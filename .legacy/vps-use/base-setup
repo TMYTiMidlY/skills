@@ -1,0 +1,12 @@
+# 加固 SSH 服务端配置
+sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+ls /etc/ssh/sshd_config.d
+查看这些配置文件的内容，如果没用可以像下面这样删去
+sudo rm /etc/ssh/sshd_config.d/*
+sudo nano /etc/ssh/sshd_config
+修改 PermitRootLogin no
+修改 PasswordAuthentication no
+修改 GatewayPorts yes（for 反向端口转发）
+sudo sshd -t # 没有任何输出表示成功
+sudo sshd -T | grep -i "GatewayPorts"
+sudo systemctl restart ssh
