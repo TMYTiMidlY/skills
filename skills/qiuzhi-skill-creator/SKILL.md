@@ -223,7 +223,22 @@ description: Guide for creating effective skills. Use when users want to create 
     └── assets/           - 输出资源 (模板、图标、字体等)
 ```
 
-### 3.2 创建 Skill
+### 3.2 文件存放位置
+
+使用 `AskUserQuestion` 询问：
+
+```
+问题: "Skill 的实体文件放在哪里？"
+选项:
+- "放在当前项目目录下"
+- "放在 skills 仓库 (~/skills) 里，软链接到项目"
+```
+
+如果用户选择放在 skills 仓库：
+- 实体文件创建在 `~/skills/skills/<skill-name>/`
+- 自动创建软链接到对应的 skills 目录（根据 Phase 1.4 确定的作用域和工具）
+
+### 3.3 创建 Skill
 
 运行初始化脚本：
 
@@ -231,7 +246,7 @@ description: Guide for creating effective skills. Use when users want to create 
 uv run scripts/init_skill.py <skill-name> --path <output-directory>
 ```
 
-### 3.3 编写 SKILL.md
+### 3.4 编写 SKILL.md
 
 #### Frontmatter 规范
 
@@ -258,7 +273,7 @@ description: 清晰描述 Skill 功能和触发场景。包含：(1) 做什么 (
 4. **避免深层嵌套**：引用文件保持一层深度
 5. **长文件加目录**：超过 100 行的参考文件需要目录
 
-### 3.4 实现资源文件
+### 3.5 实现资源文件
 
 使用 `AskUserQuestion` 询问用户有什么资源：
 
@@ -284,7 +299,7 @@ description: 清晰描述 Skill 功能和触发场景。包含：(1) 做什么 (
 - "需要你帮我创建"
 ```
 
-### 3.5 格式校验
+### 3.6 格式校验
 
 所有文件创建完成后，运行 `scripts/quick_validate.py` 校验 frontmatter 格式。校验不通过则修复后重新运行，直到通过。
 
