@@ -1,47 +1,88 @@
 # Skills
 
-这是一个 Agent Skills 仓库，收集我常用的一些技能包，方便给 AI 增加文档处理、前端设计和办公文件处理能力。
+给 AI 编程助手（Claude Code / GitHub Copilot 等）增加实用能力的技能包合集。安装后，AI 能直接处理 Office 文档、PDF、前端页面设计、服务器运维等日常任务。
 
 ## 可用的 Skills
 
-- `docx`：处理 Word 文档，包括编辑、批注、接受修订和校验。
-- `pdf`：处理 PDF，包括表单分析、字段提取、填写和图片转换。
-- `xlsx`：处理 Excel 文件，包括重算和基础校验。
-- `pptx`：处理 PowerPoint，包括清理、加页、缩略图和结构处理。
-- `frontend-design`：生成更有设计感的前端界面与页面方案。
-- `doc-coauthoring`：用于结构化文档协作与共同编写流程。
-- `qiuzhi-skill-creator`：用于创建和打包新的 skill。
+| Skill | 说明 |
+| --- | --- |
+| `docx` | Word 文档的创建、编辑、批注、修订追踪和格式化 |
+| `pdf` | PDF 读取、合并、拆分、表单填写、水印、OCR 和加解密 |
+| `xlsx` | Excel / CSV 读写、公式重算、数据清洗和格式化 |
+| `pptx` | PPT 创建与编辑、模板处理、演讲者备注和幻灯片操作 |
+| `frontend-design` | 生成有设计感的前端界面，避免千篇一律的 AI 风格 |
+| `doc-coauthoring` | 引导式结构化文档协作，适合撰写提案、技术规格等 |
+| `vps-use` | 通过 SSH 远程操作 VPS，完成服务器配置和运维任务 |
+| `qiuzhi-skill-creator` | 交互式引导创建新的 skill |
+
+## 安装
+
+### 方式一：克隆 + 软链接（推荐）
+
+```bash
+git clone https://github.com/TMYTiMidlY/skills.git ~/skills
+```
+
+以 `.agents/skills/` 作为唯一的 skill 源，将需要的 skill 链接进去。全局安装就放在 `~/` 下，项目级安装就放在项目根目录下：
+
+```bash
+mkdir -p .agents/skills
+
+# 将需要的 skill 逐个链接进来
+ln -s ~/skills/skills/<skill-name> .agents/skills/
+```
+
+GitHub Copilot、Cursor、Gemini CLI、Codex、Cline、Warp 等工具原生读取 `.agents/skills/`，无需额外配置。其他工具需要将各自的 skills 目录链接到 `.agents/skills/`：
+
+| 工具 | 自有 skills 目录 | 链接命令 |
+| --- | --- | --- |
+| Claude Code | `.claude/skills/` | `ln -s .agents/skills .claude/skills` |
+| Amp | `.config/agents/skills/` | `ln -s .agents/skills .config/agents/skills` |
+| Windsurf | `.codeium/windsurf/skills/` | `ln -s .agents/skills .codeium/windsurf/skills` |
+| Roo Code | `.roo/skills/` | `ln -s .agents/skills .roo/skills` |
+| Goose | `.config/goose/skills/` | `ln -s .agents/skills .config/goose/skills` |
+| Junie | `.junie/skills/` | `ln -s .agents/skills .junie/skills` |
+| Kiro CLI | `.kiro/skills/` | `ln -s .agents/skills .kiro/skills` |
+
+其他工具同理，将其 skills 目录链接到 `.agents/skills/` 即可。
+
+**软链接注意事项：**
+
+- 使用**绝对路径**，避免相对路径在不同工作目录下失效。
+- 链接到 skill **目录本身**而非内部单个文件，否则相对引用会断裂。
+- 同名目录已存在时先删除再建链接，否则 `ln -s` 会建到子目录里。
+
+修改仓库文件即时生效，用 git 管理版本。
+
+### 方式二：`skills` CLI
+
+```bash
+bunx skills add TMYTiMidlY/skills            # 安装全部
+bunx skills add TMYTiMidlY/skills --list      # 查看可安装内容
+bunx skills add TMYTiMidlY/skills --skill pdf  # 仅安装指定 skill
+bunx skills update                             # 更新已安装 skills
+```
+
+常用选项：`-g` 全局安装，`-y` 跳过确认。
+
+## 使用
+
+每个 skill 目录下的 `SKILL.md` 说明了触发条件和能力范围。AI 会根据对话内容自动匹配并调用对应的 skill，无需手动指定。
+
+部分 skill 附带 `scripts/` 目录，包含可直接运行的辅助脚本。
+
+想创建自己的 skill？使用 `qiuzhi-skill-creator` 即可通过交互式引导完成。
 
 ## AGENTS.md
 
-[AGENTS.md](AGENTS.md) 里放的是一个我自己常用的 AI 全局规则，主要是我常用的执行偏好，对 GitHub Copilot CLI 和 GitHub Copilot in VS Code 完美适用。例如：
+[AGENTS.md](AGENTS.md) 是一份通用的 AI agent 行为规则，涵盖 Python 环境选择、Git 操作约束、工具使用习惯等偏好设置。适用于 Claude Code、GitHub Copilot 等支持 `AGENTS.md` / `CLAUDE.md` 的工具。
 
-- Python 环境优先级
-- 遇到不明确情况时优先 askQuestion
-- Git 提交相关约束
-- tools、skills 和 subagents 的使用习惯
-
-如果你想让 Claude Code 或其他基于 Claude 的工具也遵循相同的规则，可以通过软链接实现：
+如需让 Claude Code 也读取同一份规则：
 
 ```bash
 ln -s AGENTS.md CLAUDE.md
 ```
 
-这样 CLAUDE.md 会指向 AGENTS.md，保持规则统一，只需维护一份文件。
-
-## 使用 Vercel Labs 的 `skills` 命令行工具安装 skills
-
-- 安装本仓库 skills：`bunx skills add TMYTiMidlY/skills`
-- 查看可安装内容：`bunx skills add TMYTiMidlY/skills --list`
-- 更新已安装 skills：`npx skills update`
-- 常用选项：`-g` 全局安装，`--skill <name>` 安装指定 skill，`-y` 跳过确认。
-
-## 使用方式
-
-- 每个 skill 目录下都有一个 `SKILL.md`，用于说明这个 skill 适合解决什么问题。
-- 如果某个 skill 带有 `scripts/` 目录，通常表示里面附带了可直接运行的脚本。
-- 如果你想自己做一个新 skill，可以参考 `qiuzhi-skill-creator`。
-
 ## 许可
 
-各个 skill 可能有不同的许可证，请分别查看对应目录中的 `LICENSE` 或 `LICENSE.txt`。
+各 skill 的许可证可能不同，请查看对应目录中的 `LICENSE` 或 `LICENSE.txt`。
