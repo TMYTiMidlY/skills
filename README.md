@@ -32,14 +32,13 @@ mkdir -p .agents/skills
 ln -s ~/skills/skills/<skill-name> .agents/skills/
 ```
 
-GitHub Copilot、Cursor、Gemini CLI、Codex、Cline、Warp 等工具原生读取 `.agents/skills/`，无需额外配置。其他工具需要将各自的 skills 目录链接到 `.agents/skills/`：
+GitHub Copilot、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等工具原生读取 `.agents/skills/`，无需额外配置。其他工具需要将各自的 skills 目录链接到 `.agents/skills/`：
 
 | 工具 | 自有 skills 目录 | 链接命令 |
 | --- | --- | --- |
 | Claude Code | `.claude/skills/` | `ln -s .agents/skills .claude/skills` |
+| Cursor | `.cursor/skills/` | `ln -s .agents/skills .cursor/skills` |
 | Amp | `.config/agents/skills/` | `ln -s .agents/skills .config/agents/skills` |
-| Windsurf | `.codeium/windsurf/skills/` | `ln -s .agents/skills .codeium/windsurf/skills` |
-| Roo Code | `.roo/skills/` | `ln -s .agents/skills .roo/skills` |
 | Goose | `.config/goose/skills/` | `ln -s .agents/skills .config/goose/skills` |
 | Junie | `.junie/skills/` | `ln -s .agents/skills .junie/skills` |
 | Kiro CLI | `.kiro/skills/` | `ln -s .agents/skills .kiro/skills` |
