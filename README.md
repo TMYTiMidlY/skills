@@ -31,8 +31,8 @@ ln -s AGENTS.md CLAUDE.md
 
 ## 使用 Vercel Labs 的 `skills` 命令行工具安装 skills
 
-- 安装本仓库 skills：`npx skills add https://git.chenzhaoyun.com/TiMidlY/skills.git`
-- 查看可安装内容：`npx skills add https://git.chenzhaoyun.com/TiMidlY/skills.git --list`
+- 安装本仓库 skills：`bunx skills add TMYTiMidlY/skills`
+- 查看可安装内容：`bunx skills add TMYTiMidlY/skills --list`
 - 更新已安装 skills：`npx skills update`
 - 常用选项：`-g` 全局安装，`--skill <name>` 安装指定 skill，`-y` 跳过确认。
 
