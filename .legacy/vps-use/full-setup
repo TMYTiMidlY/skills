@@ -1,0 +1,24 @@
+# 安装 Tailscale
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up --login-server <YOUR_HEADSCALE_URL> --authkey <YOUR_AUTH_KEY> --accept-routes
+sudo tailscale serve --bg --tcp 3389 tcp://localhost:3389 # WSL 转发到 Win 远程桌面
+sudo tailscale serve --bg --tcp 8080 tcp://localhost:8080 # 转发本地监听的服务
+```
+
+# 安装 Headscale
+
+```bash
+wget--output-document=headscale.deb "https://github.com/juanfont/headscale/releases/download/v0.27.1/headscale_0.27.1_linux_amd64.deb"
+sudo apt install ./headscale.deb
+sudo nano /etc/headscale/config.yaml
+修改 server_url base_domain
+sudo systemctl enable --now headscale
+sudo systemctl status headscale
+sudo headscale users create <USER>
+sudo headscale users list
+sudo headscale preauthkeys create --user <USER_ID>
+获取的 AUTH_KEY 输到 tailscale 中
+sudo headscale nodes list # 查看设备列表
+```
