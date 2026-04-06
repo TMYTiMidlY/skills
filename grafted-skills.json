@@ -1,1 +1,114 @@
-{}
+{
+  "slidev": {
+    "repo": "slidevjs/slidev",
+    "path": "skills/slidev",
+    "branch": "main",
+    "synced_commit": "d76850d",
+    "synced_date": "2026-03-11T23:54:58Z",
+    "description": "Slidev 官方 skill"
+  },
+  "doc-coauthoring": {
+    "repo": "anthropics/skills",
+    "path": "skills/doc-coauthoring",
+    "branch": "main",
+    "synced_commit": "0075614",
+    "synced_date": "2025-12-04T17:01:46Z",
+    "description": "文档协作工作流"
+  },
+  "docx": {
+    "repo": "anthropics/skills",
+    "path": "skills/docx",
+    "branch": "main",
+    "synced_commit": "3d59511",
+    "synced_date": "2026-02-25T04:28:38Z",
+    "description": "Word 文档操作"
+  },
+  "frontend-design": {
+    "repo": "anthropics/skills",
+    "path": "skills/frontend-design",
+    "branch": "main",
+    "synced_commit": "0075614",
+    "synced_date": "2025-12-04T17:01:46Z",
+    "description": "前端界面设计"
+  },
+  "pptx": {
+    "repo": "anthropics/skills",
+    "path": "skills/pptx",
+    "branch": "main",
+    "synced_commit": "1ed29a0",
+    "synced_date": "2026-02-06T21:19:32Z",
+    "description": "PowerPoint 文件操作"
+  },
+  "xlsx": {
+    "repo": "anthropics/skills",
+    "path": "skills/xlsx",
+    "branch": "main",
+    "synced_commit": "1ed29a0",
+    "synced_date": "2026-02-06T21:19:32Z",
+    "description": "Excel 电子表格操作"
+  },
+  "pdf": {
+    "repo": "anthropics/skills",
+    "path": "skills/pdf",
+    "branch": "main",
+    "synced_commit": "1ed29a0",
+    "synced_date": "2026-02-06T21:19:32Z",
+    "description": "PDF 文件操作"
+  },
+  ".experimental/doc": {
+    "repo": "openai/skills",
+    "path": "skills/.curated/doc",
+    "branch": "main",
+    "synced_commit": "7796342",
+    "synced_date": "2026-02-02T15:59:58Z",
+    "description": "Word 文档读写（python-docx）"
+  },
+  ".experimental/frontend-skill": {
+    "repo": "openai/skills",
+    "path": "skills/.curated/frontend-skill",
+    "branch": "main",
+    "synced_commit": "82d2c5b",
+    "synced_date": "2026-03-20T17:49:50Z",
+    "description": "高质量前端页面构建"
+  },
+  ".experimental/gh-address-comments": {
+    "repo": "openai/skills",
+    "path": "skills/.curated/gh-address-comments",
+    "branch": "main",
+    "synced_commit": "7796342",
+    "synced_date": "2026-02-02T15:59:58Z",
+    "description": "处理 GitHub PR 评论"
+  },
+  ".experimental/gh-fix-ci": {
+    "repo": "openai/skills",
+    "path": "skills/.curated/gh-fix-ci",
+    "branch": "main",
+    "synced_commit": "7796342",
+    "synced_date": "2026-02-02T15:59:58Z",
+    "description": "修复 GitHub CI 失败"
+  },
+  ".experimental/jupyter-notebook": {
+    "repo": "openai/skills",
+    "path": "skills/.curated/jupyter-notebook",
+    "branch": "main",
+    "synced_commit": "7796342",
+    "synced_date": "2026-02-02T15:59:58Z",
+    "description": "Jupyter Notebook 创建与编辑"
+  },
+  ".experimental/screenshot": {
+    "repo": "openai/skills",
+    "path": "skills/.curated/screenshot",
+    "branch": "main",
+    "synced_commit": "7796342",
+    "synced_date": "2026-02-02T15:59:58Z",
+    "description": "桌面截图"
+  },
+  ".experimental/slides": {
+    "repo": "openai/skills",
+    "path": "skills/.curated/slides",
+    "branch": "main",
+    "synced_commit": "b53e5e6",
+    "synced_date": "2026-03-05T23:09:22Z",
+    "description": "PptxGenJS 幻灯片制作"
+  }
+}
