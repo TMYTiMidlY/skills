@@ -4,24 +4,46 @@
 
 ## 可用的 Skills
 
-| Skill | 说明 |
-| --- | --- |
-| `docx` | Word 文档的创建、编辑、批注、修订追踪和格式化 |
-| `pdf` | PDF 读取、合并、拆分、表单填写、水印、OCR 和加解密 |
-| `xlsx` | Excel / CSV 读写、公式重算、数据清洗和格式化 |
-| `pptx` | PPT 创建与编辑、模板处理、演讲者备注和幻灯片操作 |
-| `frontend-design` | 生成有设计感的前端界面，避免千篇一律的 AI 风格 |
-| `doc-coauthoring` | 引导式结构化文档协作，适合撰写提案、技术规格等 |
-| `vps-use` | 通过 SSH 远程操作 VPS，完成服务器配置和运维任务 |
-| `qiuzhi-skill-creator` | 交互式引导创建新的 skill |
+| Skill | 来源 | 说明 |
+| --- | --- | --- |
+| `vps-use` | *原创* | 通过 SSH 远程操作 VPS，完成服务器配置和运维任务 |
+| `qiuzhi-skill-creator` | [秋芝2046](https://space.bilibili.com/385670211) | 交互式引导创建新的 skill |
 
 <!-- skills-table:begin -->
+| Skill | 来源 | 说明 |
+| --- | --- | --- |
+| `slidev` | [slidevjs/slidev](https://github.com/slidevjs/slidev) | Slidev 官方 skill |
+| `doc-coauthoring` | [anthropics/skills](https://github.com/anthropics/skills) | 文档协作工作流 |
+| `docx` | [anthropics/skills](https://github.com/anthropics/skills) | Word 文档操作 |
+| `frontend-design` | [anthropics/skills](https://github.com/anthropics/skills) | 前端界面设计 |
+| `pptx` | [anthropics/skills](https://github.com/anthropics/skills) | PowerPoint 文件操作 |
+| `xlsx` | [anthropics/skills](https://github.com/anthropics/skills) | Excel 电子表格操作 |
+| `pdf` | [anthropics/skills](https://github.com/anthropics/skills) | PDF 文件操作 |
+
+试验区（`.experimental/`）：
+
+| Skill | 来源 | 说明 |
+| --- | --- | --- |
+| `doc` | [openai/skills](https://github.com/openai/skills) | Word 文档读写（python-docx） |
+| `frontend-skill` | [openai/skills](https://github.com/openai/skills) | 高质量前端页面构建 |
+| `gh-address-comments` | [openai/skills](https://github.com/openai/skills) | 处理 GitHub PR 评论 |
+| `gh-fix-ci` | [openai/skills](https://github.com/openai/skills) | 修复 GitHub CI 失败 |
+| `jupyter-notebook` | [openai/skills](https://github.com/openai/skills) | Jupyter Notebook 创建与编辑 |
+| `screenshot` | [openai/skills](https://github.com/openai/skills) | 桌面截图 |
+| `slides` | [openai/skills](https://github.com/openai/skills) | PptxGenJS 幻灯片制作 |
 <!-- skills-table:end -->
 
 此外，`skills/` 目录下还有两个隐藏分类：
 
 - **`.experimental/`** — 从外部仓库下载的未经审核的 skill，功能可用但未经过适配和验证。
 - **`.legacy/`** — 已弃用的 skill，仅作归档保留。
+
+### 外部 Skill 的适配规则
+
+来自外部仓库的 skill（标有来源链接的条目）会做以下适配，使其不绑定特定产品：
+
+1. **去品牌化** — 将 `Claude`、`artifacts` 等产品专属概念替换为通用表述（如 `agent`、文件操作）；删除 `claude.ai` 等产品链接。
+2. **统一依赖管理** — `python scripts/...` 改为 `uv run scripts/...`；`pip install X` 改为 `uv run --with X`。
 
 ## 安装
 
