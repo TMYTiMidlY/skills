@@ -1,9 +1,9 @@
 ---
-name: skill-graft
+name: graft-skill
 description: 管理从外部 GitHub 仓库嫁接（引入）的 skill。当用户要添加、移除、修改外部 skill，或提到"检查更新"、"同步上游"、"upstream"时触发。
 ---
 
-# Skill Graft
+# Graft Skill
 
 从外部 GitHub 仓库嫁接 skill 到本仓库，管理其完整生命周期：引入 → 试验 → 转正 → 修改 → 同步 → 移除。
 
