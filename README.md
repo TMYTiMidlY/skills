@@ -4,11 +4,10 @@
 
 ## 可用的 Skills
 
-<!-- skills-table:begin -->
 | Skill | 来源 | 说明 |
 | --- | --- | --- |
 | `vps-use` | *原创* | 通过 SSH 远程操作 VPS，完成服务器配置和运维任务 |
-| `qiuzhi-skill-creator` | [秋芝2046](https://space.bilibili.com/385670211) | 交互式引导创建新的 skill |
+| `qiuzhi-skill-creator` | [秋芝2046](https://space.bilibili.com/385670211) | 交互式引导创建新的 skill |<!-- skills-table:begin -->
 | `slidev` | [slidevjs/slidev](https://github.com/slidevjs/slidev) | Slidev 官方 skill |
 | `doc-coauthoring` | [anthropics/skills](https://github.com/anthropics/skills) | 文档协作工作流 |
 | `docx` | [anthropics/skills](https://github.com/anthropics/skills) | Word 文档操作 |
@@ -27,8 +26,7 @@
 | `gh-fix-ci` | [openai/skills](https://github.com/openai/skills) | 修复 GitHub CI 失败 |
 | `jupyter-notebook` | [openai/skills](https://github.com/openai/skills) | Jupyter Notebook 创建与编辑 |
 | `screenshot` | [openai/skills](https://github.com/openai/skills) | 桌面截图 |
-| `slides` | [openai/skills](https://github.com/openai/skills) | PptxGenJS 幻灯片制作 |
-<!-- skills-table:end -->
+| `slides` | [openai/skills](https://github.com/openai/skills) | 代码驱动的幻灯片制作 |<!-- skills-table:end -->
 
 此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 
