@@ -16,6 +16,11 @@
 | `slidev` | Slidev 幻灯片项目开发，来自 [Slidev 官方](https://github.com/slidevjs/slidev) |
 | `qiuzhi-skill-creator` | 交互式引导创建新的 skill |
 
+此外，`skills/` 目录下还有两个隐藏分类：
+
+- **`.experimental/`** — 从外部仓库下载的未经审核的 skill，功能可用但未经过适配和验证。
+- **`.legacy/`** — 已弃用的 skill，仅作归档保留。
+
 ## 安装
 
 ### 方式一：克隆 + 软链接（推荐）
