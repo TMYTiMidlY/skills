@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""读取 upstream-skills.json，自动更新 README.md 中的外部 skill 表格。"""
+"""读取 grafted-skills.json，自动更新 README.md 中的外部 skill 表格。"""
 
 import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-CONFIG = REPO_ROOT / "upstream-skills.json"
+CONFIG = REPO_ROOT / "grafted-skills.json"
 README = REPO_ROOT / "README.md"
 
 BEGIN = "<!-- skills-table:begin -->"
@@ -46,7 +46,7 @@ def build_block(data: dict) -> str:
 
 def main():
     if not CONFIG.exists():
-        print("upstream-skills.json not found, skipping")
+        print("grafted-skills.json not found, skipping")
         return
 
     data = json.loads(CONFIG.read_text())
