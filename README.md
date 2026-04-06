@@ -13,8 +13,10 @@
 | `frontend-design` | 生成有设计感的前端界面，避免千篇一律的 AI 风格 |
 | `doc-coauthoring` | 引导式结构化文档协作，适合撰写提案、技术规格等 |
 | `vps-use` | 通过 SSH 远程操作 VPS，完成服务器配置和运维任务 |
-| `slidev` | Slidev 幻灯片项目开发，来自 [Slidev 官方](https://github.com/slidevjs/slidev) |
 | `qiuzhi-skill-creator` | 交互式引导创建新的 skill |
+
+<!-- skills-table:begin -->
+<!-- skills-table:end -->
 
 此外，`skills/` 目录下还有两个隐藏分类：
 
