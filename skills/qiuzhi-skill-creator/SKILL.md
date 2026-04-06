@@ -246,6 +246,8 @@ description: Guide for creating effective skills. Use when users want to create 
 uv run scripts/init_skill.py <skill-name> --path <output-directory>
 ```
 
+创建完成后，默认从 `assets/MIT-LICENSE.txt` 复制一份 `LICENSE.txt` 到新 skill 目录下，并将 `[year]` 替换为当前年份、`[name]` 替换为用户名（如用户为 timidly / MY.Tan 则写 TiMidlY）。
+
 ### 3.4 编写 SKILL.md
 
 #### Frontmatter 规范
