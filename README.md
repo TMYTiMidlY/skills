@@ -10,8 +10,6 @@
 | `qiuzhi-skill-creator` | [秋芝2046](https://space.bilibili.com/385670211) | 交互式引导创建新的 skill |
 
 <!-- skills-table:begin -->
-| Skill | 来源 | 说明 |
-| --- | --- | --- |
 | `slidev` | [slidevjs/slidev](https://github.com/slidevjs/slidev) | Slidev 官方 skill |
 | `doc-coauthoring` | [anthropics/skills](https://github.com/anthropics/skills) | 文档协作工作流 |
 | `docx` | [anthropics/skills](https://github.com/anthropics/skills) | Word 文档操作 |
@@ -20,7 +18,7 @@
 | `xlsx` | [anthropics/skills](https://github.com/anthropics/skills) | Excel 电子表格操作 |
 | `pdf` | [anthropics/skills](https://github.com/anthropics/skills) | PDF 文件操作 |
 
-试验区（`.experimental/`）：
+以下 skill 从外部仓库下载，尚未经过适配和验证，放在 `.experimental/` 目录下：
 
 | Skill | 来源 | 说明 |
 | --- | --- | --- |
@@ -33,10 +31,7 @@
 | `slides` | [openai/skills](https://github.com/openai/skills) | PptxGenJS 幻灯片制作 |
 <!-- skills-table:end -->
 
-此外，`skills/` 目录下还有两个隐藏分类：
-
-- **`.experimental/`** — 从外部仓库下载的未经审核的 skill，功能可用但未经过适配和验证。
-- **`.legacy/`** — 已弃用的 skill，仅作归档保留。
+此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 
 ### 外部 Skill 的适配规则
 

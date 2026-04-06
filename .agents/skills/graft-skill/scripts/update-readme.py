@@ -23,15 +23,13 @@ def build(grafted):
 
     parts = []
 
-    # 正式区 grafted skill
-    if stable_grafted:
-        parts.append(table_header())
-        for k, v in stable_grafted.items():
-            parts.append(grafted_row(k, v))
+    # 正式区 grafted skill（不带表头，接在手动维护的本地 skill 表格后面）
+    for k, v in stable_grafted.items():
+        parts.append(grafted_row(k, v))
 
     # 试验区
     if exp_grafted:
-        parts.append("\n试验区（`.experimental/`）：\n")
+        parts.append("\n以下 skill 从外部仓库下载，尚未经过适配和验证，放在 `.experimental/` 目录下：\n")
         parts.append(table_header())
         for k, v in exp_grafted.items():
             parts.append(grafted_row(k.removeprefix(".experimental/"), v))
