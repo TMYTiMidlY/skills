@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""读取 grafted-skills.json + 本地 skill 定义，更新 README.md 中 <!-- skills-table --> 标记之间的表格。"""
+"""读取 grafted-skills.json，更新 README.md 中 skills-table 标记之间的表格。
+
+标记以内联方式放在表格行末尾，不会打断 markdown 表格渲染：
+  | 最后一行手动行 |<!-- skills-table:begin -->
+  | 脚本生成的行 |
+  ...
+  | 最后一行生成行 |<!-- skills-table:end -->
+"""
 
 import json
 from pathlib import Path
@@ -7,20 +14,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 BEGIN, END = "<!-- skills-table:begin -->", "<!-- skills-table:end -->"
 
-# 本地 skill（不在 grafted-skills.json 中，手动维护）
-LOCAL_SKILLS = [
-    ("vps-use", "*原创*", "通过 SSH 远程操作 VPS，完成服务器配置和运维任务"),
-    ("qiuzhi-skill-creator", "[秋芝2046](https://space.bilibili.com/385670211)", "交互式引导创建新的 skill"),
-]
-
-
-def row(name, source, desc):
-    return f"| `{name}` | {source} | {desc} |"
-
 
 def grafted_row(name, info):
     repo = info["repo"]
-    return row(name, f"[{repo}](https://github.com/{repo})", info.get("description", ""))
+    return f"| `{name}` | [{repo}](https://github.com/{repo}) | {info.get('description', '')} |"
 
 
 def table_header():
@@ -31,13 +28,9 @@ def build(grafted):
     stable = {k: v for k, v in grafted.items() if not k.startswith(".experimental/")}
     exp = {k: v for k, v in grafted.items() if k.startswith(".experimental/")}
 
-    parts = [table_header()]
+    parts = []
 
-    # 本地 skill
-    for name, source, desc in LOCAL_SKILLS:
-        parts.append(row(name, source, desc))
-
-    # 正式区 grafted skill
+    # 正式区 grafted skill（接在手动维护的本地 skill 表格后面，不带表头）
     for k, v in stable.items():
         parts.append(grafted_row(k, v))
 
@@ -66,7 +59,7 @@ def main():
     if i == -1 or j == -1:
         return
 
-    new = readme[: i + len(BEGIN)] + "\n" + block + "\n" + readme[j:]
+    new = readme[: i + len(BEGIN)] + "\n" + block + readme[j:]
     if new != readme:
         readme_path.write_text(new)
         print("updated")
