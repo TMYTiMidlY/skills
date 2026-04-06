@@ -1,76 +1,58 @@
 #!/usr/bin/env python3
-"""读取 grafted-skills.json，自动更新 README.md 中的外部 skill 表格。"""
+"""读取 grafted-skills.json，更新 README.md 中 <!-- skills-table --> 标记之间的表格。"""
 
 import json
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-CONFIG = REPO_ROOT / "grafted-skills.json"
-README = REPO_ROOT / "README.md"
-
-BEGIN = "<!-- skills-table:begin -->"
-END = "<!-- skills-table:end -->"
+ROOT = Path(__file__).resolve().parents[4]
+BEGIN, END = "<!-- skills-table:begin -->", "<!-- skills-table:end -->"
 
 
-def build_block(data: dict) -> str:
+def row(name, info):
+    repo = info["repo"]
+    return f"| `{name}` | [{repo}](https://github.com/{repo}) | {info.get('description', '')} |"
+
+
+def table_header():
+    return "| Skill | 来源 | 说明 |\n| --- | --- | --- |"
+
+
+def build(data):
     stable = {k: v for k, v in data.items() if not k.startswith(".experimental/")}
-    experimental = {k: v for k, v in data.items() if k.startswith(".experimental/")}
-
-    lines = []
+    exp = {k: v for k, v in data.items() if k.startswith(".experimental/")}
+    parts = []
 
     if stable:
-        lines.append("| Skill | 来源 | 说明 |")
-        lines.append("| --- | --- | --- |")
-        for name, info in stable.items():
-            repo = info["repo"]
-            lines.append(
-                f"| `{name}` | [{repo}](https://github.com/{repo}) | {info.get('description', '')} |"
-            )
+        parts.append(table_header())
+        parts.extend(row(k, v) for k, v in stable.items())
 
-    if experimental:
-        if lines:
-            lines.append("")
-        lines.append("试验区（`.experimental/`）：")
-        lines.append("")
-        lines.append("| Skill | 来源 | 说明 |")
-        lines.append("| --- | --- | --- |")
-        for key, info in experimental.items():
-            name = key.removeprefix(".experimental/")
-            repo = info["repo"]
-            lines.append(
-                f"| `{name}` | [{repo}](https://github.com/{repo}) | {info.get('description', '')} |"
-            )
+    if exp:
+        parts.append("\n试验区（`.experimental/`）：\n")
+        parts.append(table_header())
+        parts.extend(row(k.removeprefix(".experimental/"), v) for k, v in exp.items())
 
-    return "\n".join(lines)
+    return "\n".join(parts)
 
 
 def main():
-    if not CONFIG.exists():
-        print("grafted-skills.json not found, skipping")
+    config = ROOT / "grafted-skills.json"
+    readme_path = ROOT / "README.md"
+
+    if not config.exists() or not readme_path.exists():
         return
 
-    data = json.loads(CONFIG.read_text())
-    block = build_block(data) if data else ""
+    data = json.loads(config.read_text())
+    block = build(data) if data else ""
 
-    readme = README.read_text()
-    begin_idx = readme.find(BEGIN)
-    end_idx = readme.find(END)
-
-    if begin_idx == -1 or end_idx == -1:
-        print("README.md 中未找到标记注释，跳过")
+    readme = readme_path.read_text()
+    i, j = readme.find(BEGIN), readme.find(END)
+    if i == -1 or j == -1:
         return
 
-    new_readme = (
-        readme[: begin_idx + len(BEGIN)]
-        + ("\n" + block + "\n" if block else "\n")
-        + readme[end_idx:]
-    )
-
-    if new_readme != readme:
-        README.write_text(new_readme)
-        print("README.md updated")
-    else:
-        print("README.md already up to date")
+    new = readme[:i + len(BEGIN)] + ("\n" + block + "\n" if block else "\n") + readme[j:]
+    if new != readme:
+        readme_path.write_text(new)
+        print("updated")
 
 
 if __name__ == "__main__":
