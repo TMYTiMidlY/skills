@@ -53,4 +53,4 @@ Host *
 有两种 setup，如果用户没有明确指定，需要询问：
 
 - **base-setup**：基础安全配置（防火墙、用户、SSH加固）→ [references/base-setup.md](references/base-setup.md)
-- **full-setup**：完整环境搭建（各种服务），必须先完成 base-setup → [references/full-setup.md](references/full-setup.md)
+- **extra-setup**：额外安装（ssh-agent、各种服务等），必须先完成 base-setup → [references/extra-setup.md](references/extra-setup.md)
