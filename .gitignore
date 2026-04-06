@@ -1,7 +1,6 @@
 # Vercel lab skills
 .agent/
 .agents/
-skills-lock.json
 
 # ---> Windows
 # Windows thumbnail cache files

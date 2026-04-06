@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "skills": {
+    "doc": {
+      "source": "openai/skills",
+      "sourceType": "github",
+      "computedHash": "7f8bfe9d1cbd6cb9a3617556387f2ac48911058a26d89345673c4565bb11717f"
+    },
+    "doc-coauthoring": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "b964e4c3ffe13f66f76dd7919073e60c7aec622cd8a8363bb36323188100cf8e"
+    },
+    "docx": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "6962db07127ee540a56e4677f65576d0727668a1d67f7da8bc978f10791c2bfe"
+    },
+    "figma": {
+      "source": "openai/skills",
+      "sourceType": "github",
+      "computedHash": "b73e3dc60f2531c0fed4b086c63ace91c2b6bdd80f5c747b9309fcbe0c4905b9"
+    },
+    "figma-implement-design": {
+      "source": "openai/skills",
+      "sourceType": "github",
+      "computedHash": "d6f7141e613b102b1c4b0abb392b4d5b57d2a7ea5d0036cfea85038dc24120ed"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "063a0e6448123cd359ad0044cc46b0e490cc7964d45ef4bb9fd842bd2ffbca67"
+    },
+    "frontend-skill": {
+      "source": "openai/skills",
+      "sourceType": "github",
+      "computedHash": "2074b8fa089e7ac633689b7202965513a5fd069fd1baf2ea49a928bb85bb4c9c"
+    },
+    "gh-address-comments": {
+      "source": "openai/skills",
+      "sourceType": "github",
+      "computedHash": "0a480d4fe8deb31852cd47ec8708e66b66b94875a23ba7679b17cf11ae9255a0"
+    },
+    "gh-fix-ci": {
+      "source": "openai/skills",
+      "sourceType": "github",
+      "computedHash": "1b1ce4eeeae2bfc175d05f1b69e07b17dfa1fddf99a96c22b6dcae7e5fb4e550"
+    },
+    "jupyter-notebook": {
+      "source": "openai/skills",
+      "sourceType": "github",
+      "computedHash": "aec85b4976af33923f957db1667207dfe8418592ddd91bbe4da24bbdc3058d8c"
+    },
+    "pdf": {
+      "source": "openai/skills",
+      "sourceType": "github",
+      "computedHash": "ae0a8fde8447e83a08edd0baf5373cd52febce32494e47e17d5d695a441a1884"
+    },
+    "pptx": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "6b8b859d26f93aa059c9870d1ab76b44ab69e3d6757ce4a03cc94cb760888073"
+    },
+    "qiuzhi-skill-creator": {
+      "source": "/home/timidly/skills/qiuzhi-skill-creator",
+      "sourceType": "local",
+      "computedHash": "daa49bae117ad65a3073139407d03fc4cff8ad0b25760b32d1b6fa5e14e2c4e9"
+    },
+    "screenshot": {
+      "source": "openai/skills",
+      "sourceType": "github",
+      "computedHash": "2dc50b3537ea27a1020a660ff17f12860f6ad05bcf40539165eb4655e5010d73"
+    },
+    "slides": {
+      "source": "openai/skills",
+      "sourceType": "github",
+      "computedHash": "1aa418c52c6425757f5cfb29b14cb8bd34e8c153f0ddd4404771889f85d57681"
+    },
+    "xlsx": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "efd0c8011cf0677d8075cf93867ecec804f9a8754a777e1d2fdb46197e9c247f"
+    }
+  }
+}
