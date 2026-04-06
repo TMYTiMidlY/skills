@@ -1,16 +1,26 @@
 #!/usr/bin/env python3
-"""读取 grafted-skills.json + 扫描本地 skill，更新 README.md 中 <!-- skills-table --> 标记之间的表格。"""
+"""读取 grafted-skills.json + 本地 skill 定义，更新 README.md 中 <!-- skills-table --> 标记之间的表格。"""
 
 import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
-SKILLS_DIR = ROOT / "skills"
 BEGIN, END = "<!-- skills-table:begin -->", "<!-- skills-table:end -->"
+
+# 本地 skill（不在 grafted-skills.json 中，手动维护）
+LOCAL_SKILLS = [
+    ("vps-use", "*原创*", "通过 SSH 远程操作 VPS，完成服务器配置和运维任务"),
+    ("qiuzhi-skill-creator", "[秋芝2046](https://space.bilibili.com/385670211)", "交互式引导创建新的 skill"),
+]
+
+
+def row(name, source, desc):
+    return f"| `{name}` | {source} | {desc} |"
+
 
 def grafted_row(name, info):
     repo = info["repo"]
-    return f"| `{name}` | [{repo}](https://github.com/{repo}) | {info.get('description', '')} |"
+    return row(name, f"[{repo}](https://github.com/{repo})", info.get("description", ""))
 
 
 def table_header():
@@ -18,20 +28,24 @@ def table_header():
 
 
 def build(grafted):
-    stable_grafted = {k: v for k, v in grafted.items() if not k.startswith(".experimental/")}
-    exp_grafted = {k: v for k, v in grafted.items() if k.startswith(".experimental/")}
+    stable = {k: v for k, v in grafted.items() if not k.startswith(".experimental/")}
+    exp = {k: v for k, v in grafted.items() if k.startswith(".experimental/")}
 
-    parts = []
+    parts = [table_header()]
 
-    # 正式区 grafted skill（不带表头，接在手动维护的本地 skill 表格后面）
-    for k, v in stable_grafted.items():
+    # 本地 skill
+    for name, source, desc in LOCAL_SKILLS:
+        parts.append(row(name, source, desc))
+
+    # 正式区 grafted skill
+    for k, v in stable.items():
         parts.append(grafted_row(k, v))
 
     # 试验区
-    if exp_grafted:
+    if exp:
         parts.append("\n以下 skill 从外部仓库下载，尚未经过适配和验证，放在 `.experimental/` 目录下：\n")
         parts.append(table_header())
-        for k, v in exp_grafted.items():
+        for k, v in exp.items():
             parts.append(grafted_row(k.removeprefix(".experimental/"), v))
 
     return "\n".join(parts)
