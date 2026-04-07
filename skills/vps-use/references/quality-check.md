@@ -58,11 +58,12 @@ sudo mtr -r -c 10 <目标IP> # 测试 10 次延迟
 
 #### 1.5 GB Ryzen 7950X VPS
 
+<table><tr><td>
+
 | 项目 | 信息 |
 |------|------|
 | 费用 | 年缴 $19.00 USD（Black Friday 2023） |
 | 付款方式 | Stripe 支付宝 |
-| IP | 107.173.x.x（仅可更换一次） |
 | 虚拟化 | KVM |
 | OS | Ubuntu 24.04 64 Bit |
 | 内存 | 1.5 GB |
@@ -70,9 +71,24 @@ sudo mtr -r -c 10 <目标IP> # 测试 10 次延迟
 | 磁盘 | 30 GB |
 | 带宽 | 体感还不错 |
 | 流量 | 2.44 TB |
-| Panel | <https://nerdvm.racknerd.com/> |
+| Panel | https://nerdvm.racknerd.com/ |
 | 创建时间 | 2026-01-04 |
 | 到期时间 | 2027-01-04 |
+
+</td><td>
+
+| ping0 检测 | 信息 |
+|------|------|
+| IP | 107.173.x.x（仅可更换一次） |
+| 位置 | 美国 加州 洛杉矶 |
+| ASN | AS36352 |
+| 企业 | RackNerd LLC |
+| IP 类型 | IDC机房 IP |
+| 风控值 | 39%（中性） |
+| 原生 IP | 原生 IP |
+| 共享人数 | 1-10（极好） |
+
+</td></tr></table>
 
 #### 延迟测试
 
@@ -94,10 +110,11 @@ sudo mtr -r -c 10 <目标IP> # 测试 10 次延迟
 
 #### 美国4837 双ISP家宽住宅原生IP
 
+<table><tr><td>
+
 | 项目 | 信息 |
 |------|------|
 | 费用 | 两年 ¥646.20（原价 ¥718，7 折 + 9 折优惠券） |
-| IP | 38.244.x.x（可更换一次，未再尝试过） |
 | 可用区 | US-LAX-4837-13 |
 | 实例配置 | 美国4837三网大陆回程优化 - 双ISP家宽住宅美国原生IP |
 | OS | Ubuntu 24.04.1 |
@@ -106,9 +123,24 @@ sudo mtr -r -c 10 <目标IP> # 测试 10 次延迟
 | 磁盘 | 10 GB |
 | 带宽 | 上下行 100 Mbps |
 | 流量 | 600 GB |
-| Panel | <https://lisahost.com/clientarea.php> |
+| Panel | https://lisahost.com/clientarea.php |
 | 创建时间 | 2026-03-25 |
 | 到期时间 | 2028-03-25 |
+
+</td><td>
+
+| ping0 检测 | 信息 |
+|------|------|
+| IP | 38.244.x.x（可更换一次，未再尝试过） |
+| 位置 | 美国 加州 洛杉矶 |
+| ASN | AS174 |
+| 企业 | Cogent Communications LLC |
+| IP 类型 | IDC机房 IP |
+| 风控值 | 20%（纯净） |
+| 原生 IP | 原生 IP |
+| 共享人数 | 1-10（极好） |
+
+</td></tr></table>
 
 #### 延迟测试
 
@@ -131,10 +163,11 @@ sudo mtr -r -c 10 <目标IP> # 测试 10 次延迟
 
 #### 香港 A1
 
+<table><tr><td>
+
 | 项目 | 信息 |
 |------|------|
 | 费用 | 月缴 ¥60 CNY |
-| IP | 221.128.x.x |
 | 可用区 | HK1-N7 |
 | 实例配置 | 香港 A1 |
 | OS | Ubuntu 22.04 |
@@ -143,9 +176,25 @@ sudo mtr -r -c 10 <目标IP> # 测试 10 次延迟
 | 磁盘 | 20 GB |
 | 带宽 | 上行 10 Mbps / 下行 100 Mbps |
 | 流量 | 无限 |
-| Panel | <https://www.edgenat.com/clientarea.php> |
+| Panel | https://www.edgenat.com/clientarea.php |
 | 创建时间 | 2026-04-07 |
 | 到期时间 | 2026-05-07 |
+
+</td><td>
+
+| ping0 检测 | 信息 |
+|------|------|
+| IP | 221.128.x.x |
+| 位置 | 中国 香港 |
+| ASN | AS18180 |
+| 企业 | Beijing Chang Ying Network Service |
+| IP 类型 | IDC机房 IP |
+| 风控值 | 33%（中性） |
+| 原生 IP | 广播 IP |
+| 共享人数 | 1-10（极好） |
+| 绑定域名 | 3 个（如 att11.cn） |
+
+</td></tr></table>
 
 #### 延迟测试
 
