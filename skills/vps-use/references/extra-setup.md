@@ -121,6 +121,20 @@ sysctl net.ipv4.tcp_congestion_control
 
 ## 安装 EasyTier
 
+> 依赖 unzip，需提前安装。
+
+```bash
+wget -O /tmp/easytier.sh "https://raw.githubusercontent.com/EasyTier/EasyTier/main/script/install.sh" && sudo bash /tmp/easytier.sh install --gh-proxy https://ghfast.top/
+```
+
+> `--gh-proxy` 可选，默认使用。如果网络可直连 GitHub 可去掉。
+
+安装后二进制在 `/opt/easytier`，配置文件目录在 `/opt/easytier/config/`。安装完成后让用户提供配置文件，写入该目录，然后以配置文件名启动服务：
+
+```bash
+systemctl start easytier@<配置文件名>
+```
+
 如果启用了 ufw，需要开放 11010 端口（TCP + UDP）：
 
 ```bash
