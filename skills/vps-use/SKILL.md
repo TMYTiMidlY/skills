@@ -65,6 +65,14 @@ ExecStart=/bin/sh -c 'exec /usr/bin/myservice --port $((BASE_PORT + $(id -u %i) 
 
 其中 `BASE_PORT` 替换为实际的基准端口号，`%i` 是实例名（即用户名）。启用方式：`systemctl enable --now myservice@username`。
 
+## 用户名规则
+
+参考文档中的 `<USERNAME>` 需要替换为实际用户名。确定方式：
+
+- 如果用户明确指定了用户名，使用指定的
+- 如果当前用户是 `MY.Tan` 或 `timidly`，默认使用 `timidly`
+- 其他情况询问用户
+
 ## 配置新 VPS
 
 有两种 setup，如果用户没有明确指定，需要询问：
