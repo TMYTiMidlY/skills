@@ -119,6 +119,15 @@ sysctl net.ipv4.tcp_congestion_control
 # 预期输出: net.ipv4.tcp_congestion_control = bbr
 ```
 
+## 安装 EasyTier
+
+需要开放 11010 端口（TCP + UDP）：
+
+```bash
+sudo ufw allow 11010/tcp
+sudo ufw allow 11010/udp
+```
+
 ## 安装 error-pages
 
 自定义错误页面服务，用于反向代理后端不可用时展示友好的错误页。
