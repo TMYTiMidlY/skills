@@ -23,11 +23,11 @@ sudo ufw delete allow 443/tcp
 
 ## 2. 创建普通用户
 
-`adduser` 需交互输入密码，提示用户手动执行。如果由 agent 执行后续步骤，加固完成前保持 root 登录，避免切换到 timidly 导致 sudo 无法非交互执行。
+`adduser` 需交互输入密码，提示用户手动执行。如果由 agent 执行后续步骤，加固完成前保持 root 登录，避免切换到 <USERNAME> 导致 sudo 无法非交互执行。
 
 ```bash
-adduser timidly               # 按提示设置密码
-usermod -aG sudo timidly
+adduser <USERNAME>               # 按提示设置密码
+usermod -aG sudo <USERNAME>
 ```
 
 ## 3. 部署 SSH 密钥
@@ -35,7 +35,7 @@ usermod -aG sudo timidly
 用新创建的普通用户登录：
 
 ```bash
-ssh timidly@<服务器地址>
+ssh <USERNAME>@<服务器地址>
 mkdir -p ~/.ssh
 echo "ssh-ed25519 AAA..." > ~/.ssh/authorized_keys
 chmod 700 ~/.ssh
@@ -47,11 +47,11 @@ chmod 600 ~/.ssh/authorized_keys
 如果已经在 root 账户配置过 `authorized_keys`，可以直接复制：
 
 ```bash
-mkdir -p /home/timidly/.ssh
-cp /root/.ssh/authorized_keys /home/timidly/.ssh/
-chown -R timidly:timidly /home/timidly/.ssh
-chmod 700 /home/timidly/.ssh
-chmod 600 /home/timidly/.ssh/authorized_keys
+mkdir -p /home/<USERNAME>/.ssh
+cp /root/.ssh/authorized_keys /home/<USERNAME>/.ssh/
+chown -R <USERNAME>:<USERNAME> /home/<USERNAME>/.ssh
+chmod 700 /home/<USERNAME>/.ssh
+chmod 600 /home/<USERNAME>/.ssh/authorized_keys
 ```
 
 ## 4. 加固 SSH 服务端配置

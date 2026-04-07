@@ -121,9 +121,10 @@ sysctl net.ipv4.tcp_congestion_control
 
 ## 安装 EasyTier
 
-需要开放 11010 端口（TCP + UDP）：
+如果启用了 ufw，需要开放 11010 端口（TCP + UDP）：
 
 ```bash
+sudo ufw status | grep -q "^Status: active" || exit 0
 sudo ufw allow 11010/tcp
 sudo ufw allow 11010/udp
 ```
