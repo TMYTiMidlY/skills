@@ -48,6 +48,23 @@ Host *
     ControlPersist 10m
 ```
 
+## 小技巧
+
+### 多用户共享服务的端口分配
+
+如果一个 systemd 服务需要为多个用户各跑一份实例，可以用模板单元（`@` service）。在 `ExecStart` 中用用户 UID 动态计算端口，避免冲突：
+
+```ini
+[Unit]
+Description=MyService for %i
+
+[Service]
+User=%i
+ExecStart=/bin/sh -c 'exec /usr/bin/myservice --port $((BASE_PORT + $(id -u %i) - 1000))'
+```
+
+其中 `BASE_PORT` 替换为实际的基准端口号，`%i` 是实例名（即用户名）。启用方式：`systemctl enable --now myservice@username`。
+
 ## 配置新 VPS
 
 有两种 setup，如果用户没有明确指定，需要询问：

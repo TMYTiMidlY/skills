@@ -12,6 +12,13 @@ sudo ufw allow in on lo      # 允许 loopback（本地 SSH 转发等需要）
 sudo ufw enable
 ```
 
+如需移除规则：
+
+```bash
+sudo ufw delete allow 80/tcp
+sudo ufw delete allow 443/tcp
+```
+
 ## 2. 创建普通用户
 
 ```bash
@@ -32,6 +39,16 @@ chmod 600 ~/.ssh/authorized_keys
 ```
 
 > 将 `ssh-ed25519 AAA...` 替换为你的实际公钥，可通过 `cat ~/.ssh/id_ed25519.pub` 查看。
+
+如果已经在 root 账户配置过 `authorized_keys`，可以直接复制：
+
+```bash
+mkdir -p /home/timidly/.ssh
+cp /root/.ssh/authorized_keys /home/timidly/.ssh/
+chown -R timidly:timidly /home/timidly/.ssh
+chmod 700 /home/timidly/.ssh
+chmod 600 /home/timidly/.ssh/authorized_keys
+```
 
 ## 4. 加固 SSH 服务端配置
 
@@ -54,9 +71,16 @@ EOF
 
 > **可选**：如果需要通过远程端口转发将本地服务暴露到公网（`ssh -R`），在配置中加入 `GatewayPorts yes`。默认不开启。
 
+> 上面用 `sudo tee` 写入的文件默认已是 root 所有、644 权限。如果用其他方式写入，需要手动确保权限正确：
+>
+> ```bash
+> sudo chown root:root /etc/ssh/sshd_config.d/00-custom.conf
+> sudo chmod 644 /etc/ssh/sshd_config.d/00-custom.conf
+> ```
+
 ### 4.3 语法检查并重启服务
 
 ```bash
-sudo sshd -t && sudo sshd -T | grep "permitrootlogin" && sudo systemctl restart ssh && echo "✅ 配置已应用"
+sudo sshd -t && sudo sshd -T | grep -iE "PermitRootLogin|PasswordAuthentication" && sudo systemctl restart ssh && echo "✅ 配置已应用"
 ```
 
