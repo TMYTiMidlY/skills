@@ -71,3 +71,12 @@ ExecStart=/bin/sh -c 'exec /usr/bin/myservice --port $((BASE_PORT + $(id -u %i) 
 
 - **base-setup**：基础安全配置（防火墙、用户、SSH加固）→ [references/base-setup.md](references/base-setup.md)
 - **extra-setup**：额外安装（ssh-agent、各种服务等），必须先完成 base-setup → [references/extra-setup.md](references/extra-setup.md)
+
+## 基础网络测试
+
+目标机器获准运行 `iperf3 -s` 后，客户端可用以下命令检查带宽与延迟：
+
+```bash
+iperf3 -c <目标IP>
+mtr -r -c 10 <目标IP>
+```
