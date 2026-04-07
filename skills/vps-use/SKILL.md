@@ -71,3 +71,7 @@ ExecStart=/bin/sh -c 'exec /usr/bin/myservice --port $((BASE_PORT + $(id -u %i) 
 
 - **base-setup**：基础安全配置（防火墙、用户、SSH加固）→ [references/base-setup.md](references/base-setup.md)
 - **extra-setup**：额外安装（ssh-agent、各种服务等），必须先完成 base-setup → [references/extra-setup.md](references/extra-setup.md)
+
+## 质量检测
+
+网络测速、IP/DNS 检测、风险评估、历史服务器信息与费用对比 → [references/quality-check.md](references/quality-check.md)
