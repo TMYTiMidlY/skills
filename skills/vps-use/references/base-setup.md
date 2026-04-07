@@ -4,6 +4,8 @@
 
 ## 1. 设置防火墙
 
+> 如果用户打算完全依赖云服务商的安全组功能，可跳过 ufw 配置。
+
 ```bash
 sudo ufw allow 22/tcp        # SSH
 sudo ufw allow 80/tcp        # HTTP
@@ -20,6 +22,8 @@ sudo ufw delete allow 443/tcp
 ```
 
 ## 2. 创建普通用户
+
+`adduser` 需交互输入密码，提示用户手动执行。如果由 agent 执行后续步骤，加固完成前保持 root 登录，避免切换到 timidly 导致 sudo 无法非交互执行。
 
 ```bash
 adduser timidly               # 按提示设置密码
