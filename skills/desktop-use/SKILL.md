@@ -1,6 +1,6 @@
 ---
 name: desktop-use
-description: 操作桌面系统（Windows / macOS）。用户提到 Windows、macOS、RDP、向日葵、WSL 网络、Clash、系统安装激活、Mac 应用等桌面相关操作时触发。
+description: 操作桌面系统（Windows / macOS）。用户提到 Windows、macOS、RDP、向日葵、WSL 网络、Clash、系统安装激活、Mac 应用、文件格式转换、pandoc、LaTeX、PDF 处理等桌面相关操作时触发。
 ---
 
 # 桌面系统操作
@@ -24,3 +24,7 @@ RDP、向日葵、WSL 网络排障、Clash 代理 → [references/network.md](re
 ## Windows 服务器配置
 
 EasyTier 组网、防火墙配置 → [references/server.md](references/server.md)
+
+## 格式转换
+
+pandoc 文档转换（LaTeX→Word、Markdown→PDF）、PDF→图片 → [references/format-conversion.md](references/format-conversion.md)
