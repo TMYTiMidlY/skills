@@ -1,9 +1,9 @@
 ---
-name: windows-use
-description: 操作 Windows 机器（本地或远程）。用户提到 Windows、RDP、向日葵、WSL 网络、Clash、系统安装激活等 Windows 相关操作时触发。
+name: desktop-use
+description: 操作桌面系统（Windows / macOS）。用户提到 Windows、macOS、RDP、向日葵、WSL 网络、Clash、系统安装激活、Mac 应用等桌面相关操作时触发。
 ---
 
-# Windows 操作
+# 桌面系统操作
 
 ## 快速命令参考
 
