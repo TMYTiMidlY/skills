@@ -13,8 +13,7 @@ Windows 版从 [GitHub Releases](https://github.com/EasyTier/EasyTier/releases) 
 配置文件为 TOML 格式，放在安装目录下（如 `TiMidlY.conf`）：
 
 ```toml
-instance_name = "<节点名>"
-instance_id = "<UUID，首次生成后保持不变>"
+instance_name = "TiMidlY"
 ipv4 = "10.144.18.x/24"
 dhcp = false
 listeners = [
@@ -60,7 +59,6 @@ p2p_only = false
 relay_all_peer_rpc = false
 disable_tcp_hole_punching = false
 disable_udp_hole_punching = false
-private_mode = true
 ```
 
 ### 与 VPS 配置的差异
@@ -69,7 +67,6 @@ private_mode = true
 |------|---------------|-----------|
 | `[[peer]]` | 需要填写所有 VPS 节点的 TCP/UDP 地址 | 通常不需要（作为被连接方） |
 | `listeners` | TCP + UDP + WG（3个） | TCP + UDP + WG + WS + WSS（5个） |
-| `instance_id` | 有（持久化身份） | 无（由系统生成） |
 | `enable_exit_node` | `false`（客户端） | 可设为 `true`（出口节点） |
 
 ### Peer 配置说明
@@ -98,16 +95,9 @@ Windows (10.144.18.10) ──┬──> public.easytier.top (公共中继)
 
 - `dhcp = false` + `ipv4 = "10.144.18.x/24"`：手动指定虚拟 IP，新节点需分配未使用的地址
 - `rpc_portal = "127.0.0.1:15888"`：管理 RPC 只监听本地
-- `private_mode = true`：只允许相同凭证的节点接入
 - `mtu = 1380`：适配大多数网络环境，避免分片问题
 
 ### Windows 防火墙
 
-需要放行 EasyTier 使用的端口：
-
-```powershell
-New-NetFirewallRule -DisplayName "EasyTier TCP" -Direction Inbound -Protocol TCP -LocalPort 11010 -Action Allow
-New-NetFirewallRule -DisplayName "EasyTier UDP" -Direction Inbound -Protocol UDP -LocalPort 11010 -Action Allow
-New-NetFirewallRule -DisplayName "EasyTier WG" -Direction Inbound -Protocol UDP -LocalPort 11011 -Action Allow
-```
+EasyTier 首次运行时 Windows 会弹窗询问是否允许网络访问，点击允许后自动创建程序级规则（全端口放行），无需手动添加端口规则。
 
