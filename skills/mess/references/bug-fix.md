@@ -21,7 +21,7 @@
 1. Chrome `Accept-Language` 含 `zh-CN` → 服务器注入 `https://www.vscode-unpkg.net/.../zh-cn/nls.messages.js`
 2. HTML 先加载英文 NLS（17287 条），再加载中文 NLS（17109 条）→ 中文直接覆盖 `globalThis._VSCODE_NLS_MESSAGES`
 3. 中文语言包翻译不完整，缺少 index 17109-17286 → `d(17116, null)` 抛出异常 → 页面崩溃
-4. 10.144.18.10 能用是因为该 IP 到 CDN 的请求失败，英文 NLS 保持不变
+4. 10.144.18.10 能用是因为该 IP 到 CDN 的请求失败，英文 NLS 保持不变 — "能用"不是因为它做对了什么，而是因为它恰好失败了
 
 ## 解决
 
