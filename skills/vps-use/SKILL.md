@@ -11,22 +11,6 @@ description: 通过 SSH 远程操作 VPS 服务器。用户提到在某个服务
 
 用户说"在XX上操作"时，先去 `~/.ssh/config` 找是否有匹配的 Host 别名。如果找不到，**不要继续操作**，直接问用户：是不是名字说错了、是不是想表达别的意思、还是需要先添加 SSH 配置。确认了才能往下走。
 
-### 执行远程命令
-
-通过 `ssh <name> <command>` 执行远程操作，`<name>` 是 `~/.ssh/config` 中的 Host 别名。
-
-需要 sudo 的命令无法通过 ssh 非交互执行。将命令写入本地 `/tmp` 下的脚本，scp 到服务器，然后提示用户执行 `sudo bash /tmp/<script>.sh`。如果需要查看输出，提醒用户把结果贴回来。
-
-### 复杂文件修改
-
-当需要做非平凡的文件编辑时，不要尝试通过 ssh 内联 sed/awk，而是：
-
-1. 复制到本地临时目录：`scp <name>:/remote/path/file /tmp/file`
-2. 在本地用 Read/Edit 工具修改
-3. 复制回远程：`scp /tmp/file <name>:/remote/path/file`
-
-对于简单的追加或单行替换，可以直接 ssh 执行。
-
 ### 前置检查
 
 每次开始远程操作前：
@@ -52,7 +36,21 @@ Host *
     ControlPersist 10m
 ```
 
-## 小技巧
+### 执行远程命令
+
+通过 `ssh <name> <command>` 执行远程操作，`<name>` 是 `~/.ssh/config` 中的 Host 别名。
+
+需要 sudo 的命令无法通过 ssh 非交互执行。将命令写入本地 `/tmp` 下的脚本，scp 到服务器，然后提示用户执行 `sudo bash /tmp/<script>.sh`。如果需要查看输出，提醒用户把结果贴回来。如果预期输出较长，在脚本中将输出重定向到 `/tmp/<name>.log`，执行后通过 `scp` 拉回本地查看。
+
+### 复杂文件修改
+
+当需要做非平凡的文件编辑时，不要尝试通过 ssh 内联 sed/awk，而是：
+
+1. 复制到本地临时目录：`scp <name>:/remote/path/file /tmp/file`
+2. 在本地用 Read/Edit 工具修改
+3. 复制回远程：`scp /tmp/file <name>:/remote/path/file`
+
+对于简单的追加或单行替换，可以直接 ssh 执行。
 
 ### 多用户共享服务的端口分配
 
@@ -85,9 +83,19 @@ ExecStart=/bin/sh -c 'exec /usr/bin/myservice --port $((BASE_PORT + $(id -u %i) 
 
 有两种 setup，如果用户没有明确指定，需要询问：
 
-- **base-setup**：基础安全配置（防火墙、用户、SSH加固）→ [references/base-setup.md](references/base-setup.md)
-- **extra-setup**：额外安装（ssh-agent、各种服务等），必须先完成 base-setup → [references/extra-setup.md](references/extra-setup.md)
+- **base-setup**：基础安全配置（防火墙、用户、SSH加固），初始化时需完成全部流程 → [references/base-setup.md](references/base-setup.md)
+- **extra-setup**：额外安装，必须先完成 base-setup。包含以下内容，各项之间无依赖，按需安装 → [references/extra-setup.md](references/extra-setup.md)
+  - BBR 拥塞控制：改善网络吞吐
+  - EasyTier：虚拟组网，支持 P2P / 中继 / 出口节点模式
+  - Caddy：反向代理，含 caddy-security 扩展和 GitHub OAuth 配置
+  - error-pages：自定义错误页面服务，配合 Caddy 使用
+  - SSH 密钥 passphrase 与 ssh-agent：密钥安全与免密缓存（本地机器配置）
 
 ## 质量检测
 
-网络测速、IP/DNS 检测、风险评估、历史服务器信息与费用对比 → [references/quality-check.md](references/quality-check.md)
+网络与 IP 质量评估，以及历史服务器信息与费用对比 → [references/quality-check.md](references/quality-check.md)
+
+- 带宽测试（iperf3）、延迟测试（mtr）
+- IP/DNS/WebRTC 泄漏检测（browserleaks.com）
+- IP 风险评估（ping0.cc）、多节点延迟（itdog.cn）
+- 历史服务器记录：DigitalOcean / RackNerd / LisaHost / EdgeNAT 的配置、费用与测试数据
