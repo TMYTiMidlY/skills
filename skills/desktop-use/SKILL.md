@@ -25,6 +25,10 @@ RDP、向日葵、WSL 网络排障、Clash 代理 → [references/network.md](re
 
 EasyTier 组网、防火墙配置 → [references/server.md](references/server.md)
 
+## macOS
+
+推荐应用（VMware Fusion、Mounty）、权限问题、DS_Store 清理 → [references/macos.md](references/macos.md)
+
 ## 格式转换
 
 pandoc 文档转换（LaTeX→Word、Markdown→PDF）、PDF→图片 → [references/format-conversion.md](references/format-conversion.md)
