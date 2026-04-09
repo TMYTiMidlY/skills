@@ -263,8 +263,10 @@ example.com {
 
 - **一个服务一个端口** 比合并到 443 子路径更省心，能避开 caddy-security 的 `/assets/*` 跟后端 `/assets/*` 类静态资源路径的冲突。
 - **端口被本机进程占用**（典型场景：Docker 在 `127.0.0.1:port`）给该 site 显式 `bind <eth0 ip> <tun0 ip>`，而不是默认 `0.0.0.0`，否则 Caddy 整个 reload 因 `address already in use` 失败。
-- **`caddy validate` 在 sudo shell 下 env placeholder 展开失败**：跑 validate 前 `export` 占位字符串即可，值随便填，validate 只检查能否解析。
-- **公网端口要在 Aliyun/腾讯云安全组放行**：本机监听 + 直连内网 IP 都能通，只有走公网回不来 → 一定是云平台安全组没开。云盾还会对未备案的 80/443 主动拦截。
+- **`caddy validate` 读不到 systemd 注入的环境变量**：无论是 sudo shell 下的 env placeholder，还是 `systemctl edit caddy` 设置的 `Environment=...`，validate 命令都是命令行直接启的不经过 systemd，这些变量都不可见。跑 validate 前在当前 shell 里手动 `export` 一遍即可（值随便填，validate 只检查能否解析占位符）。
+- **自定义 Caddy 二进制下载**：`caddyserver.com/api/download` 下载到的内容如果不对（比如只有 22 字节的 `Contact: ...` 拒绝文本），是因为没带 User-Agent 被拒了，加一个 `-A "Mozilla/5.0"` 重试即可。
+- **RHEL 系没有 `dpkg-divert`**：替换系统自带 caddy 时用 `alternatives` 管理多版本，具体用法查发行版文档。
+- **公网端口记得在云平台安全组放行**。中国大陆 Aliyun ECS 的未备案封锁另见 [quality-check.md 的 Aliyun 未备案封锁实测](quality-check.md#aliyun-未备案封锁实测)。
 
 ### 安装 caddy-security 扩展
 

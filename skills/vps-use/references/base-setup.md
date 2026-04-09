@@ -23,11 +23,19 @@ sudo ufw delete allow 443/tcp
 
 ## 2. 创建普通用户
 
-`adduser` 需交互输入密码，提示用户手动执行。如果由 agent 执行后续步骤，加固完成前保持 root 登录，避免切换到 <USERNAME> 导致 sudo 无法非交互执行。
+可以先非交互创建用户，最后再提示用户设置密码（sudo 需要）。加固完成前保持 root 登录，避免切换到 <USERNAME> 导致 sudo 无法非交互执行。
 
 ```bash
-adduser <USERNAME>               # 按提示设置密码
-usermod -aG sudo <USERNAME>
+useradd -m <USERNAME>
+# Debian 系用 sudo 组，RHEL 系用 wheel 组
+usermod -aG sudo <USERNAME>   # Debian/Ubuntu
+usermod -aG wheel <USERNAME>  # RHEL/CentOS
+```
+
+所有步骤完成后，提示用户手动设置密码：
+
+```bash
+passwd <USERNAME>
 ```
 
 ## 3. 部署 SSH 密钥
@@ -59,8 +67,10 @@ chmod 600 /home/<USERNAME>/.ssh/authorized_keys
 ### 4.1 检查 Include 语句
 
 ```bash
-grep -q "^Include /etc/ssh/sshd_config.d/\*.conf" /etc/ssh/sshd_config || { echo "❌ 缺失 Include 语句，操作取消"; exit 1; }
+grep -q "^Include /etc/ssh/sshd_config.d/\*.conf" /etc/ssh/sshd_config && echo "OK" || echo "MISSING"
 ```
+
+> 部分镜像没有 `sshd_config.d/` 目录也没有 `Include` 语句。此时不要创建 `.d/00-custom.conf`，直接编辑 `/etc/ssh/sshd_config`（追加或替换对应行），然后跳到 4.3 做语法检查。
 
 ### 4.2 写入配置
 

@@ -40,7 +40,9 @@ Host *
 
 通过 `ssh <name> <command>` 执行远程操作，`<name>` 是 `~/.ssh/config` 中的 Host 别名。
 
-需要 sudo 的命令无法通过 ssh 非交互执行。将命令写入本地 `/tmp` 下的脚本，scp 到服务器，然后提示用户执行 `sudo bash /tmp/<script>.sh`。如果需要查看输出，提醒用户把结果贴回来。如果预期输出较长，在脚本中将输出重定向到 `/tmp/<name>.log`，执行后通过 `scp` 拉回本地查看。
+需要 sudo 的命令无法通过 ssh 非交互执行。将命令写入本地 `/tmp` 下的脚本，scp 到服务器，然后提示用户执行 `sudo bash /tmp/<script>.sh`。
+
+脚本开头加 `exec > >(tee /tmp/<name>.log) 2>&1`，用户看终端的同时留下日志；跑完 agent 自己 `scp` 拉回读，不要让用户手贴。
 
 ### 复杂文件修改
 
@@ -54,7 +56,9 @@ Host *
 
 ### 多用户共享服务的端口分配
 
-如果一个 systemd 服务需要为多个用户各跑一份实例，可以用模板单元（`@` service）。在 `ExecStart` 中用用户 UID 动态计算端口，避免冲突：
+如果一个 systemd 服务需要为多个用户各跑一份实例，可以用模板单元（`@` service）。在 `ExecStart` 中用用户 UID 动态计算端口避免冲突。
+
+**先用 `id -u <主用户>` 查 UID 作为偏移基准**，不要想当然填 1000——部分发行版/镜像的首个普通用户 UID 是 1001 或其他值。查到之后把它填进下面公式的偏移项：
 
 ```ini
 [Unit]
@@ -62,7 +66,7 @@ Description=MyService for %i
 
 [Service]
 User=%i
-ExecStart=/bin/sh -c 'exec /usr/bin/myservice --port $((BASE_PORT + $(id -u %i) - 1000))'
+ExecStart=/bin/sh -c 'exec /usr/bin/myservice --port $((BASE_PORT + $(id -u %i) - <主用户 UID>))'
 ```
 
 其中 `BASE_PORT` 替换为实际的基准端口号，`%i` 是实例名（即用户名）。启用方式：`systemctl enable --now myservice@username`。
