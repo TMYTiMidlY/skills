@@ -32,16 +32,10 @@ network_secret = "<询问用户>"
 uri = "tcp://public.easytier.top:11010"
 
 [[peer]]
-uri = "tcp://lisahost.tmytimidly.com:11010"
+uri = "tcp://alibaba.tmytimidly.com:11010"
 
 [[peer]]
-uri = "udp://lisahost.tmytimidly.com:11010"
-
-[[peer]]
-uri = "tcp://racknerd.tmytimidly.com:11010"
-
-[[peer]]
-uri = "udp://racknerd.tmytimidly.com:11010"
+uri = "udp://alibaba.tmytimidly.com:11010"
 
 [flags]
 default_protocol = "udp"
