@@ -96,6 +96,14 @@ ExecStart=/bin/sh -c 'exec /usr/bin/myservice --port $((BASE_PORT + $(id -u %i) 
   - Caddy：反向代理，含 caddy-security 扩展和 GitHub OAuth 配置
   - error-pages：自定义错误页面服务，配合 Caddy 使用
 
+**extra-setup 不只是初始安装时用。** 以下场景也必须先读 extra-setup 中对应章节再操作：
+
+- 修改 Caddyfile、添加/删除反代规则、调整端口、排查 Caddy 报错（含 `caddy validate` 环境变量问题、caddy-security OAuth 配置等）
+- 修改 EasyTier 组网配置、添加/移除节点、排查连通性问题
+- 调整 SSH 转发规则、排查 agent forwarding 问题
+- 修改 systemd 服务单元、排查服务启动失败
+- 调整防火墙规则（ufw/iptables）
+
 ## 质量检测
 
 网络与 IP 质量评估，以及历史服务器信息与费用对比 → [references/quality-check.md](references/quality-check.md)
