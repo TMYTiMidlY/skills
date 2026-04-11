@@ -89,11 +89,12 @@ ExecStart=/bin/sh -c 'exec /usr/bin/myservice --port $((BASE_PORT + $(id -u %i) 
 
 - **base-setup**：基础安全配置（防火墙、用户、SSH加固），初始化时需完成全部流程 → [references/base-setup.md](references/base-setup.md)
 - **extra-setup**：额外安装，必须先完成 base-setup。包含以下内容，各项之间无依赖，按需安装 → [references/extra-setup.md](references/extra-setup.md)
+  - SSH 密钥 passphrase 与 ssh-agent：密钥安全与免密缓存（本地机器配置）
+  - SSH RemoteForward 代理转发：将本地代理端口暴露到 VPS
   - BBR 拥塞控制：改善网络吞吐
   - EasyTier：虚拟组网，支持 P2P / 中继 / 出口节点模式
   - Caddy：反向代理，含 caddy-security 扩展和 GitHub OAuth 配置
   - error-pages：自定义错误页面服务，配合 Caddy 使用
-  - SSH 密钥 passphrase 与 ssh-agent：密钥安全与免密缓存（本地机器配置）
 
 ## 质量检测
 
