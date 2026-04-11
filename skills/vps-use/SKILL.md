@@ -40,7 +40,7 @@ Host *
 
 通过 `ssh <name> <command>` 执行远程操作，`<name>` 是 `~/.ssh/config` 中的 Host 别名。
 
-需要 sudo 的命令无法通过 ssh 非交互执行。将命令写入本地 `/tmp` 下的脚本，scp 到服务器，然后提示用户执行 `sudo bash /tmp/<script>.sh`。
+需要 sudo 的命令，将命令写入本地 `/tmp` 下的脚本，scp 到服务器，然后通过 `ssh -t <name> "sudo bash /tmp/<script>.sh"` 执行（`-t` 强制分配伪终端，使 sudo 能正常读取密码）。
 
 脚本开头加 `exec > >(tee /tmp/<name>.log) 2>&1`，用户看终端的同时留下日志；跑完 agent 自己 `scp` 拉回读，不要让用户手贴。
 
