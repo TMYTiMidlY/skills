@@ -2,6 +2,65 @@
 
 > 必须先完成 [base-setup.md](base-setup.md) 再执行以下步骤。
 
+## SSH 密钥 passphrase 与 ssh-agent（本地机器）
+
+### 密钥 passphrase
+
+检查是否已有密钥：
+
+```bash
+ls ~/.ssh/id_*
+```
+
+- **不存在**：`ssh-keygen -t ed25519 -C "<comment>"`（`-C` 填设备名/邮箱/用途）
+- **已存在但无 passphrase**：`ssh-keygen -p -f <key_path>`
+
+> 以上命令都需要交互式执行，agent 无法代替用户输入密码，应提示用户手动运行。
+
+### ssh-agent
+
+> **Windows 用户**：参考 [Auto-launching ssh-agent on Git for Windows](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/working-with-ssh-key-passphrases#auto-launching-ssh-agent-on-git-for-windows)，以下步骤适用于 Linux/WSL。
+
+ssh-agent 由 systemd 用户服务管理，密钥缓存在 agent 进程内存中。**生命周期与用户登录绑定**——不注销/不重启就一直可用。
+
+创建 `~/.config/systemd/user/ssh-agent.service`：
+
+```ini
+[Unit]
+Description=SSH key agent
+
+[Service]
+Type=simple
+Environment=SSH_AUTH_SOCK=%t/ssh-agent.socket
+ExecStart=/usr/bin/ssh-agent -D -a $SSH_AUTH_SOCK
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user enable --now ssh-agent
+```
+
+在 `~/.bashrc` 中添加：
+
+```bash
+export SSH_AUTH_SOCK=/run/user/$(id -u)/ssh-agent.socket
+```
+
+> **WSL 注意**：WSL 环境下可能还需要设置 `XDG_RUNTIME_DIR`。
+
+在 `~/.ssh/config` 的 `Host *` 下添加：
+
+```
+Host *
+    AddKeysToAgent yes
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+- `AddKeysToAgent yes`：首次连接输入 passphrase 后自动缓存到 agent
+- `IdentityFile`：指定默认使用的密钥
+
 ## 启用 BBR 拥塞控制
 
 经过在历史 VPS 样本上的测试，启用 BBR 后很可能能改善网络体验（GitHub 下载速度、iperf3 重传和丢包等）。
@@ -451,80 +510,3 @@ WantedBy=multi-user.target
 ```bash
 sudo systemctl enable --now error-pages
 ```
-
-## 配置 SSH 密钥 passphrase（本地机器）
-
-检查是否已有密钥：
-
-```bash
-ls ~/.ssh/id_*
-```
-
-- **如果不存在**：提示用户生成密钥（交互式，需要用户输入 passphrase）：
-
-  ```bash
-  ssh-keygen -t ed25519 -C "<comment>"
-  ```
-
-  > `-C` 是密钥注释，用于区分不同密钥，填设备名、邮箱、用途等均可。
-
-- **如果已存在但没有 passphrase**：提示用户为已有密钥添加 passphrase（将 `<key_path>` 替换为实际私钥路径）：
-
-  ```bash
-  ssh-keygen -p -f <key_path>
-  ```
-
-> 以上命令都需要交互式执行，agent 无法代替用户输入密码，应提示用户手动运行。
-
-## 配置 ssh-agent（本地机器）
-
-> **Windows 用户**：参考 [Auto-launching ssh-agent on Git for Windows](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/working-with-ssh-key-passphrases#auto-launching-ssh-agent-on-git-for-windows)，以下步骤适用于 Linux/WSL。
-
-ssh-agent 由 systemd 用户服务管理，密钥缓存在 agent 进程内存中。**agent 的生命周期与用户登录绑定**——只要不注销用户或重启机器，已加载的密钥一直可用，不受终端会话关闭影响。
-
-### 创建 systemd 服务
-
-创建 `~/.config/systemd/user/ssh-agent.service`：
-
-```ini
-[Unit]
-Description=SSH key agent
-
-[Service]
-Type=simple
-Environment=SSH_AUTH_SOCK=%t/ssh-agent.socket
-ExecStart=/usr/bin/ssh-agent -D -a $SSH_AUTH_SOCK
-
-[Install]
-WantedBy=default.target
-```
-
-### 启用服务
-
-```bash
-systemctl --user enable --now ssh-agent
-```
-
-### 配置 Shell 环境
-
-在 `~/.bashrc` 中添加：
-
-```bash
-# SSH Agent
-export SSH_AUTH_SOCK=/run/user/$(id -u)/ssh-agent.socket
-```
-
-> **WSL 注意**：WSL 环境下可能还需要设置 `XDG_RUNTIME_DIR`，因为 WSL 不一定自动创建。
-
-### 配置 SSH 客户端
-
-在 `~/.ssh/config` 的 `Host *` 下添加：
-
-```
-Host *
-    AddKeysToAgent yes
-    IdentityFile ~/.ssh/id_ed25519
-```
-
-- `AddKeysToAgent yes`：首次连接输入 passphrase 后自动缓存到 agent
-- `IdentityFile`：指定默认使用的密钥
