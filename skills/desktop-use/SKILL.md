@@ -25,6 +25,10 @@ RDP、向日葵、WSL Mirror 模式网络（含 Clash Party 代理对 WSL 路由
 
 EasyTier 组网（安装、TOML 配置模板、Peer 配置、与 VPS 差异）、Windows 防火墙 → [references/server.md](references/server.md)
 
+## Hermes
+
+Gateway / Dashboard systemd 服务、profile 与 `HERMES_HOME`、开机自启、反代暴露、npm/bun 构建限制 → [references/hermes.md](references/hermes.md)
+
 ## macOS
 
 推荐应用（VMware Fusion、Mounty + macFUSE NTFS 读写）、应用无法打开的权限修复、外置存储隐藏文件（DS_Store/Spotlight/Trashes）阻止与清理 → [references/macos.md](references/macos.md)
