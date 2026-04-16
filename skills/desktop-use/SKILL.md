@@ -21,7 +21,7 @@ EasyTier 组网（安装、TOML 配置模板、Peer 配置、与 VPS 差异）�
 
 ## Hermes
 
-Gateway / Dashboard systemd 服务、profile 与 `HERMES_HOME`、开机自启、反代暴露、npm/bun 构建限制 → [references/hermes.md](references/hermes.md)
+Gateway / Dashboard systemd 服务、profile 与 `HERMES_HOME`、开机自启、反代暴露、npm/bun 构建限制；terminal.backend（local / ssh / docker / modal / daytona / singularity）切换与数据流、SSH_AUTH_SOCK 继承坑；`hermes auth` 重置命令；provider 实测（MiniMax Coding Plan `/anthropic` 路径坑、Gemini `AQ.` 前缀 key 与 OpenAI 兼容端点不兼容） → [references/hermes.md](references/hermes.md)
 
 ## macOS
 
