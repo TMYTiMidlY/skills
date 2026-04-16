@@ -82,7 +82,12 @@ uri = "<协议>://<地址>:<端口>"
 - `dhcp = false` + `ipv4 = "10.144.18.x/24"`：手动指定虚拟 IP，新节点需分配未使用的地址
 - `rpc_portal = "127.0.0.1:15888"`：管理 RPC 只监听本地
 
+### 服务名与 NSSM（排障）
+
+- 显示名 `EasyTier` 对应服务名 `EasyTierService`（可用 `sc getkeyname EasyTier` 核对）
+- `nssm restart easytier` 可以重启该服务（通过服务控制接口）
+- 若 `nssm get easytier Application` 报 *only valid for services managed by NSSM*，说明当前不是 NSSM 参数托管模式；以 `sc qc EasyTierService` 的 `BINARY_PATH_NAME`（或注册表 `ImagePath`）为准
+
 ### Windows 防火墙
 
 EasyTier 首次运行时 Windows 会弹窗询问是否允许网络访问，点击允许后自动创建程序级规则（全端口放行），无需手动添加端口规则。
-

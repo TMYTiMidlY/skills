@@ -235,6 +235,43 @@ Hermes 底下调用系统 `ssh` 子进程，所以 `~/.ssh/config` 会被读；�
 
 源码注释（`config.py:388-392`）原话举的典型例子就是用 `docker_env` 解决 systemd 下 agent socket：`{"SSH_AUTH_SOCK": "/run/user/1000/ssh-agent.sock"}`，同时用 `docker_volumes` 把这个 socket 文件挂进容器同路径，容器里 ssh 就能复用宿主机 agent。
 
+### Session 级 backend 隔离：走 profile，不要走环境变量
+
+想"让某些 session 跑在远端 backend，主对话/默认 profile 保持 local"，**唯一正确的做法是建独立 profile**：
+
+```bash
+hermes profile create vps --clone --no-alias   # 克隆默认 profile 的 config/.env/SOUL
+hermes -p vps config set terminal.backend ssh  # 只改 vps profile 的 backend
+```
+
+之后使用：
+
+```bash
+hermes -p vps chat -q "<prompt>" --yolo -Q      # 一次性子会话，跑在远端 VPS
+hermes profile use vps                          # 或把 vps 设成 sticky 默认
+```
+
+`-p / --profile` 是 `main.py:83-134` 里的 pre-parser 实现，在任何 hermes 模块 import 之前就把 `HERMES_HOME` 指到 `~/.hermes/profiles/<name>/`，然后从 argv 里剥掉；效果等价于 `HERMES_HOME=... hermes ...` 但少手写一截。`hermes --help` 里不显示这个 flag，但它稳定存在。
+
+**反面教材（踩过）**：`TERMINAL_ENV=ssh hermes chat ...` 这种纯环境变量 override **不生效**。原因在 `cli.py:442-455`：只要 `config.yaml` 里存在 `terminal:` section（几乎总是存在，默认就会被 `hermes setup` 写入），这段代码会把 yaml 里的 `terminal.backend` 反向**覆盖**进程的 `TERMINAL_ENV`，拿到 terminal_tool 那里读的时候早已变回 `local`。所以 backend 切换必须改 `config.yaml`（直接改或 `config set`），不能靠临时 env var。
+
+**`HERMES_HOME=... hermes ...` 这种显式写法**只在极个别场景有用 —— 典型是 `sudo` 或其他清 env 的环境下，`sudo -E` 不够用、或者被 `secure_path` 干掉了 `-p` 解析前的 rc 初始化 —— 日常切 profile 走 `-p`/`profile use` 即可。
+
+### 编程调用 / 后台子会话的两个关键 flag
+
+想让 Hermes 被脚本或主 agent 的 `Bash` 工具启动、一把跑完就退，不阻塞在审批/交互上，`hermes chat` 几乎必须带这两个：
+
+- `--yolo`：跳过所有"危险命令"审批。Hermes 默认 `approvals.mode=manual`，非交互调用中任何会触发审批的工具调用都会无限等待，子进程看起来就是"卡住"。知道输入是受信 prompt 就加。
+- `-Q` / `--quiet`：抑制 banner、spinner、tool preview 动画，最终只输出 assistant 的最终回复 + 一段 `session_id: ...`。不加的话 stdout 会混入 Rich 的 ANSI 控制字符和进度框线，难以被脚本解析。
+
+组合起来的一次性子会话模版：
+
+```bash
+hermes -p <profile> chat -q "<指令>" --yolo -Q
+```
+
+指令里让 LLM "**把原始 stdout 放在代码块里回我，别加解释**"，再把结果从代码块里切出来，就是最稳的 stdout 获取方式 —— 比让它自然语言描述执行结果可解析得多。
+
 ### SSH_AUTH_SOCK 继承（关键坑）
 
 Hermes 自己不做 agent 发现，完全**继承父进程环境变量**。
