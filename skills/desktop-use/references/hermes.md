@@ -1,4 +1,8 @@
-# Hermes systemd 服务
+# Hermes
+
+Hermes 指 [NousResearch/hermes-agent](https://github.com/nousresearch/hermes-agent)，一个 Python CLI 的 agent 框架。以下笔记分两类：**systemd 常驻服务**（gateway / dashboard）和 **terminal backend**（agent 执行命令的环境）。
+
+## systemd 常驻服务
 
 Hermes 常见常驻服务分两类：
 
@@ -179,3 +183,115 @@ npm run build
 3. Patch Hermes 源码，把 `_build_web_ui` 改成优先 `bun install` / `bun run build`，找不到 bun 再回退 npm。升级 Hermes 时需要重新处理补丁。
 
 不要用全局假 `npm` 包装 bun，除非明确验证 `npm install --silent` 和 `npm run build` 在该项目中完全等价；这种做法会影响同一 PATH 下其他 Node 项目。
+
+## Terminal backend（命令执行环境）
+
+Hermes 里的 "backend" 是专有术语：**agent 执行 shell 命令的运行环境**，跟 Hermes 进程本身在哪里跑无关。通过 `~/.hermes/config.yaml` 的 `terminal.backend` 切换；可选值定义在源码 `hermes-agent/hermes_cli/config.py` 的 DEFAULTS 里：`local` / `docker` / `ssh` / `modal` / `daytona` / `singularity`。
+
+切换与查看：
+
+```bash
+hermes config set terminal.backend ssh      # 或 docker / local / ...
+hermes config show                          # "◆ Terminal / Backend:" 字段验证
+```
+
+`hermes config` 可用子命令：`show` / `edit` / `set` / `path` / `env-path` / `check` / `migrate`。
+
+### 数据流（通吃所有 backend）
+
+LLM 请求从本机 Hermes 进程发出（本机网络出口 + 本机 `.env` 里的 API key），LLM 返回的 tool_call 才被转发到 backend 执行。于是：
+
+- `$HOME`、`pwd`、临时 env、出网 IP 全以 backend 为准；
+- API 凭据永远留在本机 `.env`，不会下发到远端或容器；
+- 本机代理只影响 LLM 调用那一段，不影响 backend 内部命令的网络行为。
+
+### SSH backend
+
+连接参数一律走 `~/.hermes/.env`，Hermes 官方 `.env` 模板里预留了一段 `SSH REMOTE EXECUTION` 注释（在 `TERMINAL TOOL CONFIGURATION` 块之后），把示例占位符替换成实际值即可：
+
+```
+TERMINAL_SSH_HOST=<hostname 或 ~/.ssh/config 别名>
+TERMINAL_SSH_USER=<USERNAME>
+TERMINAL_SSH_PORT=22
+TERMINAL_SSH_KEY=<私钥绝对路径>
+TERMINAL_SSH_PERSISTENT=true
+```
+
+Hermes 底下调用系统 `ssh` 子进程，所以 `~/.ssh/config` 会被读；但要避免 `-i` / `-p` 命令行参数与 ssh config 规则打架 —— **`TERMINAL_SSH_HOST` 填真实 hostname + 其他字段写全** 是最稳的方式。
+
+远端会维持一条常驻 `bash -l`，`cwd` 和 env 跨命令保留；长跑任务要自己 `tmux` / `nohup`，避免 ControlMaster 空闲超时后重连丢 shell 状态。
+
+### Docker backend
+
+所有参数走 `config.yaml` 的 `terminal.*`，字段默认值即官方推荐（源码 `hermes_cli/config.py:386-408`）：镜像 `nikolaik/python-nodejs:python3.11-nodejs20`，资源 `container_cpu/memory/disk = 1 / 5120MB / 51200MB`，`container_persistent: true`，`persistent_shell: true`，`docker_mount_cwd_to_workspace: false`（开启会把宿主机 cwd 挂进容器、削弱隔离）。
+
+三个容易混的 env 字段：
+
+| 字段 | 作用域 | 取值方式 | 何时用 |
+|---|---|---|---|
+| `env_passthrough` | 所有 backend | 从 Hermes 进程环境读值，透给 backend session | 通用 |
+| `docker_forward_env` | docker only | 从宿主机当前进程读值并转发 | Hermes 跑在能 source rc 的交互 shell 下 |
+| `docker_env` | docker only | 显式 key-value 字典 | Hermes 跑 systemd 这种环境干净的 unit |
+
+源码注释（`config.py:388-392`）原话举的典型例子就是用 `docker_env` 解决 systemd 下 agent socket：`{"SSH_AUTH_SOCK": "/run/user/1000/ssh-agent.sock"}`，同时用 `docker_volumes` 把这个 socket 文件挂进容器同路径，容器里 ssh 就能复用宿主机 agent。
+
+### SSH_AUTH_SOCK 继承（关键坑）
+
+Hermes 自己不做 agent 发现，完全**继承父进程环境变量**。
+
+| 启动方式 | agent 可见性 | 处理 |
+|---|---|---|
+| 交互 shell 里 `hermes` | ✅ `.bashrc` export 了就行 | 默认 OK |
+| systemd unit（dashboard/gateway） | ❌ unit 不 source rc | 在 service 里加 `Environment="SSH_AUTH_SOCK=/run/user/<UID>/ssh-agent.socket"` |
+| cron / 非交互 | ❌ 同上 | 同上，或确保 key 文件免 passphrase |
+
+辅助判定规则：
+
+- 私钥**没 passphrase** 时，Hermes SSH backend 靠 `-i $TERMINAL_SSH_KEY` 直读 key 文件即可连通，agent 有没有都无所谓；验证方法：`SSH_AUTH_SOCK= ssh -o BatchMode=yes -o IdentitiesOnly=yes -i <key> <host> true`，返回 0 表示没 passphrase。
+- key 有 passphrase 时，上面的继承链才真正关键，systemd 场景必须补 `Environment=` 或 `EnvironmentFile=`。
+
+## Provider 实测记录
+
+### MiniMax Coding Plan（`minimax-cn`）
+
+hermes 内置 `minimax-cn` provider 默认 `base_url=https://api.minimaxi.com/anthropic`（Anthropic 协议兼容）。用户 Coding Plan key（`sk-cp-` 前缀）实测：
+
+- ✅ `POST /anthropic/v1/messages`：200，`MiniMax-M2.7` 正常对话
+- ✅ `POST /v1/text/chatcompletion_v2`：200（原生协议）
+- ✅ `POST /v1/chat/completions`：200（OpenAI 兼容）
+- ❌ `POST /anthropic`（裸路径、无 `/v1/messages` 后缀）：nginx 404
+
+曾见过报错 `hermes` 端显示 endpoint 为 `https://api.minimaxi.com/anthropic` 返 404，原因是 `.env` 里把 `MINIMAX_CN_BASE_URL` 写成了原生全路径 `/v1/text/chatcompletion_v2`，与 provider 内部 Anthropic 协议构造方式冲突，最终拼出裸 `/anthropic` 发请求。**`MINIMAX_CN_BASE_URL` 要么不设（用默认），要么指向 Anthropic 协议的基路径 `/anthropic`**，别指向原生全路径。
+
+另：Coding Plan 某些机型（如 `MiniMax-M2.7-highspeed`）会返 HTTP 500 `your current token plan not support model (2061)`，与端点无关，是套餐白名单问题。
+
+### Gemini（Google AI Studio）OpenAI 兼容端点与 `AQ.` 前缀 key
+
+hermes `gemini` provider 硬编码 `inference_base_url=https://generativelanguage.googleapis.com/v1beta/openai`（`hermes_cli/auth.py` 附近），内部按 OpenAI 协议（`Authorization: Bearer` + `/chat/completions`）构造请求；`GEMINI_BASE_URL` 仅能覆盖 base_url，**不能切协议模式**。
+
+实测某账号 key 以 `AQ.` 开头（约 53 字符，非经典 `AIza...` 39 字符，`oauth2/tokeninfo` 验证返 `invalid_token`），在同一 key 上行为如下：
+
+| 请求 | 鉴权 | 结果 |
+|---|---|---|
+| `POST /v1beta/openai/chat/completions` | `Authorization: Bearer <AQ.key>` | ❌ HTTP 400 `"Multiple authentication credentials received. Please pass only one."` |
+| `GET /v1beta/openai/models` | 同上 | ❌ HTTP 400 同错 |
+| `POST /v1beta/models/<model>:generateContent?key=<AQ.key>` | URL 参数 | ✅ 200，多轮对话正常 |
+| `GET /v1beta/models` | `x-goog-api-key: <AQ.key>` | ✅ 200 |
+| `POST /v1beta/models/<model>:generateContent` + Bearer | `Authorization: Bearer <AQ.key>` | ❌ HTTP 401 `"Expected OAuth 2 access token"` |
+
+关键点：**即使 curl 只发一个 `Authorization` header、无任何其它 auth 形式**，OpenAI 兼容网关仍返 400 "multiple credentials"。推断是 Google 网关对 `AQ.` 前缀同时走了 OAuth + API key 两套解析都命中导致互斥。经典 `AIza...` key 走 Bearer 正常，外部未见公开报告此现象。
+
+因此 hermes gemini provider + `AQ.` key 组合下无可行直连路径。绕过方式：
+1. 去 aistudio.google.com/app/apikey 重建 key，看能不能拿到 `AIza...` 格式
+2. 本地 proxy 协议转换（LiteLLM / [gemini-openai-proxy](https://github.com/zhu327/gemini-openai-proxy)），`GEMINI_BASE_URL=http://127.0.0.1:<port>/v1`，proxy 内部用 `x-goog-api-key` 走原生端点
+3. 换走 OpenRouter 之类聚合器，直接用对方 key
+
+### hermes auth 重置命令速查
+
+| 目的 | 命令 |
+|---|---|
+| 清除 provider "配额耗尽" 标记（不删凭证） | `hermes auth reset <provider>` |
+| 删除指定凭证（并自动清理 `.env` 对应行） | `hermes auth remove <provider> <id\|label>` |
+| OAuth 类（仅 `nous` / `openai-codex`）重登 | `hermes logout --provider <p>` 然后 `hermes login` |
+
+`hermes auth remove` 会顺带把 `.env` 里该 env var 一起清掉，不用手动删。api_key 类 provider 下次启动从 env 重建；OAuth 类（如 `openai-codex` 的 device_code）必须重新 `hermes login`。避免直接删整个 `auth.json`（会连带干掉 copilot 的 `gh auth token` 和 openai-codex 的 OAuth 态）。
