@@ -518,15 +518,17 @@ sudo systemctl show caddy --property=Environment
 
 - 上传：内置 `basic_auth`（v2.10+ 新名）+ `webdav` handler。**用 `webdav { prefix /dav }` 保留前缀**，不要 `handle_path` 剥掉——否则 PROPFIND/MOVE 返回的 href 不完整，rclone 等客户端会迷路。
 - 下载：一段长随机串当 "secret path" 前缀（capability URL），配合 `uri strip_prefix` 让 `file_server` 从真实目录服务；这样上传和下载路径可以共用同一份存储，`rclone put /dav/foo.md` 写进来立刻在 `/<token>/foo.md` 可见。
-- 浏览器 vs CLI 分流：matcher 叠加 `path *.md` + `header Accept *text/html*`。浏览器分支 `rewrite * /_viewer.html`（**不要附 `?src={uri}`**，见下面"rewrite 是内部重写"那条），viewer 里 `location.pathname` 就是原始 URL，`<base href="<src 的父目录>">` 让相对资源能 resolve；viewer `fetch(location.pathname)` 默认 Accept 不含 text/html，天然回落到 raw 分支不会递归。
+- 浏览器 vs CLI 分流：matcher 叠加 `path *.md` + `header Accept *text/html*`。浏览器分支 `rewrite * /_viewer.html`（**不要附 `?src={uri}`**，见下面"rewrite 是内部重写"那条），viewer 里 `location.pathname` 就是原始 URL；viewer `fetch(location.pathname)` 默认 Accept 不含 text/html，天然回落到 raw 分支不会递归。
+- 渲染：viewer 里 **Markdeep**（LaTeX 公式、`*******` 画 ASCII 图表、TOC、admonition 开箱即用，胜过 marked.js + hljs 这套轻量组合）。Markdeep 的自处理逻辑会直接重写 `document.body`——会把我们放在父页的"返回上一级 / 下载原文"导航条吞掉。所以把 Markdeep 丢进一个 **`<iframe>`（blob:URL 喂 HTML）** 里跑，父页保留 nav，子页独立渲染。
 
 **踩过的坑**
 
-- **`rewrite` 是服务端内部重写，浏览器地址栏不变**。所以 viewer 想从 URL 里拿 src 不能靠 `?src={uri}`（那是服务端视角的 URI，浏览器根本不知道有 query），得用 `location.pathname`。
+- **`rewrite` 是服务端内部重写，浏览器地址栏不变**。viewer 从 URL 拿 src 不能靠 `?src={uri}`（那是服务端视角，浏览器根本不知道 query），得用 `location.pathname`。
 - **浏览器按 URL 缓存响应、不看 Accept**。首访 `Accept: text/html` 拿到 viewer.html 被缓存，viewer 里 fetch 同 URL 就算换 Accept 也吃缓存。三重修：Caddy 两个分支都发 `Vary: Accept`，viewer 分支加 `Cache-Control: no-cache`，fetch 加 `cache: 'no-store'`。
 - **`path /<TOKEN>/*` 不匹配 bare token**（无尾斜杠），`/x` ≠ `/x/*`。加 `redir /<TOKEN> /<TOKEN>/ 301` 跳过去，尾斜杠再命中目录 `browse`。
-- **highlight.js 的 `lib/core.min.js` 和 `lib/common.min.js` 是 CommonJS 包**，浏览器里直接 `ReferenceError: module is not defined`。必须用浏览器 UMD 版 `@highlightjs/cdn-assets@11/highlight.min.js`。
-- **marked v12 砍掉 `setOptions({highlight})`**，改后渲染 `element.querySelectorAll('pre code').forEach(hljs.highlightElement)`。
+- **用 iframe 而不是直接在主文档跑 Markdeep**：Markdeep 一启动就 `document.body.innerHTML = renderedHTML`，没有只处理子树的选项。iframe + blob:URL 同时解决两件事——导航条留在父页不丢、子页不受主文档的 CSP/扩展（Ruffle、沉浸式翻译、AI Timeline 等）干扰。
+- **iframe 用 `srcdoc` 不如 `blob:URL` 稳**：大内容（近 100 KB）srcdoc 偶尔会静默挂住，blob 没这限制；拼 HTML 字符串时把 `<script>` 用 `'<' + 'script'` 拆开能彻底避免外层脚本被 HTML 解析器误判早闭合。
+- **`.md.html` 形式的 Markdeep 源文件要剥 boilerplate**：开头的 `<!doctype html>...<style class="fallback">...</style>` 和尾部的 `<!-- Markdeep: -->` 段预处理干掉，否则父子两层的 Markdeep loader 会互相覆盖。
 - 404 用 `error "..." 404` 而非 `respond`，才会触发 `handle_errors` 走 error-pages。
 
 **凭据与权限**

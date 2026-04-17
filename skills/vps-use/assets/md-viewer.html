@@ -1,32 +1,30 @@
 <!DOCTYPE html>
 <!--
-  Markdown viewer shell. Loaded via Caddy rewrite for `Accept: text/html`; CLI/fetch
+  Markdown/Markdeep viewer shell.
+  Loaded via Caddy rewrite for `Accept: text/html`; CLI/fetch
   requests land on the raw file_server branch (no loop).
-  Deps (all CDN, no build step):
-    - marked              https://github.com/markedjs/marked         (MIT)
-    - highlight.js        https://github.com/highlightjs/highlight.js (BSD-3)
-    - github-markdown-css https://github.com/sindresorhus/github-markdown-css (MIT)
+  Renders via Markdeep inside an iframe (blob:url) so its body-overwrite
+  doesn't eat our nav, and to avoid srcdoc size / escape quirks.
+  Deps:
+    - Markdeep https://casual-effects.com/markdeep/  (BSD-2)
 -->
 <html lang="zh">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Markdown</title>
+<title>Loading…</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown.min.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github.min.css" media="(prefers-color-scheme: light)">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
 <style>
-  body { box-sizing: border-box; max-width: 900px; margin: 0 auto; padding: 2em 1em; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-  .markdown-body { background: transparent; }
-  .actions { position: fixed; top: 1em; right: 1em; display: flex; gap: .5em; z-index: 10; }
-  .actions a { padding: .4em .8em; background: #0969da; color: #fff; border-radius: 6px; text-decoration: none; font-size: .9em; }
+  html, body { margin: 0; height: 100%; }
+  .actions { position: fixed; top: 1em; right: 1em; display: flex; gap: .5em; z-index: 9999;
+             font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .actions a { padding: .4em .8em; background: #0969da; color: #fff; border-radius: 6px;
+               text-decoration: none; font-size: .9em; box-shadow: 0 2px 6px rgba(0,0,0,.15); }
   .actions a:hover { background: #0550ae; }
   .actions a.secondary { background: #6e7781; }
   .actions a.secondary:hover { background: #57606a; }
-  @media (prefers-color-scheme: dark) {
-    body { background: #0d1117; color: #e6edf3; }
-  }
+  #render { width: 100%; height: 100vh; border: 0; display: block; background: #fff; }
+  .err { padding: 2em; font-family: system-ui, sans-serif; color: #b42318; white-space: pre-wrap; }
 </style>
 </head>
 <body>
@@ -34,34 +32,65 @@
   <a id="up" class="secondary">↑ 返回上一级</a>
   <a id="dl" download>⇩ 下载原文</a>
 </nav>
-<article id="out" class="markdown-body">Loading…</article>
-<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/highlight.min.js"></script>
+<iframe id="render" title="markdown preview"></iframe>
 <script>
 (async () => {
+  const log = (...a) => console.log('[md-viewer]', ...a);
   const src = location.pathname;
   const name = decodeURIComponent(src.split('/').pop());
   document.title = name;
+  const base = src.substring(0, src.lastIndexOf('/') + 1);
+  const absBase = location.origin + base;
+  document.getElementById('up').href = base;
   const dl = document.getElementById('dl');
   dl.href = src;
   dl.setAttribute('download', name);
 
-  const base = src.substring(0, src.lastIndexOf('/') + 1);
-  document.getElementById('up').href = base;
-  document.head.insertAdjacentHTML('beforeend', `<base href="${base}">`);
+  const frame = document.getElementById('render');
+  const showError = (msg) => {
+    log('ERROR', msg);
+    frame.outerHTML = '<div class="err">' + msg + '</div>';
+  };
 
   try {
+    log('fetching', src);
     const res = await fetch(src, { headers: { Accept: 'text/plain' }, cache: 'no-store' });
-    if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
-    const md = await res.text();
-    marked.use({ gfm: true, breaks: false });
-    const out = document.getElementById('out');
-    out.innerHTML = marked.parse(md);
-    out.querySelectorAll('pre code').forEach(el => {
-      try { hljs.highlightElement(el); } catch {}
-    });
+    if (!res.ok) throw new Error('fetch ' + res.status + ' ' + res.statusText);
+    let md = await res.text();
+    log('got', md.length, 'bytes');
+
+    // Strip Markdeep self-wrapper if file is a .md.html style document.
+    if (/^<!doctype/i.test(md)) {
+      md = md.replace(/^<!doctype[\s\S]*?<\/style>\s*/i, '');
+    }
+    md = md
+      .replace(/<!--\s*Markdeep:[\s\S]*$/i, '')
+      .replace(/<style[^>]*class=["']?fallback["']?[^>]*>[\s\S]*?<\/style>/gi, '')
+      .trim();
+
+    const esc = (s) => s.replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+    const S = '<' + 'script';
+    const SE = '</' + 'script>';
+
+    const html = [
+      '<!doctype html>',
+      '<html><head>',
+      '<meta charset="utf-8">',
+      '<meta name="viewport" content="width=device-width,initial-scale=1">',
+      '<base href="' + esc(absBase) + '">',
+      '<title>' + esc(name) + '</title>',
+      S + '>window.markdeepOptions = { tocStyle: "medium", detectMath: true };' + SE,
+      '</head><body>',
+      md,
+      S + ' src="https://morgan3d.github.io/markdeep/latest/markdeep.min.js?" charset="utf-8">' + SE,
+      '</body></html>'
+    ].join('\n');
+
+    log('built html', html.length, 'bytes; handing off to iframe');
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    frame.src = URL.createObjectURL(blob);
   } catch (e) {
-    document.getElementById('out').textContent = 'Error: ' + e.message;
+    showError(e.message + '\n\n(stack: ' + e.stack + ')');
   }
 })();
 </script>
