@@ -510,6 +510,35 @@ sudo systemctl restart caddy
 sudo systemctl show caddy --property=Environment
 ```
 
+### 无 OAuth 的私链分享 + WebDAV 上传
+
+场景：链接发给人点开看 markdown 预览、脚本能直下 raw；自己用 rclone 上传。独立 site block，不接 caddy-security。当前 viewer 壳子在 [`../assets/md-viewer.html`](../assets/md-viewer.html)。
+
+**思路**
+
+- 上传：内置 `basic_auth`（v2.10+ 新名）+ `webdav` handler。**用 `webdav { prefix /dav }` 保留前缀**，不要 `handle_path` 剥掉——否则 PROPFIND/MOVE 返回的 href 不完整，rclone 等客户端会迷路。
+- 下载：一段长随机串当 "secret path" 前缀（capability URL），配合 `uri strip_prefix` 让 `file_server` 从真实目录服务；这样上传和下载路径可以共用同一份存储，`rclone put /dav/foo.md` 写进来立刻在 `/<token>/foo.md` 可见。
+- 浏览器 vs CLI 分流：matcher 叠加 `path *.md` + `header Accept *text/html*`。浏览器分支 `rewrite * /_viewer.html`（**不要附 `?src={uri}`**，见下面"rewrite 是内部重写"那条），viewer 里 `location.pathname` 就是原始 URL，`<base href="<src 的父目录>">` 让相对资源能 resolve；viewer `fetch(location.pathname)` 默认 Accept 不含 text/html，天然回落到 raw 分支不会递归。
+
+**踩过的坑**
+
+- **`rewrite` 是服务端内部重写，浏览器地址栏不变**。所以 viewer 想从 URL 里拿 src 不能靠 `?src={uri}`（那是服务端视角的 URI，浏览器根本不知道有 query），得用 `location.pathname`。
+- **浏览器按 URL 缓存响应、不看 Accept**。首访 `Accept: text/html` 拿到 viewer.html 被缓存，viewer 里 fetch 同 URL 就算换 Accept 也吃缓存。三重修：Caddy 两个分支都发 `Vary: Accept`，viewer 分支加 `Cache-Control: no-cache`，fetch 加 `cache: 'no-store'`。
+- **`path /<TOKEN>/*` 不匹配 bare token**（无尾斜杠），`/x` ≠ `/x/*`。加 `redir /<TOKEN> /<TOKEN>/ 301` 跳过去，尾斜杠再命中目录 `browse`。
+- **highlight.js 的 `lib/core.min.js` 和 `lib/common.min.js` 是 CommonJS 包**，浏览器里直接 `ReferenceError: module is not defined`。必须用浏览器 UMD 版 `@highlightjs/cdn-assets@11/highlight.min.js`。
+- **marked v12 砍掉 `setOptions({highlight})`**，改后渲染 `element.querySelectorAll('pre code').forEach(hljs.highlightElement)`。
+- 404 用 `error "..." 404` 而非 `respond`，才会触发 `handle_errors` 走 error-pages。
+
+**凭据与权限**
+
+- Token：`openssl rand -hex 16` 生成 32 位十六进制。
+- basic_auth 密码：明文 `openssl rand -base64 18`；用 `caddy hash-password --plaintext '<pwd>'` 算 bcrypt 写进 Caddyfile（Caddyfile 里 `$` 是字面量，不用转义）。
+- Caddy 以 `caddy` 用户跑，WebDAV PUT 需要对目标目录 `w+x`。`chown caddy:caddy /data/share` 最干净；如果还想自己 ssh 上去 `cp`，建共用组 + `chmod 2775`（SGID 让新文件继承组）。
+
+**撤销与过期**
+
+换 token 后 `systemctl reload caddy`——没有单条撤销/过期语义；要那种能力改用 sftpgo（自带 share 链接管理）或 `caddy-signed-urls` 插件（签名 + expires，但 README 自标 not production）。
+
 ## 安装 error-pages
 
 自定义错误页面服务，用于反向代理后端不可用时展示友好的错误页。

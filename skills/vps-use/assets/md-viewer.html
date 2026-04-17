@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<!--
+  Markdown viewer shell. Loaded via Caddy rewrite for `Accept: text/html`; CLI/fetch
+  requests land on the raw file_server branch (no loop).
+  Deps (all CDN, no build step):
+    - marked              https://github.com/markedjs/marked         (MIT)
+    - highlight.js        https://github.com/highlightjs/highlight.js (BSD-3)
+    - github-markdown-css https://github.com/sindresorhus/github-markdown-css (MIT)
+-->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Markdown</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github.min.css" media="(prefers-color-scheme: light)">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+<style>
+  body { box-sizing: border-box; max-width: 900px; margin: 0 auto; padding: 2em 1em; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .markdown-body { background: transparent; }
+  .actions { position: fixed; top: 1em; right: 1em; display: flex; gap: .5em; z-index: 10; }
+  .actions a { padding: .4em .8em; background: #0969da; color: #fff; border-radius: 6px; text-decoration: none; font-size: .9em; }
+  .actions a:hover { background: #0550ae; }
+  .actions a.secondary { background: #6e7781; }
+  .actions a.secondary:hover { background: #57606a; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #0d1117; color: #e6edf3; }
+  }
+</style>
+</head>
+<body>
+<nav class="actions">
+  <a id="up" class="secondary">↑ 返回上一级</a>
+  <a id="dl" download>⇩ 下载原文</a>
+</nav>
+<article id="out" class="markdown-body">Loading…</article>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/highlight.min.js"></script>
+<script>
+(async () => {
+  const src = location.pathname;
+  const name = decodeURIComponent(src.split('/').pop());
+  document.title = name;
+  const dl = document.getElementById('dl');
+  dl.href = src;
+  dl.setAttribute('download', name);
+
+  const base = src.substring(0, src.lastIndexOf('/') + 1);
+  document.getElementById('up').href = base;
+  document.head.insertAdjacentHTML('beforeend', `<base href="${base}">`);
+
+  try {
+    const res = await fetch(src, { headers: { Accept: 'text/plain' }, cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+    const md = await res.text();
+    marked.use({ gfm: true, breaks: false });
+    const out = document.getElementById('out');
+    out.innerHTML = marked.parse(md);
+    out.querySelectorAll('pre code').forEach(el => {
+      try { hljs.highlightElement(el); } catch {}
+    });
+  } catch (e) {
+    document.getElementById('out').textContent = 'Error: ' + e.message;
+  }
+})();
+</script>
+</body>
+</html>
