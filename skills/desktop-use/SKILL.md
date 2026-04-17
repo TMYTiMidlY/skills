@@ -35,7 +35,7 @@ Gateway / Dashboard systemd 服务、profile 与 `HERMES_HOME`、开机自启、
 
 ## 格式转换
 
-pandoc 文档转换（LaTeX→Word、Markdown→PDF）、PDF→图片 → [references/format-conversion.md](references/format-conversion.md)
+pandoc 文档转换（LaTeX→Word、Markdown→PDF）、PDF→图片、feishu2md 飞书/Lark→Markdown（表格输出 HTML 的坑）、WebDAV 上传（凭据走 `~/.env` 的 `WEBDAV_URL/USER/PASS`） → [references/format-conversion.md](references/format-conversion.md)
 
 ## MineRU PDF→Markdown 云端转换
 
