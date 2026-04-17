@@ -528,7 +528,9 @@ sudo systemctl show caddy --property=Environment
 - **`path /<TOKEN>/*` 不匹配 bare token**（无尾斜杠），`/x` ≠ `/x/*`。加 `redir /<TOKEN> /<TOKEN>/ 301`。
 - **`<base href>` 把 `#anchor` 解析成 `base-origin/#anchor`**：TOC 的锚点链接 `<a href="#section">` 在有 base 的情况下会导航到目录页而非当前文件内滚动。在 `document` 上用 capture 阶段监听 click，拦截 `getAttribute('href').charAt(0) === '#'` 的链接，改成 `location.hash = h`。其他相对/绝对链接经过 base 解析都正确，无需拦截。
 - **tocStyle**：`"auto"` `"short"` `"medium"` `"long"` `"none"` 五个字面量，无官方文档，从 `markdeep.min.js` 源码 grep 得到。当前 viewer 用 `"auto"`（Markdeep 按文档长度自动决定）。
+- **禁用标题自动序号**：Markdeep 默认用 CSS counter 给标题加序号（1. 1.1 …），没有原生配置项关闭。viewer 里扩展了一个自定义选项 `noSectionNumbers`：为 `true` 时 JS 动态注入 counter 覆盖样式；改为 `false` 恢复编号。
 - **CDN 用 `casual-effects.com/markdeep/latest/markdeep.min.js`**：作者 Morgan McGuire 官方站。
+- **微信 WebView 无法下载文件**：微信平台层面拦截所有文件下载。viewer 检测 `MicroMessenger` UA，点下载按钮改为弹出蒙层引导用户「在浏览器中打开」后再下载；其他浏览器正常 `download` 属性下载。
 - 404 用 `error "..." 404` 而非 `respond`，才会触发 `handle_errors` 走 error-pages。
 
 **凭据与权限**
