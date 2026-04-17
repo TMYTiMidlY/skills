@@ -39,7 +39,7 @@
   base.href = location.origin + src.substring(0, src.lastIndexOf('/') + 1);
   document.head.appendChild(base);
 
-  window.markdeepOptions = { tocStyle: 'auto', detectMath: true };
+  window.markdeepOptions = { tocStyle: 'auto', detectMath: true, noSectionNumbers: true };
 
   function buildChrome() {
     if (document.querySelector('.md-chrome')) return;
@@ -69,9 +69,21 @@
 
     var dl = document.createElement('a');
     dl.className = 'dl-btn';
-    dl.href = src;
-    dl.setAttribute('download', name);
-    dl.textContent = '⇩ 下载原文';
+    if (/MicroMessenger/i.test(navigator.userAgent)) {
+      dl.removeAttribute('href');
+      dl.textContent = '⇩ 下载原文';
+      dl.addEventListener('click', function () {
+        var mask = document.createElement('div');
+        mask.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.7);display:flex;flex-direction:column;align-items:flex-end;padding:0 16px;box-sizing:border-box;';
+        mask.innerHTML = '<svg width="60" height="80" viewBox="0 0 60 80" style="margin-top:4px;flex-shrink:0"><path d="M50 8 Q54 40 20 72" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/><polygon points="44,4 58,4 51,16" fill="#fff"/></svg><div style="color:#fff;font-size:16px;font-weight:bold;text-align:right;margin-top:8px;line-height:1.6">点击右上角<br><span style="font-size:22px">···</span><br>选择「在浏览器中打开」<br>即可下载原文</div>';
+        mask.addEventListener('click', function () { document.body.removeChild(mask); });
+        document.body.appendChild(mask);
+      });
+    } else {
+      dl.href = src + '?raw';
+      dl.setAttribute('download', name);
+      dl.textContent = '⇩ 下载原文';
+    }
 
     var chrome = document.createElement('div');
     chrome.className = 'md-chrome';
@@ -105,8 +117,19 @@
       s.src = 'https://casual-effects.com/markdeep/latest/markdeep.min.js?';
       s.charset = 'utf-8';
       s.onload = function () {
+        if (window.markdeepOptions.noSectionNumbers) {
+          var numRe = /^\d+(\.\d+)*\s+/;
+          document.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(function (h) {
+            h.childNodes.forEach(function (n) {
+              if (n.nodeType === 3) n.textContent = n.textContent.replace(numRe, '');
+            });
+          });
+          document.querySelectorAll('a[href^="#"]').forEach(function (a) {
+            a.textContent = a.textContent.replace(numRe, '');
+          });
+        }
         buildChrome();
-        setTimeout(buildChrome, 100); // safety net if Markdeep has async post-processing
+        setTimeout(buildChrome, 100);
       };
       document.head.appendChild(s);
     })
