@@ -1,99 +1,118 @@
-<!DOCTYPE html>
+<!doctype html><meta charset="utf-8"><style class="fallback">body{visibility:hidden;}</style>
 <!--
-  Markdown/Markdeep viewer shell.
-  Loaded via Caddy rewrite for `Accept: text/html`; CLI/fetch
-  requests land on the raw file_server branch (no loop).
-  Renders via Markdeep inside an iframe (blob:url) so its body-overwrite
-  doesn't eat our nav, and to avoid srcdoc size / escape quirks.
-  Deps:
-    - Markdeep https://casual-effects.com/markdeep/  (BSD-2)
+  Markdown viewer — same structure as a Markdeep .md.html file.
+  Caddy rewrites *.md (Accept: text/html) here; CLI fetch gets raw file_server.
 -->
-<html lang="zh">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Loading…</title>
-<link rel="icon" href="data:,">
 <style>
-  html, body { margin: 0; height: 100%; }
-  .actions { position: fixed; top: 1em; right: 1em; display: flex; gap: .5em; z-index: 9999;
-             font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-  .actions a { padding: .4em .8em; background: #0969da; color: #fff; border-radius: 6px;
-               text-decoration: none; font-size: .9em; box-shadow: 0 2px 6px rgba(0,0,0,.15); }
-  .actions a:hover { background: #0550ae; }
-  .actions a.secondary { background: #6e7781; }
-  .actions a.secondary:hover { background: #57606a; }
-  #render { width: 100%; height: 100vh; border: 0; display: block; background: #fff; }
-  .err { padding: 2em; font-family: system-ui, sans-serif; color: #b42318; white-space: pre-wrap; }
-</style>
-</head>
-<body>
-<nav class="actions">
-  <a id="up" class="secondary">↑ 返回上一级</a>
-  <a id="dl" download>⇩ 下载原文</a>
-</nav>
-<iframe id="render" title="markdown preview"></iframe>
-<script>
-(async () => {
-  const log = (...a) => console.log('[md-viewer]', ...a);
-  const src = location.pathname;
-  const name = decodeURIComponent(src.split('/').pop());
-  document.title = name;
-  const base = src.substring(0, src.lastIndexOf('/') + 1);
-  const absBase = location.origin + base;
-  document.getElementById('up').href = base;
-  const dl = document.getElementById('dl');
-  dl.href = src;
-  dl.setAttribute('download', name);
-
-  const frame = document.getElementById('render');
-  const showError = (msg) => {
-    log('ERROR', msg);
-    frame.outerHTML = '<div class="err">' + msg + '</div>';
-  };
-
-  try {
-    log('fetching', src);
-    const res = await fetch(src, { headers: { Accept: 'text/plain' }, cache: 'no-store' });
-    if (!res.ok) throw new Error('fetch ' + res.status + ' ' + res.statusText);
-    let md = await res.text();
-    log('got', md.length, 'bytes');
-
-    // Strip Markdeep self-wrapper if file is a .md.html style document.
-    if (/^<!doctype/i.test(md)) {
-      md = md.replace(/^<!doctype[\s\S]*?<\/style>\s*/i, '');
-    }
-    md = md
-      .replace(/<!--\s*Markdeep:[\s\S]*$/i, '')
-      .replace(/<style[^>]*class=["']?fallback["']?[^>]*>[\s\S]*?<\/style>/gi, '')
-      .replace(/<script\b[\s\S]*?<\/script>/gi, '')
-      .trim();
-
-    const esc = (s) => s.replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
-    const S = '<' + 'script';
-    const SE = '</' + 'script>';
-
-    const html = [
-      '<!doctype html>',
-      '<html><head>',
-      '<meta charset="utf-8">',
-      '<meta name="viewport" content="width=device-width,initial-scale=1">',
-      '<base href="' + esc(absBase) + '">',
-      '<title>' + esc(name) + '</title>',
-      S + '>window.markdeepOptions = { tocStyle: "short", detectMath: true };' + SE,
-      '</head><body>',
-      md,
-      S + ' src="https://casual-effects.com/markdeep/latest/markdeep.min.js?" charset="utf-8">' + SE,
-      '</body></html>'
-    ].join('\n');
-
-    log('built html', html.length, 'bytes; handing off to iframe');
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    frame.src = URL.createObjectURL(blob);
-  } catch (e) {
-    showError(e.message + '\n\n(stack: ' + e.stack + ')');
+  body { padding-top: 3em !important; }
+  .md-chrome {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: .5em 1em; gap: 1em; pointer-events: none;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: .9em;
   }
-})();
+  .md-chrome > * { pointer-events: auto; }
+  .crumbs {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    background: rgba(255,255,255,.92); backdrop-filter: blur(6px);
+    border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,.18); padding: .35em .75em;
+  }
+  .crumbs a { color: #0969da; text-decoration: none; }
+  .crumbs a:hover { text-decoration: underline; }
+  .crumbs .sep { color: #6e7781; margin: 0 .2em; }
+  .crumbs .cur { color: #24292f; font-weight: 500; }
+  .dl-btn {
+    color: #fff; background: #0969da; border-radius: 6px;
+    padding: .35em .75em; text-decoration: none; white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(0,0,0,.18);
+  }
+  .dl-btn:hover { background: #0550ae; }
+</style>
+<script>
+(function () {
+  var src = location.pathname;
+  var name = decodeURIComponent(src.split('/').pop());
+  document.title = name;
+
+  // base: relative images/links in the md resolve to the file's directory
+  var base = document.createElement('base');
+  base.href = location.origin + src.substring(0, src.lastIndexOf('/') + 1);
+  document.head.appendChild(base);
+
+  window.markdeepOptions = { tocStyle: 'auto', detectMath: true };
+
+  function buildChrome() {
+    if (document.querySelector('.md-chrome')) return;
+
+    var crumbs = document.createElement('nav');
+    crumbs.className = 'crumbs';
+    var parts = src.split('/').filter(Boolean);
+    var acc = '';
+    parts.forEach(function (p, i) {
+      acc += '/' + p;
+      if (i > 0) {
+        var sep = document.createElement('span');
+        sep.className = 'sep'; sep.textContent = '/';
+        crumbs.appendChild(sep);
+      }
+      if (i === parts.length - 1) {
+        var cur = document.createElement('span');
+        cur.className = 'cur'; cur.textContent = decodeURIComponent(p);
+        crumbs.appendChild(cur);
+      } else {
+        var a = document.createElement('a');
+        a.href = acc + '/';
+        a.textContent = i === 0 ? '📂' : decodeURIComponent(p);
+        crumbs.appendChild(a);
+      }
+    });
+
+    var dl = document.createElement('a');
+    dl.className = 'dl-btn';
+    dl.href = src;
+    dl.setAttribute('download', name);
+    dl.textContent = '⇩ 下载原文';
+
+    var chrome = document.createElement('div');
+    chrome.className = 'md-chrome';
+    chrome.appendChild(crumbs);
+    chrome.appendChild(dl);
+    document.body.insertBefore(chrome, document.body.firstChild);
+  }
+
+  // <base> makes #anchor resolve to base-origin/#anchor instead of current page.
+  // Intercept and do a local hash change instead.
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest && e.target.closest('a');
+    if (!a) return;
+    var raw = a.getAttribute('href');
+    if (raw && raw.charAt(0) === '#') {
+      e.preventDefault();
+      var h = raw.slice(1);
+      if (location.hash === '#' + h) location.hash = '';
+      location.hash = h;
+    }
+  }, true);
+
+  fetch(src, { headers: { Accept: 'text/plain' }, cache: 'no-store' })
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+    .then(function (md) {
+      // Put raw markdown into body — Markdeep reads body.innerText and replaces body.innerHTML.
+      document.body.textContent = md;
+
+      // Load Markdeep dynamically. readyState is already 'complete', so it processes immediately.
+      var s = document.createElement('script');
+      s.src = 'https://casual-effects.com/markdeep/latest/markdeep.min.js?';
+      s.charset = 'utf-8';
+      s.onload = function () {
+        buildChrome();
+        setTimeout(buildChrome, 100); // safety net if Markdeep has async post-processing
+      };
+      document.head.appendChild(s);
+    })
+    .catch(function (e) {
+      document.body.style.visibility = 'visible';
+      document.body.textContent = 'Error loading ' + name + ': ' + e.message;
+    });
+}());
 </script>
-</body>
-</html>
