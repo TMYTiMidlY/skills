@@ -66,6 +66,7 @@
     md = md
       .replace(/<!--\s*Markdeep:[\s\S]*$/i, '')
       .replace(/<style[^>]*class=["']?fallback["']?[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<script\b[\s\S]*?<\/script>/gi, '')
       .trim();
 
     const esc = (s) => s.replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
@@ -79,10 +80,10 @@
       '<meta name="viewport" content="width=device-width,initial-scale=1">',
       '<base href="' + esc(absBase) + '">',
       '<title>' + esc(name) + '</title>',
-      S + '>window.markdeepOptions = { tocStyle: "medium", detectMath: true };' + SE,
+      S + '>window.markdeepOptions = { tocStyle: "short", detectMath: true };' + SE,
       '</head><body>',
       md,
-      S + ' src="https://morgan3d.github.io/markdeep/latest/markdeep.min.js?" charset="utf-8">' + SE,
+      S + ' src="https://casual-effects.com/markdeep/latest/markdeep.min.js?" charset="utf-8">' + SE,
       '</body></html>'
     ].join('\n');
 
