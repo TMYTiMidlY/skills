@@ -529,6 +529,9 @@ sudo systemctl show caddy --property=Environment
 - **用 iframe 而不是直接在主文档跑 Markdeep**：Markdeep 一启动就 `document.body.innerHTML = renderedHTML`，没有只处理子树的选项。iframe + blob:URL 同时解决两件事——导航条留在父页不丢、子页不受主文档的 CSP/扩展（Ruffle、沉浸式翻译、AI Timeline 等）干扰。
 - **iframe 用 `srcdoc` 不如 `blob:URL` 稳**：大内容（近 100 KB）srcdoc 偶尔会静默挂住，blob 没这限制；拼 HTML 字符串时把 `<script>` 用 `'<' + 'script'` 拆开能彻底避免外层脚本被 HTML 解析器误判早闭合。
 - **`.md.html` 形式的 Markdeep 源文件要剥 boilerplate**：开头的 `<!doctype html>...<style class="fallback">...</style>` 和尾部的 `<!-- Markdeep: -->` 段预处理干掉，否则父子两层的 Markdeep loader 会互相覆盖。
+- **剥掉所有 inline `<script>`**：Markdeep 文档常把演示 JS 埋在正文里（如 demodoc 在正文中用 `markdeep.langTable`），这些 `<script>` 在 HTML 解析阶段就执行，早于 markdeep 库 load，报 `ReferenceError: markdeep is not defined`；更糟的是它们会在运行时重写 `markdeepOptions`（如 `tocStyle`），让你 head 里定的值失效。预处理里一并 `replace(/<script\b[\s\S]*?<\/script>/gi, '')`。代价是 md 里嵌的"能跑的小工具"也一起死掉，但换来任何人上传的 md 都不会变成 XSS 入口。
+- **tocStyle 没有官方文档页**：demodoc / 主页 / features.md.html 都没写，源码 `markdeep.min.js` 里能 grep 出 `"auto"` `"short"` `"medium"` `"long"` `"none"` 五个字面量。长文档（几十 KB+）用 `"medium"` 会是"左侧浮动方块 + 正文环绕"——这本来就是 demodoc 官方视觉，但多数人的期待是 TOC 在顶部独占一行，这时用 `"short"` 更合适（当前 asset 默认值）。
+- **CDN 用 `casual-effects.com/markdeep/latest/markdeep.min.js`**：作者 Morgan McGuire 官方站；`morgan3d.github.io` 是 GitHub Pages 镜像，同一份文件。
 - 404 用 `error "..." 404` 而非 `respond`，才会触发 `handle_errors` 走 error-pages。
 
 **凭据与权限**
