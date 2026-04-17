@@ -219,7 +219,20 @@ TERMINAL_SSH_PERSISTENT=true
 
 Hermes 底下调用系统 `ssh` 子进程，所以 `~/.ssh/config` 会被读；但要避免 `-i` / `-p` 命令行参数与 ssh config 规则打架 —— **`TERMINAL_SSH_HOST` 填真实 hostname + 其他字段写全** 是最稳的方式。
 
-远端会维持一条常驻 `bash -l`，`cwd` 和 env 跨命令保留；长跑任务要自己 `tmux` / `nohup`，避免 ControlMaster 空闲超时后重连丢 shell 状态。
+执行模型是 **spawn-per-call**：每次 `execute()` 新起一个 `ssh ... bash -c '<脚本>'` 子进程，由 ControlMaster socket（`/tmp/hermes-ssh/*.sock`, `ControlPersist=300`）复用 TCP 免握手。session 连续感靠两招伪造：init 时 dump 远端 env/函数/alias 到 `/tmp/hermes-snap-<sid>.sh`，每条命令前 `source` 后回写；CWD 用 `__HERMES_CWD_<sid>__` marker 搭在 stdout 里回传，输出给 LLM 前裁掉标记行。文件同步走 `FileSyncManager`（mtime+size 指纹、5 秒节流、批量走 `tar | ssh | tar xf` 单流上传）。长跑任务仍需 `tmux` / `nohup`，因为 spawn 的 ssh 一退，子进程收 SIGHUP。
+
+### vs. vps-use 技术路线对比
+
+共同点：都靠 OpenSSH ControlMaster（socket + `ControlPersist`）复用 TCP。差异全在"无状态 ssh 之上怎么补语义"：
+
+| 维度 | Hermes SSH backend | vps-use |
+|---|---|---|
+| session 语义 | 快照伪造：init 时 dump env/func/alias 到 `/tmp/hermes-snap-<sid>.sh`，每条命令 `source` 后回写；CWD 靠 stdout marker 带外回传 | 不补：每次 `ssh <host> <cmd>` 独立；跨命令需要 `cd x && cmd` 自己拼 |
+| 文件传输 | `FileSyncManager` 托底：mtime+size 变更检测、5 秒节流、批量走 `tar \| ssh 'tar xf -'` 单流 | 手动 `scp`；复杂编辑"scp 下 → 本地 Edit → scp 上" |
+| sudo | `SUDO_PASSWORD` env + 命令改写（`_transform_sudo_command`） | 脚本落本地 `/tmp` → scp → `ssh -t <host> sudo bash` |
+| ControlPersist | 300s | 10m |
+
+本质区别：Hermes 把 ssh 当**透明执行面**，所以必须重建 cwd/env 连续性 + 文件同步；vps-use 把 ssh 当**显式远程调用**，每条命令自带完整上下文、文件走 scp，反而简单透明。
 
 ### Docker backend
 

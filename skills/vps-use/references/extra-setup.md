@@ -519,19 +519,16 @@ sudo systemctl show caddy --property=Environment
 - 上传：内置 `basic_auth`（v2.10+ 新名）+ `webdav` handler。**用 `webdav { prefix /dav }` 保留前缀**，不要 `handle_path` 剥掉——否则 PROPFIND/MOVE 返回的 href 不完整，rclone 等客户端会迷路。
 - 下载：一段长随机串当 "secret path" 前缀（capability URL），配合 `uri strip_prefix` 让 `file_server` 从真实目录服务；这样上传和下载路径可以共用同一份存储，`rclone put /dav/foo.md` 写进来立刻在 `/<token>/foo.md` 可见。
 - 浏览器 vs CLI 分流：matcher 叠加 `path *.md` + `header Accept *text/html*`。浏览器分支 `rewrite * /_viewer.html`（**不要附 `?src={uri}`**，见下面"rewrite 是内部重写"那条），viewer 里 `location.pathname` 就是原始 URL；viewer `fetch(location.pathname)` 默认 Accept 不含 text/html，天然回落到 raw 分支不会递归。
-- 渲染：viewer 里 **Markdeep**（LaTeX 公式、`*******` 画 ASCII 图表、TOC、admonition 开箱即用，胜过 marked.js + hljs 这套轻量组合）。Markdeep 的自处理逻辑会直接重写 `document.body`——会把我们放在父页的"返回上一级 / 下载原文"导航条吞掉。所以把 Markdeep 丢进一个 **`<iframe>`（blob:URL 喂 HTML）** 里跑，父页保留 nav，子页独立渲染。
+- 渲染：viewer 里 **Markdeep**（LaTeX 公式、`*******` 画 ASCII 图表、TOC、admonition 开箱即用）。结构完全仿照 Markdeep 自身的 `.md.html` 格式：viewer 先 fetch 原始 md 写入 `document.body.textContent`，再动态加载 Markdeep CDN——此时 `document.readyState === 'complete'`，Markdeep 立刻同步处理 body；处理完后 `s.onload` 里把导航条（面包屑 + 下载按钮）插回 `body` 首位。
 
 **踩过的坑**
 
-- **`rewrite` 是服务端内部重写，浏览器地址栏不变**。viewer 从 URL 拿 src 不能靠 `?src={uri}`（那是服务端视角，浏览器根本不知道 query），得用 `location.pathname`。
-- **浏览器按 URL 缓存响应、不看 Accept**。首访 `Accept: text/html` 拿到 viewer.html 被缓存，viewer 里 fetch 同 URL 就算换 Accept 也吃缓存。三重修：Caddy 两个分支都发 `Vary: Accept`，viewer 分支加 `Cache-Control: no-cache`，fetch 加 `cache: 'no-store'`。
-- **`path /<TOKEN>/*` 不匹配 bare token**（无尾斜杠），`/x` ≠ `/x/*`。加 `redir /<TOKEN> /<TOKEN>/ 301` 跳过去，尾斜杠再命中目录 `browse`。
-- **用 iframe 而不是直接在主文档跑 Markdeep**：Markdeep 一启动就 `document.body.innerHTML = renderedHTML`，没有只处理子树的选项。iframe + blob:URL 同时解决两件事——导航条留在父页不丢、子页不受主文档的 CSP/扩展（Ruffle、沉浸式翻译、AI Timeline 等）干扰。
-- **iframe 用 `srcdoc` 不如 `blob:URL` 稳**：大内容（近 100 KB）srcdoc 偶尔会静默挂住，blob 没这限制；拼 HTML 字符串时把 `<script>` 用 `'<' + 'script'` 拆开能彻底避免外层脚本被 HTML 解析器误判早闭合。
-- **`.md.html` 形式的 Markdeep 源文件要剥 boilerplate**：开头的 `<!doctype html>...<style class="fallback">...</style>` 和尾部的 `<!-- Markdeep: -->` 段预处理干掉，否则父子两层的 Markdeep loader 会互相覆盖。
-- **剥掉所有 inline `<script>`**：Markdeep 文档常把演示 JS 埋在正文里（如 demodoc 在正文中用 `markdeep.langTable`），这些 `<script>` 在 HTML 解析阶段就执行，早于 markdeep 库 load，报 `ReferenceError: markdeep is not defined`；更糟的是它们会在运行时重写 `markdeepOptions`（如 `tocStyle`），让你 head 里定的值失效。预处理里一并 `replace(/<script\b[\s\S]*?<\/script>/gi, '')`。代价是 md 里嵌的"能跑的小工具"也一起死掉，但换来任何人上传的 md 都不会变成 XSS 入口。
-- **tocStyle 没有官方文档页**：demodoc / 主页 / features.md.html 都没写，源码 `markdeep.min.js` 里能 grep 出 `"auto"` `"short"` `"medium"` `"long"` `"none"` 五个字面量。长文档（几十 KB+）用 `"medium"` 会是"左侧浮动方块 + 正文环绕"——这本来就是 demodoc 官方视觉，但多数人的期待是 TOC 在顶部独占一行，这时用 `"short"` 更合适（当前 asset 默认值）。
-- **CDN 用 `casual-effects.com/markdeep/latest/markdeep.min.js`**：作者 Morgan McGuire 官方站；`morgan3d.github.io` 是 GitHub Pages 镜像，同一份文件。
+- **`rewrite` 是服务端内部重写，浏览器地址栏不变**。viewer 从 URL 拿 src 不能靠 `?src={uri}`，得用 `location.pathname`。
+- **浏览器按 URL 缓存响应、不看 Accept**。首访 `Accept: text/html` 拿到 viewer.html 被缓存，viewer 里 fetch 同 URL 也吃缓存。三重修：Caddy 两个分支都发 `Vary: Accept`，viewer 分支加 `Cache-Control: no-cache`，fetch 加 `cache: 'no-store'`。
+- **`path /<TOKEN>/*` 不匹配 bare token**（无尾斜杠），`/x` ≠ `/x/*`。加 `redir /<TOKEN> /<TOKEN>/ 301`。
+- **`<base href>` 把 `#anchor` 解析成 `base-origin/#anchor`**：TOC 的锚点链接 `<a href="#section">` 在有 base 的情况下会导航到目录页而非当前文件内滚动。在 `document` 上用 capture 阶段监听 click，拦截 `getAttribute('href').charAt(0) === '#'` 的链接，改成 `location.hash = h`。其他相对/绝对链接经过 base 解析都正确，无需拦截。
+- **tocStyle**：`"auto"` `"short"` `"medium"` `"long"` `"none"` 五个字面量，无官方文档，从 `markdeep.min.js` 源码 grep 得到。当前 viewer 用 `"auto"`（Markdeep 按文档长度自动决定）。
+- **CDN 用 `casual-effects.com/markdeep/latest/markdeep.min.js`**：作者 Morgan McGuire 官方站。
 - 404 用 `error "..." 404` 而非 `respond`，才会触发 `handle_errors` 走 error-pages。
 
 **凭据与权限**
