@@ -41,6 +41,15 @@
 
   window.markdeepOptions = { tocStyle: 'auto', detectMath: true, noSectionNumbers: true };
 
+  if (window.markdeepOptions.noSectionNumbers) {
+    var noNumStyle = document.createElement('style');
+    noNumStyle.textContent =
+      'h1,h2,h3,h4,h5,h6{counter-reset:none!important;counter-increment:none!important}' +
+      'h1::before,h2::before,h3::before,h4::before,h5::before,h6::before{content:none!important}' +
+      '.tocNumber{display:none!important}';
+    document.head.appendChild(noNumStyle);
+  }
+
   function buildChrome() {
     if (document.querySelector('.md-chrome')) return;
 
@@ -117,19 +126,8 @@
       s.src = 'https://casual-effects.com/markdeep/latest/markdeep.min.js?';
       s.charset = 'utf-8';
       s.onload = function () {
-        if (window.markdeepOptions.noSectionNumbers) {
-          var numRe = /^\d+(\.\d+)*\s+/;
-          document.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(function (h) {
-            h.childNodes.forEach(function (n) {
-              if (n.nodeType === 3) n.textContent = n.textContent.replace(numRe, '');
-            });
-          });
-          document.querySelectorAll('a[href^="#"]').forEach(function (a) {
-            a.textContent = a.textContent.replace(numRe, '');
-          });
-        }
         buildChrome();
-        setTimeout(buildChrome, 100);
+        setTimeout(buildChrome, 100); // safety net if Markdeep has async post-processing
       };
       document.head.appendChild(s);
     })
