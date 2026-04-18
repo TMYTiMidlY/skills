@@ -1,9 +1,39 @@
 ---
 name: manage-skills
-description: 创建、拆分、重命名、迁移、审查或维护本地 skills 时使用；关注 skill 边界、触发描述、跨 skill 引用规范、渐进式披露三层结构（description → SKILL.md → references），以及个人配置与 skill 正文分离。
+description: 安装、卸载、创建、拆分、重命名、迁移、审查或维护本地 skills 时使用；关注 skill 边界、触发描述、跨 skill 引用规范、渐进式披露三层结构（description → SKILL.md → references），以及个人配置与 skill 正文分离。
 ---
 
 # Manage Skills
+
+## 安装 / 卸载 skill
+
+前提：仓库已克隆到 `~/skills`。
+
+**安装 = 软链到 `.agents/skills/`**（`~/` 全局或 `<project>/` 项目级皆可）。skill 在仓库里分三处，按实际位置链：
+
+| 位置 | 含义 | 源路径 |
+|---|---|---|
+| `skills/.curated/` | 原创（`MIT TiMidlY`） | `~/skills/skills/.curated/<name>` |
+| `skills/` | 嫁接（已适配的外部 skill） | `~/skills/skills/<name>` |
+| `skills/.experimental/` | 实验（未适配） | `~/skills/skills/.experimental/<name>` |
+
+```bash
+mkdir -p <target>/.agents/skills && ln -s <源路径> <target>/.agents/skills/
+```
+
+Claude Code / Cursor 等工具只需对 `.agents/skills/` 做一次整目录软链（README 有具体表），不用逐 skill 重链。
+
+**卸载 = `trash-put` 软链**。skill 本体还在仓库里，其他项目照常可用：
+
+```bash
+trash-put <target>/.agents/skills/<name>
+```
+
+**重构后死链排查**：skill 重命名 / 换目录（比如迁进 `.curated/`）会让旧 symlink 断。批量找断链 → `trash-put` 掉 → 按新路径重链：
+
+```bash
+find <target>/.agents/skills -maxdepth 1 -type l ! -exec test -e {} \; -print
+```
 
 ## 跨 skill 引用
 
