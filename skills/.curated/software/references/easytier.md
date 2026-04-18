@@ -26,7 +26,7 @@ rpc_portal = "127.0.0.1:15888"
 
 [network_identity]
 network_name = "<NETWORK_NAME>"
-network_secret = "<询问用户>"
+network_secret = "<NETWORK_SECRET>"
 
 [[peer]]
 uri = "tcp://public.easytier.top:11010"
