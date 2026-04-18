@@ -391,4 +391,4 @@ Skill 测试就是设计一个能触发它的提问。向用户询问：
 - **编写最佳实践**: 见 [references/best-practices.md](references/best-practices.md) - 命名规范、简洁原则、反模式、质量检查清单
 - **多步骤流程设计**: 见 [references/workflows.md](references/workflows.md)
 - **输出格式模式**: 见 [references/output-patterns.md](references/output-patterns.md)
-- **交互设计指南**: 见 [references/interaction-guide.md](references/interaction-guide.md) - 提问与确认最佳实践
+- **向用户提问最佳实践**: 见 [references/interaction-guide.md](references/interaction-guide.md) - 何时提问与问题设计
