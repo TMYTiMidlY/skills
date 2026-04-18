@@ -71,7 +71,7 @@ find <target>/.agents/skills -maxdepth 1 -type l ! -exec test -e {} \; -print
 
 找到断的 → 移回收站 → 按新源路径重链。
 
-## 跨 skill 引用
+## 引用
 
 不要在 skill 正文里写依赖本机目录结构的跨 skill 文件路径。用户安装路径、目录名、打包方式都可能不同，硬编码容易失效。需要提示另一个 skill 的能力时，只写 skill 名加能力边界。
 
@@ -85,13 +85,14 @@ find <target>/.agents/skills -maxdepth 1 -type l ! -exec test -e {} \; -print
 
 ## 审查现有 skills
 
-用户让"审查 / 检查所有 skill 是否合规"时按本节办。**只审不改**——列出发现交给用户，明确同意后才动手改。
+用户让"审查 / 检查所有 skill 是否合规"时按本节办。**只审不改**——先向用户确认审查范围（如原创、已适配嫁接、实验性、全部），列出发现交给用户，明确同意后才动手改。
 
 检查项：
 
 - **引用状态**：
   - 同 skill 内引用（`references/`、`assets/`、`scripts/`）都用相对路径，不写绝对或 `~/...`；且目标真实存在（grep 验证）。
   - 跨 skill 不给任何文件路径，只写 skill 名加能力边界。
+- **脚本运行写法**：正文或 reference 里运行同 skill 自带脚本时，命令示例写成 `uv run scripts/<script>`，不要写绝对路径、`~/...`、上层跳转路径或绑定本机仓库位置的路径。
 - **渐进式披露三层完整、分工清晰**：`frontmatter description` → `SKILL.md` → `references/*.md`。
   - description：只写"何时触发 + 核心思路一句话"。
   - SKILL.md：短规则 + 各主题入口 + 子文档索引；不堆长流程与整段命令。
@@ -100,7 +101,7 @@ find <target>/.agents/skills -maxdepth 1 -type l ! -exec test -e {} \; -print
   - 判定：SKILL.md 读完应当知道"能做什么、哪个 reference 讲什么"，**不应该读完就能完成具体任务**——那说明 references 层缺位。
 - **个人配置不入 skill 正文**：凭据 / 域名 / 服务器地址 / 个人样例文件名都不写进 skill 正文。正文只写变量名、占位符和读取位置，真实值放 `~/.env` 或个人笔记。
 - **不绑定特定 AI 工具的具体工具名**：skill 正文不写 `AskUserQuestion`、`TodoWrite`、`WebFetch`、`Task` 这类特定宿主（Claude Code / Codex / Cursor / Trae 等）独有的工具名。同一能力在不同宿主里名字不同，硬编码会让 skill 在其它宿主跑不了。改写成能力描述："向用户提问的工具"、"任务清单工具"、"抓网页的工具"，由模型按当前环境自己挑。只有当 skill 明确只服务单一宿主、且在 description 里讲清楚时才可以保留具体名字。
-- **README 与 skill 实际状态同步**：README 表格条目的名称 / 来源 / 说明要和 skill 自身的 frontmatter `description` 口径一致；合并 / 拆分 / 重命名 / 删除 skill 后，README 不能留 stale 条目；外部索引（如 `grafted-skills.json`）里的 `path` 要和实际目录一致。
+- **README 与 skill 实际状态同步**：README 表格条目的名称 / 来源 / 说明要和 skill 自身的 frontmatter `description` 口径一致；合并 / 拆分 / 重命名 / 删除 skill 后，README 不能留 stale 条目；外部索引按其自身语义核对，例如 `grafted-skills.json` 记录上游来源路径，不按本仓落点判断。
 - **`.` 开头子目录内的 skill 名不能与主目录或其他 `.` 目录内的 skill 同名**：按 skill name 加载时会歧义，必须全局唯一。
 - **其他结构性检查**：frontmatter `name` 与目录名一致；弃用段落删掉别留历史遗迹；任何可疑处照实记下让用户决断。
 

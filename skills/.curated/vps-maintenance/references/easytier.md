@@ -21,7 +21,7 @@ wget -O /tmp/easytier.sh "https://raw.githubusercontent.com/EasyTier/EasyTier/ma
 参考配置（配置项含义见 https://easytier.cn/guide/network/configurations.html ）：
 
 ```toml
-instance_name = "TiMidlY"
+instance_name = "<INSTANCE_NAME>"
 ipv4 = "10.144.18.x"
 dhcp = false
 listeners = [
@@ -35,7 +35,7 @@ exit_nodes = []
 rpc_portal = "127.0.0.1:15888"
 
 [network_identity]
-network_name = "TiMidlY"
+network_name = "<NETWORK_NAME>"
 network_secret = "<询问用户>"
 
 [flags]
@@ -113,4 +113,3 @@ Environment="ET_HOSTNAME=自定义名称"
 - `foreign_network_whitelist`：控制允许哪些外部网络通过此节点转发流量。`"*"` 允许所有，`""` 禁止所有，也支持通配符如 `"net1 net2*"`。
 - `relay_all_peer_rpc`：当外部网络不在白名单内时，是否仍然帮它转发 RPC 包（仅用于节点发现和 P2P 建连，不转发数据流量）。
 - `private_mode`：如果为 true，外部节点必须通过密码验证才能接入，否则直接拒绝连接。这是最严格的一道门。
-
