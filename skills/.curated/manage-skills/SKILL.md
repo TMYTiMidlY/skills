@@ -92,7 +92,7 @@ find <target>/.agents/skills -maxdepth 1 -type l ! -exec test -e {} \; -print
 - **引用状态**：
   - 同 skill 内引用（`references/`、`assets/`、`scripts/`）都用相对路径，不写绝对或 `~/...`；且目标真实存在（grep 验证）。
   - 跨 skill 不给任何文件路径，只写 skill 名加能力边界。
-- **脚本运行写法**：正文或 reference 里运行同 skill 自带脚本时，命令示例写成 `uv run scripts/<script>`，不要写绝对路径、`~/...`、上层跳转路径或绑定本机仓库位置的路径。
+- **脚本运行与依赖声明**：正文或 reference 里提到运行同 skill 自带 Python 脚本时，应要求使用 `uv`，脚本路径保持为当前 skill 根目录下的 `scripts/` 相对路径，不写绝对路径、`~/...`、上层跳转路径或绑定本机仓库位置的路径；脚本的 Python 版本与第三方依赖应放进 PEP 723 内联脚本元数据（inline script metadata），不要把安装命令或临时依赖细节堆进 skill 正文。
 - **渐进式披露三层完整、分工清晰**：`frontmatter description` → `SKILL.md` → `references/*.md`。
   - description：只写"何时触发 + 核心思路一句话"。
   - SKILL.md：短规则 + 各主题入口 + 子文档索引；不堆长流程与整段命令。
