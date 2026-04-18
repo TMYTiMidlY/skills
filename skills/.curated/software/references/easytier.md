@@ -10,10 +10,10 @@ Windows 版从 [GitHub Releases](https://github.com/EasyTier/EasyTier/releases) 
 
 ## 配置模板
 
-配置文件为 TOML 格式，放在安装目录下（如 `TiMidlY.conf`）：
+配置文件为 TOML 格式，放在安装目录下（如 `<INSTANCE_NAME>.conf`）：
 
 ```toml
-instance_name = "TiMidlY"
+instance_name = "<INSTANCE_NAME>"
 ipv4 = "10.144.18.x/24"
 dhcp = false
 listeners = [
@@ -25,17 +25,17 @@ exit_nodes = []
 rpc_portal = "127.0.0.1:15888"
 
 [network_identity]
-network_name = "TiMidlY"
+network_name = "<NETWORK_NAME>"
 network_secret = "<询问用户>"
 
 [[peer]]
 uri = "tcp://public.easytier.top:11010"
 
 [[peer]]
-uri = "tcp://alibaba.tmytimidly.com:11010"
+uri = "tcp://<PUBLIC_VPS_HOST>:11010"
 
 [[peer]]
-uri = "udp://alibaba.tmytimidly.com:11010"
+uri = "udp://<PUBLIC_VPS_HOST>:11010"
 
 [flags]
 default_protocol = "udp"

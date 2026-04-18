@@ -82,11 +82,11 @@ API 限制单次最多 600 页。用 `page_ranges` 参数拆分提交同一个 U
 
 ## 超过 200MB 的文件（需物理拆分）
 
-`page_ranges` 只解决页数上限，**大小限制 200MB 必须物理拆分 PDF**。用 [../scripts/mineru_large_pdf.py](../scripts/mineru_large_pdf.py)：
+`page_ranges` 只解决页数上限，**大小限制 200MB 必须物理拆分 PDF**。用同 skill 自带的 `scripts/mineru_large_pdf.py`：
 
 ```bash
 export MINERU_TOKEN=...
-uv run ~/skills/skills/software/scripts/mineru_large_pdf.py \
+uv run scripts/mineru_large_pdf.py \
     --input 'https://example.com/big.pdf' \
     --out-dir ./mineru_output/big \
     --pages-per-part 500 --overlap 5
