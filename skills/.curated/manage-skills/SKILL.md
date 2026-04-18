@@ -16,8 +16,8 @@ skill 在仓库里分三处，按实际位置链：
 | 位置 | 含义 | 源路径 |
 |---|---|---|
 | `skills/.curated/` | 原创（MIT） | `~/skills/skills/.curated/<name>` |
-| `skills/` | 嫁接（已适配） | `~/skills/skills/<name>` |
-| `skills/.experimental/` | 实验（未适配） | `~/skills/skills/.experimental/<name>` |
+| `skills/` | 嫁接（已人工审核过） | `~/skills/skills/<name>` |
+| `skills/.experimental/` | 实验（未人工审核） | `~/skills/skills/.experimental/<name>` |
 
 ### 安装（两层软链）
 
