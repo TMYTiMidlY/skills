@@ -4,10 +4,22 @@
 
 ## 可用的 Skills
 
+### 原创（MIT License，放在 `skills/.curated/` 下）
+
+| Skill | 说明 |
+| --- | --- |
+| `manage-skills` | 创建、拆分、审查、维护本仓库里 skill 的规范与工作流 |
+| `software` | SSH、systemd、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享客户端（WebDAV + Markdeep 写作惯例） |
+| `vps-maintenance` | VPS 初始化、Caddy（含 caddy-security / caddy-webdav）、EasyTier、网络质量检测 |
+| `remote` | 远程 SSH 执行规范 |
+| `thesis-writer` | 中文学位论文写作与修订：doc 转分章 md、脚注内联、引用核查、GB/T 7714 格式规范 |
+| `desktop-use` | Windows / macOS 桌面端操作（软件使用、系统配置、网络连接、远程桌面等） |
+| `mess` | 记录排查过的疑难杂症和踩坑经历 |
+
+### 嫁接自其他仓库
+
 | Skill | 来源 | 说明 |
 | --- | --- | --- |
-| `vps-use` | *原创* | 通过 SSH 远程操作 VPS，完成服务器配置和运维任务 |
-| `thesis-writer` | *原创* | 中文学位论文写作与修订：doc 转分章 md、脚注内联、引用核查、GB/T 7714 格式规范 |
 | `qiuzhi-skill-creator` | [秋芝2046](https://space.bilibili.com/385670211) | 交互式引导创建新的 skill |<!-- skills-table:begin -->
 | `slidev` | [slidevjs/slidev](https://github.com/slidevjs/slidev) | Slidev 官方 skill |
 | `doc-coauthoring` | [anthropics/skills](https://github.com/anthropics/skills) | 文档协作工作流 |
@@ -15,9 +27,9 @@
 | `frontend-design` | [anthropics/skills](https://github.com/anthropics/skills) | 前端界面设计 |
 | `pptx` | [anthropics/skills](https://github.com/anthropics/skills) | PowerPoint 文件操作 |
 | `xlsx` | [anthropics/skills](https://github.com/anthropics/skills) | Excel 电子表格操作 |
-| `pdf` | [anthropics/skills](https://github.com/anthropics/skills) | PDF 文件操作 |
+| `pdf` | [anthropics/skills](https://github.com/anthropics/skills) | PDF 文件操作 |<!-- skills-table:end -->
 
-以下 skill 从外部仓库下载，尚未经过适配和验证，放在 `.experimental/` 目录下：
+以下 skill 从外部仓库下载，尚未经过适配和验证，放在 `skills/.experimental/` 目录下：
 
 | Skill | 来源 | 说明 |
 | --- | --- | --- |
@@ -27,7 +39,7 @@
 | `gh-fix-ci` | [openai/skills](https://github.com/openai/skills) | 修复 GitHub CI 失败 |
 | `jupyter-notebook` | [openai/skills](https://github.com/openai/skills) | Jupyter Notebook 创建与编辑 |
 | `screenshot` | [openai/skills](https://github.com/openai/skills) | 桌面截图 |
-| `slides` | [openai/skills](https://github.com/openai/skills) | 代码驱动的幻灯片制作 |<!-- skills-table:end -->
+| `slides` | [openai/skills](https://github.com/openai/skills) | 代码驱动的幻灯片制作 |
 
 此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 
@@ -46,13 +58,19 @@
 git clone https://github.com/TMYTiMidlY/skills.git ~/skills
 ```
 
-以 `.agents/skills/` 作为唯一的 skill 源，将需要的 skill 链接进去。全局安装就放在 `~/` 下，项目级安装就放在项目根目录下：
+以 `.agents/skills/` 作为唯一的 skill 源，将需要的 skill 链接进去。全局安装就放在 `~/` 下，项目级安装就放在项目根目录下。skill 按类别分布在三个位置，按来源链接：
 
 ```bash
 mkdir -p .agents/skills
 
-# 将需要的 skill 逐个链接进来
+# 原创：skills/.curated/
+ln -s ~/skills/skills/.curated/<skill-name> .agents/skills/
+
+# 嫁接（已适配）：skills/
 ln -s ~/skills/skills/<skill-name> .agents/skills/
+
+# 实验性（未适配）：skills/.experimental/
+ln -s ~/skills/skills/.experimental/<skill-name> .agents/skills/
 ```
 
 GitHub Copilot、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等工具原生读取 `.agents/skills/`，无需额外配置。其他工具需要将各自的 skills 目录链接到 `.agents/skills/`：
@@ -108,4 +126,4 @@ ln -s AGENTS.md CLAUDE.md
 
 ## 许可
 
-各 skill 的许可证可能不同，请查看对应目录中的 `LICENSE` 或 `LICENSE.txt`。
+原创 skill 使用 MIT License，每个目录下附 `LICENSE.txt`。嫁接 skill 的许可证沿用上游，请查看对应目录中的 `LICENSE` 或 `LICENSE.txt`。
