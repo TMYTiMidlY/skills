@@ -1,6 +1,6 @@
 ---
 name: software
-description: 软件服务、CLI 工具、本地/自托管服务配置与排障；尤其是 SSH 使用、systemd/service 配置、格式转换、WebDAV 上传、自托管 Markdown 分享、MinerU PDF 转 Markdown、软件 API 或命令行测试时使用。
+description: 软件服务、CLI 工具、桌面端使用、本地/自托管服务配置与排障；涵盖 SSH、systemd、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享、Windows/macOS 操作与激活、远程桌面与 WSL 网络、EasyTier 客户端、Hermes systemd / terminal backend。
 ---
 
 # Software
@@ -12,6 +12,22 @@ SSH 密钥 passphrase、ssh-agent、RemoteForward 代理转发等通用 SSH 用�
 ## Service / systemd
 
 多用户共享服务、systemd 模板单元与按 UID 分配端口见 [references/service.md](references/service.md)。
+
+## 网络与远程连接
+
+RDP、向日葵、WSL Mirror 模式网络、会话管理（tsdiscon / logoff）、MTU 排障见 [references/network.md](references/network.md)。
+
+## EasyTier 客户端（Windows）
+
+EasyTier 组网的 Windows 客户端：安装、TOML 配置模板、Peer 配置、与 VPS 服务端的差异、NSSM 服务排障、Windows 防火墙见 [references/easytier.md](references/easytier.md)。**VPS 服务端完整安装与配置（全 listener、出口节点、中继策略等）见 `vps-maintenance` skill 的 EasyTier reference。**
+
+## Windows / Office 激活
+
+镜像下载（山己几子木）与激活工具（MAS、CMWTAT、Microsoft Office For MacOS）见 [references/activation.md](references/activation.md)。
+
+## macOS 小问题集锦
+
+推荐应用（VMware Fusion、Mounty + macFUSE NTFS 读写）、应用无法打开的权限修复、外置存储隐藏文件（`.DS_Store` / `.Spotlight-V100` / `.Trashes`）阻止与清理见 [references/macos.md](references/macos.md)。
 
 ## 格式转换
 
@@ -26,3 +42,7 @@ pandoc 文档转换、Markdown→PDF、PDF→图片、feishu2md 飞书/Lark→Ma
 ## MinerU PDF→Markdown 云端转换
 
 MinerU（mineru.net）提供 VLM 模型将 PDF 转为 Markdown/JSON，支持公式和表格识别；详细流程见 [references/mineru.md](references/mineru.md)。
+
+## Hermes
+
+[NousResearch/hermes-agent](https://github.com/nousresearch/hermes-agent)：Python CLI agent 框架。systemd 常驻服务（gateway / dashboard）配置、`HERMES_HOME` 与身份管理、terminal backend（local / ssh / docker / modal / daytona / singularity）切换、provider 兼容性踩坑见 [references/hermes.md](references/hermes.md)。
