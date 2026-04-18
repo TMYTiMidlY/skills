@@ -527,11 +527,44 @@ sudo systemctl show caddy --property=Environment
 - **浏览器按 URL 缓存响应、不看 Accept**。首访 `Accept: text/html` 拿到 viewer.html 被缓存，viewer 里 fetch 同 URL 也吃缓存。三重修：Caddy 两个分支都发 `Vary: Accept`，viewer 分支加 `Cache-Control: no-cache`，fetch 加 `cache: 'no-store'`。
 - **`path /<TOKEN>/*` 不匹配 bare token**（无尾斜杠），`/x` ≠ `/x/*`。加 `redir /<TOKEN> /<TOKEN>/ 301`。
 - **`<base href>` 把 `#anchor` 解析成 `base-origin/#anchor`**：TOC 的锚点链接 `<a href="#section">` 在有 base 的情况下会导航到目录页而非当前文件内滚动。在 `document` 上用 capture 阶段监听 click，拦截 `getAttribute('href').charAt(0) === '#'` 的链接，改成 `location.hash = h`。其他相对/绝对链接经过 base 解析都正确，无需拦截。
+- **引用与脚注语法**：引用用 `[#Key]`（不是 `[Key]`）；多引用 `[#Cook84, #Kajiya86]` 逗号分隔；脚注 `[^name]`；Bibliography 节用 `**Bibliography**:` 粗体加冒号开头，不是标题（来源：[Markdeep features.md](https://casual-effects.com/markdeep/features.md.html)）。
+- **Markdeep 引用 vs GitHub/CommonMark 的不兼容点**：给人分享 md 原文要心里有数，**viewer 里渲染正常不代表 GitHub/VS Code 也行**。关键差异（已核对官方规范）：
+
+  | 语法点 | Markdeep | CommonMark / GFM |
+  | --- | --- | --- |
+  | `#` 前缀的引用 `[#Key]` | 识别为学术引用 | 仅当存在 `[#Key]: url` 定义时才解析为普通 shortcut link，没有就字面显示 |
+  | 多引用 `[#A, #B]`（单括号内逗号） | ✅ 官方明确支持 | ❌ 不支持，逗号不是合法 label 分隔 |
+  | Bibliography 条目 `[#Key]: 作者, 年, 标题, URL 自由混排` | ✅ 自由文本，Markdeep 自己抽 URL | ❌ CommonMark 要求冒号后**必须紧跟 URL**，URL 前有其他字符就不算合法 link definition |
+  | `**Bibliography**:` 作为段落起始 | Markdeep 专门识别、生成编号 + 反链 | 仅渲染为一段加粗文字，无语义 |
+  | 脚注 `[^name]` + `[^name]: text` | ✅ | ✅（GFM 2021-09 起支持，CommonMark 核心规范不含但主流解析器都支持） |
+
+  依据来源：[CommonMark 0.31.2 spec](https://spec.commonmark.org/0.31.2/)、[GitHub Changelog 2021-09-30 Footnotes](https://github.blog/changelog/2021-09-30-footnotes-now-supported-in-markdown-fields/)。
+
+  **策略**：若文档主要通过 Markdeep viewer 分享，放心用 `[#Key]`；若同份 md 还要直接丢进 GitHub issue / wiki 或在 VS Code 原生预览里看，要么改成 CommonMark shortcut link（`[key]` + `[key]: url "题注"`），要么就接受非 Markdeep 环境下会看到字面量。
 - **tocStyle**：`"auto"` `"short"` `"medium"` `"long"` `"none"` 五个字面量，无官方文档，从 `markdeep.min.js` 源码 grep 得到。当前 viewer 用 `"auto"`（Markdeep 按文档长度自动决定）。
-- **禁用标题自动序号**：Markdeep 默认用 CSS counter 给标题加序号（1. 1.1 …），没有原生配置项关闭。viewer 里扩展了一个自定义选项 `noSectionNumbers`：为 `true` 时 JS 动态注入 counter 覆盖样式；改为 `false` 恢复编号。
+- **禁用标题自动序号**：Markdeep 默认用 CSS counter 给标题和 TOC 条目都加序号（1. 1.1 …），没有原生配置项关闭。viewer 里扩展了一个自定义选项 `noSectionNumbers`：为 `true` 时注入 CSS 同时隐藏正文标题的 `::before` counter 内容和 TOC 里的 `.tocNumber` span；改为 `false` 两处编号都恢复。
 - **CDN 用 `casual-effects.com/markdeep/latest/markdeep.min.js`**：作者 Morgan McGuire 官方站。
 - **微信 WebView 无法下载文件**：微信平台层面拦截所有文件下载。viewer 检测 `MicroMessenger` UA，点下载按钮改为弹出蒙层引导用户「在浏览器中打开」后再下载；其他浏览器正常 `download` 属性下载。
 - 404 用 `error "..." 404` 而非 `respond`，才会触发 `handle_errors` 走 error-pages。
+
+**写作惯例：依据引用 vs 说明脚注（两套标识分工）**
+
+viewer 渲染 Markdeep 时支持两套互相独立的标识，用途刻意区分——**用户明确要求"有依据"/"挂来源"/"每条都要出处"时，按本约定强制执行**：
+
+- **需要外部**依据**（URL 可核的断言 / 数字 / 官方原话）** → 用 `[#key]` 引用，文末 `**Bibliography**:` 统一列条目。断言后直接跟 `[#key]`，多源并列用逗号 `[#a, #b]`。Bibliography 条目格式：`[#key]: 作者/机构, "标题", 年. URL`（Markdeep 自由文本，但统一风格便于阅读）。
+- **需要补充**说明**（展开解释、计算口径、参数差异、风险提示等，非引用）** → 用脚注 `[^1]` / `[^2]` / `[^name]`，数字或命名皆可。正文插标识，文末对应 `[^name]: 说明文字`。
+
+两者语义不同：
+- `[#key]` 回答"这条数字我从哪看到的"——Markdeep 自动收集所有引用，统一渲染在 `**Bibliography**:` 段
+- `[^name]` 回答"这条数字需要额外解释一下"——**定义行（`[^name]: ...`）在源文件里放哪，渲染就在哪**：放章节末尾→在章节末尾显示，全部堆到文末前→在文末显示。决定权在作者。建议把"紧跟当前段思路的注解"放段内尾部，把"横跨全文的长解释"堆文末。
+
+**原则**：
+- **每个关键数字 / 断言至少挂一个来源**；一手（官方文档 / 发布稿）优先，第三方（评测 / 报道）次之，推算（本文折算）要在脚注里标明口径。
+- 表格类内容最后一列统一命名"来源"，每行一个或多个 `[#key]`。
+- TL;DR 段里每条结论末尾也要挂引用，不要只挂到正文详述里。
+- 区分"引用原文"和"引用数据"：引原文用 `> **原文**："..."[#key]` 的 block quote；引数字直接行内 `[#key]`。
+
+**参考范式**：本机 `docs.tmytimidly.com` 上的 `GLM-5.1部署研报v2.md` 与 `AI-coding-plan采购研报v2.md` 是该格式的完整实现，可作模板抄结构。
 
 **凭据与权限**
 

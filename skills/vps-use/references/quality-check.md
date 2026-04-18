@@ -162,7 +162,7 @@ iperf3 -c <目标IP> -b 160M -R   # 下行压到 160 Mbit/s
 | OS | Ubuntu 24.04.1 |
 | CPU | 1 Core |
 | 内存 | 1 GB |
-| 磁盘 | 10 GB |
+| 磁盘 | 20 GB |
 | 带宽 | 上下行 100 Mbps |
 | 流量 | 600 GB |
 | Panel | <https://lisahost.com/clientarea.php> |
