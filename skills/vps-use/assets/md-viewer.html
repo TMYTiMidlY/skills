@@ -27,6 +27,16 @@
     box-shadow: 0 2px 6px rgba(0,0,0,.18);
   }
   .dl-btn:hover { background: #0550ae; }
+  .code-copy-wrap { position: relative; }
+  .code-copy-btn {
+    position: absolute; top: .45em; right: .45em; z-index: 2;
+    border: 1px solid rgba(27,31,36,.18); border-radius: 6px;
+    background: rgba(255,255,255,.92); color: #24292f;
+    padding: .25em .55em; font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+  }
+  .code-copy-btn:hover { background: #f6f8fa; border-color: rgba(27,31,36,.28); }
+  .code-copy-btn:focus-visible { outline: 2px solid #0969da; outline-offset: 2px; }
 </style>
 <script>
 (function () {
@@ -101,6 +111,55 @@
     document.body.insertBefore(chrome, document.body.firstChild);
   }
 
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      return Promise.resolve();
+    } catch (err) {
+      return Promise.reject(err);
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+
+  function addCodeCopyButtons() {
+    document.querySelectorAll('pre').forEach(function (pre) {
+      if (pre.dataset.copyReady === '1') return;
+      pre.dataset.copyReady = '1';
+
+      var wrap = document.createElement('div');
+      wrap.className = 'code-copy-wrap';
+      pre.parentNode.insertBefore(wrap, pre);
+      wrap.appendChild(pre);
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'code-copy-btn';
+      btn.textContent = 'Copy';
+      btn.setAttribute('aria-label', 'Copy code block');
+      btn.addEventListener('click', function () {
+        copyText(pre.innerText.replace(/\n$/, '')).then(function () {
+          btn.textContent = 'Copied';
+          setTimeout(function () { btn.textContent = 'Copy'; }, 1200);
+        }).catch(function () {
+          btn.textContent = 'Failed';
+          setTimeout(function () { btn.textContent = 'Copy'; }, 1200);
+        });
+      });
+      wrap.appendChild(btn);
+    });
+  }
+
   // <base> makes #anchor resolve to base-origin/#anchor instead of current page.
   // Intercept and do a local hash change instead.
   document.addEventListener('click', function (e) {
@@ -127,7 +186,10 @@
       s.charset = 'utf-8';
       s.onload = function () {
         buildChrome();
+        addCodeCopyButtons();
         setTimeout(buildChrome, 100); // safety net if Markdeep has async post-processing
+        setTimeout(addCodeCopyButtons, 100);
+        setTimeout(addCodeCopyButtons, 500);
       };
       document.head.appendChild(s);
     })
