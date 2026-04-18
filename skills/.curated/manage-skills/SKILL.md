@@ -19,21 +19,36 @@ skill 在仓库里分三处，按实际位置链：
 | `skills/` | 嫁接（已适配） | `~/skills/skills/<name>` |
 | `skills/.experimental/` | 实验（未适配） | `~/skills/skills/.experimental/<name>` |
 
-### 安装
+### 安装（两层软链）
 
-装进 `.agents/skills/`（`~/` 全局或 `<project>/` 项目级皆可）：
+**第 1 层·skill 级**：把要用的 skill 从仓库软链进 `<target>/.agents/skills/<name>`（`<target>` 是 `~/` 全局或 `<project>/` 项目级）：
 
 ```bash
 mkdir -p <target>/.agents/skills
 ln -s <源路径> <target>/.agents/skills/<name>
 ```
 
-Claude Code / Cursor 等工具只需对 `.agents/skills/` 做一次整目录软链（见 README 链接表），不用逐 skill 重链。
+**第 2 层·工具级**：Claude Code / Cursor / Amp / Junie 等都有各自的 skills 目录（`.claude/skills/`、`.cursor/skills/` …）。把**整个**工具目录软链到 `.agents/skills/`，让所有工具共享同一份：
 
-**安装前先扫一遍同名 / 同能力的现成 skill**：很多工具把自己的 skills 放在 `~/.<tool>/skills/`（Claude Code、Cursor、Junie、Amp 等）或项目根 `<project>/.<tool>/skills/` 下，直接装可能造成覆盖或内容冲突。遍历目标范围下所有 `.<tool>/skills/*/SKILL.md`，读每份 frontmatter 的 `name` 和 `description`，和准备安装的这份比对：
+```bash
+ln -s .agents/skills <target>/.claude/skills
+ln -s .agents/skills <target>/.cursor/skills
+# 其他工具同理，完整表见仓库 README
+```
 
-- **name 相同**：告知用户"`<name>` 已在 `<某路径>` 下装过"，问要不要改走本仓库的 symlink 方式；同意就把旧的挪到回收站再建 symlink。
-- **name 不同但 description 在讲同一能力**：告知用户这是同一能力的另一实现，让用户决定保留哪份。
+好处：
+
+- **统一修改**：任一处编辑都落到仓库实体，所有工具同步可见
+- **git 追踪**：改动走仓库 git，有历史、可回滚、便于协作
+
+### 安装前先扫环境、冲突就问不自动改
+
+**工具目录已有用户自己的内容时**：如果 `<target>/.claude/skills/`（或其它工具目录）已存在、不是 symlink、里面有用户自己装的 skill，说明用户之前按各工具原生方式装过，**不要直接覆盖**。告诉用户"这里有 N 个条目，要不要迁进 `.agents/skills/` 统一管理再建整目录软链？"，等用户点头。
+
+**单 skill 同名 / 同能力冲突时**：遍历目标范围下所有 `.<tool>/skills/*/SKILL.md`，读每份 frontmatter 的 `name` 和 `description`，和准备装的这份比对：
+
+- **name 相同**：告知用户"`<name>` 已在 `<某路径>` 下装过"，问要不要换成本仓库的 symlink；同意就把旧的移回收站再建 symlink。
+- **name 不同但 description 在讲同一能力**：告知用户这是同一能力的另一实现，让他决定保留哪份。
 
 **只报告、不自动改**，等用户确认。
 
