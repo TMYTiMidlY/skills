@@ -3,8 +3,8 @@
 # requires-python = ">=3.10"
 # dependencies = ["pypdf>=4.0", "httpx>=0.27"]
 # ///
-"""处理超过 MineRU 单次限制 (200MB / 600 页) 的大 PDF：
-下载（可选） → 拆分（页数 + 大小双约束，含 overlap）→ batch 上传 MineRU
+"""处理超过 MinerU 单次限制 (200MB / 600 页) 的大 PDF：
+下载（可选） → 拆分（页数 + 大小双约束，含 overlap）→ batch 上传 MinerU
 → 轮询 → 下载 zip 结果 → 合并 full.md。
 
 示例：
@@ -33,8 +33,8 @@ import httpx
 from pypdf import PdfReader, PdfWriter
 
 MINERU_API = "https://mineru.net/api/v4"
-MAX_SIZE_MB = 190  # 留余量，MineRU 限制 200MB
-MAX_PAGES = 590    # 留余量，MineRU 限制 600 页
+MAX_SIZE_MB = 190  # 留余量，MinerU 限制 200MB
+MAX_PAGES = 590    # 留余量，MinerU 限制 600 页
 
 
 def log(msg: str) -> None:
@@ -85,7 +85,7 @@ def plan_parts(total_pages: int, pages_per_part: int, overlap: int) -> list[tupl
     相邻卷的 overlap 区是前卷末尾的 overlap 页与后卷开头的 overlap 页重复。
     实际实现：每卷起点 step = pages_per_part，长度 = pages_per_part + overlap（最后一卷不加 overlap）。
     """
-    assert pages_per_part + overlap <= MAX_PAGES, "pages_per_part + overlap 超 MineRU 单次页数上限"
+    assert pages_per_part + overlap <= MAX_PAGES, "pages_per_part + overlap 超 MinerU 单次页数上限"
     parts = []
     start = 1
     step = pages_per_part

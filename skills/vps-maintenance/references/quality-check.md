@@ -61,7 +61,7 @@ sudo mtr -r -c 10 <目标IP> # 测试 10 次延迟
 
 结论：只要请求里不带域名就没事。浏览器用纯 IP 访问时默认不发 SNI，也没有域名可匹配，实测稳定可用，是目前在用的方案。
 
-一个服务一个端口，`https://<主 IP>` 走默认的 443 也能正常访问；其他服务用各自的端口。TLS 统一 `tls internal` 自签，客户端装 Caddy local root CA，见 [extra-setup.md 的对应小节](extra-setup.md#安装-caddy-local-root-ca-tls-internal-场景)。
+一个服务一个端口，`https://<主 IP>` 走默认的 443 也能正常访问；其他服务用各自的端口。TLS 统一 `tls internal` 自签，客户端装 Caddy local root CA，见 [caddy.md 的对应小节](caddy.md#安装-caddy-local-root-ca-tls-internal-场景)。
 
 > 严格讲这是违规操作，V2EX 上有反馈过"一个星期后接到电话"的案例，共识是小规模用通常被容忍。长期要合规还是得备案或走海外前端反代。
 
@@ -308,4 +308,3 @@ iperf3 -c <目标IP> -b 160M -R   # 下行压到 160 Mbit/s
 | 西北 | 29ms（陕西西安联通） | 70ms（新疆乌鲁木齐联通） | 45ms |
 | 东北 | 40ms（黑龙江哈尔滨联通） | 52ms（吉林白城联通） | 45ms |
 | 港澳台 | 37ms（中国香港） | 51ms（中国台湾） | 44ms |
-

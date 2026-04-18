@@ -1,259 +1,3 @@
-# 额外安装
-
-> 必须先完成 [base-setup.md](base-setup.md) 再执行以下步骤。
-
-## SSH 密钥 passphrase 与 ssh-agent（本地机器）
-
-### 密钥 passphrase
-
-检查是否已有密钥：
-
-```bash
-ls ~/.ssh/id_*
-```
-
-- **不存在**：`ssh-keygen -t ed25519 -C "<comment>"`（`-C` 填设备名/邮箱/用途）
-- **已存在但无 passphrase**：`ssh-keygen -p -f <key_path>`
-
-> 以上命令都需要交互式执行，agent 无法代替用户输入密码，应提示用户手动运行。
-
-### ssh-agent
-
-> **Windows 用户**：参考 [Auto-launching ssh-agent on Git for Windows](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/working-with-ssh-key-passphrases#auto-launching-ssh-agent-on-git-for-windows)，以下步骤适用于 Linux/WSL。
-
-ssh-agent 由 systemd 用户服务管理，密钥缓存在 agent 进程内存中。**生命周期与用户登录绑定**——不注销/不重启就一直可用。
-
-创建 `~/.config/systemd/user/ssh-agent.service`：
-
-```ini
-[Unit]
-Description=SSH key agent
-
-[Service]
-Type=simple
-Environment=SSH_AUTH_SOCK=%t/ssh-agent.socket
-ExecStart=/usr/bin/ssh-agent -D -a $SSH_AUTH_SOCK
-
-[Install]
-WantedBy=default.target
-```
-
-```bash
-systemctl --user enable --now ssh-agent
-```
-
-在 `~/.bashrc` 中添加：
-
-```bash
-export SSH_AUTH_SOCK=/run/user/$(id -u)/ssh-agent.socket
-```
-
-> **WSL 注意**：WSL 环境下可能还需要设置 `XDG_RUNTIME_DIR`。
-
-在 `~/.ssh/config` 的 `Host *` 下添加：
-
-```
-Host *
-    AddKeysToAgent yes
-    IdentityFile ~/.ssh/id_ed25519
-```
-
-- `AddKeysToAgent yes`：首次连接输入 passphrase 后自动缓存到 agent
-- `IdentityFile`：指定默认使用的密钥
-
-## 通过 SSH RemoteForward 暴露本地代理到 VPS
-
-将本地代理端口（如 7890）通过 SSH 反向隧道转发到 VPS，让 VPS 能使用本地代理上网。
-
-### SSH config 配置
-
-在 `~/.ssh/config` 对应 Host 下添加：
-
-```
-Host <VPS名>
-  RemoteForward 127.0.0.1:10131 127.0.0.1:7890
-```
-
-- `127.0.0.1:10131`：VPS 上的监听地址和端口（仅本地回环，不暴露到公网）
-- `127.0.0.1:7890`：本地代理监听地址和端口
-
-SSH 连接建立后，VPS 上的 `127.0.0.1:10131` 会被隧道到本地的 `127.0.0.1:7890`。
-
-### VPS bashrc 配置
-
-在 VPS 的 `~/.bashrc` 中添加：
-
-```bash
-# Proxy via SSH RemoteForward (local 7890 -> remote 10131)
-export http_proxy=http://<用户名>:<密码>@127.0.0.1:10131
-export https_proxy=http://<用户名>:<密码>@127.0.0.1:10131
-```
-
-> 如果本地代理不需要认证，去掉 `<用户名>:<密码>@` 部分。认证凭据需要和本地代理配置一致。
-
-### 注意事项
-
-- **隧道依赖 SSH 连接**：SSH 断开后隧道自动关闭，VPS 上的代理就不可用了。配合 `ControlPersist` 可以保持连接。
-- **端口冲突**：如果 VPS 上 10131 已被占用，SSH 会报 `bind: Address already in use`，转发不生效但连接本身可能仍然建立。换一个端口，或检查 `ss -tlnp | grep 10131`。
-- **已有 ControlMaster 连接不含新配置**：修改 SSH config 添加 RemoteForward 后，需要先关闭已有的复用连接（`ssh -O exit <VPS名>`），重新连接才会生效。
-- **为什么两边都写 `127.0.0.1`**：远程端不写时默认也绑 loopback，但显式写更清晰（注意：服务端 `GatewayPorts yes` 会强制覆盖为 `0.0.0.0`）。本地端写 `127.0.0.1` 比 `localhost` 可靠——避免 `localhost` 解析到 IPv6 `::1` 而代理只听 IPv4。
-
-## 启用 BBR 拥塞控制
-
-经过在 LisaHost 服务器上的测试，启用 BBR 后很可能能改善网络体验（GitHub 下载速度、iperf3 重传和丢包等）。
-
-检查系统是否已启用 BBR：
-
-```bash
-sysctl net.ipv4.tcp_available_congestion_control
-# 示例输出: net.ipv4.tcp_available_congestion_control = reno cubic
-```
-
-另一种检查方式：
-
-```bash
-sysctl net.ipv4.tcp_congestion_control
-# 示例输出: net.ipv4.tcp_congestion_control = cubic
-```
-
-如果不是 `bbr`，启用它：
-
-```bash
-sudo tee -a /etc/sysctl.conf <<EOF
-net.core.default_qdisc=fq
-net.ipv4.tcp_congestion_control=bbr
-EOF
-```
-
-刷新配置：
-
-```bash
-sudo sysctl -p
-```
-
-重启服务器后验证：
-
-```bash
-sysctl net.ipv4.tcp_congestion_control
-# 预期输出: net.ipv4.tcp_congestion_control = bbr
-```
-
-## 安装 EasyTier
-
-### 组网方案
-
-所有公网 VPS 按下方模板配置，开启 `private_mode`，可选两种模式：
-- **加入模式**：分配虚拟 IP，正常参与组网
-- **仅中继模式**：`no_tun = true`，不分配虚拟 IP，为其他节点提供发现和流量转发
-
-NAT 下的设备（PC、平板等）在 `[[peer]]` 中添加所有公网 VPS 的地址（优先 UDP，TCP 备选），通过它们加入网络后互相发现，能 P2P 就 P2P，不能就走 VPS 中继。
-
-> 依赖 unzip，需提前安装。
-
-```bash
-wget -O /tmp/easytier.sh "https://raw.githubusercontent.com/EasyTier/EasyTier/main/script/install.sh" && sudo bash /tmp/easytier.sh install --gh-proxy https://ghfast.top/
-```
-
-> `--gh-proxy` 可选，默认使用。如果网络可直连 GitHub 可去掉。
-
-安装后二进制在 `/opt/easytier`，配置文件目录在 `/opt/easytier/config/`。
-
-参考配置（配置项含义见 https://easytier.cn/guide/network/configurations.html ）：
-
-```toml
-instance_name = "TiMidlY"
-ipv4 = "10.144.18.x"
-dhcp = false
-listeners = [
-    "tcp://0.0.0.0:11010",
-    "udp://0.0.0.0:11010",
-    "wg://0.0.0.0:11011",
-    "ws://0.0.0.0:11011/",
-    "wss://0.0.0.0:11012/",
-]
-exit_nodes = []
-rpc_portal = "127.0.0.1:15888"
-
-[network_identity]
-network_name = "TiMidlY"
-network_secret = "<询问用户>"
-
-[flags]
-default_protocol = "udp"
-dev_name = ""
-enable_encryption = true
-enable_ipv6 = true
-mtu = 1380
-latency_first = false
-enable_exit_node = false
-no_tun = false
-use_smoltcp = false
-foreign_network_whitelist = "*"
-disable_p2p = false
-p2p_only = false
-relay_all_peer_rpc = false
-disable_tcp_hole_punching = false
-disable_udp_hole_punching = false
-private_mode = true
-```
-
-相对 default.conf 改动的关键参数：
-
-- `dhcp = false` + `ipv4 = "10.144.18.x"`：关闭 DHCP，手动指定虚拟 IP，需要分配一个未使用的地址，询问用户。也可以设置 `dhcp = true` 并将 `ipv4` 写为 `10.144.18.0/24` 自动分配。
-- `rpc_portal = "127.0.0.1:15888"`：管理 RPC 只监听本地，不暴露到公网。default 用 `0.0.0.0:0` 会监听所有网卡。
-- `network_name` / `network_secret`：组网凭证，只有相同 name + secret 的节点才能互相发现和通信。
-- `private_mode = true`：只允许相同 network_name + network_secret 的节点接入。开启后外部节点在密码验证阶段就会被拒绝，`foreign_network_whitelist` 和 `relay_all_peer_rpc` 不再生效。不开的话，白名单内的其他网络可以借用你的节点做中继。
-
-### 启动服务与防火墙
-
-安装完成后将配置文件写入该目录，然后以配置文件名启动服务：
-
-```bash
-systemctl start easytier@<配置文件名>
-```
-
-如果启用了 ufw，需要开放 11010 端口（TCP + UDP）：
-
-```bash
-sudo ufw status | grep -q "^Status: active" || exit 0
-sudo ufw allow 11010/tcp
-sudo ufw allow 11010/udp
-```
-
-### 自定义节点显示名称
-
-EasyTier 在 peer list 中默认显示系统主机名（`hostname`）。如需自定义显示名称，通过 systemd override 设置 `ET_HOSTNAME` 环境变量：
-
-```bash
-sudo systemctl edit easytier@<配置文件名>
-```
-
-添加：
-
-```ini
-[Service]
-Environment="ET_HOSTNAME=自定义名称"
-```
-
-保存后 `systemctl daemon-reload && systemctl restart easytier@<配置文件名>` 生效。
-
-### 出口节点（Exit Node）
-
-出口节点功能相当于搭建 VPN：让客户端的所有非虚拟网络流量通过指定的服务器出去。需要两端配合：
-
-- **服务端**：设置 `enable_exit_node = true`，允许自己接收并转发出口流量。
-- **客户端**：在 `exit_nodes` 中填入服务端的虚拟 IP（如 `exit_nodes = ["10.144.18.1"]`），访问非虚拟网络 IP 时流量会被路由到该出口节点。
-
-此功能不影响节点发现和组网，只控制流量转发行为。
-
-### 隐私与转发控制
-
-三个参数配合控制外部网络（不同 network_name/secret 的节点）能否利用你的节点：
-
-- `foreign_network_whitelist`：控制允许哪些外部网络通过此节点转发流量。`"*"` 允许所有，`""` 禁止所有，也支持通配符如 `"net1 net2*"`。
-- `relay_all_peer_rpc`：当外部网络不在白名单内时，是否仍然帮它转发 RPC 包（仅用于节点发现和 P2P 建连，不转发数据流量）。
-- `private_mode`：如果为 true，外部节点必须通过密码验证才能接入，否则直接拒绝连接。这是最严格的一道门。
-
 ## 安装 Caddy
 
 ### 通过 APT 安装
@@ -510,107 +254,55 @@ sudo systemctl restart caddy
 sudo systemctl show caddy --property=Environment
 ```
 
-### 无 OAuth 的私链分享 + WebDAV 上传
+## 无额外认证的文档分享私链（WebDAV + Markdeep viewer）
 
-场景：链接发给人点开看 markdown 预览、脚本能直下 raw；自己用 rclone 上传。独立 site block，不接 caddy-security。当前 viewer 壳子在 [`../assets/md-viewer.html`](../assets/md-viewer.html)。
+**定位**：用一段长随机串当访问凭据（capability URL）的文档私链分享。**没有登录页、没有 OAuth、不接 caddy-security**——URL 本身即凭据，拿到链接的人能读，没拿到的一律 404。上传侧单独挂一个 basic_auth 保护，和读取侧共享同一份存储目录。
 
-**思路**
+链接发给别人浏览器打开自动走 Markdeep viewer 渲染；脚本 `curl` 拿到的是 raw 原文；自己用 rclone / `curl -T` 上传。viewer 壳子在 [`../assets/md-viewer.html`](../assets/md-viewer.html)。
+
+> 客户端上传命令、分享链接使用方式、Markdeep 写作惯例（引用 vs 脚注、GFM 兼容性、研报长文模板）见 `software` skill 的 `doc-share` reference，本节只覆盖服务端配置。
+
+### 安装 caddy-webdav 扩展
+
+系统自带的 caddy 二进制**不带** WebDAV handler，必须自行替换。从 [Caddy Download Page](https://caddyserver.com/download) 下载含 caddy-webdav 扩展的可执行文件（勾选 `github.com/mholt/caddy-webdav`；如果已经装过 caddy-security 又想把两个插件合进同一个二进制，下载时两个都勾）。然后按[官方文档](https://caddyserver.com/docs/build#package-support-files-for-custom-builds-for-debianubunturaspbian)替换系统自带的 caddy：
+
+```bash
+sudo dpkg-divert --divert /usr/bin/caddy.default --rename /usr/bin/caddy   # 首次替换才需要；已做过此步直接跳
+sudo mv ./caddy /usr/bin/caddy.custom
+sudo update-alternatives --install /usr/bin/caddy caddy /usr/bin/caddy.default 10
+sudo update-alternatives --install /usr/bin/caddy caddy /usr/bin/caddy.custom 50
+sudo systemctl restart caddy
+```
+
+- `dpkg-divert` + `update-alternatives` 语义同 caddy-security 扩展安装节，不重复解释。
+- 验证：`caddy list-modules | grep webdav` 应输出 `http.handlers.webdav`；没输出说明二进制没带上插件，回去重下。
+
+### 思路
 
 - 上传：内置 `basic_auth`（v2.10+ 新名）+ `webdav` handler。**用 `webdav { prefix /dav }` 保留前缀**，不要 `handle_path` 剥掉——否则 PROPFIND/MOVE 返回的 href 不完整，rclone 等客户端会迷路。
 - 下载：一段长随机串当 "secret path" 前缀（capability URL），配合 `uri strip_prefix` 让 `file_server` 从真实目录服务；这样上传和下载路径可以共用同一份存储，`rclone put /dav/foo.md` 写进来立刻在 `/<token>/foo.md` 可见。
 - 浏览器 vs CLI 分流：matcher 叠加 `path *.md` + `header Accept *text/html*`。浏览器分支 `rewrite * /_viewer.html`（**不要附 `?src={uri}`**，见下面"rewrite 是内部重写"那条），viewer 里 `location.pathname` 就是原始 URL；viewer `fetch(location.pathname)` 默认 Accept 不含 text/html，天然回落到 raw 分支不会递归。
 - 渲染：viewer 里 **Markdeep**（LaTeX 公式、`*******` 画 ASCII 图表、TOC、admonition 开箱即用）。结构完全仿照 Markdeep 自身的 `.md.html` 格式：viewer 先 fetch 原始 md 写入 `document.body.textContent`，再动态加载 Markdeep CDN——此时 `document.readyState === 'complete'`，Markdeep 立刻同步处理 body；处理完后 `s.onload` 里把导航条（面包屑 + 下载按钮）插回 `body` 首位。
 
-**踩过的坑**
+### 踩过的坑
 
 - **`rewrite` 是服务端内部重写，浏览器地址栏不变**。viewer 从 URL 拿 src 不能靠 `?src={uri}`，得用 `location.pathname`。
 - **浏览器按 URL 缓存响应、不看 Accept**。首访 `Accept: text/html` 拿到 viewer.html 被缓存，viewer 里 fetch 同 URL 也吃缓存。三重修：Caddy 两个分支都发 `Vary: Accept`，viewer 分支加 `Cache-Control: no-cache`，fetch 加 `cache: 'no-store'`。
 - **`path /<TOKEN>/*` 不匹配 bare token**（无尾斜杠），`/x` ≠ `/x/*`。加 `redir /<TOKEN> /<TOKEN>/ 301`。
 - **`<base href>` 把 `#anchor` 解析成 `base-origin/#anchor`**：TOC 的锚点链接 `<a href="#section">` 在有 base 的情况下会导航到目录页而非当前文件内滚动。在 `document` 上用 capture 阶段监听 click，拦截 `getAttribute('href').charAt(0) === '#'` 的链接，改成 `location.hash = h`。其他相对/绝对链接经过 base 解析都正确，无需拦截。
-- **引用与脚注语法**：引用用 `[#Key]`（不是 `[Key]`）；多引用 `[#Cook84, #Kajiya86]` 逗号分隔；脚注 `[^name]`；Bibliography 节用 `**Bibliography**:` 粗体加冒号开头，不是标题（来源：[Markdeep features.md](https://casual-effects.com/markdeep/features.md.html)）。
-- **Markdeep 引用 vs GitHub/CommonMark 的不兼容点**：给人分享 md 原文要心里有数，**viewer 里渲染正常不代表 GitHub/VS Code 也行**。关键差异（已核对官方规范）：
-
-  | 语法点 | Markdeep | CommonMark / GFM |
-  | --- | --- | --- |
-  | `#` 前缀的引用 `[#Key]` | 识别为学术引用 | 仅当存在 `[#Key]: url` 定义时才解析为普通 shortcut link，没有就字面显示 |
-  | 多引用 `[#A, #B]`（单括号内逗号） | ✅ 官方明确支持 | ❌ 不支持，逗号不是合法 label 分隔 |
-  | Bibliography 条目 `[#Key]: 作者, 年, 标题, URL 自由混排` | ✅ 自由文本，Markdeep 自己抽 URL | ❌ CommonMark 要求冒号后**必须紧跟 URL**，URL 前有其他字符就不算合法 link definition |
-  | `**Bibliography**:` 作为段落起始 | Markdeep 专门识别、生成编号 + 反链 | 仅渲染为一段加粗文字，无语义 |
-  | 脚注 `[^name]` + `[^name]: text` | ✅ | ✅（GFM 2021-09 起支持，CommonMark 核心规范不含但主流解析器都支持） |
-
-  依据来源：[CommonMark 0.31.2 spec](https://spec.commonmark.org/0.31.2/)、[GitHub Changelog 2021-09-30 Footnotes](https://github.blog/changelog/2021-09-30-footnotes-now-supported-in-markdown-fields/)。
-
-  **策略**：若文档主要通过 Markdeep viewer 分享，放心用 `[#Key]`；若同份 md 还要直接丢进 GitHub issue / wiki 或在 VS Code 原生预览里看，要么改成 CommonMark shortcut link（`[key]` + `[key]: url "题注"`），要么就接受非 Markdeep 环境下会看到字面量。
 - **tocStyle**：`"auto"` `"short"` `"medium"` `"long"` `"none"` 五个字面量，无官方文档，从 `markdeep.min.js` 源码 grep 得到。当前 viewer 用 `"auto"`（Markdeep 按文档长度自动决定）。
 - **禁用标题自动序号**：Markdeep 默认用 CSS counter 给标题和 TOC 条目都加序号（1. 1.1 …），没有原生配置项关闭。viewer 里扩展了一个自定义选项 `noSectionNumbers`：为 `true` 时注入 CSS 同时隐藏正文标题的 `::before` counter 内容和 TOC 里的 `.tocNumber` span；改为 `false` 两处编号都恢复。
 - **CDN 用 `casual-effects.com/markdeep/latest/markdeep.min.js`**：作者 Morgan McGuire 官方站。
 - **微信 WebView 无法下载文件**：微信平台层面拦截所有文件下载。viewer 检测 `MicroMessenger` UA，点下载按钮改为弹出蒙层引导用户「在浏览器中打开」后再下载；其他浏览器正常 `download` 属性下载。
 - 404 用 `error "..." 404` 而非 `respond`，才会触发 `handle_errors` 走 error-pages。
 
-**写作惯例：依据引用 vs 说明脚注（两套标识分工）**
-
-viewer 渲染 Markdeep 时支持两套互相独立的标识，用途刻意区分——**用户明确要求"有依据"/"挂来源"/"每条都要出处"时，按本约定强制执行**：
-
-- **需要外部**依据**（URL 可核的断言 / 数字 / 官方原话）** → 用 `[#key]` 引用，文末 `**Bibliography**:` 统一列条目。断言后直接跟 `[#key]`，多源并列用逗号 `[#a, #b]`。Bibliography 条目格式：`[#key]: 作者/机构, "标题", 年. URL`（Markdeep 自由文本，但统一风格便于阅读）。
-- **需要补充**说明**（展开解释、计算口径、参数差异、风险提示等，非引用）** → 用脚注 `[^1]` / `[^2]` / `[^name]`，数字或命名皆可。正文插标识，文末对应 `[^name]: 说明文字`。
-
-两者语义不同：
-- `[#key]` 回答"这条数字我从哪看到的"——Markdeep 自动收集所有引用，统一渲染在 `**Bibliography**:` 段
-- `[^name]` 回答"这条数字需要额外解释一下"——**定义行（`[^name]: ...`）在源文件里放哪，渲染就在哪**：放章节末尾→在章节末尾显示，全部堆到文末前→在文末显示。决定权在作者。建议把"紧跟当前段思路的注解"放段内尾部，把"横跨全文的长解释"堆文末。
-
-**原则**：
-- **每个关键数字 / 断言至少挂一个来源**；一手（官方文档 / 发布稿）优先，第三方（评测 / 报道）次之，推算（本文折算）要在脚注里标明口径。
-- 表格类内容最后一列统一命名"来源"，每行一个或多个 `[#key]`。
-- TL;DR 段里每条结论末尾也要挂引用，不要只挂到正文详述里。
-- 区分"引用原文"和"引用数据"：引原文用 `> **原文**："..."[#key]` 的 block quote；引数字直接行内 `[#key]`。
-
-**参考范式**：本机 `docs.tmytimidly.com` 上的 `GLM-5.1部署研报v2.md` 与 `AI-coding-plan采购研报v2.md` 是该格式的完整实现，可作模板抄结构。
-
-**凭据与权限**
+### 凭据与权限
 
 - Token：`openssl rand -hex 16` 生成 32 位十六进制。
 - basic_auth 密码：明文 `openssl rand -base64 18`；用 `caddy hash-password --plaintext '<pwd>'` 算 bcrypt 写进 Caddyfile（Caddyfile 里 `$` 是字面量，不用转义）。
 - Caddy 以 `caddy` 用户跑，WebDAV PUT 需要对目标目录 `w+x`。`chown caddy:caddy /data/share` 最干净；如果还想自己 ssh 上去 `cp`，建共用组 + `chmod 2775`（SGID 让新文件继承组）。
 
-**撤销与过期**
+### 撤销与过期
 
 换 token 后 `systemctl reload caddy`——没有单条撤销/过期语义；要那种能力改用 sftpgo（自带 share 链接管理）或 `caddy-signed-urls` 插件（签名 + expires，但 README 自标 not production）。
-
-## 安装 error-pages
-
-自定义错误页面服务，用于反向代理后端不可用时展示友好的错误页。
-
-```bash
-wget https://github.com/tarampampam/error-pages/releases/download/v3.8.1/error-pages-linux-amd64
-sudo mv ./error-pages-linux-amd64 /usr/local/bin/error-pages
-sudo chmod 755 /usr/local/bin/error-pages
-sudo chown root:root /usr/local/bin/error-pages
-```
-
-创建 `/etc/systemd/system/error-pages.service`：
-
-```ini
-[Unit]
-Description=Error Pages Service
-After=network.target
-Documentation=https://github.com/tarampampam/error-pages
-
-[Service]
-Type=simple
-User=nobody
-Group=nogroup
-ExecStart=/usr/local/bin/error-pages serve --template-name connection --port 4040 --listen 127.0.0.1 --send-same-http-code
-Restart=always
-RestartSec=5s
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=error-pages
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl enable --now error-pages
-```
 
