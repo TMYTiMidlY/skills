@@ -33,6 +33,7 @@ description: 创建、拆分、重命名、迁移、审查或维护本地 skills
   - 常见病：SKILL.md 堆满命令（该下放）；references 存在但 SKILL.md 没索引（找不到入口）；description 太笼统或太具体。
   - 判定：SKILL.md 读完应当知道"能做什么、哪个 reference 讲什么"，**不应该读完就能完成具体任务**——那说明 references 层缺位。
 - **个人配置不入 skill 正文**：凭据 / 域名 / 服务器地址 / 个人样例文件名都不写进 skill 正文。正文只写变量名、占位符和读取位置，真实值放 `~/.env` 或个人笔记。
+- **不绑定特定 AI 工具的具体工具名**：skill 正文不写 `AskUserQuestion`、`TodoWrite`、`WebFetch`、`Task` 这类特定宿主（Claude Code / Codex / Cursor / Trae 等）独有的工具名。同一能力在不同宿主里名字不同，硬编码会让 skill 在其它宿主跑不了。改写成能力描述："向用户提问的工具"、"任务清单工具"、"抓网页的工具"，由模型按当前环境自己挑。只有当 skill 明确只服务单一宿主、且在 description 里讲清楚时才可以保留具体名字。
 - **README 与 skill 实际状态同步**：README 表格条目的名称 / 来源 / 说明要和 skill 自身的 frontmatter `description` 口径一致；合并 / 拆分 / 重命名 / 删除 skill 后，README 不能留 stale 条目；外部索引（如 `grafted-skills.json`）里的 `path` 要和实际目录一致。
 - **`.` 开头子目录内的 skill 名不能与主目录或其他 `.` 目录内的 skill 同名**：按 skill name 加载时会歧义，必须全局唯一。
 - **其他结构性检查**：frontmatter `name` 与目录名一致；弃用段落删掉别留历史遗迹；任何可疑处照实记下让用户决断。
