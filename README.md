@@ -13,6 +13,7 @@
 | `vps-maintenance` | VPS 初始化、Caddy（含 caddy-security / caddy-webdav）、EasyTier、网络质量检测 |
 | `remote` | 远程 SSH 执行规范 |
 | `thesis-writer` | 中文学位论文写作与修订：doc 转分章 md、脚注内联、引用核查、GB/T 7714 格式规范 |
+| `worktree` | 为实验性改动创建隔离 git worktree（含 submodule 同步）；项目特定构建由上层接管 |
 | `mess` | 记录排查过的疑难杂症和踩坑经历 |
 
 ### 嫁接自其他仓库
