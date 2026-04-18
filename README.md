@@ -9,11 +9,10 @@
 | Skill | 说明 |
 | --- | --- |
 | `manage-skills` | 创建、拆分、审查、维护本仓库里 skill 的规范与工作流 |
-| `software` | SSH、systemd、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享客户端（WebDAV + Markdeep 写作惯例） |
+| `software` | SSH、systemd、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享客户端、Windows/macOS 操作与激活、远程桌面 / WSL 网络、EasyTier 客户端、Hermes systemd / terminal backend |
 | `vps-maintenance` | VPS 初始化、Caddy（含 caddy-security / caddy-webdav）、EasyTier、网络质量检测 |
 | `remote` | 远程 SSH 执行规范 |
 | `thesis-writer` | 中文学位论文写作与修订：doc 转分章 md、脚注内联、引用核查、GB/T 7714 格式规范 |
-| `desktop-use` | Windows / macOS 桌面端操作（软件使用、系统配置、网络连接、远程桌面等） |
 | `mess` | 记录排查过的疑难杂症和踩坑经历 |
 
 ### 嫁接自其他仓库
