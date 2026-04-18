@@ -68,4 +68,5 @@ curl -u "$WEBDAV_USER:$WEBDAV_PASS" -T local.md "$WEBDAV_URL/远程文件名.md"
 
 - 中文文件名直接传，Caddy/WebDAV 自动 URL 编码。
 - 建目录：`curl -u "$WEBDAV_USER:$WEBDAV_PASS" -X MKCOL "$WEBDAV_URL/subdir"`。
+- Markdeep 预览里 FAQ/短问答不要用连续 `### 1. ...` 小标题；默认标题和代码块 margin 偏大。改用有序列表 + 加粗问题会更紧凑。
 - 配合 feishu2md：`feishu2md dl <url>` → 手动把 `<table>` 改成 pipe 表 → `curl -T ... "$WEBDAV_URL/..."`，三步完成"飞书文档 → 自托管可分享 MD"。

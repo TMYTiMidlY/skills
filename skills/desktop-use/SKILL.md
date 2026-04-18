@@ -163,11 +163,8 @@ curl -s "https://mineru.net/api/v4/extract-results/batch/<batch_id>" \
 
 MineRU 服务器支持 HTTPS 直链，但**不接受自签名证书**（如 IP + tls internal 的 Caddy）。解决方案：在 Caddy 中为同一后端额外开一个 HTTP 端口供 MineRU 拉取。
 
-### 性能对比（实测，697 页 165MB 扫描版 PDF）
+### 性能参考（实测，697 页 165MB 扫描版 PDF）
 
-| 方案 | 拉取 | 转换 | 总计 |
-|---|---|---|---|
-| 本地上传 OSS（WSL→阿里云 OSS） | 420s | ~165s | **~585s（约 10 分钟）** |
-| Caddy 文件服务 HTTP 直链 | ~30s | ~120s | **153s（约 2.5 分钟）** |
+NAS → Caddy :80 直链提供 URL：拉取 ~30s + 转换 ~120s = **~153s（约 2.5 分钟）**。
 
 推荐将 PDF 放到 VPS 的 `share/MinerU-upload/` 目录，通过 HTTP 直链提交。相同文件重复提交会命中缓存直接返回结果。
