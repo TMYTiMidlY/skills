@@ -9,7 +9,11 @@
 - 其余为段落。
 - 首页的检测结果柱状图数值行 (xx.xx%(nnn) xx.xx%(nnn) 章节名) 识别后输出为 Markdown 表。
 """
-import pdfplumber, sys, re, os
+import argparse
+import os
+import re
+
+import pdfplumber
 from itertools import groupby
 
 def clean_page(page):
@@ -137,19 +141,16 @@ def process_pdf(pdf_path, out_path):
             out_lines.append(ln)
     out = '\n'.join(out_lines)
     out = re.sub(r'\n{3,}', '\n\n', out)
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(out + '\n')
     print(f'wrote {out_path} ({len(out)} chars)')
 
 if __name__ == '__main__':
-    pairs = [
-        ('/home/timidly/doc/改革开放以来高校辅导员职能的演变（盲审前测试）_查重报告单集/改革开放以来高校辅导员职能的演变（盲审前测试）_查重_简洁报告单.pdf',
-         '/home/timidly/doc/mineru_output/pdfskill_查重_简洁报告单/full.md'),
-        ('/home/timidly/doc/改革开放以来高校辅导员职能的演变（盲审前测试）_查重报告单集/改革开放以来高校辅导员职能的演变（盲审前测试）_查重_全文对照报告单.pdf',
-         '/home/timidly/doc/mineru_output/pdfskill_查重_全文对照报告单/full.md'),
-        ('/home/timidly/doc/改革开放以来高校辅导员职能的演变（盲审前测试）_查重报告单集/改革开放以来高校辅导员职能的演变（盲审前测试）_查重_全文(标明引文)报告单.pdf',
-         '/home/timidly/doc/mineru_output/pdfskill_查重_全文标明引文报告单/full.md'),
-    ]
-    for src, dst in pairs:
-        process_pdf(src, dst)
+    parser = argparse.ArgumentParser(description='Convert a CNKI 查重 report PDF to Markdown.')
+    parser.add_argument('pdf_path', help='输入查重报告 PDF 路径')
+    parser.add_argument('out_path', help='输出 Markdown 路径')
+    args = parser.parse_args()
+    process_pdf(args.pdf_path, args.out_path)
