@@ -78,3 +78,60 @@ PDF.js 升级版本后无条件调用 TC39 提案 `Uint8Array.prototype.toHex()`
 - **`git log A..B -- path/` 比 `git diff A B -- path/` 更精准**。前者告诉你 commit 历史和动机，后者只看终态。先 log 看 commit 主题挑出"只是 rename"的纯适配 commit，能省一半判断时间。
 - **判断 JS 库版本是否受 polyfill 缺失影响，最快的办法是 grep 关键 API 看有没有 if 守卫**，比查 changelog 快。
 - **VS Code serve-web 装老版扩展报 "Extension not found"**：走 marketplace API URL 直接 curl 即可。
+
+# Windows 端口绑定异常但 Win/WSL 都查不到占用
+
+> 2026-04-20 | Windows | WSL2 | 端口绑定
+
+## 症状
+
+Windows 主机上尝试绑定某些端口（实测曾包括 1544、8090）时报端口已占用，例如：
+
+```text
+通常每个套接字地址(协议/网络地址/端口)只允许使用一次
+os error 10048
+```
+
+但 Windows 和 WSL 常规检查都看不到该端口被占用：
+
+```powershell
+netstat -aon | findstr ":<PORT>"
+Get-NetTCPConnection -LocalPort <PORT> -ErrorAction SilentlyContinue
+netsh interface ipv4 show excludedportrange protocol=tcp
+netsh interface ipv6 show excludedportrange protocol=tcp
+```
+
+```bash
+ss -ltnp | grep ':<PORT>'
+```
+
+目标端口不在 `excludedportrange`，Windows 没有 LISTEN 进程，WSL 内也查不到监听。
+
+## 排查关键转折
+
+一开始按普通端口占用查 `netstat`、`Get-NetTCPConnection`、WSL `ss`、`portproxy`、`excludedportrange`，都没有结果。最后执行：
+
+```powershell
+wsl --shutdown
+```
+
+重启 WSL 后，同一端口可以正常绑定。
+
+## 根因
+
+高度疑似 WSL/Hyper-V localhost forwarding、NAT 或端口代理层状态残留。这个状态不一定表现为普通 Windows 用户态监听进程，也不一定能在 WSL 内看到，所以 `netstat`、`Get-NetTCPConnection`、`ss` 都可能查不到；`wsl --shutdown` 会重建 WSL 网络栈，残留随之消失。
+
+## 解决
+
+遇到 `os error 10048` 但查不到端口占用时，按这个顺序：
+
+```powershell
+netstat -aon | findstr ":<PORT>"
+Get-NetTCPConnection -LocalPort <PORT> -ErrorAction SilentlyContinue
+netsh interface ipv4 show excludedportrange protocol=tcp
+netsh interface ipv6 show excludedportrange protocol=tcp
+wsl -e sh -lc "ss -ltnp | grep ':<PORT>' || true"
+wsl --shutdown
+```
+
+如果 `wsl --shutdown` 后立刻恢复，就按 WSL 网络残留处理，不要继续在普通进程列表里找。
