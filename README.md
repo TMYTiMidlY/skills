@@ -61,7 +61,7 @@
 ### 方式一：克隆 + 软链接（推荐）
 
 ```bash
-git clone https://github.com/TMYTiMidlY/skills.git ~/skills
+git clone https://github.com/TMYTiMidlY/skills.git <repo>
 ```
 
 以 `.agents/skills/` 作为唯一的 skill 源，将需要的 skill 链接进去。全局安装就放在 `~/` 下，项目级安装就放在项目根目录下。skill 按类别分布在三个位置，按来源链接：
@@ -70,13 +70,13 @@ git clone https://github.com/TMYTiMidlY/skills.git ~/skills
 mkdir -p .agents/skills
 
 # 原创：skills/.curated/
-ln -s ~/skills/skills/.curated/<skill-name> .agents/skills/
+ln -s <repo>/skills/.curated/<skill-name> .agents/skills/
 
 # 嫁接（已适配）：skills/
-ln -s ~/skills/skills/<skill-name> .agents/skills/
+ln -s <repo>/skills/<skill-name> .agents/skills/
 
 # 实验性（未适配）：skills/.experimental/
-ln -s ~/skills/skills/.experimental/<skill-name> .agents/skills/
+ln -s <repo>/skills/.experimental/<skill-name> .agents/skills/
 ```
 
 GitHub Copilot、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等工具原生读取 `.agents/skills/`，无需额外配置。其他工具需要将各自的 skills 目录链接到 `.agents/skills/`：
