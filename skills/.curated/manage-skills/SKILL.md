@@ -28,6 +28,14 @@ mkdir -p <target>/.agents/skills
 ln -s <源路径> <target>/.agents/skills/<name>
 ```
 
+Windows 下如果创建目录 symlink 提示需要管理员权限，而源和目标都在本地 NTFS 目录，可以用 junction 代替：
+
+```powershell
+New-Item -ItemType Junction -Path "<target>\.agents\skills\<name>" -Target "<源路径>"
+```
+
+Junction 是文件系统级目录链接，不是 `.lnk` 快捷方式；工具按 `<target>/.agents/skills/<name>/SKILL.md` 读取时会直接落到仓库实体。仅链接本地目录时 junction 足够；需要链接文件、网络路径、WSL 路径或相对路径时仍优先使用 symlink。
+
 **第 2 层·工具级**：Claude Code / Cursor / Amp / Junie 等都有各自的 skills 目录（`.claude/skills/`、`.cursor/skills/` …）。把**整个**工具目录软链到 `.agents/skills/`，让所有工具共享同一份：
 
 ```bash
