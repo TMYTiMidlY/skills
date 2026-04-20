@@ -231,11 +231,12 @@ description: Guide for creating effective skills. Use when users want to create 
 问题: "Skill 的实体文件放在哪里？"
 选项:
 - "放在当前项目目录下"
-- "放在 skills 仓库 (~/skills) 里，软链接到项目"
+- "放在本机 skills 仓库里，软链接到项目"
 ```
 
 如果用户选择放在 skills 仓库：
-- 实体文件创建在 `~/skills/skills/<skill-name>/`
+- 先确认本机 skills 仓库根目录（下文用 `<repo>` 表示），不要假定仓库安装在固定路径
+- 实体文件创建在 `<repo>/skills/<skill-name>/`
 - 自动创建软链接到对应的 skills 目录（根据 Phase 1.4 确定的作用域和工具）
 
 ### 3.3 创建 Skill
