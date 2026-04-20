@@ -135,3 +135,135 @@ wsl --shutdown
 ```
 
 如果 `wsl --shutdown` 后立刻恢复，就按 WSL 网络残留处理，不要继续在普通进程列表里找。
+
+# Windows 普通 PowerShell 创建文件 symlink 失败
+
+> 2026-04-20 | Windows | PowerShell | symlink 权限
+
+## 症状
+
+在普通 PowerShell 里创建文件软链接失败：
+
+```powershell
+New-Item -ItemType SymbolicLink -Path "$HOME\AGENTS.md" -Target "$HOME\skills\AGENTS.md"
+New-Item -ItemType SymbolicLink -Path "$HOME\CLAUDE.md" -Target "$HOME\AGENTS.md"
+```
+
+报错：
+
+```text
+Administrator privilege required for this operation.
+```
+
+用 `cmd /c mklink` 也失败：
+
+```text
+You do not have sufficient privilege to perform this operation.
+```
+
+但目录 skill 可以用 junction 成功安装：
+
+```powershell
+New-Item -ItemType Junction -Path "$HOME\.agents\skills\manage-skills" -Target "<repo>\skills\.curated\manage-skills"
+```
+
+## 排查关键转折
+
+先区分了三类链接：
+
+- `SymbolicLink`：文件和目录都能指向，但 Windows 默认需要 `Create symbolic links` 权限。
+- `Junction`：只适用于目录，通常普通用户在有写权限的位置也能建。
+- `.lnk` 快捷方式：不是文件系统级链接，工具不会按真实文件读取，不能替代 symlink。
+
+因此目录能装不是因为 symlink 权限正常，而是因为走了 junction；`AGENTS.md` / `CLAUDE.md` 是文件，不能用 junction，只能用文件 symlink。
+
+按微软文档确认权限名是 `SeCreateSymbolicLinkPrivilege`，普通用户需要管理员授予该权限，或者开启 Developer Mode。用户有管理员权限但当前 agent 会话没有管理员 token，所以由用户在管理员 PowerShell 里授权。
+
+第一次用 `DOMAIN\User` 写入 `secedit` 配置后出现：
+
+```text
+出现了扩展错误。
+任务已结束，但有错误。
+有关详细信息，请参阅日志 %windir%\security\logs\scesrv.log。
+```
+
+根因是 `secedit` 的用户权限配置更稳的写法是 SID，且 SID 前要带 `*`，并且必须写入 `[Privilege Rights]` 段，不能随便追加到文件末尾。
+
+另一个干扰项：用户复制命令时把 PowerShell 提示符 `PS C:\Users\...>` 和错误输出也粘进去了，导致 `PS` 被当成 `Get-Process` 别名执行，出现大量无关报错。给用户的命令必须明确“不要粘提示符”。
+
+## 解决
+
+在管理员 PowerShell 里执行：
+
+```powershell
+$sid = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
+$principal = "*$sid"
+
+$temp = Join-Path $env:TEMP "secpol-symlink"
+New-Item -ItemType Directory -Force -Path $temp | Out-Null
+
+$cfg = Join-Path $temp "secpol.cfg"
+$db = Join-Path $temp "secpol.sdb"
+$log = Join-Path $temp "secpol.log"
+
+Remove-Item $cfg, $db, $log -ErrorAction SilentlyContinue
+
+secedit /export /cfg $cfg | Out-Null
+
+$content = [string[]](Get-Content $cfg)
+$sectionIndex = [Array]::IndexOf($content, "[Privilege Rights]")
+if ($sectionIndex -lt 0) {
+    throw "secedit export 里没有 [Privilege Rights] 段，停止修改。"
+}
+
+$lineIndex = [Array]::FindIndex(
+    $content,
+    [Predicate[string]]{ param($line) $line -match '^SeCreateSymbolicLinkPrivilege\s*=' }
+)
+
+if ($lineIndex -ge 0) {
+    $current = ($content[$lineIndex] -replace '^SeCreateSymbolicLinkPrivilege\s*=\s*', '').Trim()
+    $entries = @()
+    if ($current) {
+        $entries = $current -split '\s*,\s*'
+    }
+
+    if ($entries -notcontains $principal) {
+        $entries += $principal
+    }
+
+    $content[$lineIndex] = "SeCreateSymbolicLinkPrivilege = " + ($entries -join ",")
+} else {
+    $list = [System.Collections.ArrayList]::new()
+    [void]$list.AddRange($content)
+    $list.Insert($sectionIndex + 1, "SeCreateSymbolicLinkPrivilege = $principal")
+    $content = [string[]]$list
+}
+
+Set-Content -Path $cfg -Value $content -Encoding Unicode
+
+secedit /configure /db $db /cfg $cfg /areas USER_RIGHTS /log $log
+gpupdate /force
+```
+
+然后注销当前 Windows 用户再登录，让登录 token 重新生成：
+
+```powershell
+shutdown /l
+```
+
+重新登录后，在普通 PowerShell 测试：
+
+```powershell
+Set-Content "$env:TEMP\target-test.txt" "ok"
+New-Item -ItemType SymbolicLink -Path "$env:TEMP\symlink-test.txt" -Target "$env:TEMP\target-test.txt"
+Get-Item "$env:TEMP\symlink-test.txt" | Select-Object FullName,LinkType,Target
+Remove-Item "$env:TEMP\symlink-test.txt","$env:TEMP\target-test.txt"
+```
+
+## 教训
+
+- Windows 目录链接成功不代表 symlink 权限正常，先看用的是 junction 还是 symbolic link。
+- 文件没有 junction，不能用 `.lnk` 快捷方式代替工具需要读取的配置文件。
+- 用 `secedit` 写用户权限时优先用 `*SID`，不要用显示名或 `DOMAIN\User`。
+- 修改用户权限后需要 logoff / logon；只重开 PowerShell 通常不够。
