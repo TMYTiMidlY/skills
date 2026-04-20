@@ -246,10 +246,10 @@ secedit /configure /db $db /cfg $cfg /areas USER_RIGHTS /log $log
 gpupdate /force
 ```
 
-然后注销当前 Windows 用户再登录，让登录 token 重新生成：
+然后 logoff 当前 Windows 用户再登录，让登录 token 重新生成：
 
 ```powershell
-shutdown /l
+logoff
 ```
 
 重新登录后，在普通 PowerShell 测试：
