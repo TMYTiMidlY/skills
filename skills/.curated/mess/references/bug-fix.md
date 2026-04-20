@@ -187,7 +187,7 @@ New-Item -ItemType Junction -Path "$HOME\.agents\skills\manage-skills" -Target "
 有关详细信息，请参阅日志 %windir%\security\logs\scesrv.log。
 ```
 
-根因是 `secedit` 的用户权限配置更稳的写法是 SID，且 SID 前要带 `*`，并且必须写入 `[Privilege Rights]` 段，不能随便追加到文件末尾。
+根因是 `secedit` 的用户权限配置更稳的写法是 SID，且 SID 前要带 `*`，并且必须写入 `[Privilege Rights]` 段，不能随便追加到文件末尾。另一个关键点是目标用户要明确：管理员 PowerShell 的当前身份不一定等于需要授权的日常登录用户，脚本应从目标用户的 home 目录解析账号，而不是直接使用管理员窗口的当前 SID。
 
 另一个干扰项：用户复制命令时把 PowerShell 提示符 `PS C:\Users\...>` 和错误输出也粘进去了，导致 `PS` 被当成 `Get-Process` 别名执行，出现大量无关报错。给用户的命令必须明确“不要粘提示符”。
 
@@ -196,8 +196,13 @@ New-Item -ItemType Junction -Path "$HOME\.agents\skills\manage-skills" -Target "
 在管理员 PowerShell 里执行：
 
 ```powershell
-$sid = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
-$principal = "*$sid"
+$targetHome = [Environment]::GetFolderPath("UserProfile")
+$targetUser = Split-Path $targetHome -Leaf
+$target = "$env:COMPUTERNAME\$targetUser"
+$targetSid = ([System.Security.Principal.NTAccount]$target).Translate([System.Security.Principal.SecurityIdentifier]).Value
+$principal = "*$targetSid"
+
+"Granting SeCreateSymbolicLinkPrivilege to $target ($principal)"
 
 $temp = Join-Path $env:TEMP "secpol-symlink"
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
@@ -244,6 +249,10 @@ Set-Content -Path $cfg -Value $content -Encoding Unicode
 
 secedit /configure /db $db /cfg $cfg /areas USER_RIGHTS /log $log
 gpupdate /force
+
+"Check result:"
+secedit /export /cfg $cfg | Out-Null
+Select-String -LiteralPath $cfg -Pattern '^SeCreateSymbolicLinkPrivilege\s*='
 ```
 
 然后 logoff 当前 Windows 用户再登录，让登录 token 重新生成：
