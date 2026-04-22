@@ -117,9 +117,61 @@ find <target>/.agents/skills -maxdepth 1 -type l ! -exec test -e {} \; -print
 - **个人配置不入 skill 正文**：凭据 / 域名 / 服务器地址 / 个人样例文件名都不写进 skill 正文。正文只写变量名、占位符和读取位置，真实值放 `~/.env` 或个人笔记。
 - **不绑定特定 AI 工具的具体工具名**：skill 正文不写 `AskUserQuestion`、`TodoWrite`、`WebFetch`、`Task` 这类特定宿主（Claude Code / Codex / Cursor / Trae 等）独有的工具名。同一能力在不同宿主里名字不同，硬编码会让 skill 在其它宿主跑不了。改写成能力描述："向用户提问的工具"、"任务清单工具"、"抓网页的工具"，由模型按当前环境自己挑。只有当 skill 明确只服务单一宿主、且在 description 里讲清楚时才可以保留具体名字。
 - **README 与 skill 实际状态同步**：README 表格条目的名称 / 来源 / 说明要和 skill 自身的 frontmatter `description` 口径一致；合并 / 拆分 / 重命名 / 删除 skill 后，README 不能留 stale 条目；外部索引按其自身语义核对，例如 `grafted-skills.json` 记录上游来源路径，不按本仓落点判断。
-- **`.` 开头子目录内的 skill 名不能与主目录或其他 `.` 目录内的 skill 同名**：按 skill name 加载时会歧义，必须全局唯一。
+- **所有命名空间内 skill 的 frontmatter `name` 必须全局唯一**（`.curated/` / `.experimental/` / `.legacy/` / 嫁接根目录加起来不能有重名）：Hermes 按 `name` 去重，first-seen wins 后者悄悄丢弃；如果同名 skill 落在同一个 external_dir 的不同子目录下（如 `skills/pdf` 和 `skills/.experimental/pdf`），谁先被扫到取决于文件系统遍历顺序，**行为不确定**。审查时 grep 所有 SKILL.md 的 `name:` 字段，发现重名就报告。
 - **其他结构性检查**：frontmatter `name` 与目录名一致；弃用段落删掉别留历史遗迹；任何可疑处照实记下让用户决断。
 
 输出格式：按 skill 分段，每段列命中的检查项（带文件 / 行号）与建议；最后给"全部无问题的 skill 清单"，避免用户误以为全仓都有病。
 
 批量修复前先跟用户敲定**改动策略**：统一用哪种新写法、原位置留空壳还是删、是否同步调其他 skill 的交叉引用。
+
+---
+
+## 为 Hermes 安装 skill
+
+Hermes 有自己的 skill 体系，用 `hermes skills` CLI 单独管理；它不会自动读取其它工具（Claude Code / Cursor / Codex 等）的 skills 目录，想让 Hermes 用上同一个 skill 要单独装一份。
+
+能用 `hermes skills install / uninstall` 搞定的就用命令，别手动摆目录——Hermes 会自己管安全扫描、锁文件和更新追踪。
+
+### 三种 skill 来源
+
+`hermes skills list` 里每条记录都带一个 `Source` 字段：
+
+| 来源 | 含义 | 命令能管吗 |
+|------|------|-----------|
+| `builtin` | 随 Hermes 发行版打包的 skill | 不能装/卸，只能 `reset`（清除"user-modified"标记） |
+| `hub` | 从 registry 拉下来的，走 `install`/`uninstall` 流程 | 可装可卸，有安全扫描与锁文件 |
+| `local` | 用户自己放进 Hermes skill 根的 skill | 靠文件系统管理 |
+
+### 从 registry 安装
+
+```bash
+hermes skills install <identifier> [--category <category>] [--yes]
+```
+
+`<identifier>` 采用 `<registry>/<path>/<name>` 的多级命名，常见形式：
+
+- `skills-sh/<owner>/<repo>/<name>` — skills.sh 第三方索引站（从 GitHub 仓库收录而来；上游是官方仓的条目会标 `trusted`，其余为 `community`）
+- `official/<category>/<name>` — Hermes 自带的官方 hub
+- 只写 skill 名 — 在所有已知 registry 中搜索
+
+要接入更多来源（如额外的 GitHub 仓库）用 `hermes skills tap add <owner/repo>`。不确定名字时先 `hermes skills search <query>` 找，`hermes skills inspect <identifier>` 预览，再决定是否安装。
+
+### 把本地 skill 装进 Hermes
+
+要让 Hermes 用上某个本地来源（含本仓库）的 skill，按 Hermes 约定的 `<category>/<name>/SKILL.md` 结构，把 skill 放进 Hermes 的 local skill 根——软链（推荐，改动同步）或复制均可。
+
+local 根的具体位置以` 的输出为准；分类按 skill 实际主题选，不匹配时 Hermes 会回落到 `local` 但可能影响加载。
+
+> 想让某个项目目录下的 skill 被 Hermes 发现但不移动文件，可在 `~/.hermes/config.yaml` 的 `skills.external_dirs` 里加入该目录；只读发现，不会改写。SSH / 远程 backend 不需要单独配置 skill，Hermes 会把本地 skill 同步到远端。
+
+### 其他管理命令
+
+| 操作 | 命令 |
+|------|------|
+| 列出已安装 | `hermes skills list [--source all\|hub\|builtin\|local]` |
+| 搜索可装 | `hermes skills search <query>` |
+| 预览（不装） | `hermes skills inspect <identifier>` |
+| 卸载（仅 hub） | `hermes skills uninstall <name>`（需 y 确认） |
+| 检查更新 | `hermes skills check` |
+| 更新所有 | `hermes skills update` |
+| 管理额外 registry | `hermes skills tap {list,add,remove}` |
