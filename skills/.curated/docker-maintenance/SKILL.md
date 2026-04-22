@@ -45,7 +45,7 @@ gh auth login --hostname github.com --git-protocol ssh
 # 输出里会给 one-time code + URL，到任何能开浏览器的机器上完成
 ```
 
-登录成功后 token 落在 `~/.config/gh/hosts.yml`——容器重建会丢，重要的话记得持久化这个路径（或挂到数据盘）。
+登录成功后 token 落在 `~/.config/gh/hosts.yml`。在非持久化容器环境里，这类本地认证状态可能丢失；重要的话记得把这个路径持久化（或挂到数据盘）。
 
 其他走 OAuth 的 CLI 基本都有类似 `--device-code` / `--headless` 的开关，首选它们而非 `--web`。
 
@@ -59,7 +59,7 @@ ssh-keygen -t ed25519 -C "Hermes Docker" -f ~/.ssh/id_ed25519 -N ""
 - `-N ""`：无 passphrase，容器场景免 agent 解锁。有安全顾虑再单独起 `ssh-agent`。
 - 生成后 `cat ~/.ssh/id_ed25519.pub` 贴到目标服务（GitHub/远端主机）。
 
-容器销毁会丢 key——要持久化就 `~/.ssh/` 挂到数据盘或者用 `docker_volumes` 把 host 的 `.ssh` 挂进来。
+在非持久化容器环境里，key 也可能随环境回收而丢失；要持久化就把 `~/.ssh/` 挂到数据盘，或者用 `docker_volumes` 把 host 的 `.ssh` 挂进来。
 
 ## 和其他 skill 的关系
 
