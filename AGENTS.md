@@ -5,7 +5,7 @@
 ## 核心规则
 
 - Python 环境优先级：Pixi > uv > python/python3。
-- Python 依赖优先写进脚本的 PEP 723 元数据；已有的 Python 文件运行需要临时依赖用 `uv run --with <package> <script>`。
+- Python 依赖优先写进脚本的 PEP 723 元数据；已有的 Python 文件运行需要临时依赖用 `uv run --with <package> <script>`；非必要时不用 `uv pip install`，而是使用 `uv add` 或 `uv run --with`。
 - 遇到需求不清、行为有分歧、边界不明确时，优先调用当前环境可用的提问工具向用户确认；如果没有可用工具，也必须用普通对话直接提问，不要直接暂停对话或跳过确认。
 - 未经用户明确指令，严禁自动执行 `git add` 或 `git commit`。
 - 若暂存区为空，且用户明确要求提交：只暂存用户明确要求提交的文件或改动；如果提交范围不明确，或工作区存在其他未说明改动，先说明当前状况，再按上述提问原则确认提交范围。
