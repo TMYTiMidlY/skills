@@ -47,8 +47,6 @@
 
 此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 
-另外，仓库还保留 `skills/.internal/` 目录给仓库维护者 / skill 开发者自用；该命名空间**不纳入用户安装清单，也不出现在上面的用户技能表中**。
-
 ### 外部 Skill 的适配规则
 
 来自外部仓库的 skill（标有来源链接的条目）会做以下适配，使其不绑定特定产品：
@@ -80,14 +78,12 @@ mkdir -p .agents/skills
 # 原创：skills/.curated/
 ln -s <repo>/skills/.curated/<skill-name> .agents/skills/
 
-# 嫁接（已适配）：skills/
+# 嫁接（已人工审核过）：skills/
 ln -s <repo>/skills/<skill-name> .agents/skills/
 
-# 实验性（未适配）：skills/.experimental/
+# 实验性（未人工审核）：skills/.experimental/
 ln -s <repo>/skills/.experimental/<skill-name> .agents/skills/
 ```
-
-`skills/.internal/` 属于维护者内部目录，不属于普通用户安装范围，一般不要链接进 `.agents/skills/`。
 
 GitHub Copilot、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等工具原生读取 `.agents/skills/`，无需额外配置。其他工具需要将各自的 skills 目录链接到 `.agents/skills/`：
 
