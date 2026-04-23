@@ -11,23 +11,27 @@
 | `manage-skills` | 创建、拆分、审查、维护本仓库里 skill 的规范与工作流 |
 | `software` | SSH、systemd、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享客户端、Windows/macOS 操作与激活、远程桌面 / WSL 网络、EasyTier 客户端、Hermes systemd / terminal backend |
 | `vps-maintenance` | VPS 初始化、Caddy（含 caddy-security / caddy-webdav）、EasyTier、网络质量检测 |
+| `docker-maintenance` | Hermes Docker 后端等受限容器内的环境探测、只读挂载识别、受限 CLI 安装、OAuth device flow、SSH key 生成 |
 | `remote` | 远程 SSH 执行规范 |
 | `thesis-writer` | 中文学位论文写作与修订：doc 转分章 md、脚注内联、引用核查、GB/T 7714 格式规范 |
 | `worktree` | 为实验性改动创建隔离 git worktree（含 submodule 同步）；项目特定构建由上层接管 |
 | `mess` | 记录排查过的疑难杂症和踩坑经历 |
+| `plan` | 先规划再实施：产出面向另一 AI 的分步可验证实施文档，含设计考量与注意事项 |
 
 ### 嫁接自其他仓库
 
 | Skill | 来源 | 说明 |
 | --- | --- | --- |
-| `qiuzhi-skill-creator` | [秋芝2046](https://space.bilibili.com/385670211) | 交互式引导创建新的 skill |<!-- skills-table:begin -->
+| `qiuzhi-skill-creator` | [秋芝2046](https://space.bilibili.com/385670211) | 交互式引导创建新的 skill |
+<!-- skills-table:begin -->
 | `slidev` | [slidevjs/slidev](https://github.com/slidevjs/slidev) | Slidev 官方 skill |
 | `doc-coauthoring` | [anthropics/skills](https://github.com/anthropics/skills) | 文档协作工作流 |
 | `docx` | [anthropics/skills](https://github.com/anthropics/skills) | Word 文档操作 |
 | `frontend-design` | [anthropics/skills](https://github.com/anthropics/skills) | 前端界面设计 |
 | `pptx` | [anthropics/skills](https://github.com/anthropics/skills) | PowerPoint 文件操作 |
 | `xlsx` | [anthropics/skills](https://github.com/anthropics/skills) | Excel 电子表格操作 |
-| `pdf` | [anthropics/skills](https://github.com/anthropics/skills) | PDF 文件操作 |<!-- skills-table:end -->
+| `pdf` | [anthropics/skills](https://github.com/anthropics/skills) | PDF 文件操作 |
+<!-- skills-table:end -->
 
 以下 skill 从外部仓库下载，尚未经过适配和验证，放在 `skills/.experimental/` 目录下：
 
@@ -43,6 +47,8 @@
 
 此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 
+另外，仓库还保留 `skills/.internal/` 目录给仓库维护者 / skill 开发者自用；该命名空间**不纳入用户安装清单，也不出现在上面的用户技能表中**。
+
 ### 外部 Skill 的适配规则
 
 来自外部仓库的 skill（标有来源链接的条目）会做以下适配，使其不绑定特定产品：
@@ -50,12 +56,20 @@
 1. **去品牌化** — 将 `Claude`、`artifacts` 等产品专属概念替换为通用表述（如 `agent`、文件操作）；删除 `claude.ai` 等产品链接。
 2. **统一依赖管理** — `python scripts/...` 改为 `uv run scripts/...`；`pip install X` 改为 `uv run --with X`。
 
+### 嫁接记录与本机安装记录
+
+`grafted-skills.json` 记录的是外部 skill 的**上游来源**，用于回看、同步或对比上游版本。其中 `path` 是 skill 在上游仓库中的路径，不表示它在本仓库里的落点；本仓实际位置以 README 表格和 `skills/` 目录为准。
+
+来源尚未确认时，宁可暂时留空，也不要猜测填值；当前 `upload` 按此规则处理。
+
+`.agents/.skills-lock.json` 是本机安装状态，由 `skills` CLI 这类安装工具维护，记录当前机器安装过哪些 skill。它和 `grafted-skills.json` 不是同一类文件：前者管本机安装，后者管本仓嫁接来源。
+
 ## 安装
 
 ### 方式一：克隆 + 软链接（推荐）
 
 ```bash
-git clone https://github.com/TMYTiMidlY/skills.git ~/skills
+git clone https://github.com/TMYTiMidlY/skills.git <repo>
 ```
 
 以 `.agents/skills/` 作为唯一的 skill 源，将需要的 skill 链接进去。全局安装就放在 `~/` 下，项目级安装就放在项目根目录下。skill 按类别分布在三个位置，按来源链接：
@@ -64,14 +78,16 @@ git clone https://github.com/TMYTiMidlY/skills.git ~/skills
 mkdir -p .agents/skills
 
 # 原创：skills/.curated/
-ln -s ~/skills/skills/.curated/<skill-name> .agents/skills/
+ln -s <repo>/skills/.curated/<skill-name> .agents/skills/
 
 # 嫁接（已适配）：skills/
-ln -s ~/skills/skills/<skill-name> .agents/skills/
+ln -s <repo>/skills/<skill-name> .agents/skills/
 
 # 实验性（未适配）：skills/.experimental/
-ln -s ~/skills/skills/.experimental/<skill-name> .agents/skills/
+ln -s <repo>/skills/.experimental/<skill-name> .agents/skills/
 ```
+
+`skills/.internal/` 属于维护者内部目录，不属于普通用户安装范围，一般不要链接进 `.agents/skills/`。
 
 GitHub Copilot、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等工具原生读取 `.agents/skills/`，无需额外配置。其他工具需要将各自的 skills 目录链接到 `.agents/skills/`：
 
