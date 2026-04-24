@@ -21,6 +21,10 @@ Zellij Web client、HTTPS 证书要求、login token/session token、反代注�
 
 RDP、向日葵、WSL Mirror 模式网络、会话管理（tsdiscon / logoff）、MTU 排障见 [references/network.md](references/network.md)。
 
+## 挂载与文件共享
+
+WSL 挂载 Windows 盘、UNC/SMB 共享、`drvfs/9p` 小文件性能、CIFS 凭据与 `mount.cifs` 排障见 [references/mount.md](references/mount.md)。
+
 ## EasyTier 客户端（Windows）
 
 EasyTier 组网的 Windows 客户端：安装、TOML 配置模板、Peer 配置、与 VPS 服务端的差异、NSSM 服务排障、Windows 防火墙见 [references/easytier.md](references/easytier.md)。**VPS 服务端完整安装与配置（全 listener、出口节点、中继策略等）见 `vps-maintenance` skill 的 EasyTier reference。**
