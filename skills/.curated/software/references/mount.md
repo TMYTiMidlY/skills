@@ -48,13 +48,13 @@ sudo smbclient -L //<smb-host> -A /etc/samba/credentials/<remote> -m SMB3
 ```bash
 sudo mkdir -p <mount-point>
 sudo mount.cifs //<smb-host>/<share> <mount-point> \
-  -o credentials=/etc/samba/credentials/<remote>,uid=1000,gid=1000,iocharset=utf8,vers=3.1.1,noperm,sec=ntlmssp,domain=<domain>
+  -o credentials=/etc/samba/credentials/<remote>,uid=<UID>,gid=<GID>,iocharset=utf8,vers=3.1.1,noperm,sec=ntlmssp,domain=<domain>
 ```
 
-持久化 `/etc/fstab` 示例：
+持久化 `/etc/fstab` 示例（将 `<UID>`、`<GID>` 替换为实际用户 ID，可通过 `id -u`、`id -g` 查看）：
 
 ```fstab
-//<smb-host>/<share> <mount-point> cifs credentials=/etc/samba/credentials/<remote>,uid=1000,gid=1000,iocharset=utf8,vers=3.1.1,noperm,sec=ntlmssp,domain=<domain>,noauto,x-systemd.automount 0 0
+//<smb-host>/<share> <mount-point> cifs credentials=/etc/samba/credentials/<remote>,uid=<UID>,gid=<GID>,iocharset=utf8,vers=3.1.1,noperm,sec=ntlmssp,domain=<domain>,noauto,x-systemd.automount 0 0
 ```
 
 `noauto,x-systemd.automount` 可以避免开机时网络或凭据暂不可用导致启动卡住；访问 `<mount-point>` 时再自动挂载。

@@ -18,9 +18,9 @@ TABLE_RE = re.compile(r"<table\b[^>]*>.*?</table>", re.S | re.I)
 
 
 def clean_cell_text(text: str) -> str:
-    text = text.replace(BR_TOKEN, "<br>")
     text = html.unescape(text)
     text = re.sub(r"<[^>]+>", "", text)
+    text = text.replace(BR_TOKEN, "<br>")
     text = re.sub(r"[ \t\r\f\v]+", " ", text)
     text = re.sub(r"\n\s*", "<br>", text)
     return text.strip().replace("|", r"\|")

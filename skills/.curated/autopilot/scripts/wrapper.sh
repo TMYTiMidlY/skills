@@ -54,7 +54,7 @@ check_quota() {
 for envfile in \
     "$HOME/.hermes/profiles/${PROFILE}/.env" \
     "$HOME/.hermes/.env"; do
-    [ -f "$envfile" ] && set -a && source "$envfile" && set +a
+    [ -f "$envfile" ] && export MINIMAX_CN_API_KEY="$(grep '^MINIMAX_CN_API_KEY=' "$envfile" | cut -d= -f2-)"
 done
 
 # 1. 独占锁
@@ -72,6 +72,11 @@ if ! flock -n 200; then
     fi
     exit 0
 fi
+
+cleanup() {
+    rm -f "$LOCK_FILE" "$LOCK_WARN_FLAG"
+}
+trap cleanup EXIT
 rm -f "$LOCK_WARN_FLAG"
 
 # 2. 额度检查

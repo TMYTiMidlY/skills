@@ -8,13 +8,13 @@
 
 ```bash
 gh auth setup-git
-git clone "https://x-access-token:${GH_TOKEN}@github.com/<OWNER>/<STATE_REPO>.git" /root/state
+git clone "https://x-access-token:${GH_TOKEN}@github.com/${state_repo}.git" /root/state
 ```
 
 每轮收尾：
 
 ```bash
-cd /root/state && git add -A && git commit -m "tick <时间> | <task_id>" && git push
+cd /root/state && git add -A && git commit -m "tick <时间戳> | <task_id>" && git push
 ```
 
 ## 目录结构
@@ -25,7 +25,7 @@ cd /root/state && git add -A && git commit -m "tick <时间> | <task_id>" && git
   constraints.md   (可选)
   progress.md
   attempts.log
-  status
+  status            (纯文本文件，内容为状态值之一)
   report.md
   logs/
     <YYYYMMDD-HHMM>.md

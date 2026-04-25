@@ -1,4 +1,6 @@
-# VS Code Web 中文语言包 NLS 覆盖 Bug
+# 疑难杂症案例
+
+## VS Code Web 中文语言包 NLS 覆盖 Bug
 
 > 2026-04-08 | VS Code 1.115.0 | WSL2 Mirrored Networking | Chrome
 
@@ -29,7 +31,7 @@
 - 或 Chrome 语言设置把 English 排到中文前面
 - 或等上游中文语言包补全
 
-# PDF.js v5.5+ 在 Chrome < 140 上崩溃 (`Uint8Array.toHex` polyfill 缺失)
+## PDF.js v5.5+ 在 Chrome < 140 上崩溃 (`Uint8Array.toHex` polyfill 缺失)
 
 > 2026-04-10 | LaTeX-Workshop 10.14.1 (fork) | pdfjs-dist 5.6.205 | htbrowser Chrome 132
 
@@ -79,7 +81,7 @@ PDF.js 升级版本后无条件调用 TC39 提案 `Uint8Array.prototype.toHex()`
 - **判断 JS 库版本是否受 polyfill 缺失影响，最快的办法是 grep 关键 API 看有没有 if 守卫**，比查 changelog 快。
 - **VS Code serve-web 装老版扩展报 "Extension not found"**：走 marketplace API URL 直接 curl 即可。
 
-# Windows 端口绑定异常但 Win/WSL 都查不到占用
+## Windows 端口绑定异常但 Win/WSL 都查不到占用
 
 > 2026-04-20 | Windows | WSL2 | 端口绑定
 
@@ -136,7 +138,7 @@ wsl --shutdown
 
 如果 `wsl --shutdown` 后立刻恢复，就按 WSL 网络残留处理，不要继续在普通进程列表里找。
 
-# Windows 普通 PowerShell 创建文件 symlink 失败
+## Windows 普通 PowerShell 创建文件 symlink 失败
 
 > 2026-04-20 | Windows | PowerShell | symlink 权限
 

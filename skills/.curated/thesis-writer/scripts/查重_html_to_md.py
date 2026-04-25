@@ -209,7 +209,7 @@ def parse_section_details(root) -> list[dict]:
                                "sources": sources})
         sections.append({
             "title": sec_title,
-            "total_pct": nums[0] if nums else "",
+            "total_pct": nums[0] if len(nums) > 0 else "",
             "exclude_self_pct": nums[1] if len(nums) > 1 else "",
             "exclude_quote_pct": nums[2] if len(nums) > 2 else "",
             "chars": chars,
@@ -314,7 +314,7 @@ def main():
         args.output.write_text(md, encoding="utf-8")
         print(f"wrote {args.output} ({len(md)} chars)", file=sys.stderr)
     else:
-        sys.stdout.write(md)
+        sys.stdout.write(md + "\n")
 
 
 if __name__ == "__main__":
