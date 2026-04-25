@@ -1,6 +1,6 @@
 # Skills
 
-给 AI 编程助手（Claude Code / GitHub Copilot 等）增加实用能力的技能包合集。安装后，AI 能直接处理 Office 文档、PDF、前端页面设计、服务器运维等日常任务。
+面向 AI 编程助手（Claude Code / GitHub Copilot 等）的实用技能包合集。安装后，AI 能直接处理 Office 文档、PDF、前端页面设计、服务器运维等日常任务。
 
 ## 可用的 Skills
 
