@@ -1,6 +1,6 @@
 ---
 name: software
-description: 软件服务、CLI 工具、桌面端使用、本地/自托管服务配置与排障；涵盖 SSH、systemd、Zellij Web client/token/反代、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享、Windows/macOS 操作与激活、远程桌面与 WSL 网络、EasyTier 客户端、Hermes systemd / terminal backend。
+description: 本地软件、CLI 工具与自托管服务的配置与排障。涵盖 SSH 与 systemd、Zellij 终端复用与反代、文档格式转换（pandoc/feishu2md/MinerU）、自托管文档分享、WSL 与 Windows 互操作、EasyTier 客户端组网、Hermes agent 部署等。
 ---
 
 # Software

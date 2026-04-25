@@ -47,13 +47,12 @@ def slugify(name: str) -> str:
     return name[:120].strip("_")
 
 
-def fetch_pdf(src: str, dst: Path) -> Path:
+def fetch_pdf(src: str, dst: Path, verify_ssl: bool = True) -> Path:
     """若 src 是 URL 则下载到 dst；若是本地路径直接返回。"""
     if src.startswith(("http://", "https://")):
         log(f"下载 {src} → {dst}")
         dst.parent.mkdir(parents=True, exist_ok=True)
-        # 自签证书兜底
-        with httpx.stream("GET", src, verify=False, timeout=None, follow_redirects=True) as r:
+        with httpx.stream("GET", src, verify=verify_ssl, timeout=None, follow_redirects=True) as r:
             r.raise_for_status()
             total = int(r.headers.get("content-length", 0))
             done = 0
@@ -134,9 +133,9 @@ def split_pdf(
             return parts
 
 
-def mineru_batch_upload(parts: list[Part], token: str, language: str = "ch") -> str:
+def mineru_batch_upload(parts: list[Part], token: str, language: str = "ch", is_ocr: bool = False) -> str:
     """用 batch 接口拿上传 URL，依次 PUT 上传。返回 batch_id。"""
-    files = [{"name": p.pdf_path.name, "is_ocr": True} for p in parts]
+    files = [{"name": p.pdf_path.name, "is_ocr": is_ocr} for p in parts]
     body = {
         "files": files,
         "model_version": "vlm",
@@ -243,6 +242,10 @@ def main() -> None:
     ap.add_argument("--skip-download", action="store_true", help="如 --input 已是本地文件，跳过下载")
     ap.add_argument("--skip-split", action="store_true", help="out-dir 下已有 part*.pdf 时跳过拆分")
     ap.add_argument("--resume-batch", default="", help="复用已存在的 batch_id（跳过上传）")
+    ap.add_argument("--ocr", action="store_true", default=False,
+                    help="使用 OCR 模式（默认 is_ocr=false，对文本层 PDF 推荐；扫描件 / 图片 PDF 加此选项）")
+    ap.add_argument("--insecure", action="store_true", default=False,
+                    help="跳过 HTTPS 证书验证（仅用于自签证书场景）")
     args = ap.parse_args()
 
     if not args.token:
@@ -260,7 +263,7 @@ def main() -> None:
         name = unquote(Path(urlsplit(args.input).path).name) if args.input.startswith(("http://", "https://")) else Path(args.input).name
         src_pdf = out_dir / "source.pdf"
         if not src_pdf.exists():
-            fetch_pdf(args.input, src_pdf)
+            fetch_pdf(args.input, src_pdf, verify_ssl=not args.insecure)
         else:
             log(f"已存在 {src_pdf}，跳过下载")
 
@@ -284,7 +287,7 @@ def main() -> None:
         batch_id = args.resume_batch
         log(f"复用 batch_id: {batch_id}")
     else:
-        batch_id = mineru_batch_upload(parts, args.token, args.language)
+        batch_id = mineru_batch_upload(parts, args.token, args.language, is_ocr=args.ocr)
         (out_dir / "batch_id.txt").write_text(batch_id)
 
     results = mineru_wait_batch(batch_id, args.token)

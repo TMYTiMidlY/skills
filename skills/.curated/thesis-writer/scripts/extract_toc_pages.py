@@ -63,13 +63,13 @@ def extract_headings(doc, offset):
 
                 # 章标题和 X.X 级节标题：字号 >= 14pt
                 if max_size >= 14:
-                    m = re.match(r"^第([1-9])\s*章", text)
+                    m = re.match(r"^第(\d+)\s*章", text)
                     if m:
                         key = f"第{m.group(1)}章"
                         if key not in results:
                             results[key] = body_page
 
-                    m = re.match(r"^([1-9]\.[1-9])$", text)
+                    m = re.match(r"^(\d+\.\d+)$", text)
                     if m:
                         if m.group(1) not in results:
                             results[m.group(1)] = body_page
@@ -81,7 +81,7 @@ def extract_headings(doc, offset):
 
                 # X.X.X 级小节标题：字号 >= 12pt
                 if max_size >= 12:
-                    m = re.match(r"^([1-9]\.[1-9]\.[1-9])", text)
+                    m = re.match(r"^(\d+\.\d+\.\d+)", text)
                     if m and m.group(1) not in results:
                         results[m.group(1)] = body_page
 

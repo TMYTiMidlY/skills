@@ -65,15 +65,6 @@ PAGE_NUM_RE = re.compile(r'^-?\s*\d+\s*-?$')
 def is_pagenum(text):
     return bool(re.fullmatch(r'-\s*\d+\s*-', text))
 
-def line_to_md(size, text):
-    if is_pagenum(text):
-        return None
-    if size >= 15:
-        return f'# {text}'
-    if 11.5 <= size < 15:
-        return f'## {text}'
-    return text
-
 def process_pdf(pdf_path, out_path):
     md_lines = []
     bar_rows = []  # (part_pct, part_count, total_pct, total_count, section, total_chars)
@@ -89,7 +80,12 @@ def process_pdf(pdf_path, out_path):
                     continue
                 if is_pagenum(text):
                     continue
-                md_lines.append(line_to_md(size, text))
+                if size >= 15:
+                    md_lines.append(f'# {text}')
+                elif 11.5 <= size < 15:
+                    md_lines.append(f'## {text}')
+                else:
+                    md_lines.append(text)
     # 在"检测结果"段之后插入 bar table
     if bar_rows:
         table = ['', '| 去除本人复制比 | 总文字复制比 | 章节 | 总字符数 |', '|---|---|---|---|']
