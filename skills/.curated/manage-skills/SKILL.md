@@ -83,7 +83,9 @@ trash-put <target>/.agents/skills/<name>
 skill 在仓库里改过路径（重命名、迁进 `.curated/` 等）会让旧 symlink 变成死链：
 
 ```bash
-find <target>/.agents/skills -maxdepth 1 -type l ! -exec test -e {} \; -print
+for link in <target>/.agents/skills/*; do
+  [ -L "$link" ] && [ ! -e "$link" ] && printf '%s\n' "$link"
+done
 ```
 
 找到断的 → 移回收站 → 按新源路径重链。
