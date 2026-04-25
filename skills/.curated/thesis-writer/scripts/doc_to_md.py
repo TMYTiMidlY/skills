@@ -97,10 +97,10 @@ def find_split_points(lines: list[str]) -> dict:
             toc_end_hint = i
 
     for i, line in enumerate(lines):
-        if i <= toc_end_hint:
+        if toc_end_hint > 0 and i <= toc_end_hint:
             continue
         s = line.strip()
-        for ch in '1234':
+        for ch in '123456789':
             if s.startswith(f'第{ch}章') and ch not in chapter_starts:
                 chapter_starts[ch] = i
         if s == '参考文献' and ref_start is None:
@@ -123,9 +123,7 @@ def split_and_write(lines: list[str], splits: dict, outdir: Path, original_src: 
     sections = {
         '00': lines[:bounds[0][1]] + [''] + lines[ref:],
     }
-    chapter_titles = {
-        '1': '绪论', '2': '历史考察', '3': '逻辑特征和驱动机制', '4': '实践审视和优化进路'
-    }
+    chapter_titles: dict[str, str] = {}
     for num, start, end in bounds:
         sections[f'0{num}'] = lines[start:end]
 

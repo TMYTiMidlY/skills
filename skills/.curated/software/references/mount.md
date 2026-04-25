@@ -48,13 +48,13 @@ sudo smbclient -L //10.100.158.17 -A /etc/samba/credentials/quantum-team -m SMB3
 ```bash
 sudo mkdir -p /mnt/team
 sudo mount.cifs //10.100.158.17/Team /mnt/team \
-  -o credentials=/etc/samba/credentials/quantum-team,uid=1000,gid=1000,iocharset=utf8,vers=3.1.1,noperm,sec=ntlmssp,domain=Quantum
+  -o credentials=/etc/samba/credentials/quantum-team,uid=<UID>,gid=<GID>,iocharset=utf8,vers=3.1.1,noperm,sec=ntlmssp,domain=Quantum
 ```
 
-持久化 `/etc/fstab` 示例：
+持久化 `/etc/fstab` 示例（将 `<UID>`、`<GID>` 替换为实际用户 ID，可通过 `id -u`、`id -g` 查看）：
 
 ```fstab
-//10.100.158.17/Team /mnt/team cifs credentials=/etc/samba/credentials/quantum-team,uid=1000,gid=1000,iocharset=utf8,vers=3.1.1,noperm,sec=ntlmssp,domain=Quantum,noauto,x-systemd.automount 0 0
+//10.100.158.17/Team /mnt/team cifs credentials=/etc/samba/credentials/quantum-team,uid=<UID>,gid=<GID>,iocharset=utf8,vers=3.1.1,noperm,sec=ntlmssp,domain=Quantum,noauto,x-systemd.automount 0 0
 ```
 
 `noauto,x-systemd.automount` 可以避免开机时网络或凭据暂不可用导致启动卡住；访问 `/mnt/team` 时再自动挂载。

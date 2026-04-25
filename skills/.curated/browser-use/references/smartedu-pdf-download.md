@@ -19,15 +19,20 @@ description: 国家中小学智慧教育平台受保护 PDF 的下载方法
 ```javascript
 (async () => {
   const iframe = document.querySelector('iframe');
+  if (!iframe) return console.error('未找到 iframe');
   const win = iframe.contentWindow;
+  if (!win || !win.PDFViewerApplication) return console.error('PDF.js 未初始化');
   const app = win.PDFViewerApplication;
   const doc = app.pdfDocument;
+  if (!doc) return console.error('PDF 文档未加载');
   const data = await doc.getData();
   const blob = new Blob([data], {type: 'application/pdf'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = '道德与法治八年级上册.pdf';
+  // 从页面标题或 URL 中提取文件名
+  const title = document.title || 'download';
+  a.download = title.replace(/[\\/:*?"<>|]/g, '_') + '.pdf';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -37,12 +42,13 @@ description: 国家中小学智慧教育平台受保护 PDF 的下载方法
 
 ## 步骤说明
 
-1. 首先用 `tabs_context_mcp` 获取当前 tab 列表
-2. 切换到 PDF 预览页面的 tab
-3. 用 `read_page` 确认 iframe 已加载
+1. 先通过 `tabs` 工具获取当前标签页列表
+2. 切换到 PDF 预览页面的标签页
+3. 用页面读取工具确认 iframe 已加载（检查 `PDFViewerApplication.pdfDocument` 存在且 `pagesCount` > 0）
 4. 执行上述 JavaScript 代码提取并下载 PDF
 
 ## 注意事项
 
-- PDF 必须在 pdf.js 中完全加载后才能提取
+- PDF 必须在 pdf.js 中完全加载后才能提取；可在 Console 先执行 `PDFViewerApplication.pagesCount` 确认不为空
 - 该方法利用的是用户在浏览器中已合法访问的资源
+- JavaScript 代码已内置空值检查，任一步骤失败会打印明确错误

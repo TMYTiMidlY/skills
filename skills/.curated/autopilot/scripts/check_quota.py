@@ -32,18 +32,23 @@ if not api_key:
 h5_threshold = float(os.environ.get("AUTOPILOT_5H_THRESHOLD", "0.1"))
 weekly_threshold = float(os.environ.get("AUTOPILOT_WEEKLY_THRESHOLD", "0.05"))
 
-req = urllib.request.Request(
-    "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
-    headers={
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    },
-)
-with urllib.request.urlopen(req, timeout=10) as resp:
-    data = json.load(resp)
+try:
+    req = urllib.request.Request(
+        "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.load(resp)
+except Exception as e:
+    print(f"请求额度 API 失败: {e}", file=sys.stderr)
+    sys.exit(3)
 
 for m in data.get("model_remains", []):
-    if m["model_name"] == "MiniMax-M*":
+    model_name = m.get("model_name", "")
+    if model_name.startswith("MiniMax-M"):
         iv_total = m["current_interval_total_count"]
         wk_total = m["current_weekly_total_count"]
         iv_rate = m["current_interval_usage_count"] / iv_total if iv_total else 0
@@ -62,5 +67,5 @@ for m in data.get("model_remains", []):
         print(f"额度充足：5H {iv_rate:.1%} / weekly {wk_rate:.1%}")
         sys.exit(0)
 
-print("未找到 MiniMax-M* 模型数据", file=sys.stderr)
+print(f"未找到 MiniMax-M* 模型数据，现有模型：{[m.get('model_name') for m in data.get('model_remains', [])]}", file=sys.stderr)
 sys.exit(3)
