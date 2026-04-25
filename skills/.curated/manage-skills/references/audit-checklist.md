@@ -28,9 +28,8 @@
 - **README 与 skill 实际状态同步**
   - README 表格条目的名称 / 来源 / 说明要和 skill 自身的 frontmatter `description` 口径一致。
   - 合并 / 拆分 / 重命名 / 删除 skill 后，README 不能留 stale 条目。
-  - 外部索引按其自身语义核对，例如 `grafted-skills.json` 记录上游来源路径，不按本仓落点判断。
 - **所有命名空间内 skill 的 frontmatter `name` 必须全局唯一**
-  - `.curated/`、`.experimental/`、`.legacy/`、嫁接根目录和维护区加起来不能有重名。
+  - `.curated/`、`.experimental/`、`.legacy/` 和嫁接根目录加起来不能有重名。
   - Hermes 按 `name` 去重，first-seen wins，后者会被悄悄丢弃。
   - 如果同名 skill 落在同一个 external_dir 的不同子目录下（如 `skills/pdf` 和 `skills/.experimental/pdf`），谁先被扫到取决于文件系统遍历顺序，**行为不确定**。
   - 审查时 grep 所有 SKILL.md 的 `name:` 字段，发现重名就报告。
