@@ -1,6 +1,37 @@
-# MinerU PDF→Markdown 云端转换
+# MinerU PDF→Markdown 转换
 
 MinerU（mineru.net）提供 VLM 模型将 PDF 转为 Markdown/JSON，支持公式和表格识别。
+
+## 默认策略与本地部署边界
+
+默认优先使用 MinerU 云端 API、Open API SDK 或用户已经明确配置好的现有服务。**未经用户明确允许，不要在本机安装、部署或临时拉取 MinerU 运行环境**，包括但不限于：
+
+- `uvx --from "mineru[all]" ...`
+- `pip install "mineru[all]"`
+- 启动本地 MinerU / VLM / pipeline 服务
+
+原因：MinerU 本地部署依赖很重，可能拉取数 GB 的 Python、torch、CUDA、vLLM 等组件，耗时、占空间，也可能污染用户环境。若确实需要本地部署，先说明预计影响（下载量、磁盘、是否需要 GPU/CPU、输出目录、如何清理），并等待用户确认。
+
+如果只需要快速预览，优先考虑 flash 模式；如果文件超出 flash 限制或需要完整图片/表格/公式资产，再走 token 认证的精度解析。
+
+## Flash 模式（无需 token，适合快速预览）
+
+MinerU Open API SDK 提供 `flash_extract()`，不需要 `MINERU_TOKEN`。适合小文件快速转 Markdown：
+
+```python
+from mineru import MinerU
+
+client = MinerU()
+result = client.flash_extract("https://example.com/file.pdf")
+print(result.markdown)
+```
+
+边界：
+
+- 不需要 token；如果没有 `MINERU_TOKEN`，客户端只能使用 flash 类能力。
+- 单文件限制约为 **10MB / 20 页**。
+- 默认中文语言，公式和表格识别默认开启，OCR 默认关闭。
+- 只适合快速预览 Markdown；需要完整 assets、JSON、DOCX/HTML/LaTeX 等，使用精度解析。
 
 ## 认证
 
