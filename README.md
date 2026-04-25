@@ -56,7 +56,9 @@
 
 `grafted-skills.json` 记录的是外部 skill 的**上游来源**，用于回看、同步或对比上游版本。其中 `path` 是 skill 在上游仓库中的路径，不表示它在本仓库里的落点；本仓实际位置以 README 表格和 `skills/` 目录为准。
 
-`.agents/.skills-lock.json` 是本机安装状态，由 `skills` CLI 这类安装工具维护，记录当前机器安装过哪些 skill。它和 `grafted-skills.json` 不是同一类文件：前者管本机安装，后者管本仓嫁接来源。
+来源尚未确认时，宁可暂时留空，也不要猜测填值。
+
+`skills-lock.json` 是本机安装状态，由 `skills` CLI 这类安装工具维护，记录当前机器安装过哪些 skill。它和 `grafted-skills.json` 不是同一类文件：前者管本机安装，后者管本仓嫁接来源。
 
 ## 安装
 
@@ -74,10 +76,10 @@ mkdir -p .agents/skills
 # 原创：skills/.curated/
 ln -s <repo>/skills/.curated/<skill-name> .agents/skills/
 
-# 嫁接（已适配）：skills/
+# 嫁接（已人工审核过）：skills/
 ln -s <repo>/skills/<skill-name> .agents/skills/
 
-# 实验性（未适配）：skills/.experimental/
+# 实验性（未人工审核）：skills/.experimental/
 ln -s <repo>/skills/.experimental/<skill-name> .agents/skills/
 ```
 
