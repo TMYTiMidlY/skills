@@ -109,3 +109,5 @@ gh api --paginate "repos/{repo}/commits?path={path}&since={synced_date}&sha={bra
 
 - 本地修改优先，同步时不能盲目覆盖。
 - 用 `gh api` 而非裸 `curl`，自带认证和分页。
+- `grafted-skills.json` 记录的是**上游来源路径**，不是本仓落点；核对来源索引时按上游语义判断。
+- 来源尚未确认时，宁可留空，也不要猜测补值。
