@@ -29,19 +29,19 @@
 | `frontend-design` | [anthropics/skills](https://github.com/anthropics/skills) | 前端界面设计 |
 | `pptx` | [anthropics/skills](https://github.com/anthropics/skills) | PowerPoint 文件操作 |
 | `xlsx` | [anthropics/skills](https://github.com/anthropics/skills) | Excel 电子表格操作 |
-| `pdf` | [anthropics/skills](https://github.com/anthropics/skills) | PDF 文件操作 |<!-- skills-table:end -->
+| `pdf` | [anthropics/skills](https://github.com/anthropics/skills) | PDF 文件操作 |
+| `frontend-skill` | [openai/skills](https://github.com/openai/skills) | 高质量前端页面构建 |
 
-以下 skill 从外部仓库下载，尚未经过适配和验证，放在 `skills/.experimental/` 目录下：
+以下 skill 从外部仓库下载，尚未经过适配和验证，放在 `.experimental/` 目录下：
 
 | Skill | 来源 | 说明 |
 | --- | --- | --- |
 | `doc` | [openai/skills](https://github.com/openai/skills) | Word 文档读写（python-docx） |
-| `frontend-skill` | [openai/skills](https://github.com/openai/skills) | 高质量前端页面构建 |
 | `gh-address-comments` | [openai/skills](https://github.com/openai/skills) | 处理 GitHub PR 评论 |
 | `gh-fix-ci` | [openai/skills](https://github.com/openai/skills) | 修复 GitHub CI 失败 |
 | `jupyter-notebook` | [openai/skills](https://github.com/openai/skills) | Jupyter Notebook 创建与编辑 |
 | `screenshot` | [openai/skills](https://github.com/openai/skills) | 桌面截图 |
-| `slides` | [openai/skills](https://github.com/openai/skills) | 代码驱动的幻灯片制作 |
+| `slides` | [openai/skills](https://github.com/openai/skills) | 代码驱动的幻灯片制作 |<!-- skills-table:end -->
 
 此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 

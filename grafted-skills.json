@@ -63,7 +63,7 @@
     "synced_date": "2026-02-02T15:59:58Z",
     "description": "Word 文档读写（python-docx）"
   },
-  ".experimental/frontend-skill": {
+  "frontend-skill": {
     "repo": "openai/skills",
     "path": "skills/.curated/frontend-skill",
     "branch": "main",
