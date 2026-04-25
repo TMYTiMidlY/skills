@@ -47,9 +47,9 @@ pandoc 文档转换、Markdown→PDF、PDF→图片、feishu2md 飞书/Lark→Ma
 
 服务端（Caddy site block、WebDAV handler、viewer 实现、目录权限）由 `vps-maintenance` skill 覆盖。如果源文件需要先做格式转换，看 [references/format-conversion.md](references/format-conversion.md)。
 
-## MinerU PDF→Markdown 云端转换
+## MinerU PDF→Markdown 转换
 
-MinerU（mineru.net）提供 VLM 模型将 PDF 转为 Markdown/JSON，支持公式和表格识别；详细流程见 [references/mineru.md](references/mineru.md)。
+MinerU（mineru.net）提供 VLM 模型将 PDF 转为 Markdown/JSON，支持公式和表格识别。默认使用云端 API / Open API；未经用户明确允许，不要在本机安装或部署 MinerU。详细流程见 [references/mineru.md](references/mineru.md)。
 
 ## Hermes
 
