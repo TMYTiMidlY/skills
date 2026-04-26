@@ -278,3 +278,141 @@ Remove-Item "$env:TEMP\symlink-test.txt","$env:TEMP\target-test.txt"
 - 文件没有 junction，不能用 `.lnk` 快捷方式代替工具需要读取的配置文件。
 - 用 `secedit` 写用户权限时优先用 `*SID`，不要用显示名或 `DOMAIN\User`。
 - 修改用户权限后需要 logoff / logon；只重开 PowerShell 通常不够。
+
+## 公网 VPS 做 UDP 端口段转发到内网地址时，启用 nftables.service 影响 Caddy HTTPS/TCP 服务
+
+> 2026-04-26 | Linux VPS | Caddy | nftables | GOST | UDP 端口段转发
+
+## 场景
+
+需要在一台有公网 IP 的 VPS 上，把外部访问的 UDP 端口段转发到内网/隧道里的另一台机器，例如：
+
+```text
+VPS_PUBLIC_IP:11000-11009/udp -> 10.144.18.10:11000-11009/udp
+```
+
+远端机器已有 Caddy 承载 80/443/TCP，目标内网地址通过 `tun0` 可达。起初选择内核 NAT：`prerouting dnat` + `postrouting masquerade`。
+
+## 症状
+
+- UDP NAT 规则看起来成功安装。
+- 但开启相关 nftables 配置后，VPS 上的 HTTPS/TCP 服务异常，外部连接 443/80 不可用。
+- 不需要 reload 才坏；实测直接 `stop nftables.service` 后 HTTPS/TCP 立刻恢复，因为 `ExecStop=/sbin/nft flush ruleset` 把这次加载的问题规则清掉了。
+- UDP 探测也容易误判：`nc -uvz` 对 UDP 没有握手语义，甚至未配置端口也可能显示 succeeded；普通网卡/UDP 计数还会被背景流量污染。
+
+## 排查关键转折
+
+先检查 `nftables.service` 的 unit：
+
+```ini
+ExecStart=/sbin/nft -f /etc/sysconfig/nftables.conf
+ExecReload=/sbin/nft 'flush ruleset; include "/etc/sysconfig/nftables.conf";'
+ExecStop=/sbin/nft flush ruleset
+```
+
+这就是关键：为了一个很小的 UDP 转发启用系统级 `nftables.service`，会把“谁在运行时维护了哪些 netfilter 规则”这件事变得不可控。即使转发规则本身只匹配 UDP，服务启动时加载的规则也可能影响同机已有的 HTTPS/TCP 服务链路、NAT 或防火墙状态；而 stop/reload/restart 的 `flush ruleset` 又会清空整套 nft ruleset。
+
+另一个排查坑是 UDP 测试方式：
+
+- `nc -uvz host port` 对 UDP 不可靠，不能当作“服务可用”的证据。
+- 看 `/proc/net/snmp` 的 `Udp/InDatagrams` 或网卡 RX 计数，也可能被背景流量干扰。
+- 没有 root 抓包权限时，很难证明某个测试 UDP 包确实到了目标应用；最干净还是在 VPS 或目标机上 `tcpdump udp portrange ...`。
+
+## 根因
+
+问题不是 DNAT 规则匹配了 TCP 443，而是为了安装一小段 UDP 转发，启用了会接管整个规则集的 `nftables.service`。这套 service 启动后加载的 ruleset 可能扰动同机已有的防火墙/NAT 状态，于是 Caddy 承载的 HTTPS/TCP 跟着异常；停止 service 后 `nft flush ruleset` 清掉问题规则，反而让连接恢复。
+
+## 解决
+
+先恢复现有 HTTPS 服务链路；如果问题来自刚启用的 `nftables.service`，停止它通常能立刻清掉问题规则：
+
+```bash
+sudo systemctl stop nftables
+```
+
+如果 Caddy 自身仍在监听但外部不可达，再重启 Caddy 以及相关网络/反代依赖：
+
+```bash
+sudo systemctl restart caddy
+```
+
+然后不要继续用系统 `nftables.service` 承载这种小转发：
+
+```bash
+sudo systemctl disable nftables
+```
+
+如果仍想用内核 NAT，推荐创建自己的独立 nft 表，并通过自定义 systemd oneshot 只做 `nft add table/add chain/add rule`，绝对不要 `flush ruleset`，也不要启用会加载 `/etc/sysconfig/nftables.conf` 的 `nftables.service`。
+
+更简单、容易回滚的方案是用 GOST 做用户态 UDP 端口段转发，独立 systemd 服务，不碰 Caddy/nft/iptables：
+
+```ini
+[Unit]
+Description=GOST UDP forward 11000-11009
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gost -L udp://:11000-11009/10.144.18.10:11000-11009
+Restart=always
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target
+```
+
+常用操作：
+
+```bash
+sudo systemctl enable --now gost-dst-udp
+sudo systemctl status gost-dst-udp
+sudo systemctl restart gost-dst-udp
+sudo systemctl disable --now gost-dst-udp
+```
+
+## 最终验证
+
+改用 GOST 独立 service 后，实测达到目标效果：
+
+- `gost-dst-udp.service` 为 `active` / `enabled`
+- VPS 上 `11000-11009/udp` 全部处于监听状态
+- 从另一台公网机器向 `VPS_PUBLIC_IP:11000-11009/udp` 发测试包后，GOST 日志显示每个端口都建立了到目标内网地址的转发：
+
+```text
+CLIENT_IP:CLIENT_PORT <-> 10.144.18.10:11000
+...
+CLIENT_IP:CLIENT_PORT <-> 10.144.18.10:11009
+```
+
+日志里出现 `inputBytes`，说明公网 UDP 包确实进入 GOST 并被转发到内网目标。测试包没有业务协议语义，目标服务不回包时可能看到 `outputBytes=0`，这不影响“公网 UDP 端口段已经转发到内网地址”的结论。
+
+## 清理注意
+
+如果之前已经写过 nft 配置，清理时只删/移动自己命名的文件和表：
+
+```text
+/etc/sysctl.d/99-udp-forward.conf
+/etc/nftables/udp-forward-*.nft
+/etc/systemd/system/<custom-forward>.service
+```
+
+从 `/etc/sysconfig/nftables.conf` 去掉自己追加的 include 行即可。不要执行 `nft flush ruleset`。
+
+写清理脚本时注意 `set -e` + 不存在的文件会直接中断。移动可选文件要用函数包一层：
+
+```bash
+move_if_exists() {
+  local path="$1"
+  if [[ -e "$path" ]]; then
+    mv "$path" "$BACKUP_DIR/"
+  fi
+}
+```
+
+## 教训
+
+- 只转发几个 UDP 端口时，别为了省事启用会接管全局 ruleset 的 `nftables.service`。
+- 已有 HTTPS/TCP 服务和防火墙/NAT 状态可能互相依赖，任何 `flush ruleset` 都可能制造看似无关的断流。
+- UDP 连通性测试不要相信 `nc -uvz` 的 succeeded；需要抓包或应用层协议响应。
+- 对“少量端口段转发、优先易恢复”的场景，GOST 独立 service 往往比 nft/iptables 更好维护。
