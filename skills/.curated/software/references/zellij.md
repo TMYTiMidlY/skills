@@ -135,3 +135,126 @@ WantedBy=multi-user.target
 - 未设置 `web_server_port` 时仍用默认 `8082`。
 
 如需新增端口，可使用独立 config，或在配置中显式设置 `web_server_port <PORT>`。反代前应先对该端口重新生成并登录，拿到新的 `session_token` 后再写入 `header_up Cookie`。
+
+重启 `zellij.service` 会让 Web 配置重新下发；如果该 service cgroup 中已有活跃 session/pane/agent 进程，可能中断现有会话，执行前先提醒用户。
+
+## Zellij Web 浅色主题与 Codex 颜色踩坑
+
+以下是一次 Zellij `0.44.0` Web 浅色化排障中确认过的事实。后续遇到类似问题，先按层级判断，不要直接改 `.bashrc`。
+
+### 用户偏好
+
+- 颜色类持久修复优先放 Zellij KDL：`web.kdl`、layout、theme。
+- 不把 OSC 颜色修复永久写进 `.bashrc`。
+- `printf`/临时脚本只用于诊断或即时验证。
+
+### 三层主题
+
+1. **Zellij UI theme**：根级 `theme "..."`，管 tab/status/pane frame、Zellij 自己画的鼠标选区、列表/表格选中态等。
+2. **Zellij Web xterm theme**：`web_client { theme { ... } }`，管浏览器 xterm.js 的背景、前景、xterm 自己的 selection 等。官方说明它和 Zellij theme 分离，不能写成继承 `pencil-light`，必须写具体 RGB。
+3. **pane/终端默认颜色**：程序可通过 OSC 10/11 查询默认前景/背景。Codex 输入框背景走这一层，而不是 Codex `tui.theme`。
+
+因此，单独设置 `theme "pencil-light"` 不会自动改变 Web xterm 的视觉主题；单独设置 `web_client.theme` 也不会改变 pane 的 OSC 11 默认背景。
+
+`pencil-light` 的主色来自内置主题：
+
+- foreground `66 66 66` = `#424242`
+- background `241 241 241` = `#f1f1f1`
+
+推荐 Web 视觉层最小配置：
+
+```kdl
+web_client {
+    font "monospace"
+    theme {
+        background 241 241 241
+        foreground 66 66 66
+        selection_background 0 120 215
+        selection_foreground 255 255 255
+        selection_inactive_background 153 201 239
+    }
+}
+```
+
+浏览器 Console 中 `term.options.theme` 会显示 camelCase 字段，例如 `selectionBackground`。若这里已有 `rgb(0, 120, 215)`，说明 `web_client.theme` 已正确下发。
+
+### Codex 输入框黑底
+
+Codex TUI 源码行为：输入框样式会根据终端默认背景计算；`/theme` 或 `tui.theme` 主要影响语法高亮、diff/code block，不直接决定输入框背景。
+
+诊断 OSC 11：
+
+```bash
+printf '\e]11;?\a'
+```
+
+简单 `read` 可能读不到响应；需要 raw tty 脚本更可靠。本次确认过的黑底响应：
+
+```text
+b'\x1b]11;rgb:0000/0000/0000\x1b\\'
+```
+
+临时修复验证：
+
+```bash
+printf '\033]10;#424242\007\033]11;#f1f1f1\007'
+```
+
+永久修复优先用 layout 的 pane 默认颜色：
+
+```kdl
+layout {
+    pane default_fg="#424242" default_bg="#f1f1f1"
+}
+```
+
+可配 `default_layout "pencil-light"` 并在 `~/.config/zellij/layouts/pencil-light.kdl` 中设置顶层 `pane default_fg/default_bg`。如果 layout 对某些新 pane 不生效，`default_shell` wrapper 发 OSC 10/11 只能作为兜底，不是首选。
+
+注意：`web_client.theme.background` 只管浏览器 xterm 视觉背景，不等价于 pane 的 OSC 11 默认背景；`zellij action set-pane-color` 在本环境曾出现无输出且不结束，不作为首选方案。
+
+### 鼠标拖选颜色
+
+不要把两种 selection 混淆：
+
+- `web_client.theme.selection_background` 管 xterm.js 自己的 selection。`term.select(0, 0, 20)` 变蓝，说明这一层正常。
+- 普通鼠标拖选在 `mouse_mode true` 时走 Zellij 自己的鼠标选择/复制路径，颜色来自 Zellij theme 的 `text_selected`，不是 `web_client.theme.selection_background`。
+
+如果浏览器端 `term.options.theme` 已正确、`term.select(...)` 也是蓝色，但普通鼠标拖选颜色仍不对，问题不在配置下发，而在 Zellij 鼠标选择层。
+
+源码确认 Zellij terminal pane 鼠标选区使用：
+
+```kdl
+text_selected {
+    base ...
+    background ...
+}
+```
+
+内置 `pencil-light` 的 `text_selected.background` 也是 `241 241 241`，和普通背景一样，因此鼠标拖选会像白底贴白底。解决方式：复制 `pencil-light` 为自定义主题，只改 Zellij 选中态，例如：
+
+```kdl
+theme "pencil-light-readable"
+
+themes {
+    pencil-light-readable {
+        text_selected {
+            base 255 255 255
+            background 0 120 215
+            emphasis_0 215 95 95
+            emphasis_1 32 165 186
+            emphasis_2 16 167 120
+            emphasis_3 0 142 196
+        }
+        // 其余段落从 pencil-light 复制；
+        // list_selected/table_cell_selected 也建议改为蓝底白字。
+    }
+}
+```
+
+官方 mouse 兼容建议：`mouse_mode true` 时 Zellij 接管鼠标；按住 `Shift` 可让终端处理选择/链接/复制/滚动。也可设置：
+
+```kdl
+mouse_mode false
+```
+
+但这会减少 Zellij 鼠标能力，例如点击 pane 聚焦、拖边框 resize、滚轮 scrollback、链接/路径点击、hover 效果等。用户倾向保留 `mouse_mode`，通过自定义 Zellij theme 修正 Zellij 自己的选区颜色。
