@@ -284,6 +284,53 @@ sudo systemctl restart caddy
   **IP 模式尤其要注意端口**：Go 的 `url.Host` 会把端口也算进去，匹配非标端口时正则必须显式吃掉端口。  
   参考：[caddy-security#455](https://github.com/greenpau/caddy-security/issues/455)
 
+### caddy-security 路径隔离经验
+
+`authenticate` 是认证门户本身，`authorize` 是保护业务站点的门禁。常见、稳妥的结构是把认证门户单独放在一个路径前缀或二级域名，不要让它和业务前端/后端共用根路径下的短路径。
+
+推荐二选一：
+
+- **单独路径前缀**：`/auth/*`
+- **单独二级域名**：`auth.example.com`
+
+这样可以避免这些常见冲突：
+
+- Vite 等前端构建工具默认会把静态资源放到 `/assets/*`，不要让 auth portal 抢业务前端的 assets。
+- 业务后端常用 `/api/*`，而 caddy-security 的 profile app 也会用类似 `/api/refresh_token`、`/api/profile` 的内部 API；portal 挂在根路径时很容易撞到业务 API。
+- `/profile`、`/whoami` 这类短路径也容易和业务路由或 SPA fallback 冲突；当前插件源码里没有 `/settings` 这个裸路由，不要把它当作 auth portal 路径。
+
+路径经验：
+
+- 如果业务和 portal 在同一 host，`set auth url` 必须指向 portal 前缀下能被 `authenticate` 接住的路径，例如 `https://example.com/auth/` 或 `https://example.com/auth/login`。
+- 保留业务自己的 `/api/*` 和 `/assets/*`，让它们继续进业务后端或前端文件服务。
+- 不要把 `authorize with ...` 提到 site block 顶层再用多个 `handle` 分支，否则可能让授权层先于 portal 路径执行，导致登录页、回调或 whoami 被授权层拦住。
+- `trust login redirect uri domain suffix example.com path prefix /` 适合信任自己控制的主域和子域；如果只信任当前 host，可用 `domain exact example.com`。不要删除 trust：没有 trust 时，`redirect_url` 会被忽略。
+- portal 诊断页如 `/auth/whoami` 未登录时可能使用相对 `redirect_url`；这不应作为业务登录回跳的主流程。正常业务回跳应由 `authorize` 生成完整原始 URL，这会通过 trust 的许可。
+
+下面这些路径都是**相对 portal base path**。如果 portal 挂在 `/auth/*`，就把 `/login` 理解成 `/auth/login`；如果 portal 独占 `auth.example.com` 根路径，就直接是 `/login`。
+
+| 相对路径 | 用途 | 备注 |
+|---|---|---|
+| `/` | portal 根入口 | 通常会跳到 `/login` |
+| `/login` | 登录页 | GitHub OAuth 按钮从这里进入 |
+| `/logout` | 登出 | 清理 auth cookie，可能触发外部登出 |
+| `/portal` | 登录后的 portal 首页 | auth portal 自己的首页 |
+| `/whoami` | 当前身份/Token 信息页 | 诊断用，不建议当业务登录入口 |
+| `/profile/` | 用户资料管理 SPA | 必须带尾斜杠；不是 `/profile` |
+| `/profile/*` | profile SPA 静态资源/子路由 | 例如 `/profile/assets/...` |
+| `/assets/*` | 老 portal UI 静态资源 | CSS、JS、图片等 |
+| `/oauth2/*` | OAuth 流程 | 例如 GitHub 登录、callback |
+| `/api/refresh_token` | portal 内部刷新 token | profile app 会用 |
+| `/api/profile...` | profile app 内部 API | 需要 profile API 开启和用户角色 |
+| `/register` | 注册页/流程 | 本地 identity store 场景更有意义 |
+| `/recover` / `/forgot` | 找回流程 | 主要是本地账号场景 |
+| `/basic/login/*` | Basic login 相关流程 | 特定认证方式用 |
+| `/apps/sso` | SSO app 页面 | 插件内置 app |
+| `/apps/mobile-access` | 移动访问 app 页面 | 插件内置 app |
+| `/sandbox/*` | MFA/交互沙盒流程 | MFA、U2F 等相关 |
+| `/barcode/mfa/*` | MFA 条码 | App MFA 注册/展示相关 |
+
+
 ### 配置 OAuth 环境变量
 
 ```bash
@@ -311,6 +358,48 @@ sudo systemctl show caddy --property=Environment
 
 - `JWT_SHARED_KEY` 填一串足够长的随机字符串即可。
 - 为什么必须显式配 `JWT_SHARED_KEY`，见上一节的 `crypto key sign-verify` 说明。
+
+### GitHub OAuth 与 callback 踩坑经验
+
+GitHub OAuth 的 Web application flow 不是“浏览器跳回来就登录完成”。GitHub 回调 Caddy 时只带一次性的 `code` 和 `state`；`caddy-security` 必须在服务端用 `code + client_id + client_secret` 请求：
+
+```text
+POST https://github.com/login/oauth/access_token
+```
+
+换到 access token 后，才能继续查 GitHub 用户身份、执行 `transform user`、签发自己的登录 cookie/JWT。也就是说，GitHub OAuth 登录包含一段由运行 Caddy 的服务器发起的服务端请求；浏览器能访问 GitHub 不等于服务端 OAuth 流程已经完成。
+
+GitHub OAuth App 的 callback URL 用来约束 Caddy 发给 GitHub 的 `redirect_uri`。GitHub 官方规则：
+
+- 如果没有传 `redirect_uri`，GitHub 使用 OAuth App 设置里的 callback URL。
+- 如果传了 `redirect_uri`，其 host（不含子域规则）和 port 必须匹配 callback URL。
+- `redirect_uri` 的 path 必须是 callback URL path 本身，或 callback URL path 之下的子路径。
+
+例如 OAuth App callback URL 是：
+
+```text
+https://47.102.36.175/auth/oauth2/github
+```
+
+则 GitHub 可接受同 host/port 下的：
+
+```text
+https://47.102.36.175/auth/oauth2/github
+https://47.102.36.175/auth/oauth2/github/authorization-code-callback
+```
+
+但不会把不同 host 或不同 port 视为同一个 callback。
+
+在 caddy-security 里，`redirect_url` 和 GitHub 的 `redirect_uri` 是两件事：
+
+- `redirect_url`：Caddy 登录成功后送用户回到的原始业务 URL，由 `trust login redirect uri` 约束。
+- `redirect_uri`：Caddy 发给 GitHub 的 OAuth callback URL，GitHub 授权后把 `code` 和 `state` 回传到这里。
+
+如果 portal 挂在 `/auth/*`，GitHub provider 的实际 callback endpoint 是：
+
+```text
+/auth/oauth2/github/authorization-code-callback
+```
 
 ### 域名模式模板
 
