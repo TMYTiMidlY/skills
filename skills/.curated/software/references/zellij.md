@@ -161,14 +161,24 @@ WantedBy=multi-user.target
 - foreground `66 66 66` = `#424242`
 - background `241 241 241` = `#f1f1f1`
 
-推荐 Web 视觉层最小配置：
+### 浅色模式设置参考
+
+当前推荐的浅色 Web 主题名为 `pencil-light-select-blue`：整体沿用 `pencil-light` 的浅色背景，鼠标/列表选中态改为蓝底白字，Web 终端使用 VS Code Modern Light 风格的竖线光标。
 
 ```kdl
+theme "pencil-light-select-blue"
+
 web_client {
     font "monospace"
+    cursor_blink true
+    cursor_style "bar"
     theme {
         background 241 241 241
         foreground 66 66 66
+        white 85 85 85
+        bright_white 165 165 165
+        cursor 66 66 66
+        cursor_accent 241 241 241
         selection_background 0 120 215
         selection_foreground 255 255 255
         selection_inactive_background 153 201 239
@@ -176,7 +186,34 @@ web_client {
 }
 ```
 
+`themes { pencil-light-select-blue { ... } }` 可从内置 `pencil-light` 复制，只需重点确认这些选中态为蓝底白字：
+
+```kdl
+text_selected {
+    base 255 255 255
+    background 0 120 215
+    emphasis_0 215 95 95
+    emphasis_1 32 165 186
+    emphasis_2 16 167 120
+    emphasis_3 0 142 196
+}
+
+table_cell_selected {
+    base 255 255 255
+    background 0 120 215
+    // emphasis_* 可沿用 pencil-light
+}
+
+list_selected {
+    base 255 255 255
+    background 0 120 215
+    // emphasis_* 可沿用 pencil-light
+}
+```
+
 浏览器 Console 中 `term.options.theme` 会显示 camelCase 字段，例如 `selectionBackground`。若这里已有 `rgb(0, 120, 215)`，说明 `web_client.theme` 已正确下发。
+
+Codex 在 Zellij 中渲染空输入占位文本时会使用 ANSI `white`，所以浅色模式要显式设置 `white` / `bright_white`，避免占位提示变成白字贴白底。
 
 ### Codex 输入框黑底
 
@@ -233,10 +270,10 @@ text_selected {
 内置 `pencil-light` 的 `text_selected.background` 也是 `241 241 241`，和普通背景一样，因此鼠标拖选会像白底贴白底。解决方式：复制 `pencil-light` 为自定义主题，只改 Zellij 选中态，例如：
 
 ```kdl
-theme "pencil-light-readable"
+theme "pencil-light-select-blue"
 
 themes {
-    pencil-light-readable {
+    pencil-light-select-blue {
         text_selected {
             base 255 255 255
             background 0 120 215
