@@ -19,3 +19,11 @@
 - 优先使用已有工具和已安装 skills，再考虑手动展开实现。当用户提到使用某个或某些 skills 来完成任务时，仔细阅读 skills 中与任务相关部分，严格按 skill 执行。
 - 创建和修改 skills 时，优先写流程和思想，少写具体代码，skill 的描述是给 AI 看的，AI 自己会写代码。在元数据description中，不需要完整描述 skill 的内容，只需要描述何时应调用本 skill 并介绍其核心思路即可。
 - 在理解 subagents 能力和限制的情况下，合适时调用 subagents 解决问题。
+
+## Cursor Cloud specific instructions
+
+- **仓库性质**：这是一个 AI agent skill 包合集（纯内容仓库），没有可运行的应用服务、构建流程、测试框架或 lint 配置。所有"运行"都是通过 `uv run` 执行各 skill 下的辅助 Python 脚本。
+- **环境依赖**：`uv`（Python 包管理/运行）和 `trash-cli`（`trash-put` 命令）已由 update script 安装到 `$HOME/.local/bin`。Python 3.12 系统自带。
+- **运行脚本**：遵循 AGENTS.md 核心规则，使用 `uv run scripts/...`（纯标准库脚本）或 `uv run --with <pkg> scripts/...`（有外部依赖的脚本）。不要使用 `pip install`。
+- **README 同步**：修改 `grafted-skills.json` 后，运行 `uv run .agents/skills/graft-skill/scripts/update-readme.py` 更新 README 中的 skill 表格。
+- **无 lint/test/build**：仓库没有配置 linter、测试框架或构建步骤。验证方式是确认脚本可正常执行、SKILL.md 结构合规（可用 `uv run skills/qiuzhi-skill-creator/scripts/quick_validate.py <skill-dir>` 检查）。
