@@ -110,5 +110,101 @@
     "synced_commit": "b53e5e6",
     "synced_date": "2026-03-05T23:09:22Z",
     "description": "代码驱动的幻灯片制作"
+  },
+  ".experimental/diagnose": {
+    "repo": "smll-ai/mattpocock-skills",
+    "path": "skills/engineering/diagnose",
+    "branch": "main",
+    "synced_commit": "7afa86d",
+    "synced_date": "2026-04-28T15:33:37Z",
+    "description": "困难 bug 与性能回归诊断流程"
+  },
+  ".experimental/grill-with-docs": {
+    "repo": "smll-ai/mattpocock-skills",
+    "path": "skills/engineering/grill-with-docs",
+    "branch": "main",
+    "synced_commit": "7afa86d",
+    "synced_date": "2026-04-28T15:33:37Z",
+    "description": "结合项目文档压力测试计划"
+  },
+  ".experimental/triage": {
+    "repo": "smll-ai/mattpocock-skills",
+    "path": "skills/engineering/triage",
+    "branch": "main",
+    "synced_commit": "179a14e",
+    "synced_date": "2026-04-28T18:06:32Z",
+    "description": "基于状态机的问题分诊流程"
+  },
+  ".experimental/improve-codebase-architecture": {
+    "repo": "smll-ai/mattpocock-skills",
+    "path": "skills/engineering/improve-codebase-architecture",
+    "branch": "main",
+    "synced_commit": "7afa86d",
+    "synced_date": "2026-04-28T15:33:37Z",
+    "description": "识别并改进代码库架构机会"
+  },
+  ".experimental/setup-matt-pocock-skills": {
+    "repo": "smll-ai/mattpocock-skills",
+    "path": "skills/engineering/setup-matt-pocock-skills",
+    "branch": "main",
+    "synced_commit": "179a14e",
+    "synced_date": "2026-04-28T18:06:32Z",
+    "description": "初始化 Matt Pocock 工程 skills 项目上下文"
+  },
+  ".experimental/tdd": {
+    "repo": "smll-ai/mattpocock-skills",
+    "path": "skills/engineering/tdd",
+    "branch": "main",
+    "synced_commit": "7afa86d",
+    "synced_date": "2026-04-28T15:33:37Z",
+    "description": "红绿重构测试驱动开发流程"
+  },
+  ".experimental/to-issues": {
+    "repo": "smll-ai/mattpocock-skills",
+    "path": "skills/engineering/to-issues",
+    "branch": "main",
+    "synced_commit": "179a14e",
+    "synced_date": "2026-04-28T18:06:32Z",
+    "description": "将计划拆分为可执行 issue"
+  },
+  ".experimental/to-prd": {
+    "repo": "smll-ai/mattpocock-skills",
+    "path": "skills/engineering/to-prd",
+    "branch": "main",
+    "synced_commit": "179a14e",
+    "synced_date": "2026-04-28T18:06:32Z",
+    "description": "根据上下文生成 PRD"
+  },
+  ".experimental/zoom-out": {
+    "repo": "smll-ai/mattpocock-skills",
+    "path": "skills/engineering/zoom-out",
+    "branch": "main",
+    "synced_commit": "7afa86d",
+    "synced_date": "2026-04-28T15:33:37Z",
+    "description": "从更高层次理解代码上下文"
+  },
+  ".experimental/caveman": {
+    "repo": "smll-ai/mattpocock-skills",
+    "path": "skills/productivity/caveman",
+    "branch": "main",
+    "synced_commit": "62f43a1",
+    "synced_date": "2026-04-28T08:42:34Z",
+    "description": "超压缩沟通模式"
+  },
+  ".experimental/grill-me": {
+    "repo": "smll-ai/mattpocock-skills",
+    "path": "skills/productivity/grill-me",
+    "branch": "main",
+    "synced_commit": "62f43a1",
+    "synced_date": "2026-04-28T08:42:34Z",
+    "description": "通过连续追问压力测试方案"
+  },
+  ".experimental/write-a-skill": {
+    "repo": "smll-ai/mattpocock-skills",
+    "path": "skills/productivity/write-a-skill",
+    "branch": "main",
+    "synced_commit": "62f43a1",
+    "synced_date": "2026-04-28T08:42:34Z",
+    "description": "创建结构化 agent skill"
   }
 }
