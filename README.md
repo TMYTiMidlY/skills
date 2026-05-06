@@ -41,7 +41,19 @@
 | `gh-fix-ci` | [openai/skills](https://github.com/openai/skills) | 修复 GitHub CI 失败 |
 | `jupyter-notebook` | [openai/skills](https://github.com/openai/skills) | Jupyter Notebook 创建与编辑 |
 | `screenshot` | [openai/skills](https://github.com/openai/skills) | 桌面截图 |
-| `slides` | [openai/skills](https://github.com/openai/skills) | 代码驱动的幻灯片制作 |<!-- skills-table:end -->
+| `slides` | [openai/skills](https://github.com/openai/skills) | 代码驱动的幻灯片制作 |
+| `diagnose` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 困难 bug 与性能回归诊断流程 |
+| `grill-with-docs` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 结合项目文档压力测试计划 |
+| `triage` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 基于状态机的问题分诊流程 |
+| `improve-codebase-architecture` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 识别并改进代码库架构机会 |
+| `setup-matt-pocock-skills` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 初始化 Matt Pocock 工程 skills 项目上下文 |
+| `tdd` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 红绿重构测试驱动开发流程 |
+| `to-issues` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 将计划拆分为可执行 issue |
+| `to-prd` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 根据上下文生成 PRD |
+| `zoom-out` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 从更高层次理解代码上下文 |
+| `caveman` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 超压缩沟通模式 |
+| `grill-me` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 通过连续追问压力测试方案 |
+| `write-a-skill` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 创建结构化 agent skill |<!-- skills-table:end -->
 
 此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 
