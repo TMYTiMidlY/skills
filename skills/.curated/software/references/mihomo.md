@@ -69,6 +69,73 @@ Invoke-WebRequest -Uri 'http://127.0.0.1:9090/configs?force=true' -Method Put -C
 
 CLI 默认日志输出到 stdout，不默认写日志文件。适合 AI 监控的是内置 API：`/logs?format=structured` 看结构化日志，`/traffic` 看速率，`/connections` 看连接命中规则，`/proxies` 看节点健康和选择状态。
 
+## BrowserLeaks / DNS / WebRTC 泄露排障
+
+排查 BrowserLeaks 这类站点时，不要只看浏览器页面上的 Remote IP。要同时看 mihomo 的运行态连接：
+
+```powershell
+curl.exe http://127.0.0.1:9090/connections
+curl.exe --max-time 3 "http://127.0.0.1:9090/logs?format=structured&level=info"
+```
+
+重点看：
+
+- `host`：访问的域名，例如 `browserleaks.com`、`tls.browserleaks.com`、STUN 域名。
+- `network`：`tcp` 还是 `udp`。
+- `destinationPort`：WebRTC/STUN 常见是 `19302`，TURN/STUN 常见范围是 `3478-3481`。
+- `chains`：最终是代理节点、`DIRECT` 还是 `REJECT`。
+- `rule` / `rulePayload`：是否被 `cn`、`cn-ip`、`Match` 等规则误命中。
+
+DNS 泄露测试出现本地 ISP DNS 或学校/运营商 DNS 时，先确认 TUN 和 DNS 劫持是否开启：
+
+```yaml
+tun:
+  enable: true
+  stack: mixed
+  auto-route: true
+  auto-detect-interface: true
+  strict-route: true
+  dns-hijack:
+    - any:53
+```
+
+DNS 配置建议使用 `fake-ip`，并让 DNS 查询尊重规则：
+
+```yaml
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+  respect-rules: true
+```
+
+如果 BrowserLeaks 相关域名被规则集误判为国内或直连，给它们加高优先级显式代理规则，放在通用规则前：
+
+```yaml
+rules:
+  - DOMAIN-SUFFIX,browserleaks.com,🚀 节点选择
+  - DOMAIN-SUFFIX,browserleaks.org,🚀 节点选择
+  - DOMAIN-SUFFIX,browserleaks.net,🚀 节点选择
+```
+
+WebRTC 泄露通常不是普通 TCP 页面请求泄露，而是浏览器向 STUN/TURN 服务器发 UDP 探测。若 BrowserLeaks 显示 Remote IP 是代理，但 WebRTC Public IP 还是本地出口，去 `/connections` 或结构化日志里找 UDP STUN 连接。常见修法是直接拒绝这些 UDP 端口：
+
+```yaml
+rules:
+  - AND,((NETWORK,UDP),(DST-PORT,19302)),REJECT
+  - AND,((NETWORK,UDP),(DST-PORT,3478-3481)),REJECT
+```
+
+这些端口不是“所有 WebRTC 端口”，只是常见 STUN/TURN 探测端口：`19302` 常见于 Google STUN，`3478-3481` 常见于 STUN/TURN 服务。先精准拒绝这些端口；如果后续日志里还能看到新的 UDP STUN/TURN 泄露，再按日志补规则。
+
+注意规则顺序：这些 `REJECT` 和 BrowserLeaks 显式代理规则应放在 `RuleSet(cn)`、`GEOIP,CN`、`MATCH` 等宽泛规则前面。修改后用默认配置目录校验并热重载：
+
+```powershell
+cd "$env:USERPROFILE\mihomo"
+.\mihomo.exe -t -d "$env:USERPROFILE\.config\mihomo"
+$body = @{ path = "$env:USERPROFILE\.config\mihomo\config.yaml" } | ConvertTo-Json -Compress
+Invoke-WebRequest -Uri 'http://127.0.0.1:9090/configs?force=true' -Method Put -ContentType 'application/json' -Body $body
+```
+
 ## 切换到 release tag
 
 构建指定 release 前先切 tag：
