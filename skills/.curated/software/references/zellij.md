@@ -165,28 +165,34 @@ WantedBy=multi-user.target
 
 当前推荐的浅色 Web 主题名为 `pencil-light-select-blue`：整体沿用 `pencil-light` 的浅色背景，鼠标/列表选中态改为蓝底白字，Web 终端使用 VS Code Modern Light 风格的竖线光标。
 
-```kdl
-theme "pencil-light-select-blue"
+`web_client.theme` 需要写具体 RGB；`themes { pencil-light-select-blue { ... } }` 应从内置 `pencil-light` 复制完整结构，再重点把 `text_selected`、`table_cell_selected`、`list_selected` 改成蓝底白字。具体改动见下一节的模板差异，不要只抄片段。
 
-web_client {
-    font "monospace"
-    cursor_blink true
-    cursor_style "bar"
-    theme {
-        background 241 241 241
-        foreground 66 66 66
-        white 85 85 85
-        bright_white 165 165 165
-        cursor 66 66 66
-        cursor_accent 241 241 241
-        selection_background 0 120 215
-        selection_foreground 255 255 255
-        selection_inactive_background 153 201 239
-    }
-}
+浏览器 Console 中 `term.options.theme` 会显示 camelCase 字段，例如 `selectionBackground`。若这里已有 `rgb(0, 120, 215)`，说明 `web_client.theme` 已正确下发。
+
+Codex 在 Zellij 中渲染空输入占位文本时会使用 ANSI `white`，所以浅色模式要显式设置 `white` / `bright_white`，避免占位提示变成白字贴白底。
+
+### 模板差异
+
+不要只写精简版 palette（例如只写 `fg/bg/blue` 这类字段）。Zellij `0.44.x` 的内置主题实际使用 `text_*`、`ribbon_*`、`frame_*` 等完整段落；如果自定义主题只补 `text_selected` 或简单颜色，普通选区可能变好，但 tab/status/compact-bar 等插件栏颜色和状态可能异常。
+
+正确做法：复制完整 `pencil-light` 主题结构，命名为 `pencil-light-select-blue`，其余段落保持 `pencil-light` 模板，只改下面这些差异。
+
+`web.kdl` 根级差异：
+
+```kdl
+web_server true
+web_server_ip "127.0.0.1"
+web_server_port 8082
+web_sharing "on"
+show_startup_tips false
+default_shell "/home/timidly/.local/bin/zellij-light-shell"
+theme "pencil-light-select-blue"
+default_layout "pencil-light"
 ```
 
-`themes { pencil-light-select-blue { ... } }` 可从内置 `pencil-light` 复制，只需重点确认这些选中态为蓝底白字：
+公网/反代场景按需把 `web_server_ip` 改为 `0.0.0.0` 并补 `web_server_cert` / `web_server_key`；本机 Caddy 反代或 SSH tunnel 场景保持 `127.0.0.1` 即可。
+
+`themes { pencil-light-select-blue { ... } }` 内只改这三段，其余段落沿用 `pencil-light`：
 
 ```kdl
 text_selected {
@@ -201,19 +207,67 @@ text_selected {
 table_cell_selected {
     base 255 255 255
     background 0 120 215
-    // emphasis_* 可沿用 pencil-light
+    emphasis_0 215 95 95
+    emphasis_1 32 165 186
+    emphasis_2 16 167 120
+    emphasis_3 182 214 253
 }
 
 list_selected {
     base 255 255 255
     background 0 120 215
-    // emphasis_* 可沿用 pencil-light
+    emphasis_0 215 95 95
+    emphasis_1 32 165 186
+    emphasis_2 16 167 120
+    emphasis_3 182 214 253
 }
 ```
 
-浏览器 Console 中 `term.options.theme` 会显示 camelCase 字段，例如 `selectionBackground`。若这里已有 `rgb(0, 120, 215)`，说明 `web_client.theme` 已正确下发。
+`web_client.theme` 差异：
 
-Codex 在 Zellij 中渲染空输入占位文本时会使用 ANSI `white`，所以浅色模式要显式设置 `white` / `bright_white`，避免占位提示变成白字贴白底。
+```kdl
+web_client {
+    font "monospace"
+    cursor_blink true
+    cursor_style "bar"
+    theme {
+        background 241 241 241
+        foreground 66 66 66
+        white 75 85 99
+        bright_white 107 114 128
+        cursor 66 66 66
+        cursor_accent 241 241 241
+        selection_background 0 120 215
+        selection_foreground 255 255 255
+        selection_inactive_background 153 201 239
+    }
+}
+```
+
+对应 `~/.config/zellij/layouts/pencil-light.kdl`：
+
+```kdl
+layout {
+    pane default_fg="#424242" default_bg="#f1f1f1"
+    pane size=1 borderless=true {
+        plugin location="compact-bar"
+    }
+}
+```
+
+对应 `~/.local/bin/zellij-light-shell`：
+
+```bash
+#!/usr/bin/env bash
+
+if [ -t 1 ]; then
+    printf '\033]10;#424242\007\033]11;#f1f1f1\007'
+fi
+
+exec /bin/bash "$@"
+```
+
+这个 wrapper 的作用是给新 pane 兜底下发 OSC 10/11 默认前景/背景，再进入真实 bash。它不应该写进 `.bashrc`，因为普通 SSH、非 Zellij 终端、批处理脚本不一定需要这层终端颜色修复。
 
 ### Codex 输入框黑底
 
@@ -249,6 +303,12 @@ layout {
 
 注意：`web_client.theme.background` 只管浏览器 xterm 视觉背景，不等价于 pane 的 OSC 11 默认背景；`zellij action set-pane-color` 在本环境曾出现无输出且不结束，不作为首选方案。
 
+### 终端能力响应漏到 shell
+
+命令行里突然出现 `62;4;52c` 这类文本时，通常是终端对 ANSI Device Attributes 查询的响应，完整控制序列类似 `ESC [ ? 62 ; 4 ; 52 c`，前缀被终端解释或复制时丢掉后只剩尾部可见。它不是 bash 代码，也不是 `.bashrc` 字符串。
+
+在 Zellij Web / xterm.js / 终端程序互相探测能力时，如果查询方退出或没有读取响应，响应可能落进 shell 输入行。先用 `Ctrl+C` 或 `Ctrl+U` 清掉当前输入；后续排查不要优先改 `.bashrc`，应先检查 Zellij Web、xterm theme、shell wrapper、以及是否有程序在发 `CSI c` / `OSC 10/11` 查询。
+
 ### 鼠标拖选颜色
 
 不要把两种 selection 混淆：
@@ -269,24 +329,7 @@ text_selected {
 
 内置 `pencil-light` 的 `text_selected.background` 也是 `241 241 241`，和普通背景一样，因此鼠标拖选会像白底贴白底。解决方式：复制 `pencil-light` 为自定义主题，只改 Zellij 选中态，例如：
 
-```kdl
-theme "pencil-light-select-blue"
-
-themes {
-    pencil-light-select-blue {
-        text_selected {
-            base 255 255 255
-            background 0 120 215
-            emphasis_0 215 95 95
-            emphasis_1 32 165 186
-            emphasis_2 16 167 120
-            emphasis_3 0 142 196
-        }
-        // 其余段落从 pencil-light 复制；
-        // list_selected/table_cell_selected 也建议改为蓝底白字。
-    }
-}
-```
+具体改动见“模板差异”。重点是 `text_selected`、`list_selected`、`table_cell_selected` 都要改为蓝底白字，同时保留 `pencil-light` 的其余完整 theme 段落。
 
 官方 mouse 兼容建议：`mouse_mode true` 时 Zellij 接管鼠标；按住 `Shift` 可让终端处理选择/链接/复制/滚动。也可设置：
 
