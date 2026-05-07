@@ -53,6 +53,7 @@ p2p_only = false
 relay_all_peer_rpc = false
 disable_tcp_hole_punching = false
 disable_udp_hole_punching = false
+enable_quic_proxy = false
 ```
 
 ## 与 VPS 服务端配置的差异
@@ -83,12 +84,25 @@ uri = "<协议>://<地址>:<端口>"
 
 - `dhcp = false` + `ipv4 = "10.144.18.x/24"`：手动指定虚拟 IP，新节点需分配未使用的地址
 - `rpc_portal = "127.0.0.1:15888"`：管理 RPC 只监听本地
+- `enable_quic_proxy = false`：不启用 QUIC proxy；需要两端一致修改，避免一端仍走 QUIC
 
 ## 服务名与 NSSM（排障）
 
 - 显示名 `EasyTier` 对应服务名 `EasyTierService`（可用 `sc getkeyname EasyTier` 核对）
 - `nssm restart easytier` 可以重启该服务（通过服务控制接口）
 - 若 `nssm get easytier Application` 报 *only valid for services managed by NSSM*，说明当前不是 NSSM 参数托管模式；以 `sc qc EasyTierService` 的 `BINARY_PATH_NAME`（或注册表 `ImagePath`）为准
+
+## QUIC proxy 坑点
+
+`enable_quic_proxy` 不是稳定通用开关。本次遇到远端 Caddy 访问 Windows EasyTier IP 超时，但 Windows 本机服务和 portproxy 都正常；EasyTier 侧表现为源端代理连接卡在 `SynReceived / Quic`，目标侧 `easytier-cli proxy` 看不到对应连接。
+
+处理方式是源端和目标端都设为：
+
+```toml
+enable_quic_proxy = false
+```
+
+然后重启两端 EasyTier。只改一端可能仍走 QUIC。
 
 ## Windows 防火墙
 
