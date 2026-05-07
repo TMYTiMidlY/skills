@@ -243,6 +243,89 @@ bind-address: '*'
 
 如果绑定到某个具体虚拟网卡地址，网卡重连、地址变化、服务启动顺序变化都可能导致本机工具或其他设备间歇性连不上代理端口。
 
+### WSL NAT + Mihomo TUN / fake-ip
+
+在无法使用 WSL Mirror / mirrored networking、必须继续使用 WSL NAT 时，不要假设 Windows 宿主能走 Mihomo TUN 就等于 WSL 裸 TCP 也会被稳定接管。更稳的做法是：WSL 内的 HTTP 类工具显式走 Windows 宿主 `mixed-port`，SSH 等不读代理环境变量的工具单独配置 `ProxyCommand`。这是 **WSL -> Windows/外网** 方向，不需要 `portproxy`。
+
+反过来，如果是 **Windows / EasyTier / 远端入口 -> WSL 内服务**，WSL NAT 下需要 Windows `netsh interface portproxy` 做 TCP 转发。`portproxy` 负责把 Windows 宿主某个监听地址和端口转到 WSL 内服务；它不负责让 WSL 出站流量走 Mihomo，也不支持 UDP。
+
+典型现象：
+
+- Windows PowerShell `Test-NetConnection <ip> -Port <port>` 成功，`InterfaceAlias` 显示 `Meta`。
+- WSL 里 `curl`、`ssh`、`nc` 对同一目标超时，卡在 TCP connect 阶段，还没到 TLS/SSH 握手。
+- WSL DNS 解析域名得到 `198.18.x.x`，说明 Mihomo `fake-ip` 已生效；但 WSL 到这些 fake-ip 的 TCP 流量可能没有稳定进入 TUN 映射。
+- 同一域名或目标有时成功、有时超时，通常是 fake-ip/TUN 映射链路不稳定，不要直接判断为远端服务故障。
+
+快速判断：
+
+```bash
+# WSL 看到的 Windows 宿主网关
+ip route get <target-ip>
+
+# WSL 直连目标
+nc -vz -w 6 <target-ip> <port>
+
+# WSL 是否能访问 Windows 宿主上的 mixed-port
+nc -vz -w 4 <wsl-gateway-ip> 7890
+
+# WSL 显式走 Windows 宿主 Mihomo SOCKS
+nc -vz -w 8 -x <wsl-gateway-ip>:7890 -X 5 <target-ip> <port>
+curl -I --connect-timeout 5 --max-time 8 --proxy socks5h://<wsl-gateway-ip>:7890 https://www.google.com
+```
+
+Windows 宿主侧对照：
+
+```powershell
+Test-NetConnection <target-ip> -Port <port>
+```
+
+如果 Windows 成功、WSL 直连超时、WSL 走 `<wsl-gateway-ip>:7890` 成功，说明问题在 **WSL NAT 裸流量进入 Windows TUN 的透明接管路径**，不是远端目标或节点不可用。
+
+`<wsl-gateway-ip>` 通常是 WSL 默认路由的网关，例如：
+
+```text
+<target-ip> via 172.28.80.1 dev eth0 src 172.28.94.43
+```
+
+这里 `172.28.80.1` 是 WSL NAT 网络里 Windows 宿主的地址。它可能在 `wsl --shutdown`、网络重置、虚拟网卡重建后变化；需要写入 shell 配置时，优先动态读取：
+
+```bash
+if command -v ip >/dev/null 2>&1; then
+    WSL_HOST_IP="$(ip route show default 2>/dev/null | awk '{print $3; exit}')"
+    if [ -n "$WSL_HOST_IP" ]; then
+        export ALL_PROXY="socks5h://${WSL_HOST_IP}:7890"
+        export all_proxy="socks5h://${WSL_HOST_IP}:7890"
+        export HTTPS_PROXY="http://${WSL_HOST_IP}:7890"
+        export https_proxy="http://${WSL_HOST_IP}:7890"
+        export HTTP_PROXY="http://${WSL_HOST_IP}:7890"
+        export http_proxy="http://${WSL_HOST_IP}:7890"
+    fi
+    unset WSL_HOST_IP
+fi
+```
+
+这些代理环境变量能稳定覆盖 `curl`、`git` HTTPS、`npm`、`pip`、`uv` 等大量 HTTP 客户端，但不是透明全局代理。`ssh` 默认不读 `ALL_PROXY`，需要单独配：
+
+```sshconfig
+Host <name>
+  HostName <target-ip-or-domain>
+  User <user>
+  ProxyCommand nc -x <wsl-gateway-ip>:7890 -X 5 %h %p
+```
+
+WSL 内服务要暴露给 Windows / EasyTier / 远端反代时，使用 `portproxy`：
+
+```powershell
+# 示例：Windows 在 <windows-listen-ip>:18080 监听，转发到 WSL localhost:18080
+netsh interface portproxy add v4tov4 `
+  listenaddress=<windows-listen-ip> listenport=18080 `
+  connectaddress=127.0.0.1 connectport=18080
+
+netsh interface portproxy show all
+```
+
+在当前 Windows/WSL localhost forwarding 正常时，`connectaddress=127.0.0.1` 往往比写 WSL NAT IP 更稳，因为 WSL NAT IP 会随重启变化。若服务只监听 WSL 内部地址而没有被 Windows localhost forwarding 接住，再改用当前 WSL IP 或让服务监听 `0.0.0.0`。
+
 VLESS + WebSocket + TLS 放在 Caddy/Nginx 后面不是错误方案，适合已有 HTTPS 站点、证书自动维护、端口复用和反代隐藏。但客户端配置要补齐 TLS 侧信息：
 
 ```yaml
