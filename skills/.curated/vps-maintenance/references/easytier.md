@@ -55,6 +55,8 @@ relay_all_peer_rpc = false
 disable_tcp_hole_punching = false
 disable_udp_hole_punching = false
 private_mode = true
+enable_quic_proxy = true
+multi_thread = true
 ```
 
 相对 default.conf 改动的关键参数：
@@ -63,6 +65,8 @@ private_mode = true
 - `rpc_portal = "127.0.0.1:15888"`：管理 RPC 只监听本地，不暴露到公网。default 用 `0.0.0.0:0` 会监听所有网卡。
 - `network_name` / `network_secret`：组网凭证，只有相同 name + secret 的节点才能互相发现和通信。
 - `private_mode = true`：只允许相同 network_name + network_secret 的节点接入。开启后外部节点在密码验证阶段就会被拒绝，`foreign_network_whitelist` 和 `relay_all_peer_rpc` 不再生效。不开的话，白名单内的其他网络可以借用你的节点做中继。
+- `enable_quic_proxy = true`：让 EasyTier 用 QUIC 代理虚拟网内的 TCP 流。适合公网或 NAT 链路有丢包、抖动时的 Caddy 反代、code-server、zellij、WebDAV 等 TCP 服务。生效时可在 `easytier-cli proxy` 中看到 `transport_type = Quic`。
+- `multi_thread = true`：使用多线程运行时。它不是修复丢包的核心参数，但在多连接转发、加密和代理并发时可能提高吞吐稳定性。官方还提供 `multi_thread_count`，不默认写入；需要固定线程数时再按机器 CPU 和实际压测结果添加。
 
 ### 启动服务与防火墙
 
@@ -113,3 +117,15 @@ Environment="ET_HOSTNAME=自定义名称"
 - `foreign_network_whitelist`：控制允许哪些外部网络通过此节点转发流量。`"*"` 允许所有，`""` 禁止所有，也支持通配符如 `"net1 net2*"`。
 - `relay_all_peer_rpc`：当外部网络不在白名单内时，是否仍然帮它转发 RPC 包（仅用于节点发现和 P2P 建连，不转发数据流量）。
 - `private_mode`：如果为 true，外部节点必须通过密码验证才能接入，否则直接拒绝连接。这是最严格的一道门。
+
+### Alibaba ↔ DESKTOP 慢速排查记录（2026-05）
+
+现象：`iperf3 -c 10.144.18.66 -p 5201` 一度只有 1-2 Mbit/s，TCP 重传很高，`easytier-cli peer` 显示 DESKTOP peer loss 约 9%。Caddy 本身只是反代到 `10.144.18.10`，不是瓶颈。
+
+消融测试结论：
+
+- 重启 EasyTier 后重新建链 / 重新打洞是从 1-2 Mbit/s 恢复到几十 Mbit/s 的主因；回到原始配置后仍有约 25.9 Mbit/s，没有再掉回 1-2 Mbit/s。
+- `enable_quic_proxy = true` 对 Caddy 反代方向有明确意义，`easytier-cli proxy` 能看到 `Quic` 连接，适合保留。
+- `multi_thread = true` 不是决定项，但完整配置组在测试中跑到约 93.3 Mbit/s，去掉后约 37.0 Mbit/s；考虑到 Alibaba 有多路 Caddy 反代和远控连接，默认保留。
+- `mtu` 从 1380 改 1360 不是关键；`mtu = 1380 + enable_quic_proxy = true` 仍可跑到约 53.2 Mbit/s。因此模板不为这次问题额外改 MTU。
+- `enable_kcp_proxy = false` 只是显式默认值，不写入模板。
