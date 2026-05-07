@@ -305,6 +305,40 @@ curl.exe "http://127.0.0.1:9090/proxies/$node/delay?timeout=8000&url=<encoded-te
 
 如果 API delay 较低但真实 `total` 明显更高，说明节点 TCP/TLS 探测和完整 HTTP 请求体感不同。此时应关注是否稳定、是否丢请求、是否存在反代/目标站差异，而不是只追求面板数字。
 
+### Mihomo TUN 与 EasyTier / WSL NAT
+
+`IP-CIDR,...,DIRECT` 不等于绕过 Mihomo TUN。它只表示流量进入 TUN 后，mihomo 选择 `DIRECT` outbound；运行态 `/connections` 里仍可能看到 `inboundName: DEFAULT-TUN`、`chains: [DIRECT, ...]`。
+
+规则顺序会影响策略选择。宽泛的 `RULE-SET,private-ip`、`RULE-SET,cn-ip` 如果放在显式 `IP-CIDR` 前，会先命中特例地址。需要特例策略时，把特例规则放到宽泛规则前；但即使提前命中 `DIRECT`，它仍不是 TUN bypass。
+
+`route-exclude-address` 有坑，不要把它当成稳定通用方案。它只让 mihomo 不接管这些目的地址，不保证 Windows 自动补出可用的物理网卡路由；排除异地组网依赖的公网服务器 IP 后，可能直接把异地组网服务本身断开。
+
+```powershell
+route print <peer-ip>
+```
+
+本次排障里，`route-exclude-address + 手动 host route` 没作为最终方案采用。
+
+WSL NAT + Windows EasyTier + 远端 Caddy 的简单稳定方案：
+
+```text
+远端 Caddy reverse_proxy -> Windows EasyTier IP:port
+Windows portproxy -> 127.0.0.1:port
+WSL 服务监听并由 Windows localhost 转发访问
+```
+
+`netsh interface portproxy` 是 TCP 转发，不支持 UDP。WSL NAT 下优先尝试 `connectaddress=127.0.0.1`，这样比写 WSL NAT IP 更少受 WSL 重启后地址变化影响。批量检查：
+
+```powershell
+netsh interface portproxy show all
+```
+
+从云服务器探测 TCP 时，避免用 Bash `/dev/tcp/...` 形式；这类命令容易被云安全产品识别为反弹 shell 特征。HTTP(S) 端口优先用：
+
+```bash
+curl -k -I --connect-timeout 5 --max-time 8 https://<target>:<port>/
+```
+
 ### 切换到 release tag
 
 构建指定 release 前先切 tag：
