@@ -146,6 +146,7 @@ WantedBy=multi-user.target
 
 - 颜色类持久修复优先放 Zellij KDL：`web.kdl`、layout、theme。
 - 不把 OSC 颜色修复永久写进 `.bashrc`。
+- 只针对某个 TUI 程序的颜色问题，优先写该程序自己的 wrapper；不要为了一个程序把 `default_shell` 改成全局 wrapper。
 - `printf`/临时脚本只用于诊断或即时验证。
 
 ### 三层主题
@@ -185,7 +186,6 @@ web_server_ip "127.0.0.1"
 web_server_port 8082
 web_sharing "on"
 show_startup_tips false
-default_shell "/home/timidly/.local/bin/zellij-light-shell"
 theme "pencil-light-select-blue"
 default_layout "pencil-light"
 ```
@@ -255,19 +255,9 @@ layout {
 }
 ```
 
-对应 `~/.local/bin/zellij-light-shell`：
+如果某个软件会查询终端默认前景/背景色（OSC 10/11），应优先给这个软件写专用 wrapper，在启动软件前下发颜色；如果 Zellij Web 刷新/重连会重置 xterm 状态，wrapper 可以在软件运行期间定时重发。Codex 模板见 [../assets/codex-osc-wrapper.sh](../assets/codex-osc-wrapper.sh)。
 
-```bash
-#!/usr/bin/env bash
-
-if [ -t 1 ]; then
-    printf '\033]10;#424242\007\033]11;#f1f1f1\007'
-fi
-
-exec /bin/bash "$@"
-```
-
-这个 wrapper 的作用是给新 pane 兜底下发 OSC 10/11 默认前景/背景，再进入真实 bash。它不应该写进 `.bashrc`，因为普通 SSH、非 Zellij 终端、批处理脚本不一定需要这层终端颜色修复。
+`default_shell` 也可以下发 OSC 10/11，但它会影响每个新 pane 的 shell，只适合“希望所有 pane 都继承同一默认色”的场景。不要为了 Codex 这类单个软件的问题，把 `default_shell` 当成首选设计。
 
 ### Codex 输入框黑底
 
@@ -299,9 +289,45 @@ layout {
 }
 ```
 
-可配 `default_layout "pencil-light"` 并在 `~/.config/zellij/layouts/pencil-light.kdl` 中设置顶层 `pane default_fg/default_bg`。如果 layout 对某些新 pane 不生效，`default_shell` wrapper 发 OSC 10/11 只能作为兜底，不是首选。
+可配 `default_layout "pencil-light"` 并在 `~/.config/zellij/layouts/pencil-light.kdl` 中设置顶层 `pane default_fg/default_bg`。如果只有某个软件仍然误判背景色，优先给这个软件写 wrapper 发 OSC 10/11；如果要让每个新 pane 都继承同一默认色，再考虑 `default_shell` 级 wrapper。
 
 注意：`web_client.theme.background` 只管浏览器 xterm 视觉背景，不等价于 pane 的 OSC 11 默认背景；`zellij action set-pane-color` 在本环境曾出现无输出且不结束，不作为首选方案。
+
+### Zellij Web 刷新后 Codex 背景回退
+
+Codex 输入区背景不是固定主题色，而是根据终端报告的默认背景色动态计算。Zellij Web 刷新、浏览器重连或 xterm.js 重新初始化后，之前一次性发过的 OSC 10/11 可能丢失；此时 Codex 后续 redraw 会退回默认背景，表现为输入区背景块消失或变回黑底。
+
+针对 Codex，推荐在 PATH 更靠前的位置放 `codex` wrapper，而不是改 Zellij 的 `default_shell`：
+
+```bash
+install -m 0755 skills/.curated/software/assets/codex-osc-wrapper.sh ~/.local/bin/codex
+CODEX_REAL_BIN=/path/to/real/codex codex
+```
+
+模板会向 `/dev/tty` 下发：
+
+```text
+OSC 10 -> #424242
+OSC 11 -> #f1f1f1
+```
+
+默认策略不是高频轮询：启动时立即发一次，随后做 3 次、间隔 1 秒的短 burst；收到 `WINCH` / `CONT` / `HUP` 时立即补发；之后每 30 秒低频兜底一次。这样普通 shell 不受影响；只有 Codex 进程运行期间维护自己需要的终端默认色。
+
+可调参数：
+
+```bash
+CODEX_OSC_REFRESH_INTERVAL=30
+CODEX_OSC_BURST_COUNT=3
+CODEX_OSC_BURST_INTERVAL=1
+CODEX_OSC_FG="#424242"
+CODEX_OSC_BG="#f1f1f1"
+```
+
+若临时禁用 keepalive，可用：
+
+```bash
+CODEX_OSC_KEEPALIVE=0 codex
+```
 
 ### 终端能力响应漏到 shell
 
