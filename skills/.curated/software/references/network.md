@@ -81,13 +81,13 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 - Docker Desktop WSL2 backend: Docker Desktop uses a `docker-desktop` WSL distribution for the Docker engine.
 - Docker Resource Saver on WSL: Resource Saver does not stop the whole WSL VM because it is shared by all WSL distributions.
 
-## Mihomo / Clash 内核（Windows）
+## Mihomo / Clash 内核
 
 Mihomo 是 Clash Meta 的 Go 内核。Dashboard/API 只是控制面，代理监听、DNS、规则匹配、TUN、协议 outbound 等后端逻辑都在同一个 Go 可执行文件里。
 
 ### 默认配置位置
 
-Mihomo 默认从用户配置目录读取 `config.yaml`。Windows 当前用户下常用路径：
+Mihomo 默认从运行用户的配置目录读取 `config.yaml`。Windows 当前用户下常用路径：
 
 - `%USERPROFILE%\.config\mihomo\config.yaml`：默认运行配置。这个目录在 mihomo 的安全路径内，REST API 可以用 `path` 方式热重载。
 - `%USERPROFILE%\mihomo`：mihomo 源码仓库，当前可切到 release tag 构建；`mihomo.exe` 放在这里用于运行/验证。
@@ -119,6 +119,8 @@ cd "$env:USERPROFILE\mihomo"
 cd "$env:USERPROFILE\mihomo"
 .\mihomo.exe -t -d "$env:USERPROFILE\.config\mihomo"
 ```
+
+Linux 下如果用 `sudo` 启动 mihomo，默认配置目录会从当前用户的 `~/.config/mihomo` 变成 `/root/.config/mihomo`；这时要么显式 `-d /home/<user>/.config/mihomo`，要么按 root 的默认目录放配置。TUN 需要网络管理权限，Linux 直接运行 TUN 时通常要 `sudo`。
 
 ### REST API 运行态排障
 
