@@ -17,6 +17,18 @@ Zellij Web client、HTTPS 证书要求、login token/session token、反代注�
 
 多用户共享服务、systemd 模板单元与按 UID 分配端口见 [references/service.md](references/service.md)。
 
+## 速记
+
+### VS Code serve-web
+
+在当前机器启动一个 VS Code Web 服务，适合临时从浏览器访问这台机器上的开发环境。需要终端一直挂着这个命令；重启或终端关闭后要手动重新执行。
+
+```powershell
+code serve-web --host 0.0.0.0 --port 8000 --without-connection-token
+```
+
+`--without-connection-token` 表示不要求访问 token；只适合已经有内网、VPN、反代认证等外层保护的场景。
+
 ## 网络与远程连接
 
 RDP、向日葵、WSL Mirror 模式网络、会话管理（tsdiscon / logoff）、MTU 排障见 [references/network.md](references/network.md)。
