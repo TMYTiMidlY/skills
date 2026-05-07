@@ -136,6 +136,92 @@ $body = @{ path = "$env:USERPROFILE\.config\mihomo\config.yaml" } | ConvertTo-Js
 Invoke-WebRequest -Uri 'http://127.0.0.1:9090/configs?force=true' -Method Put -ContentType 'application/json' -Body $body
 ```
 
+## Windows TUN / 代理端口稳定性排障
+
+先区分是远端节点不通，还是本机 TUN / 代理入口没有正确接管。常用对照：
+
+```powershell
+curl.exe -v -I --max-time 12 <test-url>
+curl.exe -v -I --max-time 12 --proxy http://127.0.0.1:7890 <test-url>
+curl.exe -v -I --max-time 12 --proxy http://<lan-or-vpn-ip>:7890 <test-url>
+```
+
+如果显式 `--proxy` 稳定成功，而裸 `curl` 失败或命中 fake-ip 后报连接错误，优先查 TUN、系统路由、DNS 劫持和沙箱/权限环境；不要直接判断为远端节点问题。
+
+`mixed-port` 不建议只绑定到某个虚拟网卡或临时地址。只给本机用时优先绑定回环地址；需要给局域网、虚拟网或其他设备用时可绑定全部地址，并结合防火墙控制访问：
+
+```yaml
+mixed-port: 7890
+allow-lan: true
+bind-address: '*'
+```
+
+如果绑定到某个具体虚拟网卡地址，网卡重连、地址变化、服务启动顺序变化都可能导致本机工具或其他设备间歇性连不上代理端口。
+
+VLESS + WebSocket + TLS 放在 Caddy/Nginx 后面不是错误方案，适合已有 HTTPS 站点、证书自动维护、端口复用和反代隐藏。但客户端配置要补齐 TLS 侧信息：
+
+```yaml
+proxies:
+  - name: <node-name>
+    type: vless
+    server: <proxy-domain>
+    port: 443
+    uuid: <uuid>
+    tls: true
+    servername: <proxy-domain>
+    client-fingerprint: chrome
+    network: ws
+    ws-opts:
+      path: <websocket-path>
+```
+
+`servername` 不要留空；它应和证书、反代站点、客户端访问域名一致。`client-fingerprint` 建议写在具体 proxy 上。
+
+DNS 的 IPv6 设置应和全局 IPv6 策略一致。若全局关闭 IPv6，DNS 也保持关闭，避免解析出不可用地址或连接路径不一致：
+
+```yaml
+ipv6: false
+dns:
+  enable: true
+  ipv6: false
+  respect-rules: true
+  enhanced-mode: fake-ip
+```
+
+节点组选择上，`fallback` 是按顺序优先使用第一个可用节点；`url-test` 才是按延迟选择。两台或多台同类节点需要自动选低延迟时，用 `url-test`，并设置 `tolerance` 避免延迟差很小时频繁切换：
+
+```yaml
+proxy-groups:
+  - name: <auto-group>
+    type: url-test
+    proxies:
+      - <node-a>
+      - <node-b>
+    url: <latency-test-url>
+    interval: 300
+    tolerance: 50
+    lazy: false
+```
+
+不要把探测间隔设得过短。短间隔会增加远端和反代连接压力，也可能让选择器看起来频繁抖动。
+
+MTU 不要为了“稳定”而默认显式写入。只有出现大包相关症状时再测试，例如大文件下载中断、网页加载一半停住、TLS 握手偶发超时、小请求能通但大响应卡住。需要测试时可临时从 `1400` 或 `1380` 开始；没有这些症状时让 mihomo 使用默认值。
+
+延迟判断不要只看面板或 API 的单次 delay。API delay 可用于节点间相对比较，真实体感还要看代理后的实际请求总耗时和稳定性：
+
+```powershell
+$node = [uri]::EscapeDataString('<node-name>')
+curl.exe "http://127.0.0.1:9090/proxies/$node/delay?timeout=8000&url=<encoded-test-url>"
+
+1..10 | ForEach-Object {
+  curl.exe --silent --show-error --output NUL `
+    --write-out '%{http_code} connect=%{time_connect} start=%{time_starttransfer} total=%{time_total}\n' `
+    --max-time 12 --proxy http://127.0.0.1:7890 <test-url>
+}
+```
+
+如果 API delay 较低但真实 `total` 明显更高，说明节点 TCP/TLS 探测和完整 HTTP 请求体感不同。此时应关注是否稳定、是否丢请求、是否存在反代/目标站差异，而不是只追求面板数字。
+
 ## 切换到 release tag
 
 构建指定 release 前先切 tag：
