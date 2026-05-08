@@ -56,6 +56,8 @@ curl.exe -k -I https://127.0.0.1:8080/
 
 RDP、向日葵、WSL Mirror 模式网络、会话管理（tsdiscon / logoff）、MTU 排障见 [references/network.md](references/network.md)。
 
+ChatGPT 网页端 Pro / Extended 自动化、`steipete/oracle` browser engine、Windows Chrome DevTools、WSL Mirror / NAT 差异、以及必须用 network payload 验证真实模型与 thinking effort 的经验见 [references/oracle-pro.md](references/oracle-pro.md)。
+
 ## 挂载与文件共享
 
 WSL 挂载 Windows 盘、UNC/SMB 共享、`drvfs/9p` 小文件性能、CIFS 凭据与 `mount.cifs` 排障见 [references/mount.md](references/mount.md)。
