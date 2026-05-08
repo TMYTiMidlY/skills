@@ -62,24 +62,14 @@ keep_colors_alive() {
 keep_colors_alive &
 keeper_pid=$!
 
-"$real_codex" "$@" &
-codex_pid=$!
-
 cleanup() {
     kill "$keeper_pid" 2>/dev/null || true
 }
 
-forward_signal() {
-    kill "-$1" "$codex_pid" 2>/dev/null || true
-}
-
-trap 'forward_signal INT' INT
-trap 'forward_signal TERM' TERM
-trap 'emit_osc_colors; forward_signal HUP' HUP
+trap cleanup EXIT INT TERM HUP
 trap emit_osc_colors WINCH CONT
-trap cleanup EXIT
 
-wait "$codex_pid"
+"$real_codex" "$@"
 status=$?
 cleanup
 wait "$keeper_pid" 2>/dev/null || true
