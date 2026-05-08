@@ -304,6 +304,8 @@ install -m 0755 skills/.curated/software/assets/codex-osc-wrapper.sh ~/.local/bi
 CODEX_REAL_BIN=/path/to/real/codex codex
 ```
 
+模板默认会自动跳过自身，查找 PATH 里的下一个 `codex` 作为真实 Codex；如果 PATH 顺序复杂，显式设置 `CODEX_REAL_BIN` 更稳。npm 安装的 `codex` 通常是 JS shim，会再 spawn 平台 native binary；Homebrew 安装的 `codex` 更接近 native 入口，因此需要包裹时优先包 brew/native 入口，少一层启动逻辑也少一层 PATH 干扰。
+
 模板会向 `/dev/tty` 下发：
 
 ```text
@@ -312,6 +314,8 @@ OSC 11 -> #f1f1f1
 ```
 
 默认策略不是高频轮询：启动时立即发一次，随后做 3 次、间隔 1 秒的短 burst；收到 `WINCH` / `CONT` / `HUP` 时立即补发；之后每 30 秒低频兜底一次。这样普通 shell 不受影响；只有 Codex 进程运行期间维护自己需要的终端默认色。
+
+真实 Codex 进程应保持前台执行；只把 OSC keepalive 放后台。Codex 0.129+ 对交互 stdin 更严格，如果把真实 Codex 放到后台再 `wait`，可能报 `stdin is not a terminal`。
 
 可调参数：
 
