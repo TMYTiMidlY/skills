@@ -1,4 +1,12 @@
 {
+  "remote": {
+    "repo": "TMYTiMidlY/ssh-remote-mcp",
+    "path": "skills/remote",
+    "branch": "main",
+    "synced_commit": "2c7c30b",
+    "synced_date": "2026-05-09T15:42:00Z",
+    "description": "ssh-remote-mcp 配套 skill：MCP 模式 + Plain 模式两套远端操作流程"
+  },
   "slidev": {
     "repo": "slidevjs/slidev",
     "path": "skills/slidev",
