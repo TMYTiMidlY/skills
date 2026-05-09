@@ -12,7 +12,6 @@
 | `software` | SSH、systemd、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享客户端、Windows/macOS 操作与激活、远程桌面 / WSL 网络、EasyTier 客户端、Hermes systemd / terminal backend |
 | `vps-maintenance` | VPS 初始化、Caddy（含 caddy-security / caddy-webdav）、EasyTier、网络质量检测 |
 | `docker-maintenance` | Hermes Docker 后端等受限容器内的环境探测、只读挂载识别、受限 CLI 安装、OAuth device flow、SSH key 生成 |
-| `remote` | 远程 SSH 执行规范 |
 | `thesis-writer` | 中文学位论文写作与修订：doc 转分章 md、脚注内联、引用核查、GB/T 7714 格式规范 |
 | `worktree` | 为实验性改动创建隔离 git worktree（含 submodule 同步）；项目特定构建由上层接管 |
 | `mess` | 记录排查过的疑难杂症和踩坑经历 |
@@ -23,6 +22,7 @@
 | Skill | 来源 | 说明 |
 | --- | --- | --- |
 | `qiuzhi-skill-creator` | [秋芝2046](https://space.bilibili.com/385670211) | 交互式引导创建新的 skill |<!-- skills-table:begin -->
+| `remote` | [TMYTiMidlY/ssh-remote-mcp](https://github.com/TMYTiMidlY/ssh-remote-mcp) | ssh-remote-mcp 配套 skill：MCP 模式 + Plain 模式两套远端操作流程 |
 | `slidev` | [slidevjs/slidev](https://github.com/slidevjs/slidev) | Slidev 官方 skill |
 | `doc-coauthoring` | [anthropics/skills](https://github.com/anthropics/skills) | 文档协作工作流 |
 | `docx` | [anthropics/skills](https://github.com/anthropics/skills) | Word 文档操作 |
