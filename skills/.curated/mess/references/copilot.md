@@ -1,8 +1,9 @@
 # Copilot CLI 踩坑
 
-## Copilot CLI 的 `BASH_ENV` 注入只对非交互 bash 生效
+## ~~Copilot CLI 的 `BASH_ENV` 注入只对非交互 bash 生效~~ （已废弃）
 
 > 2026-05-09 | Copilot CLI 1.0.44 | Linux
+> ⚠️ **已废弃 (2026-05-10)**：`.copilot.env` + `BASH_ENV` 方案已移除。现在 PAT 直接写在 `.envrc` 的 `GITHUB_PERSONAL_ACCESS_TOKEN` 里，git credential helper 也直接读这个变量，不再经过 `gh` CLI。下面保留原始记录作为踩坑存档。
 
 ### 症状
 
@@ -214,23 +215,24 @@ ensure_mcp_symlinks
 - 实测才信结论；我第一次只看 `copilot mcp list` 就断言"完全不上溯"，是错的——读了 app.js 才发现它**会**上溯，只是停在 git root。
 - `copilot mcp list` 输出的 `Source: Workspace (...)` 显示的是**实际命中**的那个文件路径，可以用来快速验证 symlink 起没起。
 
-## `gh repo fork` 跨账号 clone 后 `git push` 用错 SSH 身份
+## ~~`gh repo fork` 跨账号 clone 后 `git push` 用错 SSH 身份~~ （方案已更新）
 
 > 2026-05-09 | gh CLI / SSH 默认配置 | Linux
+> ⚠️ **方案已更新 (2026-05-10)**：不再用 `.copilot.env` + `GH_TOKEN`。现在 `.envrc` 直接 export `GITHUB_PERSONAL_ACCESS_TOKEN`，git credential helper 内联在 `GIT_CONFIG_COUNT` env 里直接读它。下面 SSH 身份错配的根因分析仍然成立。
 
 ### 症状
 
-工作区按 AGENTS.md 默认账号是 TMYTiMidlY（`.copilot.env` 里 `GH_TOKEN`），跑：
+工作区按 AGENTS.md 默认账号是 TMYTiMidlY（`.envrc` 里 `GITHUB_PERSONAL_ACCESS_TOKEN`），跑：
 
 ```bash
-source ~/TiMidlY-projects/.copilot.env  # GH_TOKEN=TMYTiMidlY
+# （旧方案用 source .copilot.env，现在已废弃）
 gh repo fork upstream/x --clone --fork-name x
 ```
 
 fork 操作本身成功（API 调用走 GH_TOKEN，账号没问题），clone 出来的 origin 是 `git@github.com:TMYTiMidlY/x.git`。但后面 `git push origin main` 报：
 
 ```
-ERROR: Permission to TMYTiMidlY/x.git denied to Agony5757.
+ERROR: Permission to TMYTiMidlY/x.git denied to <账号 B>.
 ```
 
 很迷惑——明明 GH_TOKEN 是 TMYTiMidlY 的。
@@ -244,11 +246,11 @@ Host *
     IdentityFile ~/.ssh/id_ed25519
 ```
 
-而本机这把默认 key 注册在 **Agony5757** 名下（TMYTiMidlY 的 key 是 `id_ed25519_second`，但 ssh 默认不会拿）。GitHub 看到的是这把 key 对应的账号，所以 push 被拒。
+而本机这把默认 key 注册在**账号 B** 名下（TMYTiMidlY 的 key 是 `id_ed25519_second`，但 ssh 默认不会拿）。GitHub 看到的是这把 key 对应的账号，所以 push 被拒。
 
 ```bash
 ssh-keygen -lf ~/.ssh/id_ed25519.pub        # 看 fingerprint
-ssh -T git@github.com                       # → "Hi Agony5757!" 一目了然
+ssh -T git@github.com                       # → "Hi <账号 B>!" 一目了然
 ```
 
 ### 解决
@@ -270,13 +272,13 @@ ssh -T git@github.com                       # → "Hi Agony5757!" 一目了然
 
 ---
 
-## 用 `GIT_CONFIG_COUNT` env 把 gh 临时挂成 git credential helper（不污染 `~/.gitconfig`）
+## 用 `GIT_CONFIG_COUNT` env 把 credential helper 注入 git（不污染 `~/.gitconfig`）
 
-> 2026-05-09 | git 2.34 | Copilot CLI 1.0.44
+> 2026-05-09 → **更新 2026-05-10** | git 2.34 | Copilot CLI 1.0.44
 
 ### 症状
 
-希望工作区内 `git push https://github.com/...` 自动用 `gh` CLI 拿 token（按当前 `GH_TOKEN` 决定账号），但**不想跑 `gh auth setup-git`**——那条命令会把 helper 写进全局 `~/.gitconfig`，对工作区**外**的所有项目（包括用别的账号的）也生效，是范围溢出。
+希望工作区内 `git push https://github.com/...` 自动用正确账号的 token，但**不想跑 `gh auth setup-git`**——那条命令会把 helper 写进全局 `~/.gitconfig`，对工作区**外**的所有项目（包括用别的账号的）也生效，是范围溢出。
 
 ### 关键发现
 
@@ -289,32 +291,36 @@ GIT_CONFIG_KEY_<i>   GIT_CONFIG_VALUE_<i>     # i ∈ [0, N-1]
 
 git 启动时把这 N 对 `(key, value)` 当成虚拟 config 项注入。用 `git config --show-scope --get-all <key>` 能看到 scope=`command` 的来源。
 
-### 解决：direnv 注入 5 个 env 变量
+### 解决：direnv 注入内联 credential helper
 
 放在工作区根 `.envrc`（direnv 自动加载/卸载）：
 
 ```bash
+export GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxx..."   # TMYTiMidlY 的 PAT
+
 _n="${GIT_CONFIG_COUNT:-0}"     # 累加，避免覆盖 Copilot 注入的 KEY_0=safe.bareRepository
 export "GIT_CONFIG_KEY_$_n=credential.https://github.com.helper"
 export "GIT_CONFIG_VALUE_$_n="                                    # ← 空值，清空之前继承的 helper 链
 export "GIT_CONFIG_KEY_$((_n+1))=credential.https://github.com.helper"
-export "GIT_CONFIG_VALUE_$((_n+1))=!gh auth git-credential"      # ← 启用 gh
+export "GIT_CONFIG_VALUE_$((_n+1))=!f(){ test \"\$1\" = get && printf 'protocol=https\nhost=github.com\nusername=TMYTiMidlY\npassword=%s\n' \"\$GITHUB_PERSONAL_ACCESS_TOKEN\"; }; f"
 export GIT_CONFIG_COUNT=$((_n+2))
 unset _n
 ```
+
+> **旧方案**（已废弃）用 `!gh auth git-credential`，但 `GH_TOKEN` 被 unset 后 gh 会退回另一个账号的 OAuth token。现在直接用 `$GITHUB_PERSONAL_ACCESS_TOKEN` 内联输出凭据，不经过 `gh` CLI。
 
 效果：
 
 | 加 env 后 | 不加 env |
 |---|---|
-| `git push` 直接调 `gh auth git-credential`，gh 用 `GH_TOKEN`（或 hosts.yml active）输出 username + password | terminal 弹 `Username for 'https://github.com':`，hang 住等输入 |
+| `git push` 自动用 `GITHUB_PERSONAL_ACCESS_TOKEN`（TMYTiMidlY）认证 | terminal 弹 `Username for 'https://github.com':`，hang 住等输入 |
 
 ### 几个易踩坑点
 
-1. **`credential.helper` 是累加列表不是覆盖**——必须先写一条空值 `helper=`（git 约定：空字符串清空之前所有 helper），再写 `helper=!gh ...`，否则会先调系统 keychain 等继承下来的 helper。
+1. **`credential.helper` 是累加列表不是覆盖**——必须先写一条空值 `helper=`（git 约定：空字符串清空之前所有 helper），再写 `helper=!...`，否则会先调系统 keychain 等继承下来的 helper。
 2. **必须 append 到现有 COUNT 后面**——Copilot CLI 自己会注入 `GIT_CONFIG_COUNT=1, KEY_0=safe.bareRepository`；从 0 开始覆盖会让 Copilot 的配置失效。`_n="${GIT_CONFIG_COUNT:-0}"` 是关键。
 3. **direnv 配合**：cd 进工作区自动 export 这堆变量，离开自动 unset（direnv 跟踪 .envrc 启停的 env diff，dynamically-named vars 也算）。改 `.envrc` 后要 `direnv allow` 重新授权（基于文件 hash）。
-4. **`GH_TOKEN` 必须能让 gh 用上**——agent 的 `bash` 工具是交互式 shell 不会触发 `BASH_ENV`，但 `bash -c '...'` 是非交互式会自动 source `.copilot.env`，所以用 `bash -c 'gh ...'` 包一层即可，无需手 source。
+4. **不要用 `GH_TOKEN` / `GITHUB_TOKEN`**——git/gh CLI 会自动读它们，导致 Copilot 主进程的 git 凭据也被污染。用 `GITHUB_PERSONAL_ACCESS_TOKEN` 这种 git/gh 不识别的变量名，只在 credential helper 里显式引用。
 5. **作用域只限工作区**：因为 env 是 direnv 按目录加载，cd 出工作区后 env 自动被 direnv 清掉；其他项目的 git 完全不受影响。
 
 ### 教训
@@ -322,6 +328,7 @@ unset _n
 - **想给 git 加临时配置不要改 `~/.gitconfig`**——`-c key=val` 命令行级、`GIT_CONFIG_*` env 级、`.git/config` 仓库级，三种都比改 user-level 干净。
 - **`gh auth setup-git` ≠ "用 gh 推 git"**——那只是把 gh 当 helper **持久化**到 `~/.gitconfig` 的快捷脚本；想要等价但不持久的效果，自己注 `GIT_CONFIG_*` 即可。
 - **scope=`command` 是 env 注入的标志**——排查"我没在哪写过这条 config 怎么 git 看到了"时，用 `git config --show-scope --show-origin --list` 一目了然。
+- **不需要 `gh` 做中间人**——credential helper 可以是任意可执行脚本/内联 shell function，直接 printf 即可，比依赖 `gh auth git-credential` 更简单、更可控。
 
 ## `/rewind` 在非 git 仓库的 cwd 里直接拒绝
 
