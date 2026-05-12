@@ -17,7 +17,7 @@
 | `portal_patch` | 改文件（hash 防冲突） | `host, path, file_hash, patches_json` | `result=ok\|error, file_hash`（成功）/ `current_file_hash`（hash mismatch） |
 | `portal_grep` | 远端 rg / grep | `host, path, pattern, [glob, file_type, ignore_case, max_count]` | `engine, matches[{file,line,text}]` |
 | `portal_glob` | 远端文件列表 | `host, pattern, [path]` | `engine, files[]` |
-| `portal_bash` | 持久 shell（cwd/env 跨调用保留） | `host, command, [timeout]` | `host, session_id, output, exit_code` |
+| `portal_bash` | 持久 shell（cwd/env 跨调用保留） | `host, command, [timeout]` | `host, session_id, output`（要 exit code 自己 `; echo $?`） |
 | `portal_bash_close` | 关闭主机 session | `host` | 状态字符串 |
 | `portal_bash_status` | 查看缓存的 session | — | host→session_id 映射 |
 | `portal_cleanup_tmps` | 清孤儿 patch tmp | `host, directory, [max_age_s]` | `scanned, removed, skipped` |

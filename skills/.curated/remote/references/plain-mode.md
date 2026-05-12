@@ -2,9 +2,9 @@
 
 > ⛔ **模式隔离**：进入 Plain 模式后，**禁止调用任何 portal MCP 工具**——包括 `portal_read`、`portal_patch`、`portal_bash`、`portal_transfer`、`portal_multi_exec` 等所有 `portal_*` 工具。所有远端操作只通过 bash 的 `ssh` / `scp` 完成。
 
-适用场景：交互式 sudo（弹密码）；改其它用户家目录文件；portal-mcp-server 未注册到当前项目。正常情况优先走 MCP 模式（参见 `mcp-mode.md`）。
+> ⚠️ **Windows 兼容性差**：Windows OpenSSH 不支持 `ControlMaster`（依赖 Unix domain socket），plain 模式每次 `ssh host cmd` 都是新 TCP+auth（~300ms/次）。**Win 上强烈建议改用 MCP 模式**（asyncssh 进程内连接池跨平台一致）。
 
-> ⚠️ **Windows 特别提示**：Windows OpenSSH 不支持 `ControlMaster`（依赖 Unix domain socket）。在 Win 上跑 plain 模式每次 `ssh host cmd` 都是新 TCP+auth（~300ms/次），**强烈建议改用 MCP 模式**（asyncssh 进程内连接池跨平台一致）。
+适用场景：交互式 sudo（弹密码）；改其它用户家目录文件；portal-mcp-server 未注册到当前项目。正常情况优先走 MCP 模式（参见 `mcp-mode.md`）。
 
 ## 前置检查
 
@@ -16,7 +16,7 @@
 [ -z "$SSH_AUTH_SOCK" ] && export SSH_AUTH_SOCK=/run/user/$(id -u)/ssh-agent.socket
 ```
 
-2. 确认本地 SSH config 包含连接复用（ControlMaster）。Windows 本机 OpenSSH 通常不支持 ControlMaster，跳过这一步；只在 Linux / macOS / WSL 检查：
+2. 在 Linux / macOS / WSL 上确认本地 SSH config 有 `ControlMaster`（Win 跳过这步——上面已说明）：
 
 ```bash
 grep -q "ControlMaster" ~/.ssh/config && echo "OK" || echo "MISSING"
