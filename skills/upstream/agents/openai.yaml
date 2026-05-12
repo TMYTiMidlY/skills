@@ -1,4 +1,4 @@
 interface:
-  display_name: "Upsteam"
+  display_name: "Upstream"
   short_description: "Prep Codex handoff for web Pro models"
   default_prompt: "Prepare repository context, smoke-test evidence, and a Pro-model handoff brief for a complex research or planning task."
