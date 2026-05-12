@@ -1,6 +1,10 @@
 # Plain 模式（sudo 与兜底）
 
-适用场景：交互式 sudo（弹密码）；改其它用户家目录文件；ssh-remote-mcp 未注册到当前项目。正常情况优先走 MCP 模式（参见 `mcp-mode.md`）。
+> ⛔ **模式隔离**：进入 Plain 模式后，**禁止调用任何 portal MCP 工具**——包括 `portal_read`、`portal_patch`、`portal_bash`、`portal_transfer`、`portal_multi_exec` 等所有 `portal_*` 工具。所有远端操作只通过 bash 的 `ssh` / `scp` 完成。
+
+适用场景：交互式 sudo（弹密码）；改其它用户家目录文件；portal-mcp-server 未注册到当前项目。正常情况优先走 MCP 模式（参见 `mcp-mode.md`）。
+
+> ⚠️ **Windows 特别提示**：Windows OpenSSH 不支持 `ControlMaster`（依赖 Unix domain socket）。在 Win 上跑 plain 模式每次 `ssh host cmd` 都是新 TCP+auth（~300ms/次），**强烈建议改用 MCP 模式**（asyncssh 进程内连接池跨平台一致）。
 
 ## 前置检查
 
@@ -55,4 +59,4 @@ ssh -t <name> "sudo bash /tmp/<script>.sh"
 
 简单的追加或单行替换可以直接 ssh 执行。
 
-> 这套流程现在主要给 "MCP 还没注册" 或 "目标在别的用户家目录" 等场景兜底；正常情况下走 MCP 模式的 `remote_read` + `remote_patch` 比这个安全也方便。
+> 这套流程现在主要给 "MCP 还没注册" 或 "目标在别的用户家目录" 等场景兜底；正常情况下走 MCP 模式的 `portal_read` + `portal_patch` 比这个安全也方便。
