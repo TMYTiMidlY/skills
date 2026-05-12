@@ -33,15 +33,15 @@
 ## 文档处理流程
 
 **步骤 1: 分析文档**
-运行: `python scripts/analyze.py input.pdf`
+运行: `uv run scripts/analyze.py input.pdf`
 ✓ 检查点: 确认输出 fields.json 存在
 
 **步骤 2: 验证字段**
-运行: `python scripts/validate.py fields.json`
+运行: `uv run scripts/validate.py fields.json`
 ✓ 检查点: 无错误输出
 
 **步骤 3: 处理文档**
-运行: `python scripts/process.py input.pdf fields.json output.pdf`
+运行: `uv run scripts/process.py input.pdf fields.json output.pdf`
 ✓ 检查点: 输出文件可正常打开
 ```
 
@@ -118,13 +118,13 @@
 ## 文档编辑流程
 
 1. 编辑 `word/document.xml`
-2. **立即验证**: `python scripts/validate.py unpacked_dir/`
+2. **立即验证**: `uv run scripts/validate.py unpacked_dir/`
 3. 如验证失败:
    - 仔细阅读错误信息
    - 修复 XML 中的问题
    - 再次运行验证
 4. **仅在验证通过后继续**
-5. 重建: `python scripts/pack.py unpacked_dir/ output.docx`
+5. 重建: `uv run scripts/pack.py unpacked_dir/ output.docx`
 6. 测试输出文档
 ```
 
