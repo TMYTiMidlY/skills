@@ -1,9 +1,9 @@
 ---
-name: upsteam
+name: upstream
 description: Prepare a high-signal handoff from Codex to a slower web-only reasoning model such as GPT-5.4 Pro or GPT-5.2 Pro, then resume local execution after the reply comes back. Use when the user wants deep planning, brainstorming, or architecture review that benefits from a Pro model, but Codex must first gather repository context, existing files, prior artifacts, environment details, and local smoke-test evidence.
 ---
 
-# Upsteam
+# Upstream
 
 ## Overview
 
