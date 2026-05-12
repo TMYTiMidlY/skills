@@ -52,13 +52,13 @@ Prefer built-in reads first:
 Use the helper script only when a quick workspace snapshot would help, when many focus paths need a compact summary, or when the user wants clipboard-ready output:
 
 ```bash
-python3 scripts/collect_handoff_context.py --root /path/to/repo
+uv run scripts/collect_handoff_context.py --root /path/to/repo
 ```
 
 If you already know the high-value files, use repeated `--focus path` flags to narrow the output:
 
 ```bash
-python3 scripts/collect_handoff_context.py \
+uv run scripts/collect_handoff_context.py \
   --root /path/to/repo \
   --focus README.md \
   --focus src \
@@ -69,7 +69,7 @@ If the user wants a ready-to-paste packet copied into the terminal clipboard, ad
 Use `--quiet` if you want clipboard-only behavior without echoing the same payload to stdout.
 
 ```bash
-python3 scripts/collect_handoff_context.py \
+uv run scripts/collect_handoff_context.py \
   --root /path/to/repo \
   --focus README.md \
   --copy \

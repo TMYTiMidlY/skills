@@ -9,6 +9,10 @@ description: 本地软件、CLI 工具与自托管服务的配置与排障。涵
 
 SSH 密钥 passphrase、ssh-agent、RemoteForward 代理转发等通用 SSH 用法见 [references/ssh.md](references/ssh.md)。
 
+## Git 镜像仓库
+
+多设备协作且部分设备无法访问 GitHub 时，用一台公网 VPS 做双向 SSH git 镜像。架构、搭建步骤、hooks、Actions workflow、防回环、防 split-brain 的完整方案见 [references/git-mirror.md](references/git-mirror.md)。
+
 ## Zellij
 
 Zellij Web client、HTTPS 证书要求、login token/session token、反代注入 Cookie、`default_shell`、Web/xterm 主题分层、给特定软件写 OSC 10/11 颜色 wrapper、Codex 输入框颜色、鼠标选区颜色与 WSL systemd service 写法见 [references/zellij.md](references/zellij.md)。
