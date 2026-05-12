@@ -77,3 +77,10 @@ tabs_context_mcp
 - 提取浏览器中预览的文档
 - 自动化网页操作（填表、点击、截图）
 - 抓取网页内容或网络请求
+
+## 站点案例
+
+具体站点的工作流单独成文，按需查阅：
+
+- [references/smartedu-pdf-download.md](references/smartedu-pdf-download.md) — 国家中小学智慧教育平台（basic.smartedu.cn）受保护 PDF 的提取
+- [references/yuketang-post-comment.md](references/yuketang-post-comment.md) — 雨课堂（yuketang.cn）论坛发评论流程

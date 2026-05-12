@@ -175,7 +175,7 @@ Based on what they've selected, ask if there's anything important missing for th
 
 ### Step 5: Drafting
 
-Use `str_replace` to replace the placeholder text for this section with the actual drafted content.
+Use a targeted edit/replace operation to swap the placeholder text for this section with the actual drafted content.
 
 Announce the [SECTION NAME] section will be drafted now based on what they've selected.
 
@@ -189,7 +189,7 @@ Provide a note: Instead of editing the doc directly, ask them to indicate what t
 ### Step 6: Iterative Refinement
 
 As user provides feedback:
-- Use `str_replace` to make edits (never reprint the whole doc)
+- Use targeted edit/replace operations to make edits (never reprint the whole doc)
 - Confirm edits are complete after each change
 - If user edits doc directly and asks to read it: mentally note the changes they made and keep them in mind for future sections (this shows their preferences)
 
@@ -347,8 +347,8 @@ Announce document completion. Provide a few final tips:
 - Don't let gaps accumulate - address them as they come up
 
 **File Management:**
-- Use `create_file` for drafting full sections
-- Use `str_replace` for all edits
+- Use a file-creation tool for drafting full sections
+- Use targeted edit/replace operations for all subsequent edits
 - Never include brainstorming lists in files - that's just conversation
 
 **Quality over Speed:**

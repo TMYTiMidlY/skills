@@ -17,6 +17,8 @@
 | `worktree` | 为实验性改动创建隔离 git worktree（含 submodule 同步）；项目特定构建由上层接管 |
 | `mess` | 记录排查过的疑难杂症和踩坑经历 |
 | `plan` | 先规划再实施：产出面向另一 AI 的分步可验证实施文档，含设计考量与注意事项 |
+| `autopilot` | 自动推进式任务系统：cron 触发 Hermes session 在容器内自主推进任务、开 PR、汇报进度（规划侧默认 Claude Code） |
+| `browser-use` | 浏览器自动化：MCP 控制浏览器、绕过下载限制、提取 pdf.js 等嵌入数据 |
 
 ### 嫁接自其他仓库
 

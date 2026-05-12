@@ -227,7 +227,7 @@ SKILL.md → advanced.md (完整信息)
 ```
 
 **步骤 1: 分析表单**
-运行: `python scripts/analyze_form.py input.pdf`
+运行: `uv run scripts/analyze_form.py input.pdf`
 ...
 ````
 
@@ -239,13 +239,13 @@ SKILL.md → advanced.md (完整信息)
 ## 文档编辑流程
 
 1. 编辑 `word/document.xml`
-2. **立即验证**: `python scripts/validate.py unpacked_dir/`
+2. **立即验证**: `uv run scripts/validate.py unpacked_dir/`
 3. 如果验证失败：
    - 仔细查看错误信息
    - 修复 XML 中的问题
    - 再次运行验证
 4. **只有验证通过后才继续**
-5. 重建: `python scripts/pack.py unpacked_dir/ output.docx`
+5. 重建: `uv run scripts/pack.py unpacked_dir/ output.docx`
 ```
 
 ### 条件工作流
