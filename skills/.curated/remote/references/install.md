@@ -10,17 +10,16 @@
       "args": [
         "--from",
         "git+https://github.com/TMYTiMidlY/portal-mcp-server.git",
-        "ssh-remote-mcp"
+        "portal-mcp-server"
       ]
     }
   }
 }
 ```
 
-> 注意三件事：
-> - server key 必须是 **`portal`**（agent 看到的工具名前缀就是 `portal-`，跟本 skill 的引用一致）
-> - `--from ...portal-mcp-server.git` 是仓库 URL；`ssh-remote-mcp` 是仓库内的 console-script 入口名（历史遗留，没改）
-> - VS Code 的 `.vscode/mcp.json` 用 `servers` 而不是 `mcpServers`，否则同格式
+> 注意两件事：
+> - `.mcp.json` 顶层 `mcpServers` 下的 key（这里是 `"portal"`）决定 agent 看到的工具名前缀就是 `portal-`，跟本 skill 的引用一致。改这个 key 会让所有工具都换前缀。
+> - VS Code 的 `.vscode/mcp.json` 用 `servers` 而不是 `mcpServers`，每个 server 多写一行 `"type": "stdio"`，否则同格式
 
 之后在该项目目录下启动 `copilot`，会自动加载。验证：
 
