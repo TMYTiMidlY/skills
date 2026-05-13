@@ -18,7 +18,7 @@
 ```
 
 > 注意两件事：
-> - `.mcp.json` 顶层 `mcpServers` 下的 key（这里是 `"portal"`）决定 agent 看到的工具名前缀就是 `portal-`，跟本 skill 的引用一致。改这个 key 会让所有工具都换前缀。
+> - `.mcp.json` 顶层 `mcpServers` 下的 key（这里是 `"portal"`）是这个 server 的本地标识。**Copilot CLI** 把它作为前缀拼到工具名前面（你看到的就是 `portal-portal_read` 等）；其他客户端（Claude Code / Codex / Cursor）格式不同——Codex 用 `mcp__portal__portal_read`，Claude Code 通常直接 `portal_read`——但都用这个 key 在配置层管理 server。改 key 会同步改 Copilot CLI 看到的工具前缀。
 > - VS Code 的 `.vscode/mcp.json` 用 `servers` 而不是 `mcpServers`，每个 server 多写一行 `"type": "stdio"`，否则同格式
 
 之后在该项目目录下启动 `copilot`，会自动加载。验证：
