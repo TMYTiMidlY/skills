@@ -129,15 +129,14 @@ ssh <name> "<command>"
 
 ### 需要 sudo 的命令（核心场景）
 
-agent 在本地 `/tmp/` 写脚本，自己 `scp` 上传，**只让用户**执行最终的 `ssh -t`：
+把"用户负责的事"压到极小——**只敲一行 `ssh -t`**，其余都 agent 在本地做：
 
-```bash
-ssh -t <name> "sudo bash /tmp/<script>.sh"
-```
+1. 在**本地** `/tmp/` 用 view/edit/create 写脚本（不在远端写）。脚本开头加 `exec > >(tee /tmp/<name>.log) 2>&1`——日志路径固定在脚本里，不要拼到 ssh 命令的 `>` 重定向上。
+2. agent 自己 `scp` 推到远端 `/tmp/`；不要让用户 `scp`、也不要让用户 `cat > /tmp/x.sh <<EOF` 这样手敲创建脚本。
+3. 给用户唯一一条命令：`ssh -t <name> "sudo bash /tmp/<script>.sh"`。`-t` 让 sudo 能弹密码。多步操作合到一个脚本里，别拆成多次 `ssh -t` 让用户重复输密码。
+4. 用户跑完通知 agent，agent 自己 `scp` 拉 `/tmp/<name>.log` 解读，别让用户复制粘贴终端输出。
 
-`-t` 强制分配伪终端，使 sudo 能正常读取密码。**不要让用户跑 `scp`**——上传脚本、上传临时文件、拉取日志这些准备动作都该 agent 做。
-
-脚本开头加 `exec > >(tee /tmp/<name>.log) 2>&1`，用户看终端的同时留下日志；跑完 agent 自己 `scp` 拉回读，不要让用户手贴。
+> 准备脚本属于 plain 模式范畴：选了 plain 就在本地写、本地编辑、`scp` 推。不要回头用 `portal_*` 在远端创建 sudo 用的脚本——模式混用同时丢了 MCP 的 hash 校验和 plain 的责任边界。
 
 ### 复杂文件修改（无 MCP 时）
 
