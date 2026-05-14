@@ -185,7 +185,7 @@ example.com {
   ```
 
 - **公网端口别忘了放行安全组/防火墙**。  
-  中国大陆 Aliyun ECS 的未备案封锁另见 [`quality-check.md` 的 Aliyun 未备案封锁实测](quality-check.md#aliyun-未备案封锁实测)。
+  中国大陆 Aliyun ECS 的未备案 SNI 封锁与"IP 直连 + `tls internal`"绕过方案另见 [icp-filing.md](icp-filing.md)。
 
 ## 安装带插件的 Caddy 二进制
 
