@@ -109,6 +109,10 @@ pandoc 文档转换、Markdown→PDF、PDF→图片、feishu2md 飞书/Lark→Ma
 
 服务端（Caddy site block、WebDAV handler、viewer 实现、目录权限）由 `vps-maintenance` skill 覆盖。如果源文件需要先做格式转换，看 [references/format-conversion.md](references/format-conversion.md)。
 
+## OpenList 网盘聚合面板
+
+OpenList（AList 的活跃 fork）的坑分类速查（共性坑 / 不借助 Mac 的 rclone 直连专属坑 / 借助 Mac SMB 中转专属注意点，含源码 + issue 引用）、与 iCloud Drive 集成的两条路径选型对比、Mac SMB 中转部署流程（Optimize Storage 取舍、`~/Library/...` symlink、OpenList 加 SMB 存储参数）、`dd over ssh` 通用测速法与体验对照表、EasyTier 双向不对称排查思路见 [references/openlist.md](references/openlist.md)。
+
 ## MinerU PDF→Markdown 转换
 
 MinerU（mineru.net）提供 VLM 模型将 PDF 转为 Markdown/JSON，支持公式和表格识别。默认使用云端 API / Open API；未经用户明确允许，不要在本机安装或部署 MinerU。详细流程见 [references/mineru.md](references/mineru.md)。
