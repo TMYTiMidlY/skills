@@ -89,6 +89,23 @@ curl -s -X POST "https://mineru.net/api/v4/extract/task" \
 - 失败任务（`state=failed`）**不扣**额度，可放心重试。
 - 相同 URL 重复提交走**缓存**直接返回已有结果，也不重复扣。
 
+## 加密 PDF（owner-password 限制型）
+
+z-library / Anna's Archive / 一些扫描书常见 owner-password 加密：限制打印/复制，但内容明文，空密码即可打开。
+
+**MinerU 服务端能直接吃这种 PDF**——URL 提交、batch 上传都不受影响，不需要先解密。
+
+**坑只在本地预处理阶段**：
+
+- 用 `pypdf` 拆分（如 `mineru_large_pdf.py` 处理超 200 页 PDF 走 batch）时，pypdf 解 AES 加密流需要 `cryptography>=3.1`，否则报：
+  ```
+  pypdf.errors.DependencyError: cryptography>=3.1 is required for AES algorithm
+  ```
+  连 `len(reader.pages)` 都拿不到，拆分整个失败。本 skill 的 `mineru_large_pdf.py` 已在 PEP 723 inline deps 里声明 `cryptography`，`uv run` 会自动带上；如果用别的运行方式，记得装这个包。
+- `PdfWriter` 默认不加密，所以拆出来的 part PDF 是明文的，传给 MinerU 也没限制问题。
+
+**判断是否加密**：用空密码 `pypdf.PdfReader(p).is_encrypted` 即可。整本 PDF 不需要拆（≤200 页且能直接走 batch / URL 方式）的场景，根本不用碰 pypdf，直接丢给 MinerU 最省事。
+
 ## 轮询结果
 
 ```bash
@@ -110,6 +127,16 @@ API 限制单次最多 600 页。用 `page_ranges` 参数拆分提交同一个 U
 ```
 
 转换完成后将两部分的 `full.md` 拼接即可。注意：`page_ranges` 仅在 URL 提交方式（`/api/v4/extract/task`）下生效，batch 上传方式不支持。
+
+## batch 上传单文件 200 页限制
+
+**batch 上传方式（`/api/v4/file-urls/batch`）的隐藏硬上限是单文件 200 页**，超过会返回 `state=failed` + `err_msg='number of pages exceeds limit (200 pages), please split the file and try again'`。MinerU 文档没明示这条，但实测确认。
+
+实操要点：
+
+- 走 batch 时，`mineru_large_pdf.py` 的 `--pages-per-part` 必须 ≤ `200 - overlap`（默认 overlap=5 → 用 195）。脚本默认值 500 是按 URL 方式 600 页设的，走 batch 会全卷 fail。
+- 200 页限制只针对 **batch 上传**；URL 提交（`/api/v4/extract/task`）仍是 600 页/次，可继续用 `page_ranges` 拆 500/卷。
+- 没有公网直链或不想折腾反代时，batch + 195 页/卷是最省心的兜底方案，不依赖任何 EasyTier/Caddy 路径暴露。
 
 ## 超过 200MB 的文件（需物理拆分）
 

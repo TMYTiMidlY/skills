@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["pypdf>=4.0", "httpx>=0.27"]
+# dependencies = ["pypdf>=4.0", "httpx>=0.27", "cryptography>=3.1"]
 # ///
 """处理超过 MinerU 单次限制 (200MB / 600 页) 的大 PDF：
 下载（可选） → 拆分（页数 + 大小双约束，含 overlap）→ batch 上传 MinerU
