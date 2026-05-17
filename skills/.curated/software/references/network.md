@@ -326,6 +326,52 @@ netsh interface portproxy show all
 
 在当前 Windows/WSL localhost forwarding 正常时，`connectaddress=127.0.0.1` 往往比写 WSL NAT IP 更稳，因为 WSL NAT IP 会随重启变化。若服务只监听 WSL 内部地址而没有被 Windows localhost forwarding 接住，再改用当前 WSL IP 或让服务监听 `0.0.0.0`。
 
+#### Docker Desktop 容器端口的 wslrelay/IPv6 坑
+
+`connectaddress=127.0.0.1` 这条建议**对原生 WSL 服务有效，对 Docker Desktop 发布的容器端口经常失效**。表现：portproxy 已正确建立，从 Windows 或 EasyTier 远端 TCP 能 connect，但请求一发出立刻 `Connection reset by peer`/`Recv failure: Connection was reset`。
+
+原因链路：
+
+1. Docker Desktop 通过 WSL Integration 在用户 WSL 发行版（如 Ubuntu）内 root 进程上做端口 relay，**绑定的是 dual-stack v6 socket**（`ss -tlnp` 显示 `*:N`，对应 `IPV6_V6ONLY=0`），不是纯 v4 `0.0.0.0:N`。
+2. `wslrelay.exe`（`hostAddressLoopback=true` 或 `localhostForwarding=true` 触发）把 WSL 里这种 dual-stack socket mirror 到 Windows host 时，**只 bind `[::1]:N`**，不补一个 v4 socket，也没显式关 Windows 默认的 `IPV6_V6ONLY=1`。结果：Windows host 上的 `127.0.0.1:N`（v4）根本没人接（refused），`[::1]:N` 看着 LISTENING 但实测对所有连接 RST（这是 wslrelay 已知缺陷）。
+3. 原生 WSL 服务（ttyd / uvicorn / python http.server 等）多用纯 v4 socket `0.0.0.0:N`，wslrelay 能完美 mirror 成 Windows `127.0.0.1:N`，所以同样的 portproxy 写法对它们没问题。
+
+辨识步骤：
+
+```bash
+# 在 WSL 里：看服务到底是 v4 还是 dual-stack v6 socket
+ss -tlnp | grep :<port>
+#  0.0.0.0:<port>  → 纯 v4，portproxy → 127.0.0.1 没问题
+#  *:<port>        → dual-stack v6（Docker Desktop relay 典型），会踩坑
+#  [::]:<port>     → 纯 v6
+```
+
+```powershell
+# 在 Windows 上：看 Windows 这侧 wslrelay 真正 bind 了啥
+netstat -ano | findstr :<port>
+# 如果只看到 [::1]:<port> 没有 127.0.0.1:<port>，且 PID 对应 C:\Program Files\WSL\wslrelay.exe
+# 几乎可以确认踩了这个坑
+
+# 也可以直接验证 Windows 侧 [::1] 是否真接连接（很可能 RST）：
+curl.exe --noproxy * -v --max-time 5 "http://[::1]:<port>/"
+```
+
+修复（按推荐度排序）：
+
+1. **portproxy `connectaddress` 改成 WSL eth0 IP**（最快可用，但 WSL 重启后 IP 可能变）：
+   ```powershell
+   netsh interface portproxy delete v4tov4 listenport=<port> listenaddress=<windows-listen-ip>
+   netsh interface portproxy add v4tov4 `
+     listenaddress=<windows-listen-ip> listenport=<port> `
+     connectaddress=<wsl-eth0-ip> connectport=<port>
+   ```
+   WSL eth0 IP 用 `wsl.exe -d Ubuntu -- ip -4 addr show eth0 | awk '/inet/{print $2}'` 取。需要长期稳定可写 scheduled task：每次 WSL 启动后跑一遍 `netsh portproxy set v4tov4 ... connectaddress=<new-ip>`。
+2. **改用 `v4tov6` 转到 `::1`**：理论可行，但实测在不少 WSL 版本上 wslrelay 的 `[::1]` listener 也 RST，所以不一定通。可作为快速试探。
+3. **改 WSL 为 mirrored 网络模式**（长期解，需要 Windows 11 22H2+）：在 `%UserProfile%\.wslconfig` 加 `[wsl2] networkingMode=mirrored` 并去掉 `[experimental] hostAddressLoopback=true`，`wsl --shutdown` 重启。此后 WSL 与 Windows 共享网络命名空间，`127.0.0.1` 两边等价，原 `connectaddress=127.0.0.1` 的 portproxy 对 Docker 容器端口也能通；但要先评估对 EasyTier、其他虚拟网卡和已有 portproxy 的影响。
+4. **在 WSL 内补一个纯 v4 relay**（绕过 wslrelay bug）：例如在 Ubuntu 里跑 `socat TCP4-LISTEN:<port-v4>,reuseaddr,fork,bind=0.0.0.0 TCP:[::1]:<port>` 暴露一个纯 v4 listener 让 wslrelay 能正确 mirror；改动小但额外多一跳进程。
+
+历史背景：参见 microsoft/WSL 仓库长期开放的 "wslrelay only listens on IPv6 / IPv4 connections refused" 类 issue。
+
 VLESS + WebSocket + TLS 放在 Caddy/Nginx 后面不是错误方案，适合已有 HTTPS 站点、证书自动维护、端口复用和反代隐藏。但客户端配置要补齐 TLS 侧信息：
 
 ```yaml
