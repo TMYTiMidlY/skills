@@ -257,15 +257,19 @@ def main() -> None:
     parts_dir.mkdir(exist_ok=True)
 
     # 1. 准备原 PDF
-    if args.skip_download and not args.input.startswith(("http://", "https://")):
-        src_pdf = Path(args.input).resolve()
-    else:
-        name = unquote(Path(urlsplit(args.input).path).name) if args.input.startswith(("http://", "https://")) else Path(args.input).name
+    is_url = urlsplit(args.input).scheme in ("http", "https")
+    if is_url:
         src_pdf = out_dir / "source.pdf"
-        if not src_pdf.exists():
-            fetch_pdf(args.input, src_pdf, verify_ssl=not args.insecure)
-        else:
+        if args.skip_download and src_pdf.exists():
             log(f"已存在 {src_pdf}，跳过下载")
+        elif src_pdf.exists():
+            log(f"已存在 {src_pdf}，跳过下载")
+        else:
+            fetch_pdf(args.input, src_pdf, verify_ssl=not args.insecure)
+    else:
+        src_pdf = Path(args.input).expanduser().resolve()
+        if not src_pdf.exists():
+            sys.exit(f"找不到文件: {src_pdf}")
 
     # 2. 拆分
     existing = sorted(parts_dir.glob("part*.pdf"))
