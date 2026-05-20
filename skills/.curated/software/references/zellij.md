@@ -32,6 +32,19 @@ default_shell "/bin/bash"
 
 `web_sharing "on"` 表示新建 session 默认通过 Web server 共享；只想在需要时显式共享可用 `"off"`，完全禁用共享可用 `"disabled"`。
 
+## 普通启动与 Web 共享前提
+
+输入 `zellij` 会启动普通 Zellij session；session 会持续存在，后续可用 `zellij attach` 恢复。这个命令本身不等同于打开 Web client。
+
+如果希望普通 `zellij` 启动的新 session 可被 Web client 看到，前提是默认配置文件中启用了 Web 相关开关，至少包括：
+
+```kdl
+web_server true
+web_sharing "on"
+```
+
+如果 Web server 使用独立配置（例如 systemd service 通过 `zellij -c ~/.config/zellij/web.kdl web` 启动），而普通交互式 `zellij` 读取的是默认配置，则要分别确认两份配置。否则可能出现 Web server 已运行，但普通 `zellij` 新建的 session 没有自动共享、Web 页面看不到的情况。
+
 ## login token 与 session token
 
 `zellij web --create-token` 用于生成登录令牌。该令牌只显示一次，Zellij 本地仅保存其 hash。需要在反代中透传认证时，应针对目标端口重新登录并提取对应的 `session_token`，不要复用其他端口或其他实例生成的 token。
