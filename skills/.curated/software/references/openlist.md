@@ -389,6 +389,8 @@ find "$ICLOUD" -type f -name "*.icloud" | wc -l     # 占位符
 
 ### 5.3 开启 macOS SMB 共享
 
+> **本节的 "CLI" 指 macOS 上的命令行**（`sharing` / `launchctl`），用于在 mac 这一侧把目录暴露为 SMB share。**OpenList 本身没有存储管理 CLI**：加 / 改 / 删 SMB 存储必须走 OpenList Web 后台（5.4），CLI 只覆盖进程级运维（启动、设管理员密码等）。
+
 两件**正交**的事：(1) 注册 share point（哪个目录、共享名、谁能访问）；(2) 启动 smbd 服务。GUI 文件共享开关一次做完两件事；CLI 必须分别处理。
 
 #### 5.3.A GUI 路径（能进 Mac 桌面时）
@@ -475,22 +477,12 @@ smbclient -L //<mac-ip> -N -t 5
 
 **层 2：用真实凭据列共享**
 
-凭据用文件而不是 prompt，方便脚本化与避免密码进入命令历史：
-
 ```bash
-umask 077
-cat > ~/.smb-creds <<'EOF'
-username=<macUser>
-password=<macPassword>
-domain=WORKGROUP
-EOF
-chmod 600 ~/.smb-creds
-
-smbclient -L //<mac-ip> -A ~/.smb-creds
-smbclient //<mac-ip>/<ShareName> -A ~/.smb-creds -c 'allinfo "<path>"; cd "<path>"; ls'
+smbclient -L //<mac-ip> -A <creds-file>
+smbclient //<mac-ip>/<ShareName> -A <creds-file> -c 'allinfo "<path>"; cd "<path>"; ls'
 ```
 
-`-A <file>` 是 smbclient 标准凭据文件参数，文件格式三行：`username=` / `password=` / `domain=`。文件权限必须 `0600`，否则 smbclient 会拒绝读。
+`-A <file>` 是 smbclient 标准凭据文件参数，文件格式 `username=` / `password=` / `domain=` 三行，权限必须 `0600`，否则 smbclient 会拒绝读。
 
 #### 5.3.C 为什么不用 macOS 上常见的旧命令
 
@@ -502,15 +494,7 @@ sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.smbd.plist     # 
 
 #### 5.3.D Share point 持久化位置
 
-旧资料常说 share point 存在 `/var/db/dslocal/nodes/Default/sharepoints/<Name>.plist`，新版 macOS 已弃用。实测在 macOS 26.2 上：
-
-```bash
-ls /var/db/dslocal/nodes/Default/sharepoints/   # 整个目录都不存在
-defaults read /var/db/dslocal/nodes/Default/sharepoints/<Name> 2>&1
-# Domain /var/db/.../sharepoints/<Name> does not exist
-```
-
-不要直接读/改 plist，统一用 CLI 查询和管理：
+旧资料常说 share point 存在 `/var/db/dslocal/nodes/Default/sharepoints/<Name>.plist`，新版 macOS（实测 26.2）该目录已不存在，**不要直接读/改 plist**，统一用 CLI 查询与管理：
 
 ```bash
 sharing -l                # 列所有 share point
