@@ -30,11 +30,7 @@ Prefer MinerU or another OCR/layout tool when:
 - Multi-column layout parsing is poor
 - Encoding is garbled
 
-Dependency:
-
-```bash
-uv run --with PyMuPDF
-```
+Dependency: `PyMuPDF` — invoke with `uv run --with PyMuPDF scripts/source_to_md/pdf_to_md.py <file>`.
 
 ## `source_to_md/doc_to_md.py`
 
@@ -60,7 +56,8 @@ Dependencies:
 
 ```bash
 # Native path — always required
-uv run --with mammoth markdownify ebooklib nbconvert beautifulsoup4
+uv run --with mammoth --with markdownify --with ebooklib --with nbconvert --with beautifulsoup4 \
+  scripts/source_to_md/doc_to_md.py <file>
 
 # Fallback path — only for .doc/.odt/.rtf/.tex/.rst/.org/.typ
 # macOS:   brew install pandoc
@@ -94,11 +91,7 @@ Behavior:
 - propagates merged-cell labels for readable Markdown tables
 - exports formula cells as cached values; it does not recalculate formulas
 
-Dependency:
-
-```bash
-uv run --with openpyxl
-```
+Dependency: `openpyxl` — invoke with `uv run --with openpyxl scripts/source_to_md/excel_to_md.py <file>`.
 
 CSV/TSV files are already plain-text table sources and do not require this converter.
 
@@ -125,11 +118,7 @@ Behavior:
 - exports embedded pictures to a sibling `_files/` directory
 - appends speaker notes when present
 
-Dependency:
-
-```bash
-uv run --with python-pptx
-```
+Dependency: `python-pptx` — invoke with `uv run --with python-pptx scripts/source_to_md/ppt_to_md.py <file>`.
 
 Legacy `.ppt` is not parsed directly. Resave it as `.pptx` or export it to PDF first.
 
@@ -144,7 +133,7 @@ uv run scripts/source_to_md/web_to_md.py -f urls.txt
 uv run scripts/source_to_md/web_to_md.py https://example.com -o output.md
 ```
 
-When `curl_cffi` is installed (declared in the script's PEP 723 metadata), this script
+When `curl_cffi` is installed (included in `requirements.txt`), this script
 automatically impersonates a modern Chrome TLS fingerprint, which lets it
 fetch WeChat Official Accounts (`mp.weixin.qq.com`) and other sites that
 block Python's default TLS fingerprint. No extra flags needed. If

@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "flask>=3.0.0",
-# ]
-# ///
 """
 PPT Master - SVG Editor Server
 

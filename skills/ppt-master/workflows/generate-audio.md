@@ -11,7 +11,7 @@ This workflow is **independent**: it reads `notes/*.md` and queries the selected
 ## When to Run
 
 - `notes/total.md` exists and has been split into per-page files at `notes/*.md` (post-processing Step 7.1 done).
-- Default mode: `edge-tts` is available on demand via `uv run --with edge-tts`.
+- Default mode: `edge-tts` is provided via `uv run --with edge-tts scripts/notes_to_audio.py ...` (the script invocations below already include it where needed).
 - The workflow is page-level only: one notes file becomes one audio file. Do not use a single long audio track or attempt automatic long-audio splitting.
 - PPT narration assets must be PowerPoint-reliable audio: `m4a` (AAC), `mp3`, or `wav`. The built-in TTS path defaults to `mp3`; provider formats such as `pcm`, `opus`, or `flac` must be transcoded before embedding.
 - PowerPoint recorded narration export requires `ffprobe` so slide timings can be written from actual audio duration.

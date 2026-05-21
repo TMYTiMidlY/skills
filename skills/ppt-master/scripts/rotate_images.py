@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "Pillow>=9.0.0",
-# ]
-# ///
 """
 PPT Master - Image Orientation Management Tool
 

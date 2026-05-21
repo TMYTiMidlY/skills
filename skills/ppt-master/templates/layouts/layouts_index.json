@@ -130,25 +130,5 @@
     "keywords": [
       "Academically grounded · Mountain City charm · Modern minimalism"
     ]
-  },
-  "ustc_thesis_defense": {
-    "name": "中科大学位论文答辩",
-    "category": "scenario",
-    "path": "templates/layouts/ustc_thesis_defense",
-    "pages": [
-      "01_cover",
-      "02_toc",
-      "02_chapter",
-      "03_content",
-      "04_ending"
-    ],
-    "tone": "Academic, professional, card-based with blue corner decorations and USTC branding",
-    "scenarios": [
-      "thesis defense",
-      "graduation defense",
-      "academic presentation",
-      "research report"
-    ],
-    "mirror_source": "guanbeibei_midterm.pptx"
   }
 }

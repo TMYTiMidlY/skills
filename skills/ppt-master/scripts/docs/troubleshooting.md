@@ -18,7 +18,7 @@ uv run scripts/project_manager.py validate <project_path>
 3. Preview via a local server if browser file loading is inconsistent:
 
 ```bash
-python3 -m http.server --directory <svg_output_path> 8000
+uv run python -m http.server --directory <svg_output_path> 8000
 ```
 
 ## Speaker Notes Do Not Split
@@ -65,12 +65,10 @@ Use `--narration-audio-dir audio` only when you intentionally want lower-level, 
 
 ## Dependency Checklist
 
-Most tools use the standard library. Install extra dependencies only when needed:
+Most tools use the standard library. With `uv run`, optional packages are added inline per invocation via `--with <pkg>` flags (e.g., `uv run --with python-pptx scripts/svg_to_pptx.py ...`). To attach all optional deps from `requirements.txt` to a single invocation:
 
 ```bash
-# Entry scripts now declare dependencies in PEP 723 metadata.
-# Install on demand by running the script with uv:
-uv run scripts/svg_to_pptx.py --help
+uv run --with-requirements requirements.txt scripts/<script>.py <args>
 ```
 
 Important optional packages:

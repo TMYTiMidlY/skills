@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "Pillow>=9.0.0",
-#   "requests>=2.31.0",
-# ]
-# ///
 """Web image search CLI.
 
 Sister tool to ``image_gen.py``: instead of generating an image from a

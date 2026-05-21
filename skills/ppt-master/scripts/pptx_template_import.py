@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "Pillow>=9.0.0",
-# ]
-# ///
 """Unified PPTX preparation entry point for the /create-template workflow.
 
 Reads OOXML directly via `pptx_to_svg` and writes a reusable reference workspace:
