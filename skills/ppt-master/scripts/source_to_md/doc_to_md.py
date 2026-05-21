@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "Pillow>=9.0.0",
-#   "beautifulsoup4>=4.12.0",
-#   "ebooklib>=0.18",
-#   "mammoth>=1.6.0",
-#   "markdownify>=0.11.6",
-#   "nbconvert>=7.0.0",
-#   "nbformat",
-#   "requests>=2.31.0",
-# ]
-# ///
 """
 Document to Markdown Converter (hybrid Python + Pandoc fallback)
 

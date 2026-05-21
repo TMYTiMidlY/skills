@@ -179,8 +179,4 @@ Notes:
 - Requires `scripts/assets/bg_48.png` and `scripts/assets/bg_96.png`
 - Best used after downloading “full size” Gemini images
 
-Dependencies:
-
-```bash
-uv run --with Pillow numpy
-```
+Dependencies: `Pillow`, `numpy` — invoke with e.g. `uv run --with Pillow --with numpy scripts/svg_finalize/fix_image_aspect.py <args>`.

@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "Pillow>=9.0.0",
-#   "requests>=2.31.0",
-# ]
-# ///
 """
 Unified Image Generation Tool
 

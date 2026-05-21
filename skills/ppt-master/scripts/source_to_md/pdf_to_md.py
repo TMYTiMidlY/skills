@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "PyMuPDF>=1.23.0",
-# ]
-# ///
 """
 PDF to Markdown Converter
 Uses PyMuPDF to extract PDF text content and convert to Markdown format.

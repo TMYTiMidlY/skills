@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "Pillow>=9.0.0",
-#   "python-pptx>=0.6.21",
-# ]
-# ///
 """
 PowerPoint to Markdown Converter
 

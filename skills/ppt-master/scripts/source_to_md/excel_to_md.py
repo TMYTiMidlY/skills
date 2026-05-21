@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "openpyxl>=3.1.0",
-# ]
-# ///
 """
 Excel to Markdown Converter
 

@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "Pillow>=9.0.0",
-#   "numpy>=1.20.0",
-# ]
-# ///
 """
 PPT Master - Gemini Watermark Remover
 

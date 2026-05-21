@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "PyYAML>=6.0",
-# ]
-# ///
 """Register a layout template or brand preset into the global template index.
 
 For layout templates (``--kind layout``, default), reads

@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "curl_cffi>=0.7.0",
-# ]
-# ///
 """PPT Master project management helpers.
 
 Usage:

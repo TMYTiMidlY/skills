@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "edge-tts>=7.2.8",
-# ]
-# ///
 """Generate per-slide narration audio from PPT Master notes.
 
 This script uses provider backends for the same per-slide output contract on
