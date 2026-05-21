@@ -1,0 +1,7 @@
+# Dependencies have moved to each entry script's PEP 723 metadata.
+# 依赖已迁移到各入口脚本顶部的 PEP 723 元数据。
+#
+# Run scripts with uv and it will create/install the needed environment automatically, e.g.:
+# 使用 uv 运行脚本时会自动创建环境并安装所需依赖，例如：
+#   uv run skills/ppt-master/scripts/analyze_images.py --help
+#   uv run skills/ppt-master/scripts/svg_to_pptx.py --help

@@ -206,5 +206,13 @@
     "synced_commit": "62f43a1",
     "synced_date": "2026-04-28T08:42:34Z",
     "description": "创建结构化 agent skill"
+  },
+  "ppt-master": {
+    "repo": "hugohe3/ppt-master",
+    "path": "skills/ppt-master",
+    "branch": "main",
+    "synced_commit": "f40fcf5",
+    "synced_date": "2026-05-19T14:30:09Z",
+    "description": "AI 多角色协作把 PDF/DOCX/URL/Markdown 转成原生可编辑 PPTX（真 DrawingML 形状/文本框）"
   }
 }

@@ -1,6 +1,14 @@
 # Vercel Labs skills CLI
 skills-lock.json
 
+# ---> Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
 # ---> Windows
 # Windows thumbnail cache files
 Thumbs.db

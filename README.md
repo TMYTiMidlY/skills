@@ -33,6 +33,7 @@
 | `xlsx` | [anthropics/skills](https://github.com/anthropics/skills) | Excel 电子表格操作 |
 | `pdf` | [anthropics/skills](https://github.com/anthropics/skills) | PDF 文件操作 |
 | `frontend-skill` | [openai/skills](https://github.com/openai/skills) | 高质量前端页面构建 |
+| `ppt-master` | [hugohe3/ppt-master](https://github.com/hugohe3/ppt-master) | AI 多角色协作把 PDF/DOCX/URL/Markdown 转成原生可编辑 PPTX（真 DrawingML 形状/文本框） |
 
 以下 skill 从外部仓库下载，尚未经过适配和验证，放在 `.experimental/` 目录下：
 
