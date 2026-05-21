@@ -23,8 +23,13 @@
 | **M — 借助 Mac (SMB) 中转专属** | | |
 | M1 | Mac 必须常启 + 网络稳定 | Mac 离线 → 该存储 503 |
 | M2 | "Optimize Mac Storage" 取舍 | 开 = 占位符首读延迟；关 = 全文件常驻本地 |
-| M3 | `~/Library/...` 不能直接共享 | Finder 拒；用 symlink 出来 |
+| M3 | `~/Library/...` 不能直接共享 | Finder 拒 + `sharing -a` 也拒 symlink；用 `sharing -a` 直接传真实路径 |
 | M4 | SMB 写入产生 `.DS_Store` | 关 `DSDontWriteNetworkStores` |
+| M5 | 加完共享 ≠ 服务起来 | `sharing -a` 只注册 share point，不启动 smbd；要单独起服务（5.3） |
+| M6 | `pgrep smbd` 看不到进程 ≠ 没起 | macOS smbd 是 launchd socket activation，看 `lsof :445` 是 launchd 才对 |
+| M7 | iCloud 里 `Desktop` / `Documents` 通过 SMB 是 reparse point 不是目录 | macOS D&D Sync 的 firmlink；走真实路径 `~/Desktop` / `~/Documents` 单独 share 即可绕过 |
+| M8 | macOS 用户首次 SMB 登录 `LOGON_FAILURE` 即使密码对 | 账号没 SMB-NT hash，需 GUI 勾"Windows 文件共享"或 `dscl . -passwd` 重设密码生成 |
+| M9 | GUI 启用文件共享会自动追加默认 share point | 实测开总开关后 `sharing -l` 多出 `Macintosh HD` 和 `<user>` 两个 share；不需要的可在 GUI 删 |
 
 ## 一、共性坑详解（任何 backend 都成立）
 
@@ -168,10 +173,8 @@ sudo aa-disable /usr/bin/fusermount3
 ### M1 Mac 必须常启 + 网络稳定
 
 Mac 是这个链路的中转节点：
-- Mac 关机 / 重启 / 断网 → OpenList 该存储 503 / 超时（不会数据丢失，但暂时不可用）
-- 适合"常启的 Mac mini / iMac"，不适合"笔记本经常带出门"
-
-接受这个依赖就行，没有技术解。
+- Mac 关机 / 重启 / 断网 → OpenList 该存储 503 / 超时
+- 无技术解，链路结构要求 Mac 在线
 
 ### M2 "Optimize Mac Storage" 取舍
 
@@ -186,18 +189,24 @@ Mac 是这个链路的中转节点：
 
 ### M3 `~/Library/...` 不能直接通过 Finder 共享
 
-macOS Finder 拒绝把 `~/Library/...` 路径加到"文件共享"列表（系统隐藏目录）。变通办法是 symlink 出来：
+两条路都有限制：
+
+- **Finder GUI**：拒绝把 `~/Library/...` 路径加到"文件共享"列表（系统隐藏目录）
+- **`sharing -a` CLI**：拒绝符号链接（报 `sharing: '<path>' is not a directory`），所以 `ln -s ~/Library/.../CloudDocs ~/iCloud-Share` 后再 `sharing -a ~/iCloud-Share` **不行**
+
+实测可行方案：**`sharing -a` 直接传真实路径 + `-n` 给 share point 一个英文名**，绕过 GUI 限制（CLI 不管 `~/Library` 隐藏属性）也避开 symlink 限制：
 
 ```bash
-ln -s "$HOME/Library/Mobile Documents/com~apple~CloudDocs" "$HOME/iCloud-Share"
-# 然后系统设置共享 ~/iCloud-Share
+sudo sharing -a "$HOME/Library/Mobile Documents/com~apple~CloudDocs" \
+     -n iCloud -S iCloud -s 001 -g 000
+sharing -l    # 验证
 ```
 
-`sharing -l` 命令查看当前所有共享点。
+参数详解见 5.3 节。
 
 ### M4 SMB 写入产生 `.DS_Store` 噪音
 
-macOS 任何挂的网络共享上都会自动写 `.DS_Store`。建议在 macOS 上：
+macOS 任何挂的网络共享上都会自动写 `.DS_Store`。如果不希望此行为：
 
 ```bash
 defaults write com.apple.desktopservices DSDontWriteNetworkStores -bool TRUE
@@ -205,6 +214,130 @@ defaults write com.apple.desktopservices DSDontWriteNetworkStores -bool TRUE
 ```
 
 详见 [macos.md](macos.md) 的对应小节。
+
+### M5 加完共享 ≠ 服务起来
+
+`sharing -a` 只往配置里注册 share point，**不会顺带启动 smbd**。需要单独起服务（5.3.B 步骤 2）。GUI 路径下打开 File Sharing 总开关时一次做完；CLI 必须分别处理。
+
+### M6 `pgrep smbd` 看不到进程 ≠ 服务没起
+
+macOS smbd 是 launchd 的 **socket activation** 模式：launchd (PID 1) 持有 445 socket，第一个连接到来才 fork smbd 处理。所以验证服务是否就绪应该看 `lsof :445` 是不是 `launchd` 在监听；`pgrep smbd` 在没有活跃 SMB 连接时本来就为空。详见 5.3.B 步骤 3。
+
+### M7 iCloud 里 `Desktop` / `Documents` 通过 SMB 是 reparse point
+
+启用了 macOS "Desktop & Documents Folders" 同步到 iCloud 后，iCloud Drive 顶层的 `Desktop` 和 `Documents` 不是普通目录，而是 macOS 系统级 firmlink 重定向。共享 iCloud Drive 顶层后通过 SMB 看：
+
+```
+Desktop                           AHr        0  ...   ← r = ReparsePoint，无 D
+Documents                         AHr        0  ...   ← 同上
+WPS Office                        D          0  ...   ← 普通目录
+```
+
+**症状**：
+- smbclient `cd Desktop` / `cd Documents` 直接报 `NT_STATUS_INVALID_NETWORK_RESPONSE`
+- OpenList 前端把它们当文件渲染（属性里没 D 位）；点开是"下载文件"按钮，但点了下不动
+
+**这不是 OpenList 的 bug**，是 macOS SMB 服务端实现限制 + reparse point 协议本身需要客户端解析。
+
+**关键事实：D&D Sync 启用后 firmlink 是反向的**——真实数据在 `~/Desktop` / `~/Documents`，iCloud Drive 里那俩是带 hidden 标记的 symlink 指向家目录。验证：
+
+```bash
+stat -f '%N -> %Y inode=%i flags=%Sf' ~/Desktop \
+     "$HOME/Library/Mobile Documents/com~apple~CloudDocs/Desktop"
+# /Users/x/Desktop ->  inode=268766 flags=-                          ← 普通目录
+# /Users/x/Library/.../CloudDocs/Desktop -> /Users/x/Desktop  flags=hidden  ← symlink
+```
+
+**绕过方案：单独 sharing 真实路径**：
+
+```bash
+sudo sharing -a "$HOME/Desktop"   -n Desktop   -S Desktop   -s 001 -g 000
+sudo sharing -a "$HOME/Documents" -n Documents -S Documents -s 001 -g 000
+sharing -l    # 验证多了两条 share point
+```
+
+实测在 OpenList 加两个独立 SMB 存储指向 `Desktop` / `Documents` share 后能正常列目录与下载。D&D Sync 不受影响（真实数据仍在 `~/Desktop`，本来就是同步源）。
+
+OpenList 视觉上还原"完整 iCloud 目录"的具体配法见 5.4.1。
+
+**备选方案**（改 macOS 行为或不解决）：
+
+| 方案 | 做法 | 影响 |
+|---|---|---|
+| 不解决 | 接受这两条目无法访问 | OpenList 上看到两个"假文件"；其他目录正常 |
+| 关 D&D Sync | 系统设置 → Apple ID → iCloud → 关 "Desktop & Documents Folders" | 桌面/文档不再上云；改变 macOS 默认行为 |
+
+### M8 macOS 用户首次 SMB 登录必报 `LOGON_FAILURE`，即使密码对
+
+新建的 macOS 账号默认 `AuthenticationAuthority` 的 `;ShadowHash;HASHLIST:<...>` 子字段里**没有 `SMB-NT` 项**（只有 `SALTED-SHA512-PBKDF2`、`SRP-RFC5054-4096-SHA512-PBKDF2`，外加 `Kerberosv5` 段）。SMB 协议层用 NTLMv2 验证时找不到 NT hash，必报：
+
+```
+session setup failed: NT_STATUS_LOGON_FAILURE
+```
+
+smbd log 同时报：
+
+```
+gss_accept_sec_context: minor_status: 0xa2e9a74a
+smb2_dispatch_session_setup: status: 0xc000006d
+```
+
+**两条修复路**：
+
+1. **GUI**：系统设置 → 通用 → 共享 → 文件共享 → ⓘ → 在 "Windows 文件共享" 列表里勾上账号 + 输密码。macOS 借此把 NT hash 派生进 ShadowHashData。验证：
+
+   ```bash
+   dscl . read /Users/<user> AuthenticationAuthority | grep SMB-NT
+   ```
+
+   有匹配即生效。实测前后 HASHLIST 变化：
+
+   ```
+   勾选前: HASHLIST:<SALTED-SHA512-PBKDF2,SRP-RFC5054-4096-SHA512-PBKDF2>
+   勾选后: HASHLIST:<SALTED-SHA512-PBKDF2,SRP-RFC5054-4096-SHA512-PBKDF2,SMB-NT>
+   ```
+
+2. **CLI（无 GUI 时）**：重设一次密码，`dscl` 会重新生成所有 hash 派生（含 NT hash）：
+
+   ```bash
+   sudo dscl . -passwd /Users/<user>
+   # 提示输新密码两次（输跟原来一样的，密码不变但 hash 重生）
+   ```
+
+GUI 操作那一勾的实测副作用：
+- **会重置 launchd smbd 状态**——勾完测出 `CONNECTION_REFUSED`，按 5.3.B 步骤 2 重跑 enable + bootstrap
+- **可能切换"远程登录" (SSH) 开关**——同一面板内开关相邻，确认远程登录仍然开着
+
+**原理：为什么 macOS 用户需要单独勾 Windows File Sharing**
+
+不是 macOS 的怪癖，而是 NTLM 协议算法 × macOS 默认密码存储策略的结构性冲突。
+
+- **NTLM 服务端验证需要 NT hash**——NT hash = `MD4(UTF-16-LE(plaintext))`，无 salt（[MS-NLMP §3.3.1 NTOWFv1](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/464551a8-9fc4-428e-b3d3-bc5bfb2e73a5)，[Windows passwords overview](https://learn.microsoft.com/en-us/windows-server/security/kerberos/passwords-technical-overview)）
+- **macOS 默认存的是不可逆强 KDF hash**——`SALTED-SHA512-PBKDF2` 是单向且加 salt 的，给定 hash 无法反推 plaintext，自然**事后也无法派生出 NT hash**（[`pwpolicy(8)` man](https://keith.github.io/xcode-man-pages/pwpolicy.8.html) 列出可用 hash 类型，`SMB-NT` 一行注明 "Required for compatibility with Windows NT/XP file sharing"）
+- **解决方案是显式补一份"弱 hash"**——只在用户在 Windows File Sharing 列表里**勾选并重新输入密码**那一刻，macOS 借机捕获 plaintext，计算 NT hash 写入 ShadowHashData，并在 `AuthenticationAuthority` 的 HASHLIST 里追加 `SMB-NT` 项（[Apple Support: Share Mac files with Windows users](https://support.apple.com/en-gb/guide/mac-help/mchlp1657/mac) 写明 "stored in a less secure manner"，每用户单独启用）
+- **每用户独立**——每个账号 plaintext 不同，必须分别勾选输密码各算一次 NT hash
+
+Apple 的设计取舍：默认不存弱 hash，由用户显式同意才补。等价的旧说法见 Apple Training 资料（["password is stored in a nonrecoverable form ... give the operating system the user's password to generate the new hash ... enabled only on a per-user basis"](https://flylib.com/books/en/4.395.1.130/1/)）。
+
+绑定 Open Directory / Active Directory 的企业场景下走 Kerberos / NTLMv2 服务，**不依赖**本地 SMB-NT hash（[Apple 企业 SMB 文档](https://support.apple.com/en-au/101659)）；这种场景与本文 OpenList + 单机 macOS 共享无关。
+
+### M9 GUI 启用文件共享会自动追加默认 share point
+
+实测在 macOS 26.2 上从 GUI 打开文件共享总开关后，`sharing -l` 在原有自定 share point 之外多出：
+
+```
+name:   Macintosh HD     path: /
+name:   <username>       path: /Users/<username>
+```
+
+含义：根盘 + 用户家目录被自动暴露为 SMB share，任何能成功登录的用户都可枚举到（实测 `smbclient -L` 能看到）。如果只想暴露指定 share point：
+
+```bash
+sudo sharing -r "Macintosh HD"
+sudo sharing -r "<username>"
+```
+
+或在 GUI"共享文件夹"列表里删除对应条目。
 
 ## 四、iCloud 集成方案对比（选型）
 
@@ -232,7 +365,7 @@ OpenList 加 backend             OpenList 加 SMB 存储
 | 依赖组件 | rclone + fuse + systemd + 维护脚本 | 仅 macOS 文件共享开关 |
 | 单点故障 | rclone 进程 / token 过期 | Mac 离线（M1） |
 
-**默认推荐 Mac 中转**。只有"环境里没有任何常启 macOS 设备" + "账号是国际区 Apple ID" + "能接受延迟和维护成本"时才考虑 rclone 直连。
+**结论**：R1（中国区 Apple ID）+ R5（轮询延迟）+ R2（30 天 token）三个限制叠加时，rclone 直连不可用或代价显著；这种场景下若环境内有常启 macOS 设备，Mac 中转是唯一可行链路。其他场景两条路都成立，按 M1 / R 系列权衡。
 
 ## 五、Mac SMB 中转部署步骤
 
@@ -252,19 +385,138 @@ find "$ICLOUD" -type f -name "*.icloud" | wc -l     # 占位符
 
 ### 5.2 决策 Optimize Storage
 
-见 M2。建议关闭，确保 OpenList 体验稳定。
+参考 M2。如果 OpenList 用户访问延迟敏感（流媒体场景），通常需要关闭让全文件常驻本地。
 
 ### 5.3 开启 macOS SMB 共享
 
-GUI 路径：**系统设置 → 通用 → 共享 → 文件共享 → 开 + 添加共享文件夹**：
-- 路径选 `~/iCloud-Share`（M3 的 symlink 目标）
-- 用户权限：仅当前 macOS 用户读写
-- 协议：勾上 SMB
+两件**正交**的事：(1) 注册 share point（哪个目录、共享名、谁能访问）；(2) 启动 smbd 服务。GUI 文件共享开关一次做完两件事；CLI 必须分别处理。
+
+#### 5.3.A GUI 路径（能进 Mac 桌面时）
+
+**系统设置 → 通用 → 共享 → 文件共享**：
+1. 打开 File Sharing 总开关
+2. 点 Options → 勾 "Share files and folders using SMB"，按 Windows File Sharing 给当前账号打 ✓ 并填密码
+3. Shared Folders 列表 → `+` 添加目标目录
+4. 用户权限：仅当前 macOS 用户读写
+
+**注意**：GUI 不允许添加 `~/Library/...`（隐藏目录），iCloud Drive 这种只能走 5.3.B 的 CLI 路径加。
 
 CLI 验证：
 
 ```bash
-sharing -l    # 看 List of Share Points
+sharing -l                                    # share points
+sudo lsof -nP -iTCP:445 -sTCP:LISTEN          # 应见 launchd / smbd 监听 445
+```
+
+#### 5.3.B CLI 路径（无 GUI 时，如纯 SSH 维护）
+
+Apple 没有官方 CLI wrapper，需要分两步。**测试环境：macOS 26.2 (Tahoe)，2025-Q4 实测可行。**
+
+**步骤 1：注册 share point**
+
+```bash
+sudo sharing -a "<绝对路径>" -n <Name> -S <SmbName> -s 001 -g 000
+sharing -l    # 验证
+```
+
+`sharing` 命令参数：
+
+| 参数 | 含义 |
+|---|---|
+| `-a <path>` | 添加 share point；**必须真实目录，不接受 symlink** |
+| `-n <name>` | share point 在系统里的全局名（不指定就用目录 basename，含特殊字符的目录会得到丑陋的名字，如 `com~apple~CloudDocs`） |
+| `-S <smb>` | SMB 客户端看到 / 挂载用的名字（`\\host\<smb>` 里那个名） |
+| `-s <mask>` | 协议位掩码 `AFP/SMB/FTP`：`001`=只 SMB；`011`=SMB+FTP；`111`=全开 |
+| `-g <mask>` | 上述协议是否允许 guest 匿名：`000`=全禁；`001`=仅 SMB 允许 guest |
+
+**步骤 2：启动 smbd 服务**
+
+`sharing -a` 只往配置里注册了 share point，**不会顺带起 smbd**。需要单独跑：
+
+```bash
+sudo launchctl enable system/com.apple.smbd
+sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.smbd.plist
+```
+
+可能的错误及对应做法：
+
+| 报错 | 含义 | 处理 |
+|---|---|---|
+| `service already bootstrapped` | 服务已 bootstrap，需要重启 | 改用 `sudo launchctl kickstart -k system/com.apple.smbd` |
+| `Operation not permitted` | 系统设置里 File Sharing 总开关被关了 | 只能去 GUI / VNC / Screen Sharing 打开，CLI 绕不过 |
+
+**步骤 3：验证（关键，跟 Linux 习惯不同）**
+
+```bash
+sudo lsof -nP -iTCP:445 -sTCP:LISTEN
+```
+
+预期看到 `launchd` (PID 1) 在监听 445，**而不是** smbd。这是 launchd 的 **socket activation** 模式：launchd 持有 socket，第一个连接到来时才 fork smbd 进程处理。所以：
+
+- ✅ `lsof :445` 见到 `launchd` = 服务已就绪
+- ❌ 用 `pgrep smbd` 是空 ≠ 服务没起（**没有 SMB 连接时本来就不会有 smbd 进程**）
+
+跨机连通性测试有两层：
+
+**层 1：协议握手（不需要密码）**
+
+```bash
+# 从客户端跑：
+smbclient -L //<mac-ip> -N -t 5
+```
+
+返回 `NT_STATUS_LOGON_FAILURE` 而不是 `CONNECTION_REFUSED` / `timeout`，说明：TCP 通 + SMB negotiate 通 + 只是匿名被拒（如果 sharing 时 `-g 000` 禁了 guest，这是预期行为）。三种结果对应不同根因：
+
+| 结果 | 含义 |
+|---|---|
+| `NT_STATUS_LOGON_FAILURE` | TCP + SMB negotiate 通，匿名被拒（或缺 NT hash，见 M8） |
+| `NT_STATUS_CONNECTION_REFUSED` | TCP 端口没监听（smbd 服务没起） |
+| `timeout` / 长时间挂起 | 网络层不通 / 防火墙 silent drop |
+
+**层 2：用真实凭据列共享**
+
+凭据用文件而不是 prompt，方便脚本化与避免密码进入命令历史：
+
+```bash
+umask 077
+cat > ~/.smb-creds <<'EOF'
+username=<macUser>
+password=<macPassword>
+domain=WORKGROUP
+EOF
+chmod 600 ~/.smb-creds
+
+smbclient -L //<mac-ip> -A ~/.smb-creds
+smbclient //<mac-ip>/<ShareName> -A ~/.smb-creds -c 'allinfo "<path>"; cd "<path>"; ls'
+```
+
+`-A <file>` 是 smbclient 标准凭据文件参数，文件格式三行：`username=` / `password=` / `domain=`。文件权限必须 `0600`，否则 smbclient 会拒绝读。
+
+#### 5.3.C 为什么不用 macOS 上常见的旧命令
+
+```bash
+sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.smbd.plist     # 旧
+```
+
+新版 macOS（13+）SIP 保护下 `load -w` 经常报 `Operation now in progress` / `Operation not permitted`。`enable` + `bootstrap` 的组合是 Apple 在 launchctl v2 推荐的接口。
+
+#### 5.3.D Share point 持久化位置
+
+旧资料常说 share point 存在 `/var/db/dslocal/nodes/Default/sharepoints/<Name>.plist`，新版 macOS 已弃用。实测在 macOS 26.2 上：
+
+```bash
+ls /var/db/dslocal/nodes/Default/sharepoints/   # 整个目录都不存在
+defaults read /var/db/dslocal/nodes/Default/sharepoints/<Name> 2>&1
+# Domain /var/db/.../sharepoints/<Name> does not exist
+```
+
+不要直接读/改 plist，统一用 CLI 查询和管理：
+
+```bash
+sharing -l                # 列所有 share point
+sudo sharing -a <path> -n <Name> -S <Smb> -s <mask> -g <mask>   # 添加
+sudo sharing -r <Name>    # 删除（按 -n 给的 share point name）
+sudo sharing -e <Name> -s <mask>   # 编辑协议位掩码
 ```
 
 ### 5.4 OpenList 加 SMB 存储
@@ -275,11 +527,35 @@ OpenList 后台 → 存储 → 添加 → 类型选 **SMB**，关键参数：
 |---|---|---|
 | 挂载路径 | `/icloud`（任意） | OpenList 前端展示路径 |
 | Address | `<Mac 在组网内的 IP>:445` | EasyTier / Tailscale / 局域网都行 |
-| Username / Password | macOS 用户名 + 登录密码 | macOS 用户必须能 SMB 登录 |
-| Share Name | iCloud-Share（与 5.3 一致） | |
+| Username / Password | macOS 用户名 + 登录密码 | macOS 用户必须能 SMB 登录（M8） |
+| Share Name | 与 `sharing -a -S <smb>` 一致（如 `iCloud`） | 用纯英文 / 短名，避免特殊字符 |
 | **DirectorySize** | **关闭 ⚠️** | 见 C2 |
 | Thumbnail | 看需求 | 开 → 用户点图会触发 SMB 拉全文件（见 C1） |
 | Web Proxy | 开 | 通过 OpenList 转发，避免暴露 SMB 端口给浏览器 |
+
+### 5.4.1 嵌套挂载 + Hide patterns 还原"完整 iCloud 视图"
+
+M7 的反向 share 方案下，原始 iCloud share（顶层）和单独的 Desktop / Documents share 是 3 个独立 SMB share。在 OpenList 里把它们组合成跟 macOS Finder 一致的视图：
+
+1. **加 3 个 SMB 存储**，挂载路径分别：
+   - `/icloud` → SMB share `iCloud`
+   - `/icloud/Desktop` → SMB share `Desktop`
+   - `/icloud/Documents` → SMB share `Documents`
+
+2. **`/icloud` 存储编辑 → 隐藏 / Hide 字段** 填两行（隐藏底层 SMB iCloud share 里那两个 reparse point 假文件，避免与子挂载同名重复显示）：
+
+   ```
+   Desktop
+   Documents
+   ```
+
+   字段语法因 OpenList 版本而异：换行 / 逗号分隔 glob，或正则 `^(Desktop|Documents)$`。UI 上方有提示。
+
+3. 用户访问 `/icloud` 时 OpenList 列出：
+   - 底层 SMB iCloud share 的真实条目（`Desktop` / `Documents` 已被 Hide 隐藏）
+   - 注入两个子挂载点 `Desktop` / `Documents`（点进去走 `/icloud/Desktop` 与 `/icloud/Documents`，对应 `~/Desktop` / `~/Documents` 真实数据）
+
+大小写敏感：OpenList 子挂载路径与 SMB share name 都用 `Desktop` / `Documents`（首字母大写），与 macOS 显示一致。
 
 ## 六、网络测速方法 + 体验对照
 
