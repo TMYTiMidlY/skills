@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的配置与排障。涵盖 SSH 与 systemd、Zellij 终端复用与反代、文档格式转换（pandoc/feishu2md/MinerU）、自托管文档分享、WSL 与 Windows 互操作、EasyTier 客户端组网、Hermes agent 部署、GitHub Copilot CLI 内部行为与排障等。
+description: 本地软件、CLI 工具与自托管服务的配置与排障。涵盖 SSH 与 systemd、Zellij 终端复用与反代、文档格式转换（pandoc/feishu2md/MinerU）、自托管文档分享与 PDF 导出（Prince XML/Vivliostyle/Paged.js/Typst 选型与 pixi 部署）、WSL 与 Windows 互操作、EasyTier 客户端组网、Hermes agent 部署、GitHub Copilot CLI 内部行为与排障等。
 ---
 
 # Software
@@ -110,6 +110,8 @@ FunASR、Fun-ASR-Nano、Paraformer + VAD + Punc + CAM++、SenseVoiceSmall、Whis
 ## 自托管 Markdown 文件分享（doc-share）
 
 把本地 Markdown / 文件推到自托管 WebDAV、拿 capability URL 分享链接、以及给 Markdeep viewer 写作的惯例（`[#key]` 引用 vs `[^name]` 脚注可选、GFM 兼容场景反而要避开 `[#key]`、研报长文模板）见 [references/doc-share.md](references/doc-share.md)。上传凭据约定从 `~/.env` 读 `WEBDAV_URL / WEBDAV_USER / WEBDAV_PASS`。
+
+同文件还覆盖 **Markdown → PDF 导出**（CSS Paged Media 路线）：工具生态定位（Prince / Vivliostyle / Paged.js / WeasyPrint / Typst 选型）、Prince XML 无 sudo pixi 安装与 CJK 字体大坑（Variable Font 静默失败、fontconfig 隔离）、Paged.js Chromium 依赖的 pixi 补齐、以及引用标签预处理 → pandoc → Prince 的一键 PDF 流水线。
 
 服务端（Caddy site block、WebDAV handler、viewer 实现、目录权限）由 `vps-maintenance` skill 覆盖。如果源文件需要先做格式转换，看 [references/format-conversion.md](references/format-conversion.md)。
 
