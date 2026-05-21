@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="1280" height="720" viewBox="0 0 1280 720"><defs><filter id="fx1" x="-25%" y="-25%" width="150%" height="150%"><feMorphology operator="dilate" radius="6" in="SourceAlpha" result="dilated"/><feGaussianBlur in="dilated" stdDeviation="12" result="blurred"/><feFlood flood-color="#000000" flood-opacity="0.3" result="flood"/><feComposite in="flood" in2="blurred" operator="in" result="glow"/><feMerge><feMergeNode in="glow"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><rect x="0" y="0" width="1280" height="720" fill="#FFFFFF"/>
+<g id="shape-1048647" data-name="矩形 3">
+<rect x="838.71" y="602.32" width="415.48" height="86.71" fill="#1C4885" stroke="none" stroke-width="1"/>
+</g>
+<g id="shape-1048648" data-name="矩形 4">
+<rect x="25.81" y="30.97" width="415.48" height="86.71" fill="#1C4885" stroke="none" stroke-width="1"/>
+</g>
+<g id="shape-1048649" data-name="圆角矩形 5">
+<rect x="42.32" y="47.23" width="1195.35" height="625.55" rx="9.81" ry="9.81" fill="#FFFFFF" stroke="none" stroke-width="1" filter="url(#fx1)"/>
+</g>
+<g id="shape-1048650" data-name="文本框 6">
+<rect x="200.34" y="129.62" width="244.19" height="87.24" fill="none"/>
+<text x="209.94" y="188.82" text-anchor="start" xml:space="preserve" font-family="&quot;微软雅黑&quot;, sans-serif" font-size="64" fill="#1C4885"><tspan fill="#1C4885" font-size="64">目录</tspan></text>
+</g>
+<g id="shape-1048651" data-name="椭圆 8">
+<ellipse cx="234.14" cy="301.77" rx="33.79" ry="33.79" fill="#1C4885" stroke="none" stroke-width="1"/>
+<text x="234.14" y="305.77" text-anchor="middle" xml:space="preserve" font-family="&quot;微软雅黑&quot;, sans-serif" font-size="16" fill="#FFFFFF" font-weight="bold"><tspan fill="#FFFFFF" font-size="16" font-weight="bold">01</tspan></text>
+</g>
+<g id="shape-1048652" data-name="文本框 9">
+<rect x="280.61" y="277.54" width="388.65" height="48.33" fill="none"/>
+<text x="290.21" y="309.54" text-anchor="start" xml:space="preserve" font-family="&quot;微软雅黑&quot;, sans-serif" font-size="32" fill="#1C4885"><tspan fill="#1C4885" font-size="32">选题</tspan><tspan fill="#1C4885" font-size="32">缘起</tspan></text>
+</g>
+<g id="shape-1048653" data-name="椭圆 11">
+<ellipse cx="715.72" cy="301.7" rx="33.79" ry="33.79" fill="#1C4885" stroke="none" stroke-width="1"/>
+<text x="715.72" y="305.7" text-anchor="middle" xml:space="preserve" font-family="&quot;微软雅黑&quot;, sans-serif" font-size="16" fill="#FFFFFF" font-weight="bold"><tspan fill="#FFFFFF" font-size="16" font-weight="bold">02</tspan></text>
+</g>
+<g id="shape-1048654" data-name="文本框 12">
+<rect x="762.19" y="277.67" width="388.65" height="48.33" fill="none"/>
+<text x="771.79" y="309.67" text-anchor="start" xml:space="preserve" font-family="&quot;微软雅黑&quot;, sans-serif" font-size="32" fill="#1C4885"><tspan fill="#1C4885" font-size="32">研究</tspan><tspan fill="#1C4885" font-size="32">方法</tspan></text>
+</g>
+<g id="shape-1048655" data-name="椭圆 14">
+<ellipse cx="234.14" cy="420.44" rx="33.79" ry="33.79" fill="#1C4885" stroke="none" stroke-width="1"/>
+<text x="234.14" y="424.44" text-anchor="middle" xml:space="preserve" font-family="&quot;微软雅黑&quot;, sans-serif" font-size="16" fill="#FFFFFF" font-weight="bold"><tspan fill="#FFFFFF" font-size="16" font-weight="bold">03</tspan></text>
+</g>
+<g id="shape-1048656" data-name="文本框 15">
+<rect x="280.61" y="394.34" width="388.65" height="48.33" fill="none"/>
+<text x="290.21" y="426.34" text-anchor="start" xml:space="preserve" font-family="&quot;微软雅黑&quot;, sans-serif" font-size="32" fill="#1C4885"><tspan fill="#1C4885" font-size="32">主要研究内容</tspan></text>
+</g>
+<g id="shape-1048657" data-name="椭圆 17">
+<ellipse cx="715.72" cy="420.44" rx="33.79" ry="33.79" fill="#1C4885" stroke="none" stroke-width="1"/>
+<text x="715.72" y="424.44" text-anchor="middle" xml:space="preserve" font-family="&quot;微软雅黑&quot;, sans-serif" font-size="16" fill="#FFFFFF" font-weight="bold"><tspan fill="#FFFFFF" font-size="16" font-weight="bold">04</tspan></text>
+</g>
+<g id="shape-2097168" data-name="图片 20">
+<svg x="877.45" y="75.29" width="85.68" height="85.68" viewBox="0 0.01336 1 0.97328" preserveAspectRatio="none"><image href="image1.jpeg" x="0" y="0" width="1" height="1" preserveAspectRatio="none"/></svg>
+</g>
+<g id="shape-2097169" data-name="图片 2097184">
+<image href="image2.jpeg" x="969.99" y="98.82" width="258.41" height="38.76" preserveAspectRatio="none"/>
+</g>
+<g id="shape-1048661" data-name="文本框 19">
+<rect x="762.19" y="396.27" width="388.65" height="48.33" fill="none"/>
+<text x="771.79" y="428.27" text-anchor="start" xml:space="preserve" font-family="&quot;微软雅黑&quot;, sans-serif" font-size="32" fill="#1C4885"><tspan fill="#1C4885" font-size="32">结论</tspan></text>
+</g></svg>
