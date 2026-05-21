@@ -102,29 +102,15 @@ pixi global install rclone   # → ~/.pixi/bin/rclone（实际位置在 ~/.pixi/
 
 > 不用 pixi 时（如 `apt install rclone` 在 `/usr/bin/rclone`、官方一键脚本在 `/usr/local/bin/rclone`），需要把后文 systemd 模板里所有 `%h/.pixi/bin/rclone` 改成实际绝对路径。**`ExecStart=` 第一项不展开 `$VAR`**（见后文坑），所以不能用 `Environment=` 注入，只能写绝对路径或 `%h` 这种 specifier。
 
-remote 配置文件 `~/.config/rclone/rclone.conf`（下文统一把这个 remote 叫 `<remote>`，实际命名自取）：
+remote 配置文件 `~/.config/rclone/rclone.conf`：按 [rclone smb 后端文档](https://rclone.org/smb/) 配，最少需要 `host` / `user` / `domain` / `pass` 四项。下文统一把这个 remote 叫 `<remote>`，实际命名自取。**`pass` 不要手写明文**，用下面的密码填法之一。
 
-```ini
-[<remote>]
-type = smb
-host = <smb-host>
-user = <smb-user>
-domain = <domain>
-# pass = <obscure 后的密文>，用下面的命令填，不要手写明文
-```
-
-密码填法（rclone ≥1.39 `config password/update` 都是非交互的 key/value 模式，没有内置交互提示，**容易踩坑**）：
+密码填法（rclone ≥1.39 `config password/update` 都是非交互的 key/value 模式，没有内置交互提示，**容易踩坑**）；菜单式 `rclone config` 走官方文档，下面只列两种 stdin 套路：
 
 ```bash
-# A. 全交互菜单（最稳）：
-rclone config
-# 选 e (Edit existing remote) -> <remote> -> 一路回车保留旧值
-# -> 到 "y) Yes, type in my own password" 时选 y -> 输密码（不回显）
-
-# B. 一行 stdin（最快但密码会短暂出现在 argv 里）：
+# A. 一行 stdin（最快但密码会短暂出现在 argv 里）：
 read -rs PW && rclone config password <remote> pass "$PW" && unset PW
 
-# C. 严格 stdin，密码永不进 argv：
+# B. 严格 stdin，密码永不进 argv：
 stty -echo; read -r PW; stty echo; echo
 obs="$(printf '%s' "$PW" | rclone obscure -)"
 unset PW
