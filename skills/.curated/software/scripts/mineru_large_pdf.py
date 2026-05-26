@@ -47,8 +47,35 @@ def slugify(name: str) -> str:
     return name[:120].strip("_")
 
 
+def wait_until_stable(p: Path, interval: float = 1.5, checks: int = 2, timeout: float = 120.0) -> None:
+    """等待本地文件大小稳定，避免读到正在上传/rsync 中的半截 PDF。
+    连续 checks 次采样间隔 interval 秒大小一致，才认为传完。
+    """
+    if not p.exists():
+        sys.exit(f"找不到文件: {p}")
+    last = -1
+    stable = 0
+    waited = 0.0
+    while True:
+        cur = p.stat().st_size
+        if cur == last and cur > 0:
+            stable += 1
+            if stable >= checks:
+                return
+        else:
+            if last != -1:
+                log(f"  文件仍在写入: {last/1e6:.1f} → {cur/1e6:.1f} MB，等待稳定…")
+            stable = 0
+            last = cur
+        if waited >= timeout:
+            log(f"  文件大小 {timeout}s 内未稳定，放弃等待，按当前内容处理")
+            return
+        time.sleep(interval)
+        waited += interval
+
+
 def fetch_pdf(src: str, dst: Path, verify_ssl: bool = True) -> Path:
-    """若 src 是 URL 则下载到 dst；若是本地路径直接返回。"""
+    """若 src 是 URL 则下载到 dst；若是本地路径直接返回（并等待大小稳定）。"""
     if src.startswith(("http://", "https://")):
         log(f"下载 {src} → {dst}")
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -66,8 +93,7 @@ def fetch_pdf(src: str, dst: Path, verify_ssl: bool = True) -> Path:
                         last_log = done
         return dst
     p = Path(src).expanduser().resolve()
-    if not p.exists():
-        sys.exit(f"找不到文件: {p}")
+    wait_until_stable(p)
     return p
 
 
