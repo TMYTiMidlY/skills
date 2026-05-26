@@ -11,7 +11,7 @@ Generate reusable page templates for the **global template library** based on a 
 ## Usage
 
 - **Trigger**: `/create-template` workflow
-- **Output location**: `templates/layouts/<template_name>/`
+- **Output location**: `$PPT_MASTER_TEMPLATES_DIR/layouts/<template_name>/`
 - **Input**: finalized template brief (template ID, display name, category, applicable scenarios, tone, theme mode, canvas format, optional reference assets)
 
 When the workflow provides a PPTX reference source, the effective input package comes from the unified `pptx_template_import.py` preparation workspace and becomes:
@@ -96,12 +96,12 @@ Extension page types beyond the canonical four (transition / appendix / disclaim
 When the brief sets `Replication mode: mirror`, the role does **not** abstract or reconstruct. Each source slide becomes one template page **byte-for-byte**:
 
 - Source: `<import_workspace>/svg-flat/slide_NN.svg` (the self-contained "what PowerPoint shows" view). Do **not** read or use `svg/master_*.svg`, `svg/layout_*.svg`, or `svg/inheritance.json` — chrome / content separation is irrelevant because mirror does not insert placeholders.
-- Output: `templates/layouts/<template_id>/<NNN>_<page_type>.svg`, where `<NNN>` is the zero-padded source slide index (3 digits) and `<page_type>` is derived from `manifest.json` `pageTypeCandidates` — `cover` / `toc` / `chapter` / `content` / `ending`. When the page-type heuristic is ambiguous, fall back to `content`. Preserve source slide order via the numeric prefix.
+- Output: `$PPT_MASTER_TEMPLATES_DIR/layouts/<template_id>/<NNN>_<page_type>.svg`, where `<NNN>` is the zero-padded source slide index (3 digits) and `<page_type>` is derived from `manifest.json` `pageTypeCandidates` — `cover` / `toc` / `chapter` / `content` / `ending`. When the page-type heuristic is ambiguous, fall back to `content`. Preserve source slide order via the numeric prefix.
 - Modifications allowed: **only** rewriting `<image href="...">` paths to point at the local `assets/` copy, and renaming asset files to semantic names. Everything else — geometry, decoration, sprite-sheet wrappers, original example text, chart placeholders, embedded fonts — is copied as-is.
 - Modifications forbidden: inserting `{{TITLE}}` / `{{CONTENT_AREA}}` / any other placeholder; "cleaning up" decorative complexity; merging similar slides; dropping master/layout chrome (it's already baked into the flat SVG, leave it).
 - `design_spec.md` §V Page Roster lists every emitted file with **a one-line description** of what the page contains and what content slot it suits — Strategist selects mirror pages purely from these descriptions, since the SVG itself carries no placeholder contract.
 
-**Why mirror has no placeholders**: it is consumed as a **visual reference** rather than a templated form. Executor's mirror path (see [executor-base.md](executor-base.md) §1.1) copies the chosen mirror page into the project and edits text elements in place against the project content — no `{{}}` substitution happens. This keeps the library asset 100% verbatim and lets the user re-discover the source deck by browsing `templates/layouts/<template_id>/` directly.
+**Why mirror has no placeholders**: it is consumed as a **visual reference** rather than a templated form. Executor's mirror path (see [executor-base.md](executor-base.md) §1.1) copies the chosen mirror page into the project and edits text elements in place against the project content — no `{{}}` substitution happens. This keeps the library asset 100% verbatim and lets the user re-discover the source deck by browsing `$PPT_MASTER_TEMPLATES_DIR/layouts/<template_id>/` directly.
 
 **What mirror is not**: a pixel-perfect re-rendering pipeline test. Charts, SmartArt, OLE objects, and EMF / WMF media that fail to round-trip in `pptx_template_import.py` will fail the same way in mirror. If the import workspace has missing media or unsupported objects, mirror inherits those gaps — the user should be told before generation begins.
 
@@ -293,7 +293,7 @@ When rebuilding from imported PPTX references, placeholder insertion takes prior
 Standard mode (default):
 
 ```
-templates/layouts/<template_name>/
+$PPT_MASTER_TEMPLATES_DIR/layouts/<template_name>/
 ├── design_spec.md     # Design specification (required)
 ├── 01_cover.svg
 ├── 02_chapter.svg
@@ -306,7 +306,7 @@ templates/layouts/<template_name>/
 Fidelity mode adds variants and extension pages, e.g.:
 
 ```
-templates/layouts/<template_name>/
+$PPT_MASTER_TEMPLATES_DIR/layouts/<template_name>/
 ├── design_spec.md
 ├── 01_cover.svg
 ├── 02a_chapter_full.svg
@@ -323,7 +323,7 @@ templates/layouts/<template_name>/
 Mirror mode emits one SVG per source slide, named by source order:
 
 ```
-templates/layouts/<template_name>/
+$PPT_MASTER_TEMPLATES_DIR/layouts/<template_name>/
 ├── design_spec.md
 ├── 001_cover.svg
 ├── 002_toc.svg
@@ -360,10 +360,10 @@ If suitable template resources already exist, use them directly instead of gener
 
 This section describes downstream reuse. The `Template_Designer` role itself is responsible for creating or normalizing the reusable library asset first.
 
-**Example library structure** (query `templates/layouts/layouts_index.json`):
+**Example library structure** (query `$PPT_MASTER_TEMPLATES_DIR/layouts/layouts_index.json`):
 
 ```
-templates/layouts/
+$PPT_MASTER_TEMPLATES_DIR/layouts/
 ├── academic_defense/  # Academic defense style
 ├── pixel_retro/       # Pixel retro / cyberpunk style
 └── 招商银行/          # China Merchants Bank brand style
@@ -378,7 +378,7 @@ templates/layouts/
 
 - [x] Read `references/template-designer.md`
 - [x] Replication mode confirmed: `standard` | `fidelity` | `mirror`
-- [x] Every page listed in `design_spec.md §V Page Roster` saved to `templates/layouts/<template_name>/`
+- [x] Every page listed in `design_spec.md §V Page Roster` saved to `$PPT_MASTER_TEMPLATES_DIR/layouts/<template_name>/`
 - [x] Naming convention applied (standard / fidelity: letter-suffix variants; mirror: `<NNN>_<page_type>.svg`)
 - [x] Templates follow design spec (colors, fonts, layout)
 - [x] Placeholder markers are clear and standardized (standard / fidelity); mirror SVGs contain **no** `{{}}` markers
