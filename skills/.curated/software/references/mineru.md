@@ -138,6 +138,18 @@ API 限制单次最多 600 页。用 `page_ranges` 参数拆分提交同一个 U
 - 200 页限制只针对 **batch 上传**；URL 提交（`/api/v4/extract/task`）仍是 600 页/次，可继续用 `page_ranges` 拆 500/卷。
 - 没有公网直链或不想折腾反代时，batch + 195 页/卷是最省心的兜底方案，不依赖任何 EasyTier/Caddy 路径暴露。
 
+## 本地输入文件正在传输的坑
+
+走本地路径（而非 URL）喂脚本时，常见场景是：客户端（Mac/手机）正在往服务器 `/tmp/clipboard/` 上传 PDF，本地同时 `rsync` 拉下来准备处理。如果上传还没完就开拆，会拷到一个**字节数不完整的 PDF**——大小看起来对，但末尾 `%%EOF`/xref 还没写，pypdf 拆分时炸：
+
+```
+pypdf.errors.PdfStreamError: Stream has ended unexpectedly
+```
+
+`mineru_large_pdf.py` 的 `wait_until_stable()` 会在读本地文件前轮询 `stat().st_size`，连续 2 次间隔 1.5s 大小一致才动手。所以现在就算上传还没完就喂给脚本，它会等到稳定再开始拆，不会读到半截。
+
+URL 输入走 `httpx.stream` 流式下载，本身就保证完整，不需要这套逻辑。
+
 ## 超过 200MB 的文件（需物理拆分）
 
 `page_ranges` 只解决页数上限，**大小限制 200MB 必须物理拆分 PDF**。用同 skill 自带的 `scripts/mineru_large_pdf.py`：
