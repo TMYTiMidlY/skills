@@ -5,8 +5,8 @@
 ## 检查项
 
 - **引用状态**
-  - 同 skill 内引用（`references/`、`assets/`、`scripts/`）都用相对路径，不写绝对或 `~/...`；且目标真实存在（grep 验证）。
-  - 跨 skill 不给任何文件路径，只写 skill 名加能力边界。
+  - 同 skill 内引用（`references/`、`assets/`、`scripts/`）都用相对路径（如 `references/foo.md`），不写绝对或 `~/...`；且目标真实存在（grep 验证）。
+  - **跨 skill 不写任何形式的文件路径**——相对路径（`../<other-skill>/references/x.md`）、绝对路径、`~/...`、"迁移指引"链接（"内容已迁移到 [.../x.md](../.../x.md)"）全部禁止。只写 `<skill 名>` 加能力边界（例："见 `software` skill 的 GitHub Copilot CLI 章节"）。理由：被引 skill 一旦重构 reference 文件名或拆分合并，所有跨 skill 链接都断；只写 skill 名 + 主题名，读者用 grep / SKILL.md 自己定位，永不断链。**没有"看似对用户更友好就破例"的豁免**——别在审查时被"明示目标对读者更顺手"的直觉劝退。
 - **不硬编码仓库 clone 位置**
   - skill 正文、reference、README 里不要把 skills 仓库位置写死为 `~/skills`、`C:\Users\...\skills`、`/home/.../skills` 等具体路径；需要表达仓库根目录时用 `<repo>` 这类占位符，并说明由当前安装位置决定。
 - **脚本运行与依赖声明**
@@ -16,9 +16,9 @@
   - `frontmatter description` → `SKILL.md` → `references/*.md`
   - description：只写“何时触发 + 核心思路一句话”。
   - SKILL.md：短规则 + 各主题入口 + 子文档索引；不堆长流程与整段命令。
-  - references/：单主题一文件，长流程 / 踩坑 / 模板。
+  - references/：单主题一文件，长流程 / 踩坑 / 模板。**单文件长度本身不是问题**——只要全篇围绕一个主题，几千行、几十 KB 的 reference 完全合规；不要因为文件"看起来大"就建议拆分，拆分依据永远是"出现了第二个独立主题"。
   - 常见病：SKILL.md 堆满命令（该下放）；references 存在但 SKILL.md 没索引（找不到入口）；description 太笼统或太具体。
-  - 判定：SKILL.md 读完应当知道“能做什么、哪个 reference 讲什么”，**不应该读完就能完成具体任务**，那说明 references 层缺位。
+  - 判定：SKILL.md 读完应当知道"能做什么、哪个 reference 讲什么"，**不应该读完就能完成具体任务**，那说明 references 层缺位。
 - **个人配置不入 skill 正文**
   - 凭据 / 域名 / 服务器地址 / 个人样例文件名都不写进 skill 正文。正文只写变量名、占位符和读取位置，真实值放 `~/.env` 或个人笔记。
 - **不绑定特定 AI 工具的具体工具名**
