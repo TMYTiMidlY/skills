@@ -92,9 +92,11 @@ done
 
 ## 引用
 
-不要在 skill 正文里写依赖本机目录结构的跨 skill 文件路径。用户安装路径、目录名、打包方式都可能不同，硬编码容易失效。需要提示另一个 skill 的能力时，只写 skill 名加能力边界。
+**跨 skill 不写任何形式的文件路径**——包括相对路径（`../software/references/copilot.md`）、绝对路径、`~/...`，也不允许"迁移指引"式的链接（"详见 .../X.md"）。需要提示另一个 skill 的能力时，只写 skill 名加能力边界（例："见 `software` skill 的 GitHub Copilot CLI 章节"）。
 
-同一 skill 内部引用自己的 `references/`、`assets/`、`scripts/` 用相对路径。
+理由：被引 skill 内部一旦拆分 / 合并 / 重命名 reference 文件，所有跨 skill 链接都断；只写 skill 名 + 主题名，读者用 grep / SKILL.md 自己定位，永不断链。这是硬规则，没有"对用户更友好就破例"的豁免——不要被"明示目标更顺手"的直觉劝退。
+
+同一 skill 内部引用自己的 `references/`、`assets/`、`scripts/` 用相对路径（如 `references/foo.md`）；目标必须真实存在，重命名后同步更新。
 
 ## 拆分与整理
 
