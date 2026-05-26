@@ -43,6 +43,69 @@ CHART_TEMPLATES_DIR = TEMPLATES_DIR / 'charts'
 
 
 # ============================================================
+# User-controlled paths (decouple-templates patch)
+# ============================================================
+# This skill is grafted into a shared `skills/` repo. We do not want it to
+# write generated artifacts (user layouts/brands, user projects) into the skill
+# directory — that would make the skill dirty and break re-graft. So the user's
+# layout/brand library and project workspace are taken from env vars; if unset,
+# the script errors out and asks the user to set them.
+#
+# Env vars:
+#   PPT_MASTER_TEMPLATES_DIR — user's templates library root (expects layouts/
+#                              and brands/ subdirs). Used by register_template.py.
+#   PPT_MASTER_PROJECTS_DIR  — user's projects root. Used by project_manager.py
+#                              as the default --dir.
+
+PPT_MASTER_TEMPLATES_ENV = "PPT_MASTER_TEMPLATES_DIR"
+PPT_MASTER_PROJECTS_ENV = "PPT_MASTER_PROJECTS_DIR"
+
+
+def _missing_env_message(env_name: str, kind: str, example: str) -> str:
+    return (
+        f"ERROR: {env_name} is not set.\n"
+        f"       This skill does not bundle a {kind} location inside SKILL_DIR.\n"
+        f"       Point {env_name} at your own directory, e.g.:\n"
+        f"         export {env_name}={example}\n"
+    )
+
+
+def require_user_templates_dir() -> Path:
+    """Return PPT_MASTER_TEMPLATES_DIR or sys.exit with a clear error.
+
+    Resolved lazily — callers must invoke this at use time, not import time,
+    so that `--help` and other env-free entry points keep working.
+    """
+    raw = os.environ.get(PPT_MASTER_TEMPLATES_ENV)
+    if not raw:
+        import sys
+        sys.exit(
+            _missing_env_message(
+                PPT_MASTER_TEMPLATES_ENV,
+                "user templates",
+                "~/ppt-projects/templates",
+            )
+            + "       Expected subdirs: layouts/, brands/."
+        )
+    return Path(raw).expanduser()
+
+
+def require_user_projects_dir() -> Path:
+    """Return PPT_MASTER_PROJECTS_DIR or sys.exit with a clear error."""
+    raw = os.environ.get(PPT_MASTER_PROJECTS_ENV)
+    if not raw:
+        import sys
+        sys.exit(
+            _missing_env_message(
+                PPT_MASTER_PROJECTS_ENV,
+                "user projects root",
+                "~/ppt-projects",
+            )
+        )
+    return Path(raw).expanduser()
+
+
+# ============================================================
 # Environment Configuration
 # ============================================================
 

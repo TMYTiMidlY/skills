@@ -63,12 +63,21 @@ For complete tool documentation, see `${SKILL_DIR}/scripts/README.md`.
 
 ## Template Index
 
+> **Workspace setup (read first).** This skill no longer ships layouts or projects inside `${SKILL_DIR}`. Two env vars locate user state:
+>
+> - `PPT_MASTER_TEMPLATES_DIR` — user's template library (must contain `layouts/` and `brands/` subdirs). Read/written by `register_template.py`.
+> - `PPT_MASTER_PROJECTS_DIR` — user's projects root. Used by `project_manager.py init` as the default `--dir`.
+>
+> If either is unset and the user has not named a path in the conversation, **ask the user where to put their templates / projects before running any script that needs them**. Suggest `~/ppt-projects/{templates,}` as a typical layout. Once decided, `export` the env vars for the rest of the session (or persist them in `~/.ppt-master/.env`).
+>
+> Scripts that need these dirs error out with a clear message when the env var is missing — they do not silently fall back to `${SKILL_DIR}`.
+
 | Index | Path | Purpose |
 |-------|------|---------|
-| Layout templates | `${SKILL_DIR}/templates/layouts/layouts_index.json` | Query available page layout templates |
-| Brand presets | `${SKILL_DIR}/templates/brands/brands_index.json` | Query available brand identity presets (color / typography / logo / voice) |
-| Visualization templates | `${SKILL_DIR}/templates/charts/charts_index.json` | Query available visualization SVG templates (charts, infographics, diagrams, frameworks) |
-| Icon library | `${SKILL_DIR}/templates/icons/` | See `${SKILL_DIR}/templates/icons/README.md`; search icons on demand with `ls templates/icons/<library>/ \| grep <keyword>` |
+| Layout templates | `${PPT_MASTER_TEMPLATES_DIR}/layouts/layouts_index.json` | Query available page layout templates (user library) |
+| Brand presets | `${PPT_MASTER_TEMPLATES_DIR}/brands/brands_index.json` | Query available brand identity presets (color / typography / logo / voice) |
+| Visualization templates | `${SKILL_DIR}/templates/charts/charts_index.json` | Query available visualization SVG templates (charts, infographics, diagrams, frameworks) — read-only assets shipped with the skill |
+| Icon library | `${SKILL_DIR}/templates/icons/` | See `${SKILL_DIR}/templates/icons/README.md`; search icons on demand with `ls templates/icons/<library>/ \| grep <keyword>` — read-only assets shipped with the skill |
 
 ## Standalone Workflows
 
@@ -158,12 +167,12 @@ Import source content (choose based on the situation):
 
 | User input contains | Step 3 action |
 |---|---|
-| An explicit path to a template directory (e.g. `skills/ppt-master/templates/layouts/academic_defense/`, `projects/foo/template/`, or any other absolute / relative path that resolves to a directory containing `design_spec.md` and one or more page SVGs) | Copy that directory's SVGs + `design_spec.md` + assets into the project, advance |
+| An explicit path to a template directory (e.g. `~/ppt-projects/templates/layouts/academic_defense/`, `projects/foo/template/`, or any other absolute / relative path that resolves to a directory containing `design_spec.md` and one or more page SVGs) | Copy that directory's SVGs + `design_spec.md` + assets into the project, advance |
 | Anything else — including bare template names ("用 academic_defense 模板"), style descriptions ("麦肯锡风格" / "Google style"), brand mentions ("招商银行风格"), vague intent ("想用个模板"), or silence | Skip Step 3, free design |
 
 There is no slug matching, no name lookup, no fuzzy resolution. A template name without a path does not trigger — the user must give a path the AI can `cd` into.
 
-The path may live anywhere — `skills/ppt-master/templates/layouts/<name>/` (the built-in library), `projects/<other_project>/template/` (reusing a previous project's templates), or any other location. Location is irrelevant; what matters is that the user named the path.
+The path may live anywhere — `${PPT_MASTER_TEMPLATES_DIR}/layouts/<name>/` (the user's library), `projects/<other_project>/template/` (reusing a previous project's templates), or any other location. Location is irrelevant; what matters is that the user named the path.
 
 ```bash
 TEMPLATE_DIR=<user-supplied path>
@@ -181,11 +190,11 @@ cp ${TEMPLATE_DIR}/*.jpg <project_path>/images/ 2>/dev/null || true
 
 > To create a new template, read `workflows/create-template.md`.
 
-**Brand triggering follows the same explicit-path rule as layout templates.** A brand is structurally a layout template minus its SVG page roster — its `design_spec.md` declares `kind: brand` in YAML frontmatter and lives under `templates/brands/<id>/`. `brands_index.json` is discovery-only, same as `layouts_index.json` — listing brands never triggers Step 3.
+**Brand triggering follows the same explicit-path rule as layout templates.** A brand is structurally a layout template minus its SVG page roster — its `design_spec.md` declares `kind: brand` in YAML frontmatter and lives under `${PPT_MASTER_TEMPLATES_DIR}/brands/<id>/`. `brands_index.json` is discovery-only, same as `layouts_index.json` — listing brands never triggers Step 3.
 
 | User input contains | Step 3 brand action |
 |---|---|
-| An explicit path to a brand directory (e.g. `skills/ppt-master/templates/brands/acme/`, or any path that resolves to a directory whose `design_spec.md` declares `kind: brand`) | Copy `design_spec.md` + logo files + any present asset subdirectories into `<project_path>/templates/` |
+| An explicit path to a brand directory (e.g. `~/ppt-projects/templates/brands/acme/`, or any path that resolves to a directory whose `design_spec.md` declares `kind: brand`) | Copy `design_spec.md` + logo files + any present asset subdirectories into `<project_path>/templates/` |
 | Bare brand names ("use acme brand", "用 acme 品牌"), brand mentions without a path, or silence | Skip — same mechanical rule as layout templates: bare names never trigger |
 
 ```bash

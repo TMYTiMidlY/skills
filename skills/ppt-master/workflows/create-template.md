@@ -8,7 +8,9 @@ description: Generate a new PPT layout template based on existing project files 
 
 Generate a complete set of reusable PPT layout templates for the **global template library**.
 
-> This workflow is for **library asset creation**, not project-level one-off customization. The output must be reusable by future PPT projects and discoverable from `templates/layouts/layouts_index.json`.
+> This workflow is for **library asset creation**, not project-level one-off customization. The output must be reusable by future PPT projects and discoverable from `${PPT_MASTER_TEMPLATES_DIR}/layouts/layouts_index.json`.
+>
+> **Workspace setup (required)**: the user's template library lives at `$PPT_MASTER_TEMPLATES_DIR` (typically `~/ppt-projects/templates`). If the env var is unset and the user hasn't named a path, **ask** before running any registrar / `mkdir` command. All paths in this workflow that begin with `$PPT_MASTER_TEMPLATES_DIR/` assume the env var is exported (or that the user named an equivalent path).
 
 > **Companion workflow**: identity-only locking (colors / typography / logo / voice without SVG pages) is handled by [`create-brand.md`](./create-brand.md). Use that when the user wants brand identity but free page layout; use this when fixed page structures are also required.
 
@@ -38,7 +40,7 @@ Branch by the type of reference source the user supplied. This step produces ana
 `fidelity` and `mirror` are not available for type C / D — visual references and verbal-only briefs cannot drive page-by-page replication. Type A is the canonical path: `manifest.json` page-type candidates and the layered `svg/` workspace anchor cluster detection (fidelity) and verbatim copy (mirror) with factual data. Type B is supported with caveats:
 
 - **mirror on type B** — direct 1:1 copy. B's SVGs are already self-contained (one file per page, equivalent to `svg-flat/slide_*.svg`). Page-type for the `<NNN>_<page_type>.svg` filename is read from the source filename when it follows the PPT Master naming convention (`01_cover.svg` → `cover`, `03a_content_two_col.svg` → `content`); fall back to `content` otherwise. Particularly natural when the source is `templates/layouts/<existing>` and the user wants to fork an existing template.
-- **fidelity on type B** — clustering relies on the AI's visual judgement of the SVGs; there is no `manifest.json.pageTypeCandidates` to anchor it. Variant count and grouping are more subjective and may need iteration. If the input is already a PPT Master template (`templates/layouts/<existing>`), parse the existing variant filenames (`03a_content_two_col` etc.) as authoritative cluster hints rather than re-clustering visually.
+- **fidelity on type B** — clustering relies on the AI's visual judgement of the SVGs; there is no `manifest.json.pageTypeCandidates` to anchor it. Variant count and grouping are more subjective and may need iteration. If the input is already a PPT Master template (`$PPT_MASTER_TEMPLATES_DIR/layouts/<existing>` or `${SKILL_DIR}/templates/layouts/<existing>`), parse the existing variant filenames (`03a_content_two_col` etc.) as authoritative cluster hints rather than re-clustering visually.
 
 ### 1A. `.pptx` reference
 
@@ -200,10 +202,10 @@ Step 4 MUST NOT run until `[TEMPLATE_BRIEF_CONFIRMED]` has been emitted in the c
 Create the final template directory:
 
 ```bash
-mkdir -p "skills/ppt-master/templates/layouts/<template_id>"
+mkdir -p "$PPT_MASTER_TEMPLATES_DIR/layouts/<template_id>"
 ```
 
-> **Output location**: Global templates go to `skills/ppt-master/templates/layouts/`; project templates go to `projects/<project>/templates/`
+> **Output location**: Global (reusable) templates go to `$PPT_MASTER_TEMPLATES_DIR/layouts/`; project-scoped templates go to `<project_path>/templates/`
 >
 > The generated directory name must match the final template ID used in `layouts_index.json`.
 
@@ -255,13 +257,13 @@ Mirror mode does **not** invoke the "reconstruct into clean SVG" pathway. The sp
 ## Step 5: Validate Template Assets
 
 ```bash
-ls -la "skills/ppt-master/templates/layouts/<template_id>"
+ls -la "$PPT_MASTER_TEMPLATES_DIR/layouts/<template_id>"
 ```
 
 Run SVG validation on the template directory:
 
 ```bash
-uv run skills/ppt-master/scripts/svg_quality_checker.py "skills/ppt-master/templates/layouts/<template_id>" --template-mode --format <canvas_format>
+uv run ${SKILL_DIR}/scripts/svg_quality_checker.py "$PPT_MASTER_TEMPLATES_DIR/layouts/<template_id>" --template-mode --format <canvas_format>
 ```
 
 `--template-mode` makes the checker:
@@ -281,7 +283,7 @@ uv run skills/ppt-master/scripts/svg_quality_checker.py "skills/ppt-master/templ
 - [ ] Placeholder names follow the canonical convention where applicable; templates with intentionally different vocabularies (e.g. `{{KEY_MESSAGE}}` instead of `{{PAGE_TITLE}}`) should declare a `placeholders:` frontmatter block to silence advisory warnings
 - [ ] Asset files referenced by SVGs actually exist in the template package
 - [ ] For `fidelity` mode: every sprite-sheet asset retains its nested `<svg viewBox=...>` crop wrapper; no image whose file aspect differs from its on-page aspect was flattened to a bare `<image>`
-- [ ] For `mirror` mode: file count equals source page count (type A: `ls templates/layouts/<id>/*_*.svg | wc -l` matches `<import_workspace>/svg-flat/slide_*.svg | wc -l`; type B: matches the source SVG count); filenames follow the `<NNN>_<page_type>.svg` convention; **no `{{...}}` placeholder strings appear in any copied SVG** (`grep -l "{{" templates/layouts/<id>/*.svg` should return nothing — if the type B source itself contains placeholders, the user should be in `standard` mode, not `mirror`); §V Page Roster in `design_spec.md` lists every emitted file with a one-line description of what the page contains and what content slot it suits
+- [ ] For `mirror` mode: file count equals source page count (type A: `ls "$PPT_MASTER_TEMPLATES_DIR"/layouts/<id>/*_*.svg | wc -l` matches `<import_workspace>/svg-flat/slide_*.svg | wc -l`; type B: matches the source SVG count); filenames follow the `<NNN>_<page_type>.svg` convention; **no `{{...}}` placeholder strings appear in any copied SVG** (`grep -l "{{" "$PPT_MASTER_TEMPLATES_DIR"/layouts/<id>/*.svg` should return nothing — if the type B source itself contains placeholders, the user should be in `standard` mode, not `mirror`); §V Page Roster in `design_spec.md` lists every emitted file with a one-line description of what the page contains and what content slot it suits
 
 This step is a **hard gate**. Do not register the template into the library index until validation passes.
 
@@ -292,13 +294,13 @@ This step is a **hard gate**. Do not register the template into the library inde
 Run the unified registrar; it derives the `layouts_index.json` entry and refreshes the `README.md` Quick Index from `design_spec.md` (frontmatter when present, prose fallback otherwise) plus the actual SVG file list:
 
 ```bash
-uv run skills/ppt-master/scripts/register_template.py <template_id>
+uv run ${SKILL_DIR}/scripts/register_template.py <template_id>
 ```
 
 Outputs:
 
-- updates `skills/ppt-master/templates/layouts/layouts_index.json` — the flat `template_id → { summary, keywords }` map
-- refreshes the auto-managed Quick Index inside `skills/ppt-master/templates/layouts/README.md` (the surrounding category sections stay hand-edited)
+- updates `$PPT_MASTER_TEMPLATES_DIR/layouts/layouts_index.json` — the flat `template_id → { summary, keywords }` map
+- refreshes the auto-managed Quick Index inside `$PPT_MASTER_TEMPLATES_DIR/layouts/README.md` (the surrounding category sections stay hand-edited)
 - prints a "Template Creation Complete" card you can use directly for Step 7
 
 The completion card's file roster is collected by globbing `*.svg` in the template directory, so `fidelity`-mode templates that include variant pages such as `03a_content_two_col` are listed automatically.
@@ -349,7 +351,7 @@ For a standard-mode template the card looks like:
 ## Template Creation Complete
 
 **Template Name**: <template_id> (<display_name>)
-**Template Path**: `templates/layouts/<template_id>/`
+**Template Path**: `$PPT_MASTER_TEMPLATES_DIR/layouts/<template_id>/`
 **Category**: <category>
 **Primary Color**: <hex>
 **Index Registration**: Done

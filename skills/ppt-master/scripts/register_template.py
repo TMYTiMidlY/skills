@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
 """Register a layout template or brand preset into the global template index.
 
-For layout templates (``--kind layout``, default), reads
-``templates/layouts/<template_id>/design_spec.md`` and synchronizes:
+Operates on the user's template library, located via
+``PPT_MASTER_TEMPLATES_DIR`` (no fallback — the script errors out with a
+friendly message if the env var is unset).
 
-- ``templates/layouts/layouts_index.json`` — slim machine-readable map
-- ``templates/layouts/README.md`` — human-facing "Quick Template Index" table
+For layout templates (``--kind layout``, default), reads
+``$PPT_MASTER_TEMPLATES_DIR/layouts/<template_id>/design_spec.md`` and synchronizes:
+
+- ``$PPT_MASTER_TEMPLATES_DIR/layouts/layouts_index.json`` — slim machine-readable map
+- ``$PPT_MASTER_TEMPLATES_DIR/layouts/README.md`` — human-facing "Quick Template Index" table
 
 For brand presets (``--kind brand``), reads
-``templates/brands/<brand_id>/design_spec.md`` and synchronizes:
+``$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/design_spec.md`` and synchronizes:
 
-- ``templates/brands/brands_index.json`` — slim machine-readable map
-  (brand README under ``templates/brands/`` is hand-maintained)
+- ``$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json`` — slim machine-readable map
+  (brand README under ``$PPT_MASTER_TEMPLATES_DIR/brands/`` is hand-maintained)
 
 This script is the single source-of-truth bridge between a design spec and
 the indexes. Run it after creating a new template / brand (or after editing
 a spec) and the index updates automatically — no manual JSON surgery.
 
 Usage:
-    python3 scripts/register_template.py <template_id>
-    python3 scripts/register_template.py <template_id> --dry-run
-    python3 scripts/register_template.py --rebuild-all
-    python3 scripts/register_template.py <brand_id> --kind brand
-    python3 scripts/register_template.py --kind brand --rebuild-all
+    uv run scripts/register_template.py <template_id>
+    uv run scripts/register_template.py <template_id> --dry-run
+    uv run scripts/register_template.py --rebuild-all
+    uv run scripts/register_template.py <brand_id> --kind brand
+    uv run scripts/register_template.py --kind brand --rebuild-all
 
 ``--rebuild-all`` rebuilds every entry from scratch within the chosen kind;
 recommended for repairing index drift across many templates / brands at once.
@@ -32,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections import OrderedDict
@@ -46,12 +51,35 @@ except ImportError:  # pragma: no cover — yaml is part of stdlib-adjacent deps
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_DIR = SCRIPT_DIR.parent
-LAYOUTS_DIR = SKILL_DIR / "templates" / "layouts"
-INDEX_PATH = LAYOUTS_DIR / "layouts_index.json"
-README_PATH = LAYOUTS_DIR / "README.md"
 
-BRANDS_DIR = SKILL_DIR / "templates" / "brands"
-BRANDS_INDEX_PATH = BRANDS_DIR / "brands_index.json"
+# decouple-templates patch: layouts/brands no longer live inside SKILL_DIR.
+# They are sourced from PPT_MASTER_TEMPLATES_DIR (user's templates root).
+# Resolved lazily via the helpers below so --help and other env-free entry
+# points keep working.
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from config import require_user_templates_dir  # noqa: E402
+
+
+def _layouts_dir() -> Path:
+    return require_user_templates_dir() / "layouts"
+
+
+def _layouts_index_path() -> Path:
+    return _layouts_dir() / "layouts_index.json"
+
+
+def _layouts_readme_path() -> Path:
+    return _layouts_dir() / "README.md"
+
+
+def _brands_dir() -> Path:
+    return require_user_templates_dir() / "brands"
+
+
+def _brands_index_path() -> Path:
+    return _brands_dir() / "brands_index.json"
+
 
 QUICK_INDEX_BEGIN = "<!-- quick-index:begin -->"
 QUICK_INDEX_END = "<!-- quick-index:end -->"
@@ -246,19 +274,20 @@ def _extract_entry(template_id: str, template_dir: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 def _load_index() -> "OrderedDict[str, dict]":
-    if not INDEX_PATH.exists():
+    if not _layouts_index_path().exists():
         return OrderedDict()
-    raw = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+    raw = json.loads(_layouts_index_path().read_text(encoding="utf-8"))
     return OrderedDict(sorted(raw.items()))
 
 
 def _write_index(data: "OrderedDict[str, dict]", *, dry_run: bool) -> None:
     payload = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    index_path = _layouts_index_path()
     if dry_run:
-        print(f"--- {INDEX_PATH.name} (dry-run) ---")
+        print(f"--- {index_path.name} (dry-run) ---")
         print(payload)
         return
-    INDEX_PATH.write_text(payload, encoding="utf-8")
+    index_path.write_text(payload, encoding="utf-8")
 
 
 def _render_quick_index_rows(
@@ -286,7 +315,8 @@ def _patch_readme(
     *,
     dry_run: bool,
 ) -> None:
-    text = README_PATH.read_text(encoding="utf-8") if README_PATH.exists() else ""
+    readme_path = _layouts_readme_path()
+    text = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
 
     # Update header count
     new_total = len(items)
@@ -331,10 +361,10 @@ def _patch_readme(
             text = f"{text.rstrip()}\n\n## Quick Template Index\n\n{block}\n"
 
     if dry_run:
-        print(f"--- {README_PATH.name} (dry-run) ---")
+        print(f"--- {readme_path.name} (dry-run) ---")
         print(text)
         return
-    README_PATH.write_text(text, encoding="utf-8")
+    readme_path.write_text(text, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -384,18 +414,20 @@ def _extract_brand_entry(brand_id: str, brand_dir: Path) -> dict:
 
 
 def _enumerate_brands() -> list[str]:
-    if not BRANDS_DIR.exists():
+    brands_dir = _brands_dir()
+    if not brands_dir.exists():
         return []
     return sorted(
-        p.name for p in BRANDS_DIR.iterdir()
+        p.name for p in brands_dir.iterdir()
         if p.is_dir() and (p / "design_spec.md").exists()
     )
 
 
 def _load_brand_index() -> "OrderedDict[str, dict]":
-    if not BRANDS_INDEX_PATH.exists():
+    brands_index_path = _brands_index_path()
+    if not brands_index_path.exists():
         return OrderedDict()
-    raw_text = BRANDS_INDEX_PATH.read_text(encoding="utf-8").strip() or "{}"
+    raw_text = brands_index_path.read_text(encoding="utf-8").strip() or "{}"
     raw = json.loads(raw_text)
     return OrderedDict(sorted(raw.items()))
 
@@ -404,12 +436,13 @@ def _write_brand_index(
     data: "OrderedDict[str, dict]", *, dry_run: bool
 ) -> None:
     payload = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    brands_index_path = _brands_index_path()
     if dry_run:
-        print(f"--- {BRANDS_INDEX_PATH.name} (dry-run) ---")
+        print(f"--- {brands_index_path.name} (dry-run) ---")
         print(payload)
         return
-    BRANDS_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
-    BRANDS_INDEX_PATH.write_text(payload, encoding="utf-8")
+    brands_index_path.parent.mkdir(parents=True, exist_ok=True)
+    brands_index_path.write_text(payload, encoding="utf-8")
 
 
 def _print_brand_completion_card(brand_id: str, entry: dict) -> None:
@@ -437,7 +470,7 @@ def _register_brand_main(args: argparse.Namespace) -> int:
             return 0
     else:
         ids = [args.template_id]
-        brand_dir = BRANDS_DIR / args.template_id
+        brand_dir = _brands_dir() / args.template_id
         if not brand_dir.is_dir():
             print(
                 f"Error: brand directory not found: {brand_dir}",
@@ -448,7 +481,7 @@ def _register_brand_main(args: argparse.Namespace) -> int:
     extracted: dict[str, dict] = {}
     for bid in ids:
         try:
-            extracted[bid] = _extract_brand_entry(bid, BRANDS_DIR / bid)
+            extracted[bid] = _extract_brand_entry(bid, _brands_dir() / bid)
         except SpecParseError as exc:
             print(f"Error: {bid}: {exc}", file=sys.stderr)
             return 1
@@ -485,7 +518,7 @@ def _register_brand_main(args: argparse.Namespace) -> int:
 
 def _enumerate_templates() -> list[str]:
     return sorted(
-        p.name for p in LAYOUTS_DIR.iterdir()
+        p.name for p in _layouts_dir().iterdir()
         if p.is_dir() and p.name != "images" and (p / "design_spec.md").exists()
     )
 
@@ -522,8 +555,9 @@ def main() -> int:
         "template_id",
         nargs="?",
         help=(
-            "Template directory under templates/layouts/ "
-            "(or templates/brands/ when --kind brand). "
+            "Template directory name under "
+            "$PPT_MASTER_TEMPLATES_DIR/layouts/ "
+            "(or $PPT_MASTER_TEMPLATES_DIR/brands/ when --kind brand). "
             "Omit with --rebuild-all."
         ),
     )
@@ -559,7 +593,7 @@ def main() -> int:
         ids = _enumerate_templates()
     else:
         ids = [args.template_id]
-        spec_dir = LAYOUTS_DIR / args.template_id
+        spec_dir = _layouts_dir() / args.template_id
         if not spec_dir.is_dir():
             print(f"Error: template directory not found: {spec_dir}",
                   file=sys.stderr)
@@ -569,7 +603,7 @@ def main() -> int:
     extracted: dict[str, dict] = {}
     for tid in ids:
         try:
-            extracted[tid] = _extract_entry(tid, LAYOUTS_DIR / tid)
+            extracted[tid] = _extract_entry(tid, _layouts_dir() / tid)
         except SpecParseError as exc:
             print(f"Error: {tid}: {exc}", file=sys.stderr)
             return 1
@@ -601,7 +635,7 @@ def main() -> int:
             if tid in extracted:
                 all_extras[tid] = extracted[tid]["extras"]
             else:
-                template_dir = LAYOUTS_DIR / tid
+                template_dir = _layouts_dir() / tid
                 if (template_dir / "design_spec.md").exists():
                     try:
                         all_extras[tid] = _extract_entry(tid, template_dir)["extras"]

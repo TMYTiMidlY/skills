@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """PPT Master project management helpers.
 
+Project root resolution:
+    --dir <path>                                 → use that path
+    else $PPT_MASTER_PROJECTS_DIR                → use that path
+    else                                         → error (no implicit fallback)
+
 Usage:
-    python3 scripts/project_manager.py init <project_name> [--format ppt169] [--dir projects]
-    python3 scripts/project_manager.py import-sources <project_path> <source1> [<source2> ...] [--move | --copy]
-    python3 scripts/project_manager.py validate <project_path>
-    python3 scripts/project_manager.py info <project_path>
+    uv run scripts/project_manager.py init <project_name> [--format ppt169] [--dir <projects_root>]
+    uv run scripts/project_manager.py import-sources <project_path> <source1> [<source2> ...] [--move | --copy]
+    uv run scripts/project_manager.py validate <project_path>
+    uv run scripts/project_manager.py info <project_path>
 """
 
 from __future__ import annotations
@@ -42,6 +47,27 @@ except ImportError:
 TOOLS_DIR = Path(__file__).resolve().parent
 SKILL_DIR = TOOLS_DIR.parent
 REPO_ROOT = SKILL_DIR.parent.parent
+
+# decouple-templates patch: projects no longer default to REPO_ROOT/projects.
+# Path resolution is lazy via the config helper so --help still works without env.
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+try:
+    from config import require_user_projects_dir  # noqa: E402
+except ImportError:  # pragma: no cover — config.py is shipped alongside this script
+    require_user_projects_dir = None  # type: ignore[assignment]
+
+
+def _default_projects_base() -> Path:
+    """Return PPT_MASTER_PROJECTS_DIR or sys.exit with a clear error."""
+    if require_user_projects_dir is None:  # pragma: no cover — defensive
+        sys.exit(
+            "ERROR: scripts/config.py is missing — cannot resolve "
+            "PPT_MASTER_PROJECTS_DIR."
+        )
+    return require_user_projects_dir()
+
+
 SOURCE_DIRNAME = "sources"
 TEXT_SOURCE_SUFFIXES = {".md", ".markdown", ".txt"}
 TABLE_TEXT_SUFFIXES = {".csv", ".tsv"}
@@ -112,8 +138,15 @@ class ProjectManager:
 
     CANVAS_FORMATS = CANVAS_FORMATS
 
-    def __init__(self, base_dir: str = "projects") -> None:
-        self.base_dir = Path(base_dir)
+    def __init__(self, base_dir: str | None = None) -> None:
+        self.base_dir: Path | None = Path(base_dir) if base_dir else None
+
+    def _resolve_base(self, override: str | None = None) -> Path:
+        if override:
+            return Path(override)
+        if self.base_dir is not None:
+            return self.base_dir
+        return _default_projects_base()
 
     def init_project(
         self,
@@ -121,7 +154,7 @@ class ProjectManager:
         canvas_format: str = "ppt169",
         base_dir: str | None = None,
     ) -> str:
-        base_path = Path(base_dir) if base_dir else self.base_dir
+        base_path = self._resolve_base(base_dir)
 
         normalized_format = normalize_canvas_format(canvas_format)
         if normalized_format not in self.CANVAS_FORMATS:
@@ -757,7 +790,7 @@ def parse_init_args(argv: list[str]) -> tuple[str, str, str]:
 
     project_name = argv[2]
     canvas_format = "ppt169"
-    base_dir = "projects"
+    base_dir: str | None = None
 
     i = 3
     while i < len(argv):

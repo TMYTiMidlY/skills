@@ -1,12 +1,14 @@
 ---
-description: Generate a brand-only template under `templates/brands/<id>/` — a design_spec.md that captures the user's colors / typography / logo / voice / icon style without an SVG page roster, so subsequent PPT projects inherit brand identity while keeping page layout free.
+description: Generate a brand-only template under `$PPT_MASTER_TEMPLATES_DIR/brands/<id>/` — a design_spec.md that captures the user's colors / typography / logo / voice / icon style without an SVG page roster, so subsequent PPT projects inherit brand identity while keeping page layout free.
 ---
 
 # Create Brand Workflow
 
-> Standalone preset-creation workflow. Output is a brand template package at `skills/ppt-master/templates/brands/<brand_id>/`. Structurally a brand is a template minus the SVG page roster — Strategist locks the brand's color / typography / logo / voice as truth; Executor designs pages freely under those constraints.
+> Standalone preset-creation workflow. Output is a brand template package at `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/`. Structurally a brand is a template minus the SVG page roster — Strategist locks the brand's color / typography / logo / voice as truth; Executor designs pages freely under those constraints.
+>
+> **Workspace setup (required)**: the user's brand library lives at `$PPT_MASTER_TEMPLATES_DIR/brands/`. If `PPT_MASTER_TEMPLATES_DIR` is unset and the user hasn't named a path, **ask** before running any registrar / `mkdir` command (typical answer: `~/ppt-projects/templates`). All paths below assume the env var is exported.
 
-This workflow edits the global brand library, not any specific `projects/<x>/`. Consumption follows the same explicit-path rule as layout templates (see [Downstream consumption](#downstream-consumption-informational) at the end).
+This workflow edits the user's global brand library, not any specific `<project_path>/`. Consumption follows the same explicit-path rule as layout templates (see [Downstream consumption](#downstream-consumption-informational) at the end).
 
 > Companion: [`create-template.md`](./create-template.md) generates full templates with SVG pages. Use `create-brand.md` when the user wants identity-only locking with free page layout.
 
@@ -17,7 +19,7 @@ This workflow edits the global brand library, not any specific `projects/<x>/`. 
 | "set up brand" / "extract brand from this logo" / 建立品牌 / 做品牌规范 | Run this workflow |
 | User provides a brand asset (logo / brand site URL / branded PPTX / brand PDF) and wants it locked across future projects | Run this workflow |
 | User mentions brand color or font once for a single deck only | Skip — handle inline via Strategist h.5 |
-| `templates/brands/<requested_id>/` already exists | Ask: update / replace / use a new id — never silently overwrite |
+| `$PPT_MASTER_TEMPLATES_DIR/brands/<requested_id>/` already exists | Ask: update / replace / use a new id — never silently overwrite |
 
 ⛔ Never auto-trigger. Brand creation is a user-invoked identity setup; an empty `templates/brands/` is not an invitation to create one.
 
@@ -66,7 +68,7 @@ Whatever the user gives is `[user]`-labelled. Skip Step 3 unless the user explic
 
 ## Step 2C: Empty skeleton
 
-Write `templates/brands/<brand_id>/design_spec.md` with the full schema, every value as a TODO comment. Tell the user where the file is. No further prompting — the user owns it from here.
+Write `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/design_spec.md` with the full schema, every value as a TODO comment. Tell the user where the file is. No further prompting — the user owns it from here.
 
 ---
 
@@ -90,7 +92,7 @@ For fields not covered by the asset, ask the user in a single bundled message. S
 Create the package directory:
 
 ```bash
-mkdir -p "skills/ppt-master/templates/brands/<brand_id>"
+mkdir -p "$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>"
 ```
 
 ### Mandatory: `design_spec.md`
@@ -151,18 +153,18 @@ primary_color: "#XXXXXX"
 ```
 
 **Section scope rules**:
-- Layout / canvas / spacing / radius / shadow / page roster / signature design elements are OUT of brand scope. Those live in layout templates (`templates/layouts/<id>/design_spec.md`) or `shared-standards.md`. Do NOT add those sections here.
+- Layout / canvas / spacing / radius / shadow / page roster / signature design elements are OUT of brand scope. Those live in layout templates (`$PPT_MASTER_TEMPLATES_DIR/layouts/<id>/design_spec.md`) or `shared-standards.md`. Do NOT add those sections here.
 - HEX must be `#RRGGBB`
 - Font names are free strings; not validated against locally installed fonts
 - §VII is fully optional — list only directories that actually exist
 
 ### Optional: logo file
 
-If the user provided a logo, copy it to `templates/brands/<brand_id>/logo.<ext>` (preserve source extension).
+If the user provided a logo, copy it to `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/logo.<ext>` (preserve source extension).
 
 ### Optional: visual asset directories
 
-If the user provided brand photo / illustration / icon folders, copy them as `images/` / `illustrations/` / `icons/` under `templates/brands/<brand_id>/`. Reference each in §VII of `design_spec.md`. Skip the entire section if none exist.
+If the user provided brand photo / illustration / icon folders, copy them as `images/` / `illustrations/` / `icons/` under `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/`. Reference each in §VII of `design_spec.md`. Skip the entire section if none exist.
 
 ### NOT created here
 
@@ -172,7 +174,7 @@ No SVG page roster. No canvas spec. No signature design elements. If the user la
 
 ## Step 5: Register and hand off
 
-Update `templates/brands/brands_index.json` with the new entry (create the file if missing):
+Update `$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json` with the new entry (create the file if missing):
 
 ```json
 {
@@ -188,17 +190,17 @@ Emit the confirmation card:
 
 ```markdown
 ## ✅ Brand Saved
-- Path: `skills/ppt-master/templates/brands/<brand_id>/`
+- Path: `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/`
 - Files: design_spec.md{, logo.<ext>}{, images/}{, illustrations/}{, icons/}
 - Fields locked: <list>
 - Provenance: <fact / approx / user counts>
 
 How to use in a project:
-- Include the brand directory path in your initial Step 3 input — e.g. "做一个 Q4 总结 PPT, 用 skills/ppt-master/templates/brands/<brand_id>/ 这个品牌"
+- Include the brand directory path in your initial Step 3 input — e.g. "做一个 Q4 总结 PPT, 用 ~/ppt-projects/templates/brands/<brand_id>/ 这个品牌"
 - Same explicit-path rule as layout templates: bare brand names never trigger
 - May be supplied together with a layout template path; Step 3 fuses both into a single `design_spec.md` (brand wins on identity tokens, layout wins on page structure) — see `SKILL.md` Step 3
-- To list available brands: open `templates/brands/brands_index.json`
-- To edit: modify `templates/brands/<brand_id>/design_spec.md` directly, then re-run `uv run skills/ppt-master/scripts/register_template.py --kind brand <brand_id>`
+- To list available brands: open `$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json`
+- To edit: modify `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/design_spec.md` directly, then re-run `uv run ${SKILL_DIR}/scripts/register_template.py --kind brand <brand_id>`
 ```
 
 ---
@@ -220,7 +222,7 @@ Brand application happens in [`SKILL.md` Step 3](../SKILL.md) under the **same e
 ## Notes
 
 1. **Brand is identity, not layout** — colors / typography / logo / voice / icon style only. Page roster, canvas spec, and signature design elements belong to layout templates; do not duplicate them here.
-2. **Self-contained package** — all brand assets (logo, images, illustrations, icons) live inside `templates/brands/<brand_id>/`. Nothing leaks to workspace root or `projects/`.
+2. **Self-contained package** — all brand assets (logo, images, illustrations, icons) live inside `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/`. Nothing leaks to workspace root or to any specific `<project_path>/`.
 3. **No script dependency** — Step 2A reuses existing converters plus AI inline reading. A dedicated `brand_extract.py` is not introduced unless future user feedback demands batch processing or precise color picking from raster logos.
 4. **Multi-brand support** — `templates/brands/` accepts any number of brands; agency / freelancer / multi-client workflows are natural.
 5. **Precedence rule** — when a brand and a layout template both apply, Step 3 fuses them into one `design_spec.md`: brand wins on color / typography / logo / voice / icon style; layout wins on canvas / page roster / spacing / font-size hierarchy / signature visual elements. See `SKILL.md` Step 3 for the full precedence table.

@@ -1,4 +1,9 @@
-# Template Resources
+# Template Resources (upstream-shipped, read-only)
+
+> **Read first.** Everything under `${SKILL_DIR}/templates/` is **upstream-shipped sample / read-only asset library** that comes with the skill:
+>
+> - `layouts/`, `brands/` — **sample libraries**. Your editable layout / brand library lives at `$PPT_MASTER_TEMPLATES_DIR/{layouts,brands}/` (typically `~/ppt-projects/templates/{layouts,brands}/`); `register_template.py` writes there. The samples in this directory are reference material — copy one into your library to use as a starting point, or pass any one of these directories directly to SKILL.md Step 3 as a layout / brand path.
+> - `charts/`, `icons/`, `design_spec_reference.md`, `spec_lock_reference.md` — **shipped assets and references** that all projects consume directly from `${SKILL_DIR}/templates/`. No env-var indirection.
 
 ## Design Specification & Outline Reference
 
@@ -64,4 +69,4 @@ The `icons/` directory contains 11,600+ vector icons across five libraries:
 | `simple-icons` | brand logos (company / product marks) | 3400+ |
 
 - **Usage & style rules**: [icons/README.md](./icons/README.md)
-- **Search icons**: `ls skills/ppt-master/templates/icons/<library>/ | grep <keyword>`
+- **Search icons**: `ls ${SKILL_DIR}/templates/icons/<library>/ | grep <keyword>`
