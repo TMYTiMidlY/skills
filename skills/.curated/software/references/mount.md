@@ -231,3 +231,47 @@ RCLONE_VFS_CACHE_MAX_AGE=1h
 
 如果直连 SMB 不通但有 SSH 到一台已经内核 `mount.cifs` 挂上同一 share 的机器，可以 `sshfs <hop>:<remote-mount> <local-mount>` 间接挂上。代价是每个 FUSE 操作多一跳 SSH RTT，对 metadata 密集操作更慢；优势是热路径文件会命中跳板机的内核 dentry/page cache，**读密集且热数据场景反而可能比 rclone 直连快**。sshfs 在 conda-forge 上只有 Python fsspec 版本（非 FUSE 二进制），原生 FUSE 二进制要自己 `apt download sshfs && dpkg -x` 解包到 `~/.local/bin`。
 
+### SMB server 地址漂移：用 hostname 不用 IP literal
+
+**`rclone.conf` 的 `host =` 字段写 NetBIOS/DNS hostname，不要写 IP literal。** 现场 SMB server 经常被运维迁机器、换网段、改 DHCP 池——一旦 IP 漂移，写 IP literal 的 rclone 直接连不上，service 进入"`Type=notify` 90s 超时 → `Restart=always` 每 ~100s 重试"的循环（看 `systemctl --user status` 里 restart counter 一路涨就是它）。同 share 上跑内核 `mount.cifs` 的机器（如 1810）通常是写 `//Quantum/Team`，因为 hostname 路径只需要本机 `/etc/hosts` 改一行就跟得上。
+
+**hostname 解析的权威来源是"已经 work 的那台机器"。** 多机部署同一 share 时，新机器直接抄那台 work 机的 `/etc/hosts` 里关于这个 SMB host 的映射（例：`10.100.158.91  Quantum`），别去自己探/猜/写错的别名。本机能 ping 通 hostname + 445 端口 reachable 后，`rclone.conf` 的 `host =` 改成 hostname，重启 service 即可。
+
+```bash
+# 1. 抄已 work 机的 hosts 条目（在该机上 grep）
+ssh <work-host> "getent hosts <smb-server-hostname>"
+# 2. 本机加 sudo（需要 root）
+echo "<ip>  <hostname>" | sudo tee -a /etc/hosts
+# 3. 把 rclone.conf 的 host = <ip> 改成 host = <hostname>
+# 4. systemctl --user restart rclone@<remote>
+```
+
+### `find` / `grep -r` / `git status` 进 rclone 挂载点会卡死
+
+> 本工作区实例：`QuantumAtlas/raw/` 就是 rclone SMB FUSE 挂载（→ `team:Team/QuantumAtlas/raw`），下文 `*/raw` / `!**/raw/**` / `--exclude=raw` 模板都以它为例。
+
+承接上面性能表里 "深层 `find` >10 分钟未完成"——任何在仓库根/家目录跑全量 walk 的工具（`find`、`fd`、`rg --no-ignore`、`git status` 当 mount 在仓库子目录内、IDE 索引、`du -sh`、备份工具）都会一头扎进挂载点，因为 rclone SMB 后端无 SMB compound、metadata 走每目录一次 RTT，几万条目就是几十分钟级别，并且其它工具会同时被这条 stuck 进程拖住（FUSE 串行 + dir-cache miss 雪崩）。
+
+对策：**在 walk 命令上明确 `-prune` 排除挂载点 / FUSE 路径**：
+
+```bash
+# find 模板
+find ~ \
+    \( -path '*/raw' -o -path '*/.cache/rclone/*' -o -path '*/node_modules' -o -fstype fuse \) -prune \
+    -o -name '<pat>' -print
+
+# rg 模板（rg 不识别 fstype，靠 ignore-file 或 --glob '!path')
+rg --glob '!**/raw/**' --glob '!**/.cache/rclone/**' '<pat>'
+
+# du 模板（du 不识别 fstype，要手动 --exclude）
+du -sh --exclude=raw --exclude=.cache/rclone .
+```
+
+ripgrep 默认遵守 `.gitignore` / `.rgignore`——当挂载子目录已经在仓库 ignore 文件里时（推荐做法），普通 `rg` / `git status` 不会扎进去；**只有 `rg --no-ignore` / `rg -uu` / `grep -r` 才需要手动加 `--glob '!path'`**。
+
+仓库级保险：在仓库根 `.gitignore` / `.rgignore` / `.fdignore` / IDE 的 file-watch 排除里把 mount 子目录加进去（即使 mount 目录是仓库内的子目录，git 不会自己识别 FUSE）。
+
+### 挂载点的删除：trash-put 而不是 rm
+
+挂载目录里删除文件**仍然用 `trash-put`**，不要 `rm`——trash-cli 会在挂载点根目录自动建 `.Trash-<UID>/`，文件留在同一 filesystem 可恢复（而不是被搬到 `~/.local/share/Trash`、跨 filesystem 触发完整数据传输）。这条对 FUSE 和内核挂载（CIFS / NFS 等）都成立。也意味着挂载点本身的 `.Trash-<UID>/` 不会消耗本地盘，但会占远端 share 配额，按需 `trash-empty` 清理。
+
