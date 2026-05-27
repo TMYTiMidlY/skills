@@ -248,23 +248,21 @@ echo "<ip>  <hostname>" | sudo tee -a /etc/hosts
 
 ### `find` / `grep -r` / `git status` 进 rclone 挂载点会卡死
 
-> 本工作区实例：`QuantumAtlas/raw/` 就是 rclone SMB FUSE 挂载（→ `team:Team/QuantumAtlas/raw`），下文 `*/raw` / `!**/raw/**` / `--exclude=raw` 模板都以它为例。
-
 承接上面性能表里 "深层 `find` >10 分钟未完成"——任何在仓库根/家目录跑全量 walk 的工具（`find`、`fd`、`rg --no-ignore`、`git status` 当 mount 在仓库子目录内、IDE 索引、`du -sh`、备份工具）都会一头扎进挂载点，因为 rclone SMB 后端无 SMB compound、metadata 走每目录一次 RTT，几万条目就是几十分钟级别，并且其它工具会同时被这条 stuck 进程拖住（FUSE 串行 + dir-cache miss 雪崩）。
 
-对策：**在 walk 命令上明确 `-prune` 排除挂载点 / FUSE 路径**：
+对策：**在 walk 命令上明确 `-prune` 排除挂载点 / FUSE 路径**（下文 `<mount-dir>` 替换为实际挂载子目录名）：
 
 ```bash
 # find 模板
 find ~ \
-    \( -path '*/raw' -o -path '*/.cache/rclone/*' -o -path '*/node_modules' -o -fstype fuse \) -prune \
+    \( -path '*/<mount-dir>' -o -path '*/.cache/rclone/*' -o -path '*/node_modules' -o -fstype fuse \) -prune \
     -o -name '<pat>' -print
 
 # rg 模板（rg 不识别 fstype，靠 ignore-file 或 --glob '!path')
-rg --glob '!**/raw/**' --glob '!**/.cache/rclone/**' '<pat>'
+rg --glob '!**/<mount-dir>/**' --glob '!**/.cache/rclone/**' '<pat>'
 
 # du 模板（du 不识别 fstype，要手动 --exclude）
-du -sh --exclude=raw --exclude=.cache/rclone .
+du -sh --exclude=<mount-dir> --exclude=.cache/rclone .
 ```
 
 ripgrep 默认遵守 `.gitignore` / `.rgignore`——当挂载子目录已经在仓库 ignore 文件里时（推荐做法），普通 `rg` / `git status` 不会扎进去；**只有 `rg --no-ignore` / `rg -uu` / `grep -r` 才需要手动加 `--glob '!path'`**。
