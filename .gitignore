@@ -1,6 +1,11 @@
 # Vercel Labs skills CLI
 skills-lock.json
 
+# Quilt 工作元数据（每个 grafted skill 一个子目录，集中在仓库根）
+/.quilt-pc/
+# Quilt refresh 的旧版备份
+*.patch~
+
 # ---> Python
 __pycache__/
 *.py[cod]
