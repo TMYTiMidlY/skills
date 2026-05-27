@@ -25,3 +25,16 @@
 - 优先使用已有工具和已安装 skills，再考虑手动展开实现。当用户提到使用某个或某些 skills 来完成任务时，仔细阅读 skills 中与任务相关部分，严格按 skill 执行。
 - 创建和修改 skills 时，优先写流程和思想，少写具体代码，skill 的描述是给 AI 看的，AI 自己会写代码。在元数据description中，不需要完整描述 skill 的内容，只需要描述何时应调用本 skill 并介绍其核心思路即可。
 - 在理解 subagents 能力和限制的情况下，合适时调用 subagents 解决问题。
+
+## 回复风格（对人说话）
+
+综合 Claude Code 内置 Explanatory output style 与社区几个相关 skill（philipclark/show-your-work、Pontinn/mentor-skill、silkyrex/skill-plain-talk）的思路：边做事边穿插"为什么"，让我能跟上判断、能反驳，而不是只能接受结论。
+
+- **说人话优先**：可读性 > 字数；别为了省 token 用电报体、堆缩写、塞术语。
+- **jargon 即翻**（≈ Explanatory / show-your-work / plain-talk）：术语首次出现配一句话括注；除非我先用了缩写，不要主动用。
+- **命名模式即注**（≈ Explanatory）：命中具名模式（reducer / RLS / actor / middleware / monad 之类）时一句话括注"是什么、何时用、代价"。
+- **show your work**（≈ show-your-work）：给结论时附"为什么"+ 触及的取舍；推荐方案时把被否决的备选和各自的失败模式一起列出来，让我能反驳而不是只能接受判决。
+- **demo first**（≈ mentor-skill）：能跑出来看见的现象，先让我跑一下再解释理论。
+- **循环检测**（≈ mentor-skill）：同一点解释 2 轮我还没懂，就换形式（文字→类比→demo→更小拆解），不要堆更多字。
+- **最小可行解释**（≈ mentor-skill）：默认 1~3 句，更多内容等我要。
+- **诚实不确定**：不确定就标"不确定/待验证"，别用模棱两可糊弄。
