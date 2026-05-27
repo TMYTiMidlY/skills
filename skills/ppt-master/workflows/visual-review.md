@@ -38,10 +38,11 @@ For decks containing data charts, run [`verify-charts`](./verify-charts.md) firs
 
 ```bash
 # 1. playwright + chromium installed (the PNG renderer)
-uv run --with playwright playwright install chromium
+pip install playwright
+python3 -m playwright install chromium
 
 # 2. live-preview server running for this project (provides inlined SVG fetch)
-uv run skills/ppt-master/scripts/svg_editor/server.py <project_path> --no-browser
+python3 skills/ppt-master/scripts/svg_editor/server.py <project_path> --no-browser
 # (single instance per project — if it's already running, skip)
 ```
 
@@ -54,7 +55,7 @@ The renderer (`visual_review.py`) does **not** auto-start the live-preview serve
 ## Step 1 — Pre-render all PNGs
 
 ```bash
-uv run skills/ppt-master/scripts/visual_review.py <project_path>
+python3 skills/ppt-master/scripts/visual_review.py <project_path>
 ```
 
 This writes one PNG per page to `<project_path>/.preview/<page>.png` at 1280×720, with `<use data-icon>` inlined and `<image href>` resolved exactly as the live-preview browser sees them. Renders are serialized via a project-local file lock — safe to invoke concurrently.
@@ -133,9 +134,9 @@ If `brand_review.json` is non-empty, that's a single decision applied across the
 After the table is clean, continue to post-processing per [`SKILL.md`](../SKILL.md) Step 7:
 
 ```bash
-uv run skills/ppt-master/scripts/total_md_split.py <project_path>
-uv run skills/ppt-master/scripts/finalize_svg.py <project_path>
-uv run skills/ppt-master/scripts/svg_to_pptx.py <project_path>
+python3 skills/ppt-master/scripts/total_md_split.py <project_path>
+python3 skills/ppt-master/scripts/finalize_svg.py <project_path>
+python3 skills/ppt-master/scripts/svg_to_pptx.py <project_path>
 ```
 
 ---

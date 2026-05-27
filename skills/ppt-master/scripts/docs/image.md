@@ -2,30 +2,62 @@
 
 > Architecture rationale (why provider-specific config keys instead of a generic `IMAGE_API_KEY`, why permissive license filter with strict-mode escape hatch, why external refs in dev but two divergent embedding strategies for delivery): see [docs/technical-design.md "Image Acquisition & Embedding"](../../../../docs/technical-design.md#image-acquisition--embedding).
 
-Image tools cover prompt-based AI generation, web image search, image inspection, and Gemini watermark removal.
+Image tools cover formula rendering, prompt-based AI generation, web image search, image inspection, and Gemini watermark removal.
+
+## `latex_render.py`
+
+Manifest-driven LaTeX formula renderer. Strategist writes `images/formula_manifest.json` after the Typography confirmation; this script renders only those declared formulas to transparent PNGs and writes dimensions back into the manifest.
+
+```bash
+python3 scripts/latex_render.py <project_path>
+python3 scripts/latex_render.py <project_path> --dry-run
+python3 scripts/latex_render.py <project_path> --providers codecogs,quicklatex,mathpad,wikimedia
+```
+
+Manifest shape:
+
+```json
+{
+  "providers": ["codecogs", "quicklatex", "mathpad", "wikimedia"],
+  "items": [
+    {
+      "id": "formula_001",
+      "latex": "E = mc^2",
+      "display": "block",
+      "color": "#1D1D1F",
+      "background": "#FFFFFF",
+      "transparent": true,
+      "dpi": 300,
+      "filename": "formula_001.png"
+    }
+  ]
+}
+```
+
+Output files land directly under `project/images/`. Formula filenames should use a shared `formula_` prefix, e.g. `formula_001.png`. The default provider chain is `codecogs,quicklatex,mathpad,wikimedia`; each provider is tried automatically until one succeeds, and the winning provider is recorded back into the manifest. `--providers` or manifest-level `providers` may override the order, but all four are available as no-key fallbacks. Formula PNGs are transparent by default. `background` is the temporary render matte and local background-removal reference; set `transparent: false` only when an opaque final formula asset is intentional. The script does not scan `spec_lock.md` or source documents for `$...$`; formula selection is a Strategist decision.
 
 ## `image_gen.py`
 
 Unified image generation entry point.
 
 ```bash
-uv run scripts/image_gen.py "A modern futuristic workspace"
-uv run scripts/image_gen.py "Abstract tech background" --aspect_ratio 16:9 --image_size 4K
-uv run scripts/image_gen.py "Concept car" -o projects/demo/images
-uv run scripts/image_gen.py "Beautiful landscape" -n "low quality, blurry, watermark"
-uv run scripts/image_gen.py --list-backends
+python3 scripts/image_gen.py "A modern futuristic workspace"
+python3 scripts/image_gen.py "Abstract tech background" --aspect_ratio 16:9 --image_size 4K
+python3 scripts/image_gen.py "Concept car" -o projects/demo/images
+python3 scripts/image_gen.py "Beautiful landscape" -n "low quality, blurry, watermark"
+python3 scripts/image_gen.py --list-backends
 ```
 
-Backends are grouped into Core / Extended / Experimental tiers. Run `uv run scripts/image_gen.py --list-backends` for the current list.
+Backends are grouped into Core / Extended / Experimental tiers. Run `python3 scripts/image_gen.py --list-backends` for the current list.
 
 Backend selection:
 
 ```bash
-uv run scripts/image_gen.py "A cat" --backend openai
-uv run scripts/image_gen.py "A cinematic portrait" --backend minimax
-uv run scripts/image_gen.py "A product launch hero image" --backend qwen
-uv run scripts/image_gen.py "科技感背景图" --backend zhipu
-uv run scripts/image_gen.py "A product KV in cinematic style" --backend volcengine
+python3 scripts/image_gen.py "A cat" --backend openai
+python3 scripts/image_gen.py "A cinematic portrait" --backend minimax
+python3 scripts/image_gen.py "A product launch hero image" --backend qwen
+python3 scripts/image_gen.py "科技感背景图" --backend zhipu
+python3 scripts/image_gen.py "A product KV in cinematic style" --backend volcengine
 ```
 
 Configuration sources:
@@ -33,6 +65,7 @@ Configuration sources:
 1. Current process environment variables
 2. First `.env` found in this order:
    - Current working directory
+   - Skill directory (e.g. `~/.agents/skills/ppt-master/.env`)
    - Clone repo root
    - `~/.ppt-master/.env`
 
@@ -69,6 +102,8 @@ Current process environment wins over `.env`.
 
 OpenAI backend notes:
 - `gpt-image-2` is the default OpenAI model.
+- Requests are sent with plain `requests.post()` to improve compatibility with
+  OpenAI-compatible proxies that block the OpenAI SDK's `httpx` transport.
 - For `gpt-image-2`, `image_size=512px` means a low-quality draft preset, not a literal 512px edge. The model requires both edges to be multiples of 16px, a long:short ratio no greater than 3:1, and total pixels between 655,360 and 8,294,400.
 - `OPENAI_BACKGROUND=transparent` is not supported by `gpt-image-2`; use `auto` or `opaque`.
 - If `OPENAI_OUTPUT_FORMAT=jpeg` or `webp`, generated files use `.jpg` or `.webp` extensions instead of `.png`.
@@ -100,7 +135,7 @@ MINIMAX_API_KEY=your-api-key
 Analyze images in a project directory before writing the design spec or composing slide layouts.
 
 ```bash
-uv run scripts/analyze_images.py <project_path>/images
+python3 scripts/analyze_images.py <project_path>/images
 ```
 
 Use this instead of opening image files directly when following the project workflow.
@@ -110,7 +145,7 @@ Use this instead of opening image files directly when following the project work
 Zero-config web image search across openly-licensed providers. Sister tool to `image_gen.py` — used when the resource list row has `Acquire Via: web`.
 
 ```bash
-uv run scripts/image_search.py "offshore wind farm" \
+python3 scripts/image_search.py "offshore wind farm" \
   --filename cover_bg.jpg --slide 01_cover \
   --orientation landscape -o projects/demo/images
 ```
@@ -145,12 +180,12 @@ Pin a provider, refuse attribution, or override the manifest path:
 
 ```bash
 # Pin Wikimedia
-uv run scripts/image_search.py "Olympics opening ceremony" \
+python3 scripts/image_search.py "Olympics opening ceremony" \
   --filename event.jpg --provider wikimedia \
   --orientation landscape -o projects/demo/images
 
 # Strict mode — refuse CC BY / CC BY-SA
-uv run scripts/image_search.py "abstract gradient" \
+python3 scripts/image_search.py "abstract gradient" \
   --filename hero.jpg --strict-no-attribution \
   -o projects/demo/images
 ```
@@ -170,13 +205,17 @@ The full role-level reference (intent → query translation, on-slide attributio
 Remove Gemini watermark assets after manual download.
 
 ```bash
-uv run scripts/gemini_watermark_remover.py <image_path>
-uv run scripts/gemini_watermark_remover.py <image_path> -o output_path.png
-uv run scripts/gemini_watermark_remover.py <image_path> -q
+python3 scripts/gemini_watermark_remover.py <image_path>
+python3 scripts/gemini_watermark_remover.py <image_path> -o output_path.png
+python3 scripts/gemini_watermark_remover.py <image_path> -q
 ```
 
 Notes:
 - Requires `scripts/assets/bg_48.png` and `scripts/assets/bg_96.png`
 - Best used after downloading “full size” Gemini images
 
-Dependencies: `Pillow`, `numpy` — invoke with e.g. `uv run --with Pillow --with numpy scripts/svg_finalize/fix_image_aspect.py <args>`.
+Dependencies:
+
+```bash
+pip install Pillow numpy
+```

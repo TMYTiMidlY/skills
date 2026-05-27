@@ -5,7 +5,7 @@
 1. Run:
 
 ```bash
-uv run scripts/project_manager.py validate <project_path>
+python3 scripts/project_manager.py validate <project_path>
 ```
 
 2. Fix missing files or invalid directories reported by the validator.
@@ -18,7 +18,7 @@ uv run scripts/project_manager.py validate <project_path>
 3. Preview via a local server if browser file loading is inconsistent:
 
 ```bash
-uv run python -m http.server --directory <svg_output_path> 8000
+python3 -m http.server --directory <svg_output_path> 8000
 ```
 
 ## Speaker Notes Do Not Split
@@ -31,7 +31,7 @@ Check `total.md`:
 Then rerun:
 
 ```bash
-uv run scripts/total_md_split.py <project_path>
+python3 scripts/total_md_split.py <project_path>
 ```
 
 ## PPT Export Quality Issues
@@ -39,9 +39,9 @@ uv run scripts/total_md_split.py <project_path>
 Preferred sequence:
 
 ```bash
-uv run scripts/total_md_split.py <project_path>
-uv run scripts/finalize_svg.py <project_path>
-uv run scripts/svg_to_pptx.py <project_path>
+python3 scripts/total_md_split.py <project_path>
+python3 scripts/finalize_svg.py <project_path>
+python3 scripts/svg_to_pptx.py <project_path>
 ```
 
 Do not export directly from `svg_output/` when `svg_final/` exists.
@@ -52,8 +52,8 @@ Do not export directly from `svg_output/` when `svg_final/` exists.
 2. Export with the project-relative audio directory:
 
 ```bash
-uv run scripts/notes_to_audio.py <project_path> --voice zh-CN-XiaoxiaoNeural
-uv run scripts/svg_to_pptx.py <project_path> --recorded-narration audio
+python3 scripts/notes_to_audio.py <project_path> --voice zh-CN-XiaoxiaoNeural
+python3 scripts/svg_to_pptx.py <project_path> --recorded-narration audio
 ```
 
 `--recorded-narration` prepares PowerPoint recorded timings and narrations. If it fails, check:
@@ -65,10 +65,10 @@ Use `--narration-audio-dir audio` only when you intentionally want lower-level, 
 
 ## Dependency Checklist
 
-Most tools use the standard library. With `uv run`, optional packages are added inline per invocation via `--with <pkg>` flags (e.g., `uv run --with python-pptx scripts/svg_to_pptx.py ...`). To attach all optional deps from `requirements.txt` to a single invocation:
+Most tools use the standard library. Install extra dependencies only when needed:
 
 ```bash
-uv run --with-requirements requirements.txt scripts/<script>.py <args>
+pip install -r requirements.txt
 ```
 
 Important optional packages:
@@ -77,4 +77,4 @@ Important optional packages:
 - `Pillow` for image utilities
 - `numpy` for watermark removal
 - `PyMuPDF` for PDF conversion
-- `google-genai` / `openai` for image generation backends
+- `google-genai` for Gemini image generation

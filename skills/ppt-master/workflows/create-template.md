@@ -1,18 +1,29 @@
 ---
-description: Generate a new PPT layout template based on existing project files or reference templates
+description: Generate a new layout or deck template based on existing project files or reference templates
 ---
 
 # Create New Template Workflow
 
 > **Role invoked**: [Template_Designer](../references/template-designer.md)
 
-Generate a complete set of reusable PPT layout templates for the **global template library**.
+Generate a complete set of reusable PPT templates for the **global template library**.
 
-> This workflow is for **library asset creation**, not project-level one-off customization. The output must be reusable by future PPT projects and discoverable from `${PPT_MASTER_TEMPLATES_DIR}/layouts/layouts_index.json`.
+> This workflow is for **library asset creation**, not project-level one-off customization. The output must be reusable by future PPT projects and discoverable from the appropriate index file.
 >
 > **Workspace setup (required)**: the user's template library lives at `$PPT_MASTER_TEMPLATES_DIR` (typically `~/ppt-projects/templates`). If the env var is unset and the user hasn't named a path, **ask** before running any registrar / `mkdir` command. All paths in this workflow that begin with `$PPT_MASTER_TEMPLATES_DIR/` assume the env var is exported (or that the user named an equivalent path).
 
-> **Companion workflow**: identity-only locking (colors / typography / logo / voice without SVG pages) is handled by [`create-brand.md`](./create-brand.md). Use that when the user wants brand identity but free page layout; use this when fixed page structures are also required.
+> **Companion workflow**: identity-only locking (colors / typography / logo / voice without SVG pages) is handled by [`create-brand.md`](./create-brand.md). Use that when the user wants brand identity but free page layout; use this when fixed page structures are required.
+
+## Kind decision — deck (default) vs layout
+
+This workflow produces one of two kinds of templates depending on whether the source PPT carries a specific brand identity:
+
+| Kind | When | Output dir | What `design_spec.md` writes |
+|---|---|---|---|
+| **deck** (default) | Source is a specific organization's branded PPT (e.g. company report, university defense template); the visual identity is part of the replica | `$PPT_MASTER_TEMPLATES_DIR/decks/<id>/` | Full segments: identity + structure + middle |
+| **layout** | Source is a generic stylistic template (no specific brand); only the structural skeleton should be reusable; color / typography decided per-deck downstream | `$PPT_MASTER_TEMPLATES_DIR/layouts/<id>/` | Structure segments only (canvas / page structure / page types / SVG roster); identity segment omitted |
+
+Default to **deck** unless the user explicitly says "structure only" / "layout only" / "no brand identity". When in doubt, lean deck — losing identity later is easy; reconstructing it from a layout-mode strip is not. See [`docs/zh/templates-architecture.md`](../../../docs/zh/templates-architecture.md) for the full kind / schema / fusion model.
 
 ## Process Overview
 
@@ -33,21 +44,21 @@ Branch by the type of reference source the user supplied. This step produces ana
 | Type | What the user supplied | Tool / read path | Replication modes available |
 |------|-------------------------|------------------|------------------------------|
 | **A** `.pptx` reference | A `.pptx` file path | `pptx_template_import.py` → `manifest.json` + `svg/master_*.svg` + `svg/layout_*.svg` + `svg/slide_*.svg` + `svg-flat/slide_*.svg` + `assets/` | `standard` / `fidelity` / `mirror` |
-| **B** Existing SVG assets | `projects/<x>/svg_output/`, `templates/layouts/<existing>`, or a loose `.svg` folder | `ls` + `Read` each `*.svg`; plus `design_spec.md` / `spec_lock.md` if present | `standard` / `fidelity` (AI visual clustering) / `mirror` (direct 1:1 copy) |
+| **B** Existing SVG assets | `<project_path>/svg_output/`, `$PPT_MASTER_TEMPLATES_DIR/<layouts|decks>/<existing>`, `${SKILL_DIR}/templates/<layouts|decks>/<existing>` (bundled sample), or a loose `.svg` folder | `ls` + `Read` each `*.svg`; plus `design_spec.md` / `spec_lock.md` if present | `standard` / `fidelity` (AI visual clustering) / `mirror` (direct 1:1 copy) |
 | **C** Image / visual references | Screenshot folder, single image, PDF pages | `ls` + `Read` each file (multimodal visual recognition) | `standard` only |
 | **D** No reference source | Verbal description only ("McKinsey style", "tech blue", "dark minimal") | — | `standard` only |
 
 `fidelity` and `mirror` are not available for type C / D — visual references and verbal-only briefs cannot drive page-by-page replication. Type A is the canonical path: `manifest.json` page-type candidates and the layered `svg/` workspace anchor cluster detection (fidelity) and verbatim copy (mirror) with factual data. Type B is supported with caveats:
 
-- **mirror on type B** — direct 1:1 copy. B's SVGs are already self-contained (one file per page, equivalent to `svg-flat/slide_*.svg`). Page-type for the `<NNN>_<page_type>.svg` filename is read from the source filename when it follows the PPT Master naming convention (`01_cover.svg` → `cover`, `03a_content_two_col.svg` → `content`); fall back to `content` otherwise. Particularly natural when the source is `templates/layouts/<existing>` and the user wants to fork an existing template.
-- **fidelity on type B** — clustering relies on the AI's visual judgement of the SVGs; there is no `manifest.json.pageTypeCandidates` to anchor it. Variant count and grouping are more subjective and may need iteration. If the input is already a PPT Master template (`$PPT_MASTER_TEMPLATES_DIR/layouts/<existing>` or `${SKILL_DIR}/templates/layouts/<existing>`), parse the existing variant filenames (`03a_content_two_col` etc.) as authoritative cluster hints rather than re-clustering visually.
+- **mirror on type B** — direct 1:1 copy. B's SVGs are already self-contained (one file per page, equivalent to `svg-flat/slide_*.svg`). Page-type for the `<NNN>_<page_type>.svg` filename is read from the source filename when it follows the PPT Master naming convention (`01_cover.svg` → `cover`, `03a_content_two_col.svg` → `content`); fall back to `content` otherwise. Particularly natural when the source is `$PPT_MASTER_TEMPLATES_DIR/<layouts|decks>/<existing>` (or `${SKILL_DIR}/templates/<layouts|decks>/<existing>` to fork a bundled sample) and the user wants to fork an existing template.
+- **fidelity on type B** — clustering relies on the AI's visual judgement of the SVGs; there is no `manifest.json.pageTypeCandidates` to anchor it. Variant count and grouping are more subjective and may need iteration. If the input is already a PPT Master template (`$PPT_MASTER_TEMPLATES_DIR/<layouts|decks>/<existing>` or `${SKILL_DIR}/templates/<layouts|decks>/<existing>`), parse the existing variant filenames (`03a_content_two_col` etc.) as authoritative cluster hints rather than re-clustering visually.
 
 ### 1A. `.pptx` reference
 
 Run the unified preparation helper:
 
 ```bash
-uv run skills/ppt-master/scripts/pptx_template_import.py "<reference_template.pptx>"
+python3 skills/ppt-master/scripts/pptx_template_import.py "<reference_template.pptx>"
 ```
 
 This produces, in one workspace:
@@ -202,12 +213,12 @@ Step 4 MUST NOT run until `[TEMPLATE_BRIEF_CONFIRMED]` has been emitted in the c
 Create the final template directory:
 
 ```bash
-mkdir -p "$PPT_MASTER_TEMPLATES_DIR/layouts/<template_id>"
+mkdir -p "$PPT_MASTER_TEMPLATES_DIR/<kind_dir>/<template_id>"   # kind_dir: layouts or decks
 ```
 
-> **Output location**: Global (reusable) templates go to `$PPT_MASTER_TEMPLATES_DIR/layouts/`; project-scoped templates go to `<project_path>/templates/`
+> **Output location**: Global (reusable) templates go to `$PPT_MASTER_TEMPLATES_DIR/<layouts|decks>/`; project-scoped templates go to `<project_path>/templates/`
 >
-> The generated directory name must match the final template ID used in `layouts_index.json`.
+> The generated directory name must match the final template ID used in the corresponding index file.
 
 **Switch to the Template_Designer role** and generate per role definition. The role input is the finalized brief from Step 3 plus the analysis bundle from Step 1.
 
@@ -257,13 +268,14 @@ Mirror mode does **not** invoke the "reconstruct into clean SVG" pathway. The sp
 ## Step 5: Validate Template Assets
 
 ```bash
-ls -la "$PPT_MASTER_TEMPLATES_DIR/layouts/<template_id>"
+# Replace <kind_dir> with "decks" or "layouts" depending on the kind decided above
+ls -la "$PPT_MASTER_TEMPLATES_DIR/<kind_dir>/<template_id>"
 ```
 
 Run SVG validation on the template directory:
 
 ```bash
-uv run ${SKILL_DIR}/scripts/svg_quality_checker.py "$PPT_MASTER_TEMPLATES_DIR/layouts/<template_id>" --template-mode --format <canvas_format>
+uv run ${SKILL_DIR}/scripts/svg_quality_checker.py "$PPT_MASTER_TEMPLATES_DIR/<kind_dir>/<template_id>" --template-mode --format <canvas_format>
 ```
 
 `--template-mode` makes the checker:
@@ -283,7 +295,7 @@ uv run ${SKILL_DIR}/scripts/svg_quality_checker.py "$PPT_MASTER_TEMPLATES_DIR/la
 - [ ] Placeholder names follow the canonical convention where applicable; templates with intentionally different vocabularies (e.g. `{{KEY_MESSAGE}}` instead of `{{PAGE_TITLE}}`) should declare a `placeholders:` frontmatter block to silence advisory warnings
 - [ ] Asset files referenced by SVGs actually exist in the template package
 - [ ] For `fidelity` mode: every sprite-sheet asset retains its nested `<svg viewBox=...>` crop wrapper; no image whose file aspect differs from its on-page aspect was flattened to a bare `<image>`
-- [ ] For `mirror` mode: file count equals source page count (type A: `ls "$PPT_MASTER_TEMPLATES_DIR"/layouts/<id>/*_*.svg | wc -l` matches `<import_workspace>/svg-flat/slide_*.svg | wc -l`; type B: matches the source SVG count); filenames follow the `<NNN>_<page_type>.svg` convention; **no `{{...}}` placeholder strings appear in any copied SVG** (`grep -l "{{" "$PPT_MASTER_TEMPLATES_DIR"/layouts/<id>/*.svg` should return nothing — if the type B source itself contains placeholders, the user should be in `standard` mode, not `mirror`); §V Page Roster in `design_spec.md` lists every emitted file with a one-line description of what the page contains and what content slot it suits
+- [ ] For `mirror` mode: file count equals source page count (type A: `ls "$PPT_MASTER_TEMPLATES_DIR"/<kind_dir>/<id>/*_*.svg | wc -l` matches `<import_workspace>/svg-flat/slide_*.svg | wc -l`; type B: matches the source SVG count); filenames follow the `<NNN>_<page_type>.svg` convention; **no `{{...}}` placeholder strings appear in any copied SVG** (`grep -l "{{" "$PPT_MASTER_TEMPLATES_DIR"/<kind_dir>/<id>/*.svg` should return nothing — if the type B source itself contains placeholders, the user should be in `standard` mode, not `mirror`); §V Page Roster in `design_spec.md` lists every emitted file with a one-line description of what the page contains and what content slot it suits
 
 This step is a **hard gate**. Do not register the template into the library index until validation passes.
 
@@ -291,53 +303,60 @@ This step is a **hard gate**. Do not register the template into the library inde
 
 ## Step 6: Register Template in Library Index
 
-Run the unified registrar; it derives the `layouts_index.json` entry and refreshes the `README.md` Quick Index from `design_spec.md` (frontmatter when present, prose fallback otherwise) plus the actual SVG file list:
+Run the unified registrar with the kind flag; it derives the corresponding index entry from `design_spec.md` (frontmatter when present, prose fallback otherwise) plus the actual SVG file list:
 
 ```bash
-uv run ${SKILL_DIR}/scripts/register_template.py <template_id>
+# For deck (default)
+uv run ${SKILL_DIR}/scripts/register_template.py <template_id> --kind deck
+
+# For layout
+uv run ${SKILL_DIR}/scripts/register_template.py <template_id> --kind layout
 ```
 
-Outputs:
+Outputs by kind (the JSON index is the single source of truth — READMEs describe the kind in prose but do not enumerate templates):
 
-- updates `$PPT_MASTER_TEMPLATES_DIR/layouts/layouts_index.json` — the flat `template_id → { summary, keywords }` map
-- refreshes the auto-managed Quick Index inside `$PPT_MASTER_TEMPLATES_DIR/layouts/README.md` (the surrounding category sections stay hand-edited)
-- prints a "Template Creation Complete" card you can use directly for Step 7
+| `--kind` | Index updated |
+|---|---|
+| `deck` | `$PPT_MASTER_TEMPLATES_DIR/decks/decks_index.json` |
+| `layout` | `$PPT_MASTER_TEMPLATES_DIR/layouts/layouts_index.json` |
+| `brand` | `$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json` |
 
-The completion card's file roster is collected by globbing `*.svg` in the template directory, so `fidelity`-mode templates that include variant pages such as `03a_content_two_col` are listed automatically.
+The completion card's file roster is collected by globbing `*.svg` in the template directory.
 
-`layouts_index.json` is a **discovery index** — it lets the AI answer "what templates are available?" by listing names and paths. It is **not** consulted to trigger Step 4. Step 4 triggers on an explicit directory path supplied by the user, regardless of whether that path is registered. A template directory that has not been run through `register_template.py` still works fine when the user gives its path; it just won't appear in discovery listings.
+The index file is a **discovery index** — it lets the AI answer "what templates are available?" by listing names and paths. It is **not** consulted to trigger Step 3 (SKILL.md). Step 3 triggers on an explicit directory path supplied by the user, regardless of whether that path is registered. A template directory that has not been run through `register_template.py` still works fine when the user gives its path; it just won't appear in discovery listings.
 
-> **Recommended for new templates**: declare a YAML frontmatter block at the top of `design_spec.md`. The registrar prefers it over the §I table and lets you set `category`, `keywords`, `summary`, etc. without relying on prose extraction:
+> **Recommended for new templates**: declare a YAML frontmatter block at the top of `design_spec.md`. The registrar prefers it over prose extraction:
 >
 > ```yaml
+> # deck example
 > ---
-> template_id: my_template
-> category: brand            # brand | general | scenario | government | special
-> summary: Strategic consulting, executive briefings, ...
-> keywords: [tag1, tag2, tag3]
-> primary_color: "#005587"
+> deck_id: my_deck
+> kind: deck
+> summary: ...
 > canvas_format: ppt169
-> replication_mode: standard  # standard | fidelity | mirror
-> # Optional: per-page placeholder overrides. Templates that legitimately
-> # use a different vocabulary (e.g. consulting decks with {{KEY_MESSAGE}}
-> # in place of {{PAGE_TITLE}}, or content variants with bespoke slots)
-> # should declare them here so svg_quality_checker --template-mode does
-> # not flag them as conventional-placeholder gaps.
-> # Mirror-mode templates do not need this field — they have no placeholders.
-> placeholders:
->   01_cover: ["{{TITLE}}", "{{SUBTITLE}}", "{{BRAND_LOGO}}"]
->   03_content: ["{{KEY_MESSAGE}}", "{{CONTENT_AREA}}"]
->   03a_content_dual_col: []   # silences hints for this variant entirely
+> page_count: 5
+> primary_color: "#005587"
+> ---
+>
+> # layout example
+> ---
+> layout_id: my_layout
+> kind: layout
+> summary: ...
+> canvas_format: ppt169
+> page_count: 5
+> page_types: [cover, toc, chapter, content, ending]
 > ---
 > ```
 
 > To rebuild every entry at once (e.g. after editing many specs), run:
 >
 > ```bash
-> uv run skills/ppt-master/scripts/register_template.py --rebuild-all
+> uv run ${SKILL_DIR}/scripts/register_template.py --kind deck --rebuild-all
+> uv run ${SKILL_DIR}/scripts/register_template.py --kind layout --rebuild-all
 > ```
 
-If you need to update the categorized sections lower in `README.md` (Brand Style Templates / General Style Templates / etc.), edit those by hand — the registrar deliberately leaves them alone so curated descriptions are preserved.
+README files describe each kind in prose only — they do not list templates. Discovery happens against the JSON index file; the registrar does not touch READMEs.
 
 ---
 
@@ -351,9 +370,9 @@ For a standard-mode template the card looks like:
 ## Template Creation Complete
 
 **Template Name**: <template_id> (<display_name>)
-**Template Path**: `$PPT_MASTER_TEMPLATES_DIR/layouts/<template_id>/`
-**Category**: <category>
-**Primary Color**: <hex>
+**Kind**: deck | layout
+**Template Path**: `$PPT_MASTER_TEMPLATES_DIR/<kind_dir>/<template_id>/`
+**Primary Color**: <hex>  ← deck only; omit for layout
 **Index Registration**: Done
 
 ### Files Included
