@@ -46,16 +46,18 @@ CHART_TEMPLATES_DIR = TEMPLATES_DIR / 'charts'
 # User-controlled paths (decouple-templates patch)
 # ============================================================
 # This skill is grafted into a shared `skills/` repo. We do not want it to
-# write generated artifacts (user layouts/brands, user projects) into the skill
-# directory — that would make the skill dirty and break re-graft. So the user's
-# layout/brand library and project workspace are taken from env vars; if unset,
-# the script errors out and asks the user to set them.
+# write generated artifacts (user templates, user projects) into the skill
+# directory — that would make the skill dirty and break re-graft. So the
+# user's templates library (brands / layouts / decks) and project workspace
+# are taken from env vars; if unset, scripts error out and ask the user to
+# set them.
 #
 # Env vars:
-#   PPT_MASTER_TEMPLATES_DIR — user's templates library root (expects layouts/
-#                              and brands/ subdirs). Used by register_template.py.
-#   PPT_MASTER_PROJECTS_DIR  — user's projects root. Used by project_manager.py
-#                              as the default --dir.
+#   PPT_MASTER_TEMPLATES_DIR — user's templates library root (expects
+#                              brands/, layouts/, decks/ subdirs).
+#                              Used by register_template.py.
+#   PPT_MASTER_PROJECTS_DIR  — user's projects root. Used by
+#                              project_manager.py as the default --dir.
 
 PPT_MASTER_TEMPLATES_ENV = "PPT_MASTER_TEMPLATES_DIR"
 PPT_MASTER_PROJECTS_ENV = "PPT_MASTER_PROJECTS_DIR"
@@ -85,7 +87,7 @@ def require_user_templates_dir() -> Path:
                 "user templates",
                 "~/ppt-projects/templates",
             )
-            + "       Expected subdirs: layouts/, brands/."
+            + "       Expected subdirs: brands/, layouts/, decks/."
         )
     return Path(raw).expanduser()
 
@@ -117,6 +119,7 @@ def get_env_candidates() -> list[Path]:
     """Return the supported .env lookup order."""
     return [
         Path.cwd() / '.env',
+        PROJECT_ROOT / '.env',
         REPO_ROOT / '.env',
         USER_ENV_FILE,
     ]

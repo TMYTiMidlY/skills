@@ -21,7 +21,7 @@ This workflow edits the user's global brand library, not any specific `<project_
 | User mentions brand color or font once for a single deck only | Skip — handle inline via Strategist h.5 |
 | `$PPT_MASTER_TEMPLATES_DIR/brands/<requested_id>/` already exists | Ask: update / replace / use a new id — never silently overwrite |
 
-⛔ Never auto-trigger. Brand creation is a user-invoked identity setup; an empty `templates/brands/` is not an invitation to create one.
+⛔ Never auto-trigger. Brand creation is a user-invoked identity setup; an empty `$PPT_MASTER_TEMPLATES_DIR/brands/` is not an invitation to create one.
 
 ---
 
@@ -43,9 +43,9 @@ Read assets directly using existing converters — no dedicated extraction scrip
 |---|---|---|
 | SVG logo | `Read` the SVG; grep `fill=` / `stroke=` for HEX | colors (literal), logo file |
 | PNG/JPG logo | `Read` (multimodal); AI vision identifies dominant colors | colors (approximate HEX, label `[approx]`), logo file |
-| Brand site URL | `uv run skills/ppt-master/scripts/source_to_md/web_to_md.py <URL>`, then `Read` the result | color references, font references, voice/tone |
-| Branded PPTX | `uv run skills/ppt-master/scripts/source_to_md/ppt_to_md.py <file>`, then read theme XML | colors, typography (literal) |
-| Brand PDF | `uv run skills/ppt-master/scripts/source_to_md/pdf_to_md.py <file>` | voice/tone; sometimes color/font references |
+| Brand site URL | `python3 skills/ppt-master/scripts/source_to_md/web_to_md.py <URL>`, then `Read` the result | color references, font references, voice/tone |
+| Branded PPTX | `python3 skills/ppt-master/scripts/source_to_md/ppt_to_md.py <file>`, then read theme XML | colors, typography (literal) |
+| Brand PDF | `python3 skills/ppt-master/scripts/source_to_md/pdf_to_md.py <file>` | voice/tone; sometimes color/font references |
 
 Identify which of (colors / typography / logo / voice / icon style) the asset did NOT cover, then proceed to Step 3 for the rest. Most single assets cover 1–2 categories well.
 
@@ -153,7 +153,7 @@ primary_color: "#XXXXXX"
 ```
 
 **Section scope rules**:
-- Layout / canvas / spacing / radius / shadow / page roster / signature design elements are OUT of brand scope. Those live in layout templates (`$PPT_MASTER_TEMPLATES_DIR/layouts/<id>/design_spec.md`) or `shared-standards.md`. Do NOT add those sections here.
+- Layout / canvas / spacing / radius / shadow / page roster / signature design elements are OUT of brand scope. Those live in layout / deck templates (`$PPT_MASTER_TEMPLATES_DIR/layouts/<id>/design_spec.md` or `$PPT_MASTER_TEMPLATES_DIR/decks/<id>/design_spec.md`) or `shared-standards.md`. Do NOT add those sections here.
 - HEX must be `#RRGGBB`
 - Font names are free strings; not validated against locally installed fonts
 - §VII is fully optional — list only directories that actually exist
@@ -224,5 +224,5 @@ Brand application happens in [`SKILL.md` Step 3](../SKILL.md) under the **same e
 1. **Brand is identity, not layout** — colors / typography / logo / voice / icon style only. Page roster, canvas spec, and signature design elements belong to layout templates; do not duplicate them here.
 2. **Self-contained package** — all brand assets (logo, images, illustrations, icons) live inside `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/`. Nothing leaks to workspace root or to any specific `<project_path>/`.
 3. **No script dependency** — Step 2A reuses existing converters plus AI inline reading. A dedicated `brand_extract.py` is not introduced unless future user feedback demands batch processing or precise color picking from raster logos.
-4. **Multi-brand support** — `templates/brands/` accepts any number of brands; agency / freelancer / multi-client workflows are natural.
+4. **Multi-brand support** — `$PPT_MASTER_TEMPLATES_DIR/brands/` accepts any number of brands; agency / freelancer / multi-client workflows are natural.
 5. **Precedence rule** — when a brand and a layout template both apply, Step 3 fuses them into one `design_spec.md`: brand wins on color / typography / logo / voice / icon style; layout wins on canvas / page roster / spacing / font-size hierarchy / signature visual elements. See `SKILL.md` Step 3 for the full precedence table.

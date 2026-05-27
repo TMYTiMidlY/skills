@@ -1,8 +1,8 @@
 # Template Resources (upstream-shipped, read-only)
 
-> **Read first.** Everything under `${SKILL_DIR}/templates/` is **upstream-shipped sample / read-only asset library** that comes with the skill:
+> **Read first.** Everything under `${SKILL_DIR}/templates/` is the **upstream-shipped sample / read-only asset library** that ships with the skill:
 >
-> - `layouts/`, `brands/` — **sample libraries**. Your editable layout / brand library lives at `$PPT_MASTER_TEMPLATES_DIR/{layouts,brands}/` (typically `~/ppt-projects/templates/{layouts,brands}/`); `register_template.py` writes there. The samples in this directory are reference material — copy one into your library to use as a starting point, or pass any one of these directories directly to SKILL.md Step 3 as a layout / brand path.
+> - `brands/`, `layouts/`, `decks/` — **sample libraries**. Your editable template library lives at `$PPT_MASTER_TEMPLATES_DIR/{brands,layouts,decks}/` (typically `~/ppt-projects/templates/{brands,layouts,decks}/`); `register_template.py` writes there. The samples in this directory are reference material — copy one into your library as a starting point, or pass any one of these sample directories directly to SKILL.md Step 3 as a brand / layout / deck path.
 > - `charts/`, `icons/`, `design_spec_reference.md`, `spec_lock_reference.md` — **shipped assets and references** that all projects consume directly from `${SKILL_DIR}/templates/`. No env-var indirection.
 
 ## Design Specification & Outline Reference
