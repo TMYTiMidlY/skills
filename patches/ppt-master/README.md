@@ -8,7 +8,7 @@
 
 | 序号 | 文件 | 目的 |
 | ---- | ---- | ---- |
-| 0001 | `0001-decouple-templates-and-projects.patch` | 把模板库与项目根目录从 `${SKILL_DIR}/{templates/layouts,templates/brands,projects}` 解耦到环境变量 `PPT_MASTER_TEMPLATES_DIR` / `PPT_MASTER_PROJECTS_DIR`。脚本缺 env 时硬报错，文档要求 AI 先问用户。`templates/{charts,icons}/` 仍是 skill 自带只读资产，不动。 |
+| 0001 | `0001-decouple-templates-and-projects.patch` | 把模板库（含 `brands` / `layouts` / `decks` 三种 kind）与项目根目录从 `${SKILL_DIR}/{templates/{brands,layouts,decks},projects}` 解耦到环境变量 `PPT_MASTER_TEMPLATES_DIR` / `PPT_MASTER_PROJECTS_DIR`。脚本缺 env 时硬报错，文档要求 AI 先问用户。`templates/{charts,icons}/` 仍是 skill 自带只读资产，不动。 |
 
 ## 工作流
 
@@ -56,4 +56,4 @@ cd "$REPO/skills/ppt-master"
 ## 不动的边界
 
 - `templates/charts/`、`templates/icons/`、`templates/design_spec_reference.md`、`templates/spec_lock_reference.md` —— 上游只读资产，re-graft 后直接用上游版本，不进 patch。
-- `templates/layouts/<sample>/`、`templates/brands/<sample>/` —— 上游示例库，re-graft 后直接用上游版本。用户自己的 layouts/brands 在 `$PPT_MASTER_TEMPLATES_DIR/{layouts,brands}/`，不在本仓。
+- `templates/brands/<sample>/`、`templates/layouts/<sample>/`、`templates/decks/<sample>/` —— 上游示例库，re-graft 后直接用上游版本。用户自己的 brands / layouts / decks 在 `$PPT_MASTER_TEMPLATES_DIR/{brands,layouts,decks}/`，不在本仓。
