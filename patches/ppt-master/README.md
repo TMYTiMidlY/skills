@@ -31,24 +31,17 @@ QUILT_PATCHES="$REPO/patches/ppt-master" QUILT_PC="$REPO/.quilt-pc/ppt-master" \
   quilt refresh              # 把改动写入 patch 文件
 ```
 
-**Re-graft 时重放补丁**（上游有新版本后）：
+**Re-graft 时重放补丁**（上游有新版本后）—— 完整流程见 `.agents/skills/graft-skill/SKILL.md` §「本地补丁（quilt）」→ Re-graft。关键骨架：
 
 ```bash
 REPO=$(git rev-parse --show-toplevel)
 cd "$REPO/skills/ppt-master"
 
-# 1. 撤回当前 patch（如果之前 quilt 跑过；首次 re-graft 时 .quilt-pc 还不存在，跳过这步）
-QUILT_PATCHES="$REPO/patches/ppt-master" QUILT_PC="$REPO/.quilt-pc/ppt-master" \
-  quilt pop -a 2>/dev/null || true
-
-# 2. rsync 上游新版本覆盖
-rsync -a --delete --exclude='.git' /tmp/upstream-ppt-master/skills/ppt-master/ ./
-
-# 3. 重新应用本地补丁（quilt 自动 3-way 处理 context drift；冲突手动解 + quilt refresh）
-QUILT_PATCHES="$REPO/patches/ppt-master" QUILT_PC="$REPO/.quilt-pc/ppt-master" \
-  quilt push -a
-
-# 4. 更新 grafted-skills.json 的 synced_commit / synced_date，跑 update-readme.py
+# 1. reverse 回裸 OLD_SYNC：.quilt-pc 存在用 quilt pop -a，不存在按 series 倒序 patch -p1 -R
+# 2. rsync 上游 NEW_SYNC 覆盖
+# 3. quilt push -a 重放本地 patch；失败按 SKILL.md「冲突处理」分流（context drift vs 结构性重写）
+# 4. 解完后 quilt refresh
+# 5. 更新 grafted-skills.json 的 synced_commit / synced_date，跑 update-readme.py
 ```
 
 ## 新增补丁的归档约定

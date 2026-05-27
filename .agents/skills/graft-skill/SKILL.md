@@ -144,68 +144,97 @@ QUILT_PC="$REPO/.quilt-pc/$SKILL" \
 
 下面所有命令都默认 `cd $REPO/skills/$SKILL` + 设好两个 env var。
 
-### 新加补丁（不需要先 pop -a，可在当前成品状态上叠加）
+### 关键前提：`.quilt-pc/<skill>/` 不存在是常态
+
+`.quilt-pc/` 被 gitignore，**clone 后、新机器上、跨 session、上次清理后** 它都不存在。`quilt push` 会自动创建并接管栈，所以**绝大多数操作直接 `quilt push -a` 起手即可**——quilt 会在 `.quilt-pc/$SKILL/` 不存在时建立栈、push 完成后 working tree 即「成品 + quilt 接管」状态。
+
+唯一例外：**`quilt pop` / `quilt header -e` / `quilt refresh` 这类依赖栈状态的命令**，必须先有 `.quilt-pc/$SKILL/`——下面每个流程会在前提里写清楚。
+
+### 新加补丁
+
+成品状态（`.quilt-pc/` 可有可无）→ 在最末尾叠一个新 patch：
 
 ```bash
-quilt new 0002-<short-name>.patch        # 在 series 末尾新建一个 patch slot
-quilt edit some/file.py                  # 改文件，quilt 自动把该文件注册到当前 top patch
+quilt push -a              # 幂等：.quilt-pc 不存在则建栈，存在则确认全部已 apply
+quilt new 0002-<short>.patch
+quilt edit some/file.py    # 改文件；quilt 自动把该文件注册进 top patch 的快照
 # ... 重复 edit 多个文件 ...
-quilt refresh                             # 把工作树跟 .pc 备份的差异写入 patch 文件
-quilt header -e                           # 可选：编辑 patch 的描述头部
+quilt refresh              # 把工作树跟 .pc 快照的差异写入 patch 文件
+quilt header -e            # 可选：编辑 patch 的描述头部
 ```
 
 ### 改已有的补丁
 
 ```bash
-quilt push -a                             # 应用全部 patch（如未应用）
-quilt pop <patch>                         # pop 到目标 patch 之下（之上的会被 unapply）
-quilt push                                # 再 push 一个，让目标 patch 成为 top
-# 在 top 状态下改文件
-quilt edit some/file.py
-quilt refresh                             # 写回 patch
-quilt push -a                             # 把后续 patch 重新应用上
+quilt push -a              # 同上幂等起手
+quilt pop <patch>          # 回退到目标 patch 之下（更上面的会被 unapply）
+quilt push                 # 再 push 一个，让目标 patch 成为 top
+quilt edit some/file.py    # 在 top 状态下改文件
+quilt refresh              # 写回 patch
+quilt push -a              # 把后续 patch 重新应用上
 ```
 
 ### Re-graft（上游有更新后重放本地补丁）
+
+前提：`skills/<skill>/` 是上游 OLD_SYNC + 本地 patches 应用后的成品状态。
 
 ```bash
 REPO=$(git rev-parse --show-toplevel)
 SKILL=ppt-master
 NEW_SYNC=<上游新 commit sha>
 
-# 1. 从当前成品 reverse 出裸上游
+# 1. reverse 出裸上游 OLD_SYNC
 cd "$REPO/skills/$SKILL"
-QUILT_PATCHES="$REPO/patches/$SKILL" QUILT_PC="$REPO/.quilt-pc/$SKILL" quilt pop -a
-#    quilt 没初始化过（首次 re-graft）时，手动 patch -p1 -R 反向应用 series 里每个 patch
+if [ -d "$REPO/.quilt-pc/$SKILL" ]; then
+  QUILT_PATCHES="$REPO/patches/$SKILL" QUILT_PC="$REPO/.quilt-pc/$SKILL" quilt pop -a
+else
+  # .quilt-pc 不存在（首次/clone 后），按 series 倒序手动 patch -R
+  tac "$REPO/patches/$SKILL/series" | while read p; do
+    patch -p1 -R < "$REPO/patches/$SKILL/$p"
+  done
+fi
+trash-put "$REPO/.quilt-pc/$SKILL" 2>/dev/null || true   # 让下一步从 clean 起手
 
-# 2. 用 git/rsync 把上游新版本覆盖到 skills/<skill>/（保留 patches symlink 不存在，本来就没有）
-#    上游 path 在 grafted-skills.json 里的 path 字段
-rsync -a --delete --exclude='.git' /tmp/upstream-clone/<upstream-path>/ "$REPO/skills/$SKILL/"
+# 2. rsync 上游 NEW_SYNC 覆盖
+rsync -a --delete --exclude='.git' /tmp/upstream-clone/<upstream-path>/ ./
 
-# 3. 把本地补丁重新 push 上去（quilt 自动 3-way 处理 context drift）
+# 3. 重放本地 patch
 QUILT_PATCHES="$REPO/patches/$SKILL" QUILT_PC="$REPO/.quilt-pc/$SKILL" quilt push -a
-#    冲突：手动解 → quilt refresh，patch 文件会被自动更新成新 context
+# 全成功：跳到第 5 步
+# 部分/全失败：见下面「冲突处理」
 
-# 4. 一切干净后清掉 .quilt-pc/<skill> 的状态（可选；本来就 gitignore，不清也无害）
+# 4. （冲突解完后）quilt refresh，刷新 patch 文件到新 context
+QUILT_PATCHES="$REPO/patches/$SKILL" QUILT_PC="$REPO/.quilt-pc/$SKILL" quilt refresh
+
+# 5. 更新 grafted-skills.json 的 synced_commit / synced_date
+# 6. 跑 .agents/skills/graft-skill/scripts/update-readme.py
+# 7. 清 .quilt-pc/<skill>（可选，本就 gitignore）
 trash-put "$REPO/.quilt-pc/$SKILL"
-
-# 5. 更新 grafted-skills.json 的 synced_commit / synced_date，跑 update-readme.py
 ```
+
+**冲突处理**：第 3 步失败时，quilt 默认会写 `.rej` 文件并停在失败的 patch。看 reject 的范围和性质，分两类：
+
+- **Context drift / 局部冲突**（hunk 落点仍能识别，只是上下文飘了）：交给 agent 处理——可以选 `quilt push -af --merge` 让 patch 把冲突以 `<<<<<<<`/`=======`/`>>>>>>>` 标记写进源文件，然后人工/agent 编辑解开，最后 `quilt refresh`。
+- **结构性重写**（上游把 patch 触及的文件整个重构了，hunk 找不到落点）：放弃自动 merge，让 agent 在新上游基础上**重新写 patch**——`trash-put .quilt-pc/$SKILL` 清栈、重 rsync、`quilt new` 重命名后重做、删旧 patch 更新 series。
+
+不要让 SKILL.md 写死冲突解决脚本——具体走哪条路需要看 diff 才能判断，是 agent 决策范畴。
 
 ### 首次接入 quilt（已有 patch 文件，但 series 未建立）
 
 ```bash
 cd "$REPO/patches/$SKILL"
-ls *.patch | sort > series                # 生成 series 文件
-# 验证：在裸上游基础上 quilt push -a 能干净 apply
+ls *.patch | sort > series
+# 路径前缀剥离：git format-patch 产物的 +++ b/skills/<skill>/foo 需要变成 +++ b/foo 或 +++ <skill>/foo
+sed -i -E 's@(\+\+\+ b/|--- a/)skills/'"$SKILL"'/@\1@g' *.patch
+# 端到端验证：从裸上游 quilt push -a 能干净 apply
 ```
 
 ### 注意事项
 
-- patch 文件路径必须相对 `skills/<skill>/` 根，**不能含 `skills/<skill>/` 前缀**。从 `git format-patch` 迁移过来的需要 `sed -E 's@(\+\+\+ b/|--- a/)skills/<skill>/@\1@g' file.patch` 剥前缀。
-- `quilt refresh` 会保留 patch 文件顶部所有非 diff 内容（git format-patch 的 `From/Subject/Date/MIME` 头部不会被吃掉）。
-- `.quilt-pc/` 不进 git，多机协作时各自重建即可（quilt push -a 会重建）。
-- quilt 跨设备时会报 `Invalid cross-device link`——绝对路径能避开这个 bug。
+- patch 文件路径必须相对 `skills/<skill>/` 根，**不能含 `skills/<skill>/` 前缀**。git format-patch 默认带 `a/`/`b/` 前缀，quilt refresh 后会重写成 `<skill>/` 风格——两种都能 push（quilt 默认 `-p1` strip）。
+- `quilt refresh` 保留 patch 文件顶部所有非 diff 内容（git format-patch 的 `From/Subject/Date/MIME` 头部不会被吃掉）。
+- `.quilt-pc/` 不进 git，是状态文件不是临时文件——push/refresh 中途别删；流程结束后可以删，下次再 `quilt push -a` 重建即可。
+- quilt 跨设备时会报 `Invalid cross-device link`——`QUILT_PATCHES` / `QUILT_PC` 必须用绝对路径才能规避。
 
 ## 移除
 
