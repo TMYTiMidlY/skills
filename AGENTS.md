@@ -10,7 +10,12 @@
 - 未经用户明确指令，严禁自动执行 `git add` 或 `git commit`。
 - 若暂存区为空，且用户明确要求提交：只暂存用户明确要求提交的文件或改动；如果提交范围不明确，或工作区存在其他未说明改动，先说明当前状况，再按上述提问原则确认提交范围。
 - 若暂存区非空，且用户明确要求提交：先说明当前状况，再按上述提问原则确认提交范围。
-- 删除文件时使用 `trash-put` 代替 `rm`。恢复误删文件必须由用户手动执行 `trash-restore`，agent 不得自动执行。挂载目录里也用 `trash-put`：trash-cli 会在挂载点根目录自动建 `.Trash-<UID>/`，文件留在同一 filesystem 可恢复，不会跨 filesystem 拷回本地（FUSE / 内核 CIFS 行为一致）。
+- 删除文件时**强制使用 `trash-put` 代替 `rm`，无任何例外**。即使跨 filesystem（NTFS / drvfs / CIFS / FUSE / overlay 等）也用 `trash-put`：
+  - 跨 filesystem 时 trash-cli 会在挂载点根目录建 `.Trash-<UID>/`，文件留在源 filesystem 内可恢复；不会自动跨 filesystem 拷回本地，不影响"可恢复"这一核心保证。
+  - NTFS / Windows 盘没有 freedesktop trash spec，trash-cli 仍会在该卷的挂载点根目录建 `.Trash-<UID>/` 落实回收站语义；Windows 端虽然不会出现在资源管理器回收站，但 agent 仍能从该目录恢复——比 `rm` 安全得多。
+  - 唯一允许用 `rm` 的情形：**用户在本轮对话中显式批准**（"用 rm"/"直接 rm 删"/"不用 trash"等明确措辞）。仅"删掉"/"清理"/"remove"等中性措辞不构成授权，必须先用 `trash-put`。
+  - 即使是自己刚 create 的零信息临时文件（如 `.ps1` marker、check probe），也用 `trash-put`，**不要自行判断"反正没价值"绕开规则**。
+  - 恢复误删文件必须由用户手动执行 `trash-restore`，agent 不得自动执行。
 - 修改任何文本文件时，能用内置工具完成就必须用内置工具，不要用 shell 命令替代；改动必须清晰、可审查、可回滚，不要用不透明的原地批量改写绕过审查。任务量大时先问用户。
 - 如果目标文件权限或沙箱限制导致不能直接修改，应申请权限或准备临时文件让用户安装，不要为了绕过权限而改用难以审查的方式。
 - 每次回复末尾都必须追加”喝水水中”并配一个好玩的 emoji。
