@@ -63,7 +63,7 @@ FunASR、Fun-ASR-Nano、Paraformer + VAD + Punc + CAM++、SenseVoiceSmall、Whis
 
 ## 自托管 Markdown 文件分享（doc-share）
 
-把本地 Markdown / 文件推到自托管 WebDAV、拿 capability URL 分享链接、以及给 Markdeep viewer 写作的惯例（`[#key]` 引用 vs `[^name]` 脚注可选、GFM 兼容场景反而要避开 `[#key]`、研报长文模板）见 [references/doc-share.md](references/doc-share.md)。上传凭据约定从 `~/.env` 读 `WEBDAV_URL / WEBDAV_USER / WEBDAV_PASS`。
+把本地 Markdown / 文件推到自托管 WebDAV、拿 capability URL 分享链接、以及给 Markdeep viewer 写作的惯例（`[#key]` 引用 vs `[^name]` 脚注可选、GFM 兼容场景反而要避开 `[#key]`、研报长文模板）见 [references/doc-share.md](references/doc-share.md)。上传凭据约定从 `~/.env` 读 `WEBDAV_URL / WEBDAV_USER / WEBDAV_PASS`。同 reference 末尾还覆盖 **copyparty**（Python sfx zipapp，带浏览器 UI + 账号系统 + `POST /?share` 动态分享 API；适用"登录后创建临时分享链接"场景）的完整部署方案（按官方 contrib 模板）、官方 argon2 hash 流程、权限边界自检、10 条踩坑（含 `python3-argon2` 缺失引发的 restart 死循环、明文 diff 泄密、`xff-src:` 误覆盖等）。
 
 服务端（Caddy site block、WebDAV handler、viewer 实现、目录权限）由 `vps-maintenance` skill 覆盖。如果源文件需要先做格式转换，看 [references/format-conversion.md](references/format-conversion.md)。
 
