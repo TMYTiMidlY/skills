@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的配置与排障。涵盖 SSH 与 systemd、Zellij 终端复用与反代、文档格式转换（pandoc/feishu2md/MinerU）、自托管文档分享与 PDF 导出（Prince XML/Vivliostyle/Paged.js/Typst 选型与 pixi 部署）、WSL 与 Windows 互操作、EasyTier 客户端组网、Hermes agent 部署、GitHub Copilot CLI 内部行为与排障等。
+description: 本地软件、CLI 工具与自托管服务的配置与排障。涵盖 SSH 与 systemd、Zellij 终端复用与反代、文档格式转换（pandoc/feishu2md/MinerU）、自托管文档分享（WebDAV/Markdeep）与 PDF 导出（Prince XML/Vivliostyle/Paged.js/Typst 选型与 pixi 部署）、WSL 与 Windows 互操作（VS Code serve-web、portproxy）、EasyTier 客户端组网、Hermes agent 部署、GitHub Copilot CLI 内部行为与排障等。
 ---
 
 # Software
@@ -25,44 +25,9 @@ Zellij Web client、HTTPS 证书要求、login token/session token、反代注�
 
 逆向工程 + 排障笔记，覆盖进程模型、bash 工具 env 处理、权限与目录信任、Walk-Up（向上查找）机制总览、Custom Instructions（指令文件，含 AGENTS.md / `.github/instructions` 嵌套查找）、Hooks（preToolUse / Safety Net）、MCP 配置、Skills 发现、git 认证 / credential helper、`gh repo fork` 跨账号 SSH 身份错配。所有结论都附 `app.js` 源码摘录或字节偏移。见 [references/copilot.md](references/copilot.md)。
 
-## 速记
-
-### VS Code serve-web
-
-在当前机器启动一个 VS Code Web 服务，适合临时从浏览器访问这台机器上的开发环境。需要终端一直挂着这个命令；重启或终端关闭后要手动重新执行。
-
-Windows 侧临时服务用 `18080`：
-
-```powershell
-code serve-web --host 0.0.0.0 --port 18080 --without-connection-token
-```
-
-`--without-connection-token` 表示不要求访问 token；只适合已经有内网、VPN、反代认证等外层保护的场景。
-
-WSL 默认是 NAT 网络，`portproxy` 常用来把 Windows/EasyTier IP 上的端口转到 WSL 服务。常见链路是：
-
-```text
-远端 Caddy/Nginx -> Windows EasyTier IP:port
-Windows portproxy -> 127.0.0.1:port
-WSL localhost forwarding -> WSL 内服务
-```
-
-WSL 内配置了很多系统服务，端口按各自服务配置为准。`portproxy` 不会自动唤醒 WSL；建议留一个 WSL 窗口或会话挂着，避免发行版被停掉后远端反代变 502。
-
-常用查询：
-
-```powershell
-wsl -l -v
-wsl -- ip route show
-wsl -- ss -ltnp
-netsh interface portproxy show all
-netstat -ano | Select-String -Pattern ':8080|:18080|:8082'
-curl.exe -k -I https://127.0.0.1:8080/
-```
-
 ## 网络与远程连接
 
-RDP、向日葵、WSL Mirror 模式网络、会话管理（tsdiscon / logoff）、MTU 排障见 [references/network.md](references/network.md)。
+RDP、向日葵、WSL Mirror 模式网络、VS Code serve-web（浏览器访问本机开发环境 + WSL portproxy 链路 + 排障查询）、WSL NAT + portproxy 与 Docker Desktop wslrelay/IPv6 坑、会话管理（tsdiscon / logoff）、MTU 排障见 [references/network.md](references/network.md)。
 
 ChatGPT 网页端 Pro / Extended 自动化、`steipete/oracle` browser engine、Windows Chrome DevTools、WSL Mirror / NAT 差异、以及必须用 network payload 验证真实模型与 thinking effort 的经验见 [references/oracle-pro.md](references/oracle-pro.md)。
 
@@ -72,7 +37,13 @@ WSL 挂载 Windows 盘、UNC/SMB 共享、`drvfs/9p` 小文件性能、CIFS 凭�
 
 ## EasyTier 客户端（Windows）
 
-EasyTier 组网的 Windows 客户端：安装、TOML 配置模板、Peer 配置、与 VPS 服务端的差异、NSSM 服务排障、Windows 防火墙见 [references/easytier.md](references/easytier.md)。**VPS 服务端完整安装与配置（全 listener、出口节点、中继策略等）见 `vps-maintenance` skill 的 EasyTier reference。**
+EasyTier 组网的 Windows 客户端：安装、TOML 配置模板、Peer 配置、与 VPS 服务端的差异、NSSM 服务排障、Windows 防火墙见 [references/easytier.md](references/easytier.md)。**VPS 服务端完整安装与配置（全 listener、出口节点、中继策略等）由 `vps-maintenance` skill 覆盖。**
+
+## Windows / WSL 宿主侧速记
+
+跑在 Windows 宿主上的小经验：PowerShell 5.1 vs 7（pwsh）的运行时与默认 encoding 差异、为什么从 WSL/agent shell 调 PowerShell 优先用 pwsh 7 避开中文 GBK decode 炸 channel、从 WSL 弹 UAC 拿管理员权限（`Start-Process -Verb RunAs` + 文件标记跨上下文传结果）、cmd.exe 不接 UNC 当 CWD、Windows 回收站与 `trash-put` 的关系见 [references/windows.md](references/windows.md)。
+
+> WSL 内 Linux 服务的网络坑（wslrelay、portproxy、Docker IPv6 dual-stack）在 [references/network.md](references/network.md)，不在 windows.md 重复。
 
 ## Windows / Office 激活
 
@@ -94,9 +65,11 @@ FunASR、Fun-ASR-Nano、Paraformer + VAD + Punc + CAM++、SenseVoiceSmall、Whis
 
 把本地 Markdown / 文件推到自托管 WebDAV、拿 capability URL 分享链接、以及给 Markdeep viewer 写作的惯例（`[#key]` 引用 vs `[^name]` 脚注可选、GFM 兼容场景反而要避开 `[#key]`、研报长文模板）见 [references/doc-share.md](references/doc-share.md)。上传凭据约定从 `~/.env` 读 `WEBDAV_URL / WEBDAV_USER / WEBDAV_PASS`。
 
-同文件还覆盖 **Markdown → PDF 导出**（CSS Paged Media 路线）：工具生态定位（Prince / Vivliostyle / Paged.js / WeasyPrint / Typst 选型）、Prince XML 无 sudo pixi 安装与 CJK 字体大坑（Variable Font 静默失败、fontconfig 隔离）、Paged.js Chromium 依赖的 pixi 补齐、以及引用标签预处理 → pandoc → Prince 的一键 PDF 流水线。
-
 服务端（Caddy site block、WebDAV handler、viewer 实现、目录权限）由 `vps-maintenance` skill 覆盖。如果源文件需要先做格式转换，看 [references/format-conversion.md](references/format-conversion.md)。
+
+## Markdown → PDF 导出
+
+CSS Paged Media 路线的工具生态定位（Prince / Vivliostyle / Paged.js / WeasyPrint / Typst 选型）、Prince XML 无 sudo pixi 安装与 CJK 字体大坑（Variable Font 静默失败、fontconfig 隔离）、Paged.js Chromium 依赖的 pixi 补齐、以及引用标签预处理 → pandoc → Prince 的一键 PDF 流水线见 [references/pdf-export.md](references/pdf-export.md)。
 
 ## OpenList 网盘聚合面板
 

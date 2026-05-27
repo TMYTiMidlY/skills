@@ -117,7 +117,7 @@ zellij attach https://<HOST>:<PORT>/<SESSION_NAME> --ca-cert /path/to/ca.pem
 
 ## WSL service 写法
 
-当前 WSL systemd service：
+当前 WSL systemd service（`<USERNAME>` 替换为实际系统用户名）：
 
 ```ini
 [Unit]
@@ -126,11 +126,11 @@ After=network.target
 
 [Service]
 Type=simple
-User=timidly
+User=<USERNAME>
 Environment=TERM=xterm-256color
 Environment=COLORTERM=truecolor
-ExecStart=/home/timidly/.local/bin/zellij -c /home/timidly/.config/zellij/web.kdl web
-ExecStop=/home/timidly/.local/bin/zellij web --stop
+ExecStart=/home/<USERNAME>/.local/bin/zellij -c /home/<USERNAME>/.config/zellij/web.kdl web
+ExecStop=/home/<USERNAME>/.local/bin/zellij web --stop
 Restart=on-failure
 RestartSec=5
 
@@ -140,8 +140,8 @@ WantedBy=multi-user.target
 
 与默认用法相比，这里的差异点如下：
 
-- 用 `-c /home/timidly/.config/zellij/web.kdl` 指定独立配置，避免污染交互式 Zellij 配置。
-- 用系统级 service 常驻，业务进程仍以 `User=timidly` 运行。
+- 用 `-c /home/<USERNAME>/.config/zellij/web.kdl` 指定独立配置，避免污染交互式 Zellij 配置。
+- 用系统级 service 常驻，业务进程仍以 `User=<USERNAME>` 运行。
 - 显式设置 `TERM` / `COLORTERM`。
 - `web.kdl` 中启用 `web_server true`、`web_sharing "on"`。
 - `web_server_ip "0.0.0.0"` 绑定非 localhost，所以必须配置证书和私钥。
@@ -310,10 +310,10 @@ layout {
 
 Codex 输入区背景不是固定主题色，而是根据终端报告的默认背景色动态计算。Zellij Web 刷新、浏览器重连或 xterm.js 重新初始化后，之前一次性发过的 OSC 10/11 可能丢失；此时 Codex 后续 redraw 会退回默认背景，表现为输入区背景块消失或变回黑底。
 
-针对 Codex，推荐在 PATH 更靠前的位置放 `codex` wrapper，而不是改 Zellij 的 `default_shell`：
+针对 Codex，推荐在 PATH 更靠前的位置放 `codex` wrapper，而不是改 Zellij 的 `default_shell`（`<repo>` 为 skills 仓库 clone 位置）：
 
 ```bash
-install -m 0755 skills/.curated/software/assets/codex-osc-wrapper.sh ~/.local/bin/codex
+install -m 0755 <repo>/skills/.curated/software/assets/codex-osc-wrapper.sh ~/.local/bin/codex
 CODEX_REAL_BIN=/path/to/real/codex codex
 ```
 

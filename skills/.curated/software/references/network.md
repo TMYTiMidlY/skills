@@ -56,3 +56,36 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 - Microsoft WSL basic commands: `wsl --shutdown` terminates all running distributions and the WSL2 VM.
 - Docker Desktop WSL2 backend: Docker Desktop uses a `docker-desktop` WSL distribution for the Docker engine.
 - Docker Resource Saver on WSL: Resource Saver does not stop the whole WSL VM because it is shared by all WSL distributions.
+
+## VS Code serve-web
+
+在当前机器启动一个 VS Code Web 服务，适合临时从浏览器访问这台机器上的开发环境。需要终端一直挂着这个命令；重启或终端关闭后要手动重新执行。
+
+Windows 侧临时服务示例（端口可换，下例用 `18080`）：
+
+```powershell
+code serve-web --host 0.0.0.0 --port 18080 --without-connection-token
+```
+
+`--without-connection-token` 表示不要求访问 token；**只适合已经有内网、VPN、反代认证等外层保护的场景**——服务直接暴露到公网时务必去掉这个开关或额外加层。
+
+WSL 默认是 NAT 网络，常见的远程访问链路是：
+
+```text
+远端 Caddy/Nginx -> Windows EasyTier IP:<port>
+Windows portproxy -> 127.0.0.1:<port>
+WSL localhost forwarding -> WSL 内服务
+```
+
+`portproxy` 不会自动唤醒 WSL，建议留一个 WSL 窗口 / 会话挂着，避免发行版被停掉后远端反代直接 502。
+
+排障常用查询：
+
+```powershell
+wsl -l -v
+wsl -- ip route show
+wsl -- ss -ltnp
+netsh interface portproxy show all
+netstat -ano | Select-String -Pattern ':<port>'
+curl.exe -k -I https://127.0.0.1:<port>/
+```

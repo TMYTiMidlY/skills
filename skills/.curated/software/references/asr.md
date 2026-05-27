@@ -4,13 +4,9 @@
 
 本页记录本机中文长录音转写的实际经验，尤其是 FunASR、Fun-ASR-Nano、Paraformer + VAD + Punc + CAM++、SenseVoiceSmall、Whisper turbo 在 CPU 环境下的取舍。
 
-当前测试机器是 WSL2 CPU only，无可用 NVIDIA GPU，约 120 vCPU / 472 GiB RAM。Python 环境按本机约定优先用 `uv`。测试音频为 3:13:25 的中文课程录音：`（曹军武）国有企业“十五五”规划20251126.mp3`
+当前测试机器是 WSL2 CPU only，无可用 NVIDIA GPU，约 120 vCPU / 472 GiB RAM。Python 环境按本机约定优先用 `uv`。测试音频为约 3 小时 13 分钟的中文课程录音（单人授课为主，包含少量主持人 / 问答片段）。
 
-工作目录：
-
-```text
-/home/timidly/funasr-cpu-demo
-```
+工作目录占位 `<work-dir>`：本节所有命令、缓存路径、产物路径都以 `<work-dir>` 为根，按实际机器选定后展开。本机实测在一个独立的 `funasr-cpu-demo` 工作目录里跑（venv、模型缓存、`outputs/<run-name>/...` 都放这里），所以下文 `<work-dir>/outputs/<run-name>/results/...` 这种结构是该工作流的常见组织方式，不是硬性约定。
 
 ## 已测结论
 
@@ -76,13 +72,13 @@ Whisper turbo 60 秒样本：
 最终可读主稿：
 
 ```text
-/home/timidly/funasr-cpu-demo/outputs/cao_junwu_nano_60s_parallel/results/transcript_5min_reading.md
+<work-dir>/outputs/<run-name>_nano_60s_parallel/results/transcript_5min_reading.md
 ```
 
 结构化结果：
 
 ```text
-/home/timidly/funasr-cpu-demo/outputs/cao_junwu_nano_60s_parallel/results/transcript.jsonl
+<work-dir>/outputs/<run-name>_nano_60s_parallel/results/transcript.jsonl
 ```
 
 ### 2. 时间轴
@@ -96,8 +92,8 @@ Paraformer + FSMN-VAD + CT-Punc + CAM++
 输出：
 
 ```text
-/home/timidly/funasr-cpu-demo/outputs/cao_junwu_paraformer_spk/full/paraformer_full_spk.md
-/home/timidly/funasr-cpu-demo/outputs/cao_junwu_paraformer_spk/full/paraformer_full.json
+<work-dir>/outputs/<run-name>_paraformer_spk/full/paraformer_full_spk.md
+<work-dir>/outputs/<run-name>_paraformer_spk/full/paraformer_full.json
 ```
 
 注意：本录音的 `SPK0/SPK1` 不可靠，只适合作句级时间戳骨架。
@@ -207,22 +203,6 @@ iic/SenseVoiceSmall
 首跑后缓存体积大致：Nano ≈ 2.0 G、Paraformer ≈ 953 M、FSMN-VAD ≈ 3.9 M、CT-Punc ≈ 283 M、CAM++ ≈ 28 M。
 
 在 Codex 沙箱里，FunASR/ModelScope 会尝试写 `~/.cache/modelscope/hub/.lock/...`，普通 sandbox 可能报只读文件系统。遇到这种情况直接用 escalated permission 重跑。
-
-## 已有脚本
-
-原 demo 目录 `/home/timidly/funasr-cpu-demo/scripts` 已废弃，下表是其中脚本的职责，作为日后重写的备忘：
-
-| 脚本 | 用途 |
-|---|---|
-| `check_env.py` | 验证 venv / torch / funasr / 模型缓存是否就绪 |
-| `nano_text_demo.py` | Nano 单段 smoke test（短音频 / URL） |
-| `nano_batch_chunks.py` | Nano 分块批处理，支持 shard 并行 |
-| `merge_nano_shards.py` | 合并 Nano 多 shard JSONL/Markdown |
-| `group_transcript.py` | 把 60s Nano 块合并成 5min 阅读版 |
-| `paraformer_spk_demo.py` | 跑 Paraformer + VAD + Punc + CAM++ |
-| `paraformer_json_to_md.py` | 从 FunASR JSON 生成 speaker/timestamp Markdown |
-| `group_paraformer_reading.py` | 把 Paraformer 句子合并成 5min 阅读版 |
-| `sensevoice_text_demo.py` | 跑 SenseVoiceSmall 候选转写 |
 
 ## 速度记录
 

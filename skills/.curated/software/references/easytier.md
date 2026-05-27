@@ -64,7 +64,7 @@ enable_quic_proxy = false
 | `listeners` | TCP + UDP + WG（3个） | TCP + UDP + WG + WS + WSS（5个） |
 | `enable_exit_node` | `false`（客户端） | 可设为 `true`（出口节点） |
 
-> 服务端完整安装、listener 全集、出口节点、中继策略、systemd 单元等见 `vps-maintenance` skill 的 `easytier` reference。
+> 服务端完整安装、listener 全集、出口节点、中继策略、systemd 单元等见 `vps-maintenance` skill 的 EasyTier 服务端配置章节。
 
 ## Peer 配置说明
 
