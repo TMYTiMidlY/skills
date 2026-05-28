@@ -56,7 +56,8 @@
 | `zoom-out` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 从更高层次理解代码上下文 |
 | `caveman` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 超压缩沟通模式 |
 | `grill-me` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 通过连续追问压力测试方案 |
-| `write-a-skill` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 创建结构化 agent skill |<!-- skills-table:end -->
+| `write-a-skill` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 创建结构化 agent skill |
+| `humanizer-zh` | [op7418/Humanizer-zh](https://github.com/op7418/Humanizer-zh) | 去除中文文本中的 AI 生成痕迹（Humanizer 汉化版） |<!-- skills-table:end -->
 
 此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 

@@ -214,5 +214,13 @@
     "synced_commit": "9c98a6e",
     "synced_date": "2026-05-27T12:19:59Z",
     "description": "AI 多角色协作把 PDF/DOCX/URL/Markdown 转成原生可编辑 PPTX（真 DrawingML 形状/文本框）"
+  },
+  ".experimental/humanizer-zh": {
+    "repo": "op7418/Humanizer-zh",
+    "path": "",
+    "branch": "main",
+    "synced_commit": "91f3d39",
+    "synced_date": "2026-01-19T07:45:46Z",
+    "description": "去除中文文本中的 AI 生成痕迹（Humanizer 汉化版）"
   }
 }
