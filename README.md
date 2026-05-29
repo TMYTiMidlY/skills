@@ -34,6 +34,7 @@
 | `pdf` | [anthropics/skills](https://github.com/anthropics/skills) | PDF 文件操作 |
 | `frontend-skill` | [openai/skills](https://github.com/openai/skills) | 高质量前端页面构建 |
 | `ppt-master` | [hugohe3/ppt-master](https://github.com/hugohe3/ppt-master) | AI 多角色协作把 PDF/DOCX/URL/Markdown 转成原生可编辑 PPTX（真 DrawingML 形状/文本框） |
+| `teacher` | [JackyYang258/AgentTeacher](https://github.com/JackyYang258/AgentTeacher) | 用六段式（直觉 → 可跑示例 / 伪代码 → 逐段讲解 → 陷阱 → 延伸 → 自测题）把一个技术概念讲清楚；DL/ML 概念默认 PyTorch 伪代码 + 张量形状标注 |
 
 以下 skill 从外部仓库下载，尚未经过适配和验证，放在 `.experimental/` 目录下：
 
