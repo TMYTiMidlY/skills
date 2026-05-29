@@ -222,5 +222,13 @@
     "synced_commit": "91f3d39",
     "synced_date": "2026-01-19T07:45:46Z",
     "description": "去除中文文本中的 AI 生成痕迹（Humanizer 汉化版）"
+  },
+  "teacher": {
+    "repo": "JackyYang258/AgentTeacher",
+    "path": "",
+    "branch": "main",
+    "synced_commit": "8dde312",
+    "synced_date": "2026-05-29T01:04:44Z",
+    "description": "用六段式（直觉 → 可跑示例 / 伪代码 → 逐段讲解 → 陷阱 → 延伸 → 自测题）把一个技术概念讲清楚；DL/ML 概念默认 PyTorch 伪代码 + 张量形状标注"
   }
 }
