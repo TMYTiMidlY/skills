@@ -307,6 +307,8 @@ job 容器跑在 **DinD 的独立 daemon** 里，DinD 的网络命名空间默�
 - DinD 容器挂到 Forgejo 的 compose 网络（compose 项目名前缀，本部署是 `forgejo_forgejo`）→ DinD 能解析 `forgejo:3000`。
 - runner config `container.network: "host"` → job 容器共享 DinD 的 netns → job 内 `actions/checkout` 能从 `http://forgejo:3000` clone（内部 HTTP，无 TLS 验证问题）。
 
+> **host vs bridge（为什么不能用默认）**：这是 **docker 套娃的两层网络**——job 容器由 **DinD 内层 docker daemon** 创建、待在内层 bridge（实测 `172.17.0.0/16`），而 `forgejo` 在**外层 compose** 网络（实测 `172.20.0.0/16`），两层互不相通。用默认 `network: ""`（自动建网）或 `bridge`，job 待在内层 bridge 只能 NAT **向外**出公网、却**够不到内部 `forgejo:3000`**（clone 失败）。`host` 让 job 共享 **DinD 容器自己的 netns**，而 DinD 本身在外层 compose 里 → job 借它的身份才直连得上 `forgejo`。代价：job 与 DinD 共享网络栈、隔离略松，换来内部直连。**设置点就是 `runner/config.yml` 的 `container.network: "host"`**（`generate-config` 默认 `""`，需手改，即 ③ 第 3 步）。
+
 runner 日志里会看到 `task N repo is <repo> https://data.forgejo.org http://forgejo:3000`：前者是 `DEFAULT_ACTIONS_URL`（`uses:` 不带 host 时去 data.forgejo.org 拉公共 action），后者是内部实例地址。
 
 ### 验收
@@ -326,6 +328,27 @@ docker exec forgejo-db psql -U forgejo -t -c \
 - 并发：runner config `runner.capacity`（默认 1，同时几个 job）。
 - CPU / 内存 / 文件系统配额：给 `docker-in-docker` 和 job 容器加 docker 资源限制（compose `deploy.resources` 或 runner config `container.options` 注入 `--cpus` / `--memory`）。资源充裕默认不设限。
 - DinD 的 `/var/lib/docker` 用 `./dind` bind mount 持久化，避免每次重启重拉镜像。
+
+### 查看 / 拉取 action 运行日志
+
+REST API（`/api/v1/.../actions/tasks`、`/actions/runs`、`/actions/runs/{id}`）只返回 run 的**状态与元数据**，swagger 里**没有**下载日志正文的端点。正文只有两条路：
+
+- **Web UI**（`/{owner}/{repo}/actions/runs/{run_index}/jobs/{job_index}`）是 **web 端点，只认登录 session cookie，不认 API token**——带 `Authorization: token` 访问 web 路径会被当成匿名，私有仓库对匿名返回 **404**（不泄露存在性，跟匿名访问私有仓库主页一致）。所以"直接 curl raw-log URL"对**公开**仓库成立，对**私有**仓库得先模拟登录拿 cookie（GET 取 `_csrf` → POST `/user/login` → 存 cookie，还要过可能的 2FA），脆。
+
+- **读服务器端日志文件**（脚本化最稳）：日志按 job 落在 `<forgejo-data>/gitea/actions_log/<owner>/<repo>/<NN>/<task_id>.log.zst`，**zstd 压缩**。`<NN>` 是 `task_id` 的零填充两位前缀目录（`2 → 02/2.log.zst`、`123 → 12/123.log.zst`）；这条相对路径直接存在 `action_task.log_filename` 字段。forgejo 容器是 alpine、**不带 zstd**，在宿主或带 zstd 的环境解：
+
+  ```bash
+  # 由 repo 反查最近一次 job 的日志相对路径
+  docker exec forgejo-db psql -U forgejo -d forgejo -At -c \
+    "SELECT t.log_filename FROM action_task t JOIN repository r ON r.id=t.repo_id \
+     WHERE r.lower_name='<repo>' ORDER BY t.id DESC LIMIT 1;"   # -> <owner>/<repo>/NN/<id>.log.zst
+
+  # 解压 + 去掉 ANSI 颜色码（宿主有 zstd 时）
+  zstd -dc "<forgejo-data>/gitea/actions_log/<owner>/<repo>/NN/<id>.log.zst" | sed 's/\x1b\[[0-9;]*m//g'
+  # 无 zstd：python3 -c 'import zstandard,sys; sys.stdout.buffer.write(zstandard.ZstdDecompressor().decompress(open(sys.argv[1],"rb").read(), max_output_size=50_000_000))' <file>
+  ```
+
+> `action_run.index`（仓库内 run 序号，= Web URL 里的 `{run_index}`）与全局 `action_run.id` 不是一回事；按 repo 反查日志走 `action_task` 表最直接。`action_run_job.status` 枚举见上节验收。
 
 ## 关键坑
 
