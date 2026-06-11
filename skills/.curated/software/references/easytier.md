@@ -4,9 +4,20 @@
 
 ## 安装
 
-Windows 版从 [GitHub Releases](https://github.com/EasyTier/EasyTier/releases) 下载 `easytier-windows-x86_64` 压缩包，解压后运行即可。
+推荐官方 Windows 一键脚本 `install.ps1`（**管理员 PowerShell**）：自动从 GitHub Release 拉最新版、解压**整包**到 `C:\Program Files\EasyTier`、并把该目录加进系统 PATH。
 
-默认路径：`C:\Users\<USER>\easytier-windows-x86_64\`
+```powershell
+# 管理员 PowerShell 运行；可选 -Version v2.6.2 / -InstallDir 自定义路径
+irm https://raw.githubusercontent.com/EasyTier/EasyTier/main/script/install.ps1 -OutFile "$env:TEMP\et-install.ps1"
+& "$env:TEMP\et-install.ps1"
+```
+
+装完该目录含 `easytier-core.exe` / `easytier-cli.exe` / `easytier-web.exe` / `easytier-web-embed.exe` / `wintun.dll` 等（`web` 系列做客户端联网用不到，但脚本会整包装下）。脚本**不会**自动注册服务，开机自启按下文「作为系统服务安装」跑 `easytier-cli service install`。
+
+- 脚本源与参数说明：[`script/install.ps1`](https://github.com/EasyTier/EasyTier/blob/main/script/install.ps1)
+- 官方安装总览（手动下载 / Docker / Linux 一键 / 源码）：[安装 (命令行程序)](https://easytier.cn/guide/installation.html)；注意 Windows 的 `install.ps1` **未收录**进该文档，只在仓库 `script/` 下
+
+（手动解压 [GitHub Releases](https://github.com/EasyTier/EasyTier/releases) 的 `easytier-windows-x86_64` 压缩包到任意目录其实也能直接跑，只是不挂 PATH、不自动注册服务。）
 
 ## 配置模板
 
@@ -86,11 +97,59 @@ uri = "<协议>://<地址>:<端口>"
 - `rpc_portal = "127.0.0.1:15888"`：管理 RPC 只监听本地
 - `enable_quic_proxy = false`：不启用 QUIC proxy；需要两端一致修改，避免一端仍走 QUIC
 
-## 服务名与 NSSM（排障）
+## 作为系统服务安装
 
-- 显示名 `EasyTier` 对应服务名 `EasyTierService`（可用 `sc getkeyname EasyTier` 核对）
-- `nssm restart easytier` 可以重启该服务（通过服务控制接口）
-- 若 `nssm get easytier Application` 报 *only valid for services managed by NSSM*，说明当前不是 NSSM 参数托管模式；以 `sc qc EasyTierService` 的 `BINARY_PATH_NAME`（或注册表 `ImagePath`）为准
+EasyTier **自带**服务安装能力，装出来是原生 Windows 服务（无需 NSSM 之类外部包装）。安装入口在 `easytier-cli`，**不是** `easytier-core`（所以 `easytier-core --help` 里看不到 service 子命令）。
+
+> 官方文档：[一键注册服务](https://easytier.cn/guide/network/oneclick-install-as-service.html)（同时覆盖 Linux/Windows，列全可选参数）。
+
+### 初次安装（端到端）
+
+已有 conf 的话，从零做成开机自启服务只多两步（注册 + 启动）：
+
+**1) 下载解压** —— 见上文「安装」，得到同目录下的 `easytier-core.exe` 与 `easytier-cli.exe`（如 `C:\Program Files\EasyTier\`）。
+
+**2) 准备配置** —— 按上文「配置模板」写好 `<INSTANCE>.conf`（填 `instance_name` / `ipv4` / `network_name` / `network_secret` / `[[peer]]`），放到固定路径，建议就放程序目录下。服务化不需要给 conf 加任何特殊字段。
+
+**3) 注册服务** —— 用**管理员权限**的终端（写 SCM 需要提权）：
+
+```text
+cd "C:\Program Files\EasyTier"
+.\easytier-cli.exe service install -- -c "C:\Program Files\EasyTier\<INSTANCE>.conf"
+```
+
+服务名默认 `easytier`（要自定义须写成 `service -n <名字> install …`，`-n` 是 `service` 层参数、不能放 `install` 后）；`--` 之后的参数原样透传给 easytier-core，`-c` 后**写 conf 绝对路径**（服务工作目录和当前 shell 不同，相对路径会找不到）。
+
+**4) 启动并验证**：
+
+```text
+.\easytier-cli.exe service start
+.\easytier-cli.exe service status     # 期望 Running
+```
+
+装好即 `AUTO_START`，此后开机自动拉起、无需任何人登录。
+
+> 卸载 `easytier-cli service uninstall`（会先 stop）。只改了 conf 内容：重启服务即可生效（`service stop` 再 `service start`）；要换 conf 路径/透传参数：`uninstall` 后重新 `install`。
+
+### 原理：Rust `windows-service` / `service-manager`
+
+EasyTier 不借助 NSSM，而是用两个 Rust crate 自己完成服务化：
+
+- **`windows-service`**（Windows 服务控制管理器 SCM 的 Rust 绑定）让 `easytier-core.exe` 本身 **service-aware**：`define_windows_service!` 宏生成服务入口，进程启动时先用 `service_dispatcher::start()` 试连 SCM——被 SCM 拉起就连上、进入服务模式（线程 park 住并响应 SCM 的 start/stop/查询）；在命令行直接敲则连不上 SCM，fallback 当普通 CLI 跑。**同一个 exe「两副面孔」，由"谁启动它"决定**，不需要 `--service` 这类显式开关（所以 `--help` 里也看不到）。
+- **`service-manager`**（跨平台服务管理抽象）负责"安装"侧：Windows 上 easytier 用自定义的 `WinServiceManager` 直接调 SCM 的 `create_service`，把 core 注册为 `OWN_PROCESS` + `AutoStart`、依赖 `rpcss`+`dnscache`、账户 `LocalSystem`；同一套抽象在 Linux 生成 systemd unit、macOS 生成 launchd plist。
+
+源码位置：`easytier/src/core.rs`（service_dispatcher 那段）、`easytier/src/service_manager/mod.rs`（`WinServiceManager`）。
+
+**排障核对** —— `sc qc easytier` 或 `Get-CimInstance Win32_Service -Filter "Name='easytier'"` 应看到：
+
+| 字段 | 值 |
+|------|----|
+| 服务名 | `easytier` |
+| BINARY_PATH_NAME | `"\\?\C:\Program Files\EasyTier\easytier-core.exe" -c "...conf"`（`\\?\` 是 canonicalize 产物） |
+| DEPENDENCIES | `rpcss` + `dnscache`（install 写死的依赖） |
+| START_TYPE / 账户 | `AUTO_START` / `LocalSystem`（session 0 开机即起，不需用户登录，故自启稳定） |
+
+注册表无 `HKLM\SYSTEM\CurrentControlSet\Services\easytier\Parameters` 子键。
 
 ## QUIC proxy 坑点
 
