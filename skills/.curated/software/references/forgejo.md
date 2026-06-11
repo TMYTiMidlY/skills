@@ -194,6 +194,26 @@ docker inspect forgejo --format '{{range .Mounts}}{{.Source}} -> {{.Destination}
 
 要能看到 `… -> /data`；且宿主 `./data` 里应有 `git/ gitea/ ssh/` 三块，空的就是挂错了（修复见「关键坑 · 数据落进匿名卷」）。
 
+### 登录与注册控制（OAuth / 禁密码 / 禁注册）
+
+`[service]` 段两个开关（本部署经 compose `FORGEJO__service__*` 注入）：
+
+- `DISABLE_REGISTRATION = true` —— 关掉自助注册（没人能自己开新账号）。
+- `ENABLE_INTERNAL_SIGNIN = false` —— 关掉内置密码登录，**只剩外部认证源**（GitHub OAuth 等）。`generate-config` 里查无 `ENABLE_PASSWORD_SIGNIN_FORM`，禁密码登录用的就是这个 `ENABLE_INTERNAL_SIGNIN`。
+
+OAuth 登录源用 CLI 加（等价 Web「站点管理 → 认证源」，**不在 `/api/v1`**）：
+
+```bash
+docker exec -u git forgejo forgejo admin auth add-oauth \
+  --name github --provider github --key <CLIENT_ID> --secret <CLIENT_SECRET>
+```
+
+GitHub OAuth App 回调填 `<ROOT_URL>/user/oauth2/<name>/callback`（`<name>` 要和 `--name` 一致）。
+
+**准入门槛**：`DISABLE_REGISTRATION=true` 且未开自动注册（`[oauth2_client] ENABLE_AUTO_REGISTRATION` 默认 false）时，陌生 GitHub 账号首次登录会被要求「关联到已有账号」——必须输入一个**已有 Forgejo 账号的用户名+密码**才能绑进来；没有已有账号密码的陌生人光有 GitHub 进不来。一个 GitHub 身份只能绑一个账号（`external_login_user.external_id` 唯一），关联只能本人走一次 OAuth 完成，CLI / admin 无法代绑。
+
+> ⚠️ 把 `ENABLE_INTERNAL_SIGNIN` 设 false（只留 OAuth）**之前**，先确认 admin 账号已绑好 OAuth 且能登入，否则会把自己锁在 web 外（容器内 `forgejo admin` CLI 仍可救，但麻烦）。
+
 ## ② web 公网入口：Caddy 反代 + 默认中文
 
 web UI + git-over-HTTPS 经 `<入口VPS>` 的边缘 Caddy 反代到 `<内网机>:3000`。Forgejo 容器只把 3000 发布到 `127.0.0.1:3000`（compose 里的 `ports: "127.0.0.1:3000:3000"`），不直接对外，对外只经 Caddy。Caddy → `<内网机>` 的具体链路（mesh / Windows portproxy / wslrelay / WSL→容器端口形态）是通用 WSL/Docker 网络问题，见 [`network.md`](network.md) 的「WSL / Docker 服务暴露（入站）」。
