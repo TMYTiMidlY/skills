@@ -4,11 +4,12 @@
 >
 > - `<内网机>`：Forgejo 实际运行的机器（本部署是团队后端机：Windows host + 内嵌 WSL2 Ubuntu + Docker Desktop，在 EasyTier mesh 内，无独立公网 IP）。
 > - `<MESH_IP>`：`<内网机>` 的 mesh IP（relay 的目的地址）。
+> - `<MESH_SSH_PORT>`：`<内网机>` 上 sshd 监听、relay 连进去的端口（按你内网机实际填，本部署是 2222；地位同 `<MESH_IP>`，环境相关）。
 > - `<user>`：`<内网机>` 上的部署/运维用户（在 docker 组，免 sudo 跑 docker）。
 > - `<入口VPS>`：唯一有公网 IP 的机器，做公网入口（本部署是一台 RHEL 系、未备案的云 VPS）。
 > - `<PUBLIC_IP>`：`<入口VPS>` 的公网 IP。
 >
-> 端口（22 / 2222 / 3000 / 2376）是配置值，按原样保留即可。
+> 其余端口 22 / 3000 / 2376 是设计固定值，按原样保留即可。
 
 ## 为什么选 Forgejo（选型背景）
 
@@ -177,7 +178,13 @@ Forgejo 官方镜像有两种（[官方 docker.md](https://forgejo.org/docs/late
 - **非 rootless**（`forgejo:15`，本部署用这个）：容器以 root 启动再降权到 `git`，数据目录是 **`/data`**（`GITEA_CUSTOM=/data/gitea`，git 仓库落在 `/data/git/repositories/`）。
 - **rootless**（`forgejo:15-rootless`）：全程不以 root 跑，数据目录是 `/var/lib/gitea`，要额外配 `user: 1000:1000`、SSH 映射到 `:2222`。
 
-**为什么用非 rootless**：本部署跑在 Docker Desktop / WSL2 + bind mount 下，rootless 镜像常因宿主目录属主/权限重映射出问题（官方文档专门提醒过这类权限坑）；而本部署只把 `./data` 一个目录挂进容器、不碰宿主敏感路径，root 容器的额外风险很小。rootless 的安全收益主要在多租户、或要把宿主敏感目录挂进容器、或服务暴露在不可信网络时才明显——这里都不是。
+**为什么用非 rootless**：本部署跑在 Docker Desktop / WSL2 + bind mount 下，rootless 镜像常因宿主目录属主/权限重映射出问题（官方文档专门提醒过这类权限坑）；而本部署只把 `./data` 一个目录挂进容器、不碰宿主敏感路径，root 容器的额外风险很小。
+
+> **别和 "rootless Docker" 混了——这是两个不同的层：**
+> - **镜像 rootless**（本节说的 `-rootless` 后缀）：只管**容器内 app 进程**用 uid 1000 还是容器 root，**不改变**你启动容器要不要权限——两种镜像都一样 `docker compose up`。
+> - **引擎 rootless**（rootless Docker / Podman）：让 docker 守护进程以**普通用户**跑，**用它无需 root 或 `docker` 组**。这才是决定"要不要 sudo"的层，也是多租户 / 拿不到 root 的共享机给你的模式。
+>
+> 所以 rootless **镜像**的安全收益主要在 **rootful 引擎**上才明显（本部署即此：在 `docker` 组 ≈ 有 root，容器内 root = 宿主/VM 的 root，这时换 rootless 镜像才算纵深防御）。而在 **rootless 引擎**下，连非 rootless 镜像的容器 root 也被 user namespace 重映射成普通 uid，宿主已被引擎保护，镜像选哪个更无所谓。本部署是**单租户 + rootful 引擎 + 自己人才在 docker 组**，故这层纵深防御省得起。
 
 **挂载路径必须匹配镜像类型**：非 rootless 就写 `./data:/data`。最容易踩的坑是给非 rootless 镜像错写成 `./data:/var/lib/gitea`——容器根本不读这个路径，会自己在 `/data` 上挂一个 **docker 匿名卷**：数据看着正常，其实落在匿名卷里，`docker compose down -v` 或换 compose 就丢、也难备份。自查：
 
@@ -222,34 +229,33 @@ Match User git
 
 ### (b) `<入口VPS>` 两个中转脚本
 
+这两个脚本**就是单机 Forgejo 里 `forgejo keys` / `forgejo serv` 两个功能的"跨机版"**：单机部署时 sshd 直接调 forgejo 二进制的这俩子命令；这里 VPS 上没有 forgejo，于是用两个 shell 脚本把请求经 relay 转给内网机容器里的 `forgejo keys` / `forgejo serv` 执行。脚本本身只做 ssh 转发——**VPS 不需要任何 forgejo 二进制**，公网那台越干净越安全。
+
 `/usr/local/bin/forgejo-authkeys`（sshd 查 key 时调，把 `keys` 请求经 relay 转给内网，再把内网返回的 key id 拼成一行带 forced command 的 authorized_keys 回给 sshd）：
 
 ```bash
 #!/usr/bin/env bash
-# sshd AuthorizedKeysCommand (runs as git). args: %u %t %k
+# VPS sshd 的 AuthorizedKeysCommand（以 git 身份跑，参数 = %u %t %k）。
+# = 单机 Forgejo 里 `forgejo keys` 的跨机版：把 (类型,公钥) 经 relay 转给内网机
+#   容器查，再把返回的 key-N 改写成一行指向本机 forgejo-serv 的 authorized_keys。
 set -uo pipefail
-RELAY="ssh -i /home/git/.ssh/relay_key -p 2222 -o IdentitiesOnly=yes -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 <user>@<MESH_IP>"
-t="${2:-}"; k="${3:-}"
-[ -z "$t" ] || [ -z "$k" ] && exit 0
-line="$($RELAY "keys $t $k" 2>/dev/null)" || exit 0
-keyid="$(printf '%s' "$line" | grep -oE 'key-[0-9]+' | head -1)"
-[ -z "$keyid" ] && exit 0
-printf 'command="/usr/local/bin/forgejo-serv %s",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,restrict %s %s\n' "$keyid" "$t" "$k"
+RELAY="ssh -i /home/git/.ssh/relay_key -p <MESH_SSH_PORT> -o IdentitiesOnly=yes -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 <user>@<MESH_IP>"
+keyid="$($RELAY "keys ${2:-} ${3:-}" 2>/dev/null | grep -m1 -oE 'key-[0-9]+')" || exit 0   # 查不到 / relay 失败 → 干净拒绝
+printf 'command="/usr/local/bin/forgejo-serv %s",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,restrict %s %s\n' "$keyid" "$2" "$3"
 ```
 
 `/usr/local/bin/forgejo-serv`（上面拼出的 forced command 的目标；把客户端真正的 git 命令 base64 后经 relay 转给内网的 `serv`）：
 
 ```bash
 #!/usr/bin/env bash
-# Forced command on git side. arg1 = key-N.
+# 上面那行 authorized_keys 的 forced command（参数 = key-N）。
+# = 单机 Forgejo 里 `forgejo serv` 的跨机版：把客户端真正的 git 命令
+#   （在 $SSH_ORIGINAL_COMMAND 里）base64 后经 relay 转给内网机容器执行。
 set -uo pipefail
-keyid="${1:-}"
-[ -z "$keyid" ] && { echo "forgejo-serv: missing keyid" >&2; exit 2; }
-b64="$(printf '%s' "${SSH_ORIGINAL_COMMAND:-}" | base64 -w0)"
-exec ssh -i /home/git/.ssh/relay_key -p 2222 \
+exec ssh -i /home/git/.ssh/relay_key -p <MESH_SSH_PORT> \
   -o IdentitiesOnly=yes -o ControlMaster=no -o ControlPath=none \
   -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 \
-  <user>@<MESH_IP> "serv $keyid $b64"
+  <user>@<MESH_IP> "serv ${1:?keyid} $(printf '%s' "${SSH_ORIGINAL_COMMAND:-}" | base64 -w0)"
 ```
 
 两脚本 `chmod 755`、root 拥有。relay 私钥 `/home/git/.ssh/relay_key`（600、git 拥有）+ 预填 `known_hosts`。git 命令必须 base64：它含空格和引号，跨两跳 SSH + shell 会被切碎，base64 成一个整块最稳。那串 `-o ControlMaster=no …` 见「关键坑 · ControlMaster」。
