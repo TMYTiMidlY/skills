@@ -1,9 +1,21 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的配置与排障。涵盖 SSH 与 systemd、Zellij 终端复用与反代、文档格式转换（pandoc/feishu2md/MinerU）、自托管文档分享（WebDAV/Markdeep）与 PDF 导出（Prince XML/Vivliostyle/Paged.js/Typst 选型与 pixi 部署）、WSL 与 Windows 互操作（VS Code serve-web、portproxy）、EasyTier 客户端组网、Hermes agent 部署、GitHub Copilot CLI 内部行为与排障等。
+description: 本地软件、CLI 工具与自托管服务的配置与排障。涵盖 SSH 与 systemd、Zellij 终端复用与反代、文档格式转换（pandoc/feishu2md/MinerU）、自托管文档分享（WebDAV/Markdeep）与 PDF 导出（Prince XML/Vivliostyle/Paged.js/Typst 选型与 pixi 部署）、WSL 与 Windows 互操作（VS Code serve-web、portproxy）、EasyTier 客户端组网、Hermes agent 部署、GitHub Copilot CLI 内部行为与排障、RustFS + MinIO mc 客户端（versioning 桶语义 + ListObjectsV2 paginator bug + 软硬删恢复链路 + `mc rb --force` 真相 + HDD 后端"对象数 ≫ 字节数"性能特征 + 大批量 op 可靠性模式实测）等。
 ---
 
 # Software
+
+## 写 / 改 reference 文件的规则
+
+reference 文件的目标：让**任意** agent 或用户照着就能在**自己的**设备上搭起来。改某类问题的 reference 时遵循：
+
+1. **概念优先、说人话**：先讲清"是什么、为什么这么做、解决什么问题"，再给细节；代码黑话/术语只在影响理解时才解释，不重要的略过。
+2. **可复现、不绑定本机**：隐去具体主机名 / IP / 用户名 / 私有路径，用占位符（如 `<入口VPS>`、`<user>`）。路径、目录名这类"换台机器就不同"的东西讲清作用即可，别当硬性要求。
+3. **命令 / 示例文件优先**：能贴一段可直接套用的 compose / 配置 / 脚本 / 命令就贴出来（敏感值留占位符），胜过大段散文。
+4. **每条说法要有据**：自己实测的直接陈述（不用写"实测"二字）；来自官方/外部的**挂可点开的官方文档链接**；拿不准的标注不确定，别凭记忆编。多给客观证据（版本号、命令输出、API 返回等）。
+5. **踩坑 / 排障紧贴主题**：记录真实踩过的坑和诊断/恢复办法，但只留与本主题强相关、对复现有用的；琐碎、一次性、跑题的不写。
+6. **不写"怎么改文件、在哪跑命令"的操作流程**：用什么工具、要不要 sudo、怎么备份回滚、删文件用什么——这些是操作者各自的事，不进 reference。reference 只描述**目标产物长什么样**。
+7. **不过度限制、少堆告诫**：陈述事实与权衡（必要时给出被否决的备选及代价），让读者自己判断，少用"绝不能 / 务必"这类防御句；复杂链路优先用 GitHub 能渲染的图（mermaid / 表格 / blockquote）。
 
 ## SSH
 
@@ -12,6 +24,10 @@ SSH 密钥 passphrase、ssh-agent、RemoteForward 代理转发等通用 SSH 用�
 ## Git 镜像仓库
 
 多设备协作且部分设备无法访问 GitHub 时，用一台公网 VPS 做双向 SSH git 镜像。架构、搭建步骤、hooks、Actions workflow、防回环、防 split-brain 的完整方案见 [references/git-mirror.md](references/git-mirror.md)。
+
+## 自建 Forgejo（公网 22 SSH relay + CI runner）
+
+无独立公网 IP 的内网 WSL2 机上自建 Forgejo，借唯一公网落点 VPS 做入口。核心做法是 SSH passthrough（公网 sshd 按登录名 `git` vs 运维用户分流，不破坏运维 shell）+ 跨机 relay（key 查询/git 命令经一条 SSH 转发到内网 Forgejo 容器的 `forgejo keys`/`serv`）。覆盖整体三段链路架构、为什么网页端加 SSH key 入口机即认（`AuthorizedKeysCommand` 当场查 Forgejo 数据库、不拷文件）、内网机用 authorized_keys 内联 forced command 转发 keys/serv（不另放脚本）、ControlMaster 复用绕过坑、`serv` stdin 透传、入口机发行版差异（SSH service 名/SELinux/sshd_config.d 因发行版而异）、sshd 幂等 append + 安全兜底、Forgejo Actions runner（DinD 隔离、token 注册三步、job 容器回连 `http://forgejo:3000` 的网络设计）、web 经边缘 Caddy 反代（默认中文 header；WSL/Docker 网络细节转 network.md）、session COOKIE_NAME 改名治登录 500、数据卷 `/data` 挂载坑（非 rootless 镜像）见 [references/forgejo.md](references/forgejo.md)。
 
 ## Zellij
 
@@ -38,6 +54,10 @@ WSL 挂载 Windows 盘、UNC/SMB 共享、`drvfs/9p` 小文件性能、CIFS 凭�
 ## EasyTier 客户端（Windows）
 
 EasyTier 组网的 Windows 客户端：安装、TOML 配置模板、Peer 配置、与 VPS 服务端的差异、NSSM 服务排障、Windows 防火墙见 [references/easytier.md](references/easytier.md)。**VPS 服务端完整安装与配置（全 listener、出口节点、中继策略等）由 `vps-maintenance` skill 覆盖。**
+
+## RustFS + MinIO mc 客户端
+
+RustFS（Rust 实现的 S3 兼容对象存储，github.com/rustfs/rustfs）+ MinIO `mc` CLI 的稳定行为：bucket versioning 是桶级开关、软删（`mc rm` 不带 `--versions` = 写 delete marker，可 `mc undo` 恢复）vs 硬删（`mc rm --versions --force` = 按 vid 物理 delete，不可恢复）的源码级机制、`mc undo` 的实现、`NoncurrentVersionExpiration` lifecycle 与 noncurrent 累积规则；**重点：RustFS 在 versioning 桶 + 大量 delete marker 时 `ListObjectsV2` 服务端会错误返回 `IsTruncated=false` 提前截断（已读 Rust 源码确诊 root cause 在 `crates/ecstore/src/disk/local.rs::scan_dir` 一处被注释掉的 `all_hidden` guard），mc 客户端用 StartAfter workaround 绕过、boto3 严格遵守 spec 反而被骗 → 列 versioning 桶用 mc 或自写 StartAfter loop，列版本历史反过来要 boto3 `list_object_versions()`**，并附诊断/恢复命令清单。见 [references/rustfs.md](references/rustfs.md)。配套的 CopyObject 跨桶 server-side 行为 + `Io error: timeout` 调参等故障经验在 `mess/references/rustfs.md`。
 
 ## Windows / WSL 宿主侧速记
 
