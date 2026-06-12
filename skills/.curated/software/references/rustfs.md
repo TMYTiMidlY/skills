@@ -97,7 +97,7 @@ mc ilm ls <alias>/<bucket>
 
 ### 状态先行
 
-这是 **RustFS 服务端 bug**，我在 `1.0.0-beta.7` 上复现（`beta.5` 起就有）、提了 issue [#3217](https://github.com/rustfs/rustfs/issues/3217)，已被 PR [#3224](https://github.com/rustfs/rustfs/pull/3224)「skip hidden metadata in walk limit」修掉，2026-06-05 合进 `main`。**`beta.7` 之后的发布版本带修复；`≤ beta.7` 仍中招**——下面的规避只对旧版本有意义，能升级就升级。
+这是 **RustFS 服务端 bug**，我在 `1.0.0-beta.7` 上复现（`beta.5` 起就有）、提了 issue [#3217](https://github.com/rustfs/rustfs/issues/3217)，已被 PR [#3224](https://github.com/rustfs/rustfs/pull/3224)「skip hidden metadata in walk limit」修掉，2026-06-05 合进 `main`。**`1.0.0-beta.8`（2026-06-10 发布）是第一个带修复的发布版本（已用 compare API 确认修复 commit 在 beta.8 tag 内）；`≤ beta.7` 仍中招**——下面的规避只对 `≤ beta.7` 有意义，**能升 `beta.8`+ 就别留在 beta.7**。
 
 ### 症状
 
