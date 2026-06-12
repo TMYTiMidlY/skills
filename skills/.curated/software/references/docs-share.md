@@ -1,182 +1,81 @@
-# docs-share：私有 Git 仓库 → S3 直链分享站
+# docs-share：用 S3 presigned 直链分享私密文档
 
-把一批要在公网呈现的 Markdown / HTML 放进一个**私有 Git 仓库**；每次 `git push` 或在 Git 网页端上传/编辑文件，CI 自动把仓库内容**增量同步**到一个 S3 兼容对象存储的桶里（桶结构与仓库树一一对应）。对外**不靠反向代理鉴权**，而是用 S3 **presigned 直链**（URL 自带签名 + 有效期）分享。`.md` 在桶里原样存储——直接取对象得到原始 Markdown，套一个 `viewer.html` 则由 markdeep 客户端渲染成排版页面。
+把 Markdown / HTML 放进**私有 Git 仓库** → forgejo runner 自动把仓库内容 sync 到 RustFS S3 桶 → 用 **S3 presigned URL** 分享。`.md` 浏览器贴地址栏自动 markdeep 渲染，`curl/wget` 拿原始文本。
 
-适用场景：想要"gh-pages 式自动发布 + 私密分享"，但不想给每个文件配反代 basic_auth、也不想靠"路径猜不到"那种弱隐私。
+> 服务端部署 / Caddy / `_viewer.html` 壳子 / 桶 + CI key 创建：见 `vps-maintenance` skill 的 [`references/caddy.md` §「文档私链分享站」](../../vps-maintenance/references/caddy.md)。
+>
+>
+> 本节只覆盖**客户端使用**：凭据放哪、生成分享链接、撤销分享、markdeep 写作惯例。
 
-## 架构与数据流
+## 客户端凭据：受限 `ci` access key
 
-```mermaid
-flowchart LR
-  A[本地编辑 / 网页上传] -->|git push = 一次 push 事件| B[Forgejo 仓库]
-  B -->|on: push 触发 Actions| C[runner: rclone sync --checksum]
-  C -->|只传内容变化的对象 + 镜像删除| D[(S3 桶 docs-share)]
-  D -->|presigned 直链 / viewer.html 渲染| E[访问者]
-```
+部署完成后，**唯一会持久存在的凭据**就是一把绑了 policy 的**受限 access key**，只能操作 `docs-share/*` 这一个桶（policy 在服务端配置时已固化）。
 
-- **同步方向单向**：Git 仓库是唯一真相源，桶是它的镜像。不要直接往桶里写内容（会被下次同步用 `--remove` 抹掉）。
-- **桶私有**：除 `viewer.html` 一个对象匿名可读外，其余对象只能凭 presigned 链接访问。
+| 凭据 | 存哪 | 用途 |
+|---|---|---|
+| 受限 CI key（AK + SK） | 本机 `~/.mc/config.json` 一个 alias | 日常生成 presigned URL |
+| 同上 | forgejo 仓库 secret `RUSTFS_CI_AK` / `RUSTFS_CI_SK` | runner 跑 `rclone sync` |
+| **root key** | **不该出现在客户端**——部署时 mc admin 用一次就删掉本地 alias | 只用于建桶 / 发 CI key / 配 policy（一次性） |
 
-## 名词：AK / SK 是什么
-
-- **AK = Access Key ID，SK = Secret Access Key**，是 S3（及兼容实现）的一对凭据，相当于对象存储 HTTP API 的"用户名 / 密码"。
-- 客户端用 **SK** 对请求做 **SigV4 签名**（HMAC，不在网络上明文传 SK），服务端用请求里携带的 **AK** 找到对应 SK 验签。
-- **presigned URL**（预签名直链）= 把这套签名连同 `X-Amz-Expires`（有效期）塞进 URL 查询参数。任何人拿到这条 URL，在有效期内即可访问该对象，无需自己持有 AK/SK——这就是"URL 里给一段密钥就能访问"的实现。
-- **root key vs 受限 key**：管理员 key（建桶 / 发 key / 配策略）权限极大，**绝不交给 CI、绝不进 git**。给 CI 的应是一把**绑了 policy、只能读写目标桶**的受限 access key（S3 术语 service account / access key pair）。
-
-## 从零部署（持 root key 的人执行一次）
-
-下面 `<...>` 为按部署填的值；`<S3_ENDPOINT>` 用**公网**端点（presigned 链接要让外部能解析），`<MESH_ENDPOINT>` 用 CI runner 能直连的内网端点（省一跳）。S3 兼容服务可用 MinIO `mc` 操作。
-
-**1. 装 mc 并配 root alias（仅本地临时用，做完即删）**
+本机 alias 命名建议两个：
 
 ```bash
-curl -sSL -o ~/.local/bin/mc https://dl.min.io/client/mc/release/linux-amd64/mc && chmod +x ~/.local/bin/mc
-mc alias set rootadmin <S3_ENDPOINT> <ROOT_AK> <ROOT_SK>
-mc ls rootadmin                      # 只读确认连通，并看清已有哪些桶以免误伤
+# 走公网域名（生成外发链接用）
+mc alias set <PUB_ALIAS> https://<S3_HOST>      <CI_AK> <CI_SK> --api s3v4
+# 走 mesh 内网（自己机器测 / CI 用，省一跳）
+mc alias set <MESH_ALIAS> http://<MESH_HOST>:9000 <CI_AK> <CI_SK> --api s3v4
 ```
 
-**2. 建桶**（桶名 = Git 仓库名，本部署为 `docs-share`）
+> SigV4 把 host 也签进签名了——**生成对外链接必须用 alias 对应公网域名**；mesh alias 签出来的链接外部访问会签名失败。
+
+## 生成分享链接
+
+### 方式 A：地址栏直贴 .md → 自动渲染（推荐）
 
 ```bash
-mc mb rootadmin/docs-share
+mc share download --expire 168h <PUB_ALIAS>/docs-share/<dir>/<file>.md
 ```
 
-**3. 建受限 access key（只能碰 docs-share），并实测隔离**
+输出里 `Share:` 那行就是完整 presigned URL。**直接发给读者**——浏览器贴地址栏看到排版页（Caddy `Accept: text/html` 分流到 viewer rewrite），`curl/wget` 拿到原文。
 
-`policy.json`：
-
-```json
-{ "Version": "2012-10-17",
-  "Statement": [
-    { "Effect": "Allow", "Action": ["s3:ListBucket","s3:GetBucketLocation"],
-      "Resource": ["arn:aws:s3:::docs-share"] },
-    { "Effect": "Allow", "Action": ["s3:GetObject","s3:PutObject","s3:DeleteObject"],
-      "Resource": ["arn:aws:s3:::docs-share/*"] }
-  ] }
-```
+### 方式 B：viewer.html?doc= 包装（向后兼容，跨 S3 后端通用）
 
 ```bash
-mc admin accesskey create rootadmin/ --access-key <CI_AK> --secret-key <CI_SK> \
-  --policy policy.json --name docs-share-ci
-# 实测隔离：用受限 key 必须只能碰 docs-share
-mc alias set ci <S3_ENDPOINT> <CI_AK> <CI_SK>
-mc ls ci/docs-share          # 期望 OK
-mc ls ci/<其它桶名>           # 期望 Access Denied —— 不被拒就说明 policy 没生效，别往下走
-```
-
-> 受限 key 是否被**真正强制**取决于 S3 实现：上线前务必跑通"访问别的桶被拒"这一步，再把它交给 CI。
-
-**4. 让 `viewer.html` 单对象匿名可读**（其余对象保持私有）
-
-`viewer-policy.json`（只放行这一个对象的匿名 GET）：
-
-```json
-{ "Version": "2012-10-17",
-  "Statement": [ { "Effect": "Allow", "Principal": {"AWS": ["*"]},
-    "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::docs-share/viewer.html"] } ] }
-```
-
-```bash
-mc anonymous set-json viewer-policy.json rootadmin/docs-share
-```
-
-**5. 建 Git 仓库（私有）并设 CI secrets**
-
-在 Forgejo（或任何带 Actions/CI 的 Git 服务）建私有仓库 `docs-share`，把受限 key 写成仓库级 secret：`RUSTFS_CI_AK` / `RUSTFS_CI_SK`。endpoint、桶名不是 secret，可直接写进 workflow。
-
-**6. 仓库内容**
-
-- `.forgejo/workflows/sync.yml`（见下「同步流水线」）
-- `viewer.html`（见下「markdeep 渲染」）
-- 内容按目录命名空间隔离（`demo/`、`notes/` …），不要在根目录平铺。
-
-**7. push 后验证**：Action 成功 → `mc ls --recursive ci/docs-share` 应见仓库树（`.git*` / `.forgejo*` 已排除）。
-
-做完后**把本地 root alias 删掉**，root key 不留盘：`mc alias rm rootadmin`。受限 `ci` alias 保留，供日后生成分享链接。
-
-## 同步流水线（`.forgejo/workflows/sync.yml`）
-
-```yaml
-name: sync-to-s3
-on:
-  push:
-    branches: [main]
-jobs:
-  sync:
-    runs-on: docker
-    steps:
-      - uses: actions/checkout@v4
-      - name: install rclone
-        run: |
-          apt-get update -qq && apt-get install -y -qq rclone >/dev/null
-      - name: incremental checksum sync
-        env:
-          RCLONE_S3_PROVIDER: Other
-          RCLONE_S3_ACCESS_KEY_ID: ${{ secrets.RUSTFS_CI_AK }}
-          RCLONE_S3_SECRET_ACCESS_KEY: ${{ secrets.RUSTFS_CI_SK }}
-          RCLONE_S3_ENDPOINT: <S3_ENDPOINT>     # CI 能直连的话用内网 <MESH_ENDPOINT> 更省一跳
-          RCLONE_S3_REGION: us-east-1
-          BUCKET: docs-share
-        run: |
-          rclone sync --checksum -v \
-            --exclude '.git/**' --exclude '.forgejo/**' \
-            ./ ":s3:${BUCKET}"
-```
-
-**为什么是 `rclone sync --checksum` 而不是 `mc mirror` / `rsync`（关键踩坑）**：`actions/checkout` 每次把所有文件以**当前时间**写入工作区，mtime 全被重置。任何**按 size+mtime 判断变化**的工具（`mc mirror`、默认 `rsync`）都会把整棵树判为"已变"→**每次全量重传**，不是真增量。`rclone --checksum` 改为**按内容哈希**（对比 S3 ETag/MD5）判断，无视 mtime，只传内容真的变了的对象。验证方法：内容不变再触发一次同步，桶里对象的 Last-Modified 应**纹丝不动**（0 传输）。`rclone sync` 同时镜像删除（仓库删的对象桶里也删）。
-
-## markdeep 渲染（`viewer.html`）
-
-`.md` 在桶里**原样存储**（下载即原始 Markdown）；渲染交给一个通用 viewer 页客户端完成，因此**不要**把文件命名成 `.md.html`、也**不要**把 markdeep 的 `<script>` 写进 `.md` 里（否则下载到的不是纯 md）。
-
-`viewer.html` 思路：读 `?doc=<URL>` → `fetch` 取原始 md 文本 → 把文本作为 body 内容交给 markdeep 渲染。它是桶内**唯一匿名可读**的对象；当 `?doc=` 指向**同源**的 presigned 链接时，`fetch` 不跨域、无 CORS 问题；markdeep 脚本本身从 CDN 以 `<script>` 方式加载（脚本加载不受 CORS 限制）。
-
-```html
-<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Markdeep Viewer</title></head>
-<body><script>
-(function () {
-  var doc = new URLSearchParams(location.search).get('doc');
-  if (!doc) { document.body.textContent = '缺少 ?doc=<url>'; return; }
-  fetch(doc).then(function (r) {
-    if (!r.ok) throw new Error('HTTP ' + r.status + '（presigned 可能过期）');
-    return r.text();
-  }).then(function (t) {
-    document.body.innerHTML = '';
-    document.body.appendChild(document.createTextNode(t));   // markdeep 把 body 文本当 md 源渲染
-    window.markdeepOptions = { tocStyle: 'auto', mode: 'markdown' };
-    var s = document.createElement('script');
-    s.src = 'https://casual-effects.com/markdeep/latest/markdeep.min.js'; s.charset = 'utf-8';
-    document.head.appendChild(s);
-  }).catch(function (e) { document.body.textContent = '渲染失败：' + e.message; });
-})();
-</script></body></html>
-```
-
-## 日常使用（**不需要 root key、也不需要 CI token**）
-
-这是本设计的关键：日常上传 / 下载 / 分享都只用两样**会持久存在**的东西——Git 的 SSH key，和本地 mc 里那把**受限** `ci` alias。root key 与 CI token 只在「从零部署」时用一次。
-
-- **新增 / 批量更新内容**：`git clone`（走 SSH key）→ 编辑（一次改多个文件都行）→ **一次 `git push`**。
-  - **一次 push 推多个 commit 只触发一次同步**：`on: push` 按 **push 事件**触发，不是按 commit；一条 `git push` 里有 N 个 commit 也只跑一次 Action。而且 `rclone sync` 是「对齐到最终状态」的幂等操作，同步的是 push 后的最终树，不在乎中间有几个 commit。
-- **下载源文件**：`git pull` / `git clone`。
-- **生成分享直链**（持受限 `ci` alias 的机器执行；该 alias 把受限 key 存在 `~/.mc/config.json`，跨会话持久）：
-
-```bash
-# 原始直链（下载 = 原始 md / html），7 天有效
-mc share download --expire 168h ci/docs-share/demo/guide.md
-```
-
-- **分享渲染后的 md**：把上面的 presigned 链接 urlencode 后拼到 viewer：
-
-```bash
-RAW=$(mc share download --expire 168h ci/docs-share/demo/guide.md | sed -n 's/.*Share: *//p')
+RAW=$(mc share download --expire 168h <PUB_ALIAS>/docs-share/<dir>/<file>.md | sed -n 's/.*Share: *//p')
 ENC=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$RAW")
-echo "<S3_ENDPOINT>/docs-share/viewer.html?doc=$ENC"
+echo "https://<S3_HOST>/docs-share/viewer.html?doc=$ENC"
 ```
 
-- **撤销分享**：presigned 链接到期自动失效；要立刻作废所有在途链接，用 root key `mc admin accesskey rm` 删掉受限 key 再重发一把（会让所有已发链接同时失效）。
+适用：后端是 MinIO / 其他 S3 但没装 viewer rewrite 的边缘 Caddy。
+
+### 非 .md 资源（图片 / pdf / html / mp4）
+
+直接用方式 A 的命令。S3 把这些对象的 Content-Type 设对就行，浏览器自然渲染。
+
+```bash
+mc share download --expire 168h <PUB_ALIAS>/docs-share/<dir>/<file>.png
+mc share download --expire 168h <PUB_ALIAS>/docs-share/<dir>/<file>.pdf
+```
+
+## 更新内容（git push 即同步）
+
+```bash
+git clone <forgejo>/TiMidlY/docs-share
+# 编辑（一次改多个文件都行）
+git push
+```
+
+- **一次 push 推多个 commit 只触发一次同步**：`on: push` 按 push 事件触发不是按 commit；rclone sync 是「对齐到最终状态」的幂等操作，同步 push 后的最终 tree，不在乎中间几个 commit。
+- **本地 git status 干净 = 桶状态干净？不一定**：如果你（或别人）做过 forgejo rerun 早 sha 的操作，桶可能被回滚（详见 `~/TiMidlY-projects/docs-share/.github/copilot-instructions.md`）。
+- **想立刻让桶对齐 main HEAD**：`git commit --allow-empty -m "trigger sync" && git push`。
+
+## 撤销分享
+
+| 想做的 | 怎么做 |
+|---|---|
+| 单条链接到期 | 啥都不用做，`X-Amz-Expires` 自动失效 |
+| **立刻作废所有在途链接** | 在持 root key 的机器上 `mc admin accesskey rm rootadmin/ <CI_AK>` + 重新建一把新 CI key + 替换 forgejo secret + 替换本机 `~/.mc/config.json`（**让所有已发链接同时失效**） |
+| 撤回单个对象 | git 仓库 `git rm <path> && git push`，下次 sync 会把桶里对应对象删掉；已发出去的链接 GET 该对象会 404 |
 
 ## markdeep 写作惯例：依据引用 vs 说明脚注（可选）
 
@@ -213,13 +112,23 @@ echo "<S3_ENDPOINT>/docs-share/viewer.html?doc=$ENC"
 - 行内：原文直引用 `> 原文：**"..."**[#key]`；小结段用粗体标签开头（`**推论**：`/`**策略**：`）；来源分级标记 `【官方】`/`【第三方】`/`【推算】`。
 - 结尾：`---` + `**Bibliography**:`（条目一行一条、条间空行）+ 再一个 `---` + `**变更说明**`。
 
-## 排障 / 要点速查
+### markdeep 不能用什么（viewer 渲染下）
 
-- **改了内容 push 后桶没更新**：看 Action run 是否成功；rclone `-v` 日志看传输了哪些对象。
-- **所有对象 Last-Modified 每次都变**：说明用了按 mtime 判断的工具（`mc mirror` 等）→ 换 `rclone --checksum`。
-- **presigned 链接 403 / 过期**：`X-Amz-Expires` 到期重新生成；或受限 key 被删/改 policy。
-- **viewer 打开空白 / 报错**：`?doc=` 必须是**可 fetch** 的 URL（私有桶用 presigned）；presigned 与 viewer **同源**才无 CORS；浏览器需能访问 markdeep CDN。
-- **桶里混进了 `.git` / workflow 文件**：检查 rclone 的 `--exclude` 是否覆盖 `.git/**` 与 CI 目录。
-- **想给 CI 直连内网端点省一跳**：runner 在能直达对象存储内网地址的网络里时，把 `RCLONE_S3_ENDPOINT` 换成内网 `<MESH_ENDPOINT>`；但 presigned 分享链接必须用**公网** `<S3_ENDPOINT>`，否则外部打不开。
+- **`<script>`** —— viewer 客户端只加载 `markdeep.min.js`；md 内嵌脚本不执行（也不该执行，否则 docs-share 的"md 原样存储"约定被破坏）
+- **mermaid** —— viewer 没加载 mermaid runtime；要画流程图用 markdeep 原生 [ASCII diagram](https://casual-effects.com/markdeep/features.md.html#diagrams)
+- **GFM 表格里的复杂内联 HTML** —— markdeep 表格语法跟 GFM 兼容但严格度更高
 
-> 把 Markdown 导出为 PDF 见 `pdf-export.md`；源文件格式转换见 `format-conversion.md`。S3 兼容存储（RustFS / MinIO `mc`）的 versioning、软删/硬删、`ListObjectsV2` 截断等底层行为见 `rustfs.md`。
+需要这些功能就转为方式 B（`viewer.html?doc=`）的 viewer 是 stock markdeep 渲染，或者考虑直接传 HTML 文件（桶照样存，按 mc Content-Type 设 `text/html`）。
+
+## 排障速查
+
+| 现象 | 原因 / 修法 |
+|---|---|
+| 改了内容 push 后桶没更新 | 看 forgejo Actions run 是否成功；最常见是 DinD 短暂连不上 `data.forgejo.org` 拉 `actions/checkout` 超时（21s 那种）。**下次 push 会带上当前 main tree 整体 sync**，不用回头 rerun |
+| 浏览器贴 .md URL 看到的不是排版页是 md 原文 | 边缘 Caddy 没装 Accept rewrite，只支持方式 B；改用 `viewer.html?doc=` |
+| `viewer.html?doc=` 打开空白 / 报错 | `?doc=` 必须是**可 fetch** 的 URL（私有桶用 presigned）；presigned 与 viewer **同源**才无 CORS；浏览器需能访问 markdeep CDN |
+| presigned 链接 403 / 过期 | `X-Amz-Expires` 到期重新生成；或受限 key 被删 / 改 policy |
+| 同一个对象 mc cp 上传后下次 sync 又消失 | `rclone sync --remove` 是"以 git 仓库为权威 mirror"，桶里多余对象会被删；**永远以 git push 为唯一写入路径**，除非在做 hot-fix 对齐 |
+| 桶里看到很多 `0B` 目录条目 | `mc ls` 不带 `--recursive` 把 S3 prefix 列为 0B（视觉占位）；用 `mc ls --recursive` 看真实内容 |
+
+> 把 Markdown 导出为 PDF 见 `pdf-export.md`；源文件格式转换见 `format-conversion.md`。S3 兼容存储底层行为见 `rustfs.md`。

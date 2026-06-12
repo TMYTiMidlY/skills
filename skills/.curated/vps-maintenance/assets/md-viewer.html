@@ -41,6 +41,7 @@
 <script>
 (function () {
   var src = location.pathname;
+  var rawSrc = location.pathname + location.search;  // include SigV4 query for S3 backend
   var name = decodeURIComponent(src.split('/').pop());
   document.title = name;
 
@@ -99,7 +100,7 @@
         document.body.appendChild(mask);
       });
     } else {
-      dl.href = src + '?raw';
+      dl.href = rawSrc;  // S3-compatible: keep SigV4 query, no copyparty ?raw
       dl.setAttribute('download', name);
       dl.textContent = '⇩ 下载原文';
     }
@@ -174,7 +175,7 @@
     }
   }, true);
 
-  fetch(src, { headers: { Accept: 'text/plain' }, cache: 'no-store' })
+  fetch(rawSrc, { headers: { Accept: 'text/plain' }, cache: 'no-store' })  // SigV4 query must travel through to RustFS
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
     .then(function (md) {
       // Put raw markdown into body — Markdeep reads body.innerText and replaces body.innerHTML.

@@ -17,7 +17,7 @@
 | 有域名、想省心上 HTTPS | 域名模式 | 域名已解析到机器，`80/443` 可从公网直达 |
 | 只有 IP / 未备案 | IP 模式 | 用 `tls internal`，并在客户端导入 Caddy local root CA |
 | 需要 GitHub OAuth 登录 | `caddy-security` | 使用自定义 Caddy 二进制，配置 `GITHUB_CLIENT_*` 与 `JWT_SHARED_KEY` |
-| 需要“拿到链接即可读”的文档私链 | `caddy-webdav` + Markdeep viewer | URL 本身作为凭据；上传口单独做 `basic_auth` |
+| 需要"拿到链接即可读"的文档私链 | RustFS S3 + presigned + Markdeep viewer (docs-share) | 桶级 SigV4 签名 URL，自带过期；无 caddy-security 层 |
 
 ## 安装 Caddy
 
@@ -539,212 +539,173 @@ IP 模式里最容易错的两点：
 - **不要写** `cookie domain`
 - `trust login redirect uri domain regex` 里要把端口吃掉：`(:[0-9]+)?`
 
-## 无额外认证的文档私链（WebDAV + Markdeep viewer）
+## 文档私链分享站（docs-share：Git → RustFS S3 + Markdeep viewer）
 
-> 这一套的定位是：**用 capability URL 做只读分享**。  
-> 没有登录页、没有 OAuth、不接 `caddy-security`。URL 本身就是凭据：拿到链接的人能读，没拿到的一律 `404`。
+> 这一套的定位是：**用 S3 presigned URL 做带过期、可撤销的只读文档分享**。后端是 RustFS（S3-compatible）；上传走 Git push（forgejo runner `rclone sync`）；浏览器渲染靠 Caddy 按 `Accept` 分流到本地 `_viewer.html`。
 >
-> 上传口单独挂一个 `basic_auth` 保护，和读取口共享同一份存储目录。
+> **配套**：
 >
-> 浏览器打开链接时自动进 Markdeep viewer 渲染；脚本 `curl` 拿到的是 raw 原文；自己用 `rclone` / `curl -T` 上传。
+> - **客户端怎么用**（凭据存哪、生成分享链接、Markdeep 写作惯例）→ `software` skill 的 `references/docs-share.md`
+> - **viewer 壳子** → [`../assets/md-viewer.html`](../assets/md-viewer.html)
 >
-> viewer 壳子在 [`../assets/md-viewer.html`](../assets/md-viewer.html)。  
-> 客户端上传命令、分享链接用法、Markdeep 写作惯例见 `software` skill 的 `doc-share` reference（`references/doc-share.md`）；本节只覆盖服务端配置。
+> 本节只覆盖服务端：RustFS 桶 + 受限 CI key + Caddy 边缘反代 + viewer rewrite。
 
-### 安装 `caddy-webdav`
-
-从 [Caddy Download Page](https://caddyserver.com/download) 下载带 `github.com/mholt/caddy-webdav` 的二进制；如果已经装过 `caddy-security`，要重新下载一个**同时勾选两个插件**的二进制，然后按上面的“带插件二进制”流程替换系统 Caddy。
-
-验证：
-
-```bash
-caddy list-modules | grep webdav
-```
-
-正常应看到：
+### 架构与组件
 
 ```text
-http.handlers.webdav
+git push → forgejo (gitea-self-hosted) → forgejo-runner (DinD)
+                                          │
+                                          ▼
+                                 rclone sync --checksum --remove
+                                          │
+                                          ▼
+                                 RustFS S3 (mesh)
+                                          │
+                                          │ Caddy 边缘反代
+                                          ▼
+                                s3.example.com
+                          ┌──────────────────────────────────┐
+                          │ Idiom A: viewer.html?doc=...     │  (桶内匿名可读对象)
+                          │ Idiom B: 浏览器贴 .md 直接渲染   │  (Caddy Accept rewrite → /srv/viewer/_viewer.html)
+                          └──────────────────────────────────┘
 ```
 
-### 先准备 viewer、token、密码和目录
+两套 idiom 共存：
 
-安装 viewer 壳子：
+| Idiom | 入口 URL | 桶里需要 | Caddy 需要 | 适用 |
+|---|---|---|---|---|
+| **A. viewer 包装** | `<S3>/<bucket>/viewer.html?doc=<URL-encoded presigned>` | 桶根放 `viewer.html`（**单对象匿名可读**） | 仅普通反代 | 简单、跨 S3 后端通用 |
+| **B. 地址栏直贴** | `<S3>/<bucket>/<path>.md?<presigned>` | 不需要 | `s3.example.com` 加 Accept matcher + 本地 `_viewer.html` | 想要 "同一 URL 浏览器排版 / `curl` 拿原文" |
+
+### 客户端配置参考（详见 `software/docs-share.md`）
+
+服务端部署完成后，把**受限 CI key**（绑 policy 只允许操作 `docs-share/*` 这一个桶）写入：
+
+- forgejo 仓库 secret：`RUSTFS_CI_AK` / `RUSTFS_CI_SK`（让 runner 跑 rclone sync）
+- 操作者本机 `~/.mc/config.json` 的一个 alias（让本人 `mc share download` 生成 presigned）
+
+**root key 绝不写进 CI、不进 git、不留本机**。
+
+### 安装 viewer 壳子
 
 ```bash
-sudo install -D -m 0644 ../assets/md-viewer.html /opt/md-viewer/_viewer.html
+sudo install -D -m 0644 ../assets/md-viewer.html /srv/viewer/_viewer.html
 ```
 
-生成 token 与上传密码：
+viewer 壳子是**外置文件**（Caddy 本地 file_server 直接 serve），不在桶里——所以**不需要桶里有任何匿名可读对象就能跑 Idiom B**。
 
-```bash
-openssl rand -hex 16        # 32 位十六进制 token，做 capability URL
-openssl rand -base64 18     # 上传口明文密码
-```
+> Idiom A 仍可并存：桶里另放一个对象级 anonymous policy 放行的 `viewer.html`（详见 `software/docs-share.md`「从零部署」步骤 4）。两者不冲突，因为 Caddy matcher 只对 `*.md` 生效，不影响 `/viewer.html` 路径。
 
-把上传口明文密码转成 Caddyfile 里的 bcrypt：
+### Caddy 站点模板
 
-```bash
-caddy hash-password --plaintext '<pwd>'
-```
+下面模板假设：
 
-目录权限建议：
-
-```bash
-sudo mkdir -p /data/share
-sudo chown caddy:caddy /data/share
-```
-
-说明：
-
-- `basic_auth` 是 Caddy v2.10+ 的新指令名；旧文档里可能还会看到 `basicauth`。
-- Caddy 以 `caddy` 用户跑，WebDAV 的 `PUT/MOVE/DELETE` 需要目标目录可写。
-- `chown caddy:caddy /data/share` 最干净。
-- 如果还想自己 SSH 上去 `cp`，就建一个共用组，并配 `chmod 2775`，用 SGID 让新文件继承组。
-
-### 最小可用模板
-
-下面的模板假设：
-
-- 上传口走 `/dav/*`
-- 文档分享口走 `/<TOKEN>/*`
-- viewer 壳子放在 `/opt/md-viewer/_viewer.html`
-- 原始文件都存到 `/data/share`
+- 边缘域名：`<S3_HOST>`（如 `s3.example.com`）
+- 后端 RustFS：`<RUSTFS_S3_API>`（如 mesh 内 `10.144.18.10:9000`）
+- 外置 viewer：`/srv/viewer/_viewer.html`
 
 ```caddyfile
-share.example.com {
-    # 可选：如果前面定义过 error_pages snippet，再取消下面这行
-    # import error_pages
-
-    # bare token 不匹配 /<TOKEN>/*，补一个尾斜杠
-    @token_root path /<TOKEN>
-    redir @token_root /<TOKEN>/ 301
-
-    # 上传：basic_auth + WebDAV，共享同一份存储目录
-    handle /dav/* {
-        basic_auth {
-            <USER> <BCRYPT_HASH>
-        }
-
-        webdav {
-            root /data/share
-            prefix /dav
-        }
-    }
-
-    # viewer 壳子本身
-    handle /_viewer.html {
-        root * /opt/md-viewer
-        header Cache-Control "no-cache"
-        header Vary "Accept"
-        file_server
-    }
-
-    # 浏览器访问 .md：返回 viewer 壳子
-    @md_browser {
-        path_regexp md ^/<TOKEN>/.*\.md$
+<S3_HOST> {
+    # Accept-based rewrite: browsers (text/html) → viewer.html;
+    # everything else (CLI / viewer JS fetch with Accept:text/plain) → RustFS.
+    @md_in_browser {
+        path *.md
         header Accept *text/html*
     }
-    handle @md_browser {
+    handle @md_in_browser {
+        header Vary Accept
         header Cache-Control "no-cache"
-        header Vary "Accept"
         rewrite * /_viewer.html
-        root * /opt/md-viewer
+        root * /srv/viewer
         file_server
     }
-
-    # 其他请求：返回 raw 文件
-    # 包括：
-    # - curl 直接请求
-    # - viewer 内部 fetch(location.pathname)
-    # - 非 .md 的附件下载
-    handle /<TOKEN>/* {
-        header Vary "Accept"
-        root * /data/share
-        uri strip_prefix /<TOKEN>
-        file_server
-    }
-
-    # 其他路径一律 404，才能让 handle_errors 接管
     handle {
-        error "Not Found" 404
+        reverse_proxy <RUSTFS_S3_API>
     }
+    import error_pages
 }
 ```
 
 ### 这套设计为什么这么配
 
-- **上传口必须用 `webdav { prefix /dav }` 保留前缀**  
-  不要用 `handle_path` 先把 `/dav` 剥掉；否则 `PROPFIND` / `MOVE` 返回的 `href` 不完整，`rclone` 这类客户端会迷路。
+- **浏览器和 CLI 用 `Accept` 分流**
+  浏览器分支匹配 `.md` + `Accept: text/html`，内部 `rewrite` 到 `/_viewer.html`；viewer 里再 `fetch(location.pathname + location.search)` 拉原始 Markdown。第二次请求的 `Accept` 默认不含 `text/html`，自然落到 raw 分支透传 RustFS，不会递归套 viewer。
 
-- **下载口用 secret path + `uri strip_prefix`**  
-  这样上传和下载可以共享同一份目录。`rclone put /dav/foo.md` 写进去后，`/<TOKEN>/foo.md` 会立刻可见。
+- **viewer 反向 fetch 必须把 SigV4 query 透传**
+  S3 presigned URL 的签名签了 host + path + query，缺一不可。viewer 不能只用 `location.pathname`（旧 `/data/share` 时代的写法），必须 `location.pathname + location.search`。否则 RustFS 拿到无签名请求直接 403。
 
-- **浏览器和 CLI 用 `Accept` 分流**  
-  浏览器分支匹配 `.md` + `Accept: text/html`，内部 `rewrite` 到 `/_viewer.html`；  
-  viewer 里再 `fetch(location.pathname)` 拉原始 Markdown。这个 fetch 默认 `Accept` 不含 `text/html`，自然会落到 raw 分支，不会递归套 viewer。
+- **viewer 壳子采用 Markdeep 自己的工作方式**
+  先把原始 Markdown 塞进 `document.body.textContent`，再动态加载 Markdeep CDN；Markdeep 会同步处理整页内容。处理结束后再把导航条（面包屑、下载按钮）插回 `body` 首位。
 
-- **viewer 壳子采用 Markdeep 自己的工作方式**  
-  先把原始 Markdown 塞进 `document.body.textContent`，再动态加载 Markdeep CDN；Markdeep 会同步处理整页内容。  
-  处理结束后，再把导航条（面包屑、下载按钮等）插回 `body` 首位。
+- **`_viewer.html` 不需要在桶里**
+  Caddy 直接 file_server `/srv/viewer/`；rewrite 是服务端内部重写，不发实际 HTTP 请求到 RustFS，所以 viewer 这块不消耗 SigV4 / 不增加桶里匿名对象。
 
-- **404 要用 `error`，不要用 `respond`**  
-  只有这样才会触发前面的 `handle_errors`，由 `error-pages` 服务统一接管。
+- **`rclone sync --checksum` 而不是 `mc mirror`**
+  `actions/checkout` 每次把所有文件以**当前时间**写入工作区，mtime 全被重置。按 mtime 判变化的工具会把整棵树判为"已变"→每次全量重传。`rclone --checksum` 改按内容哈希（对比 S3 ETag/MD5）判断，无视 mtime，只传内容真的变了的对象。`sync` 同时镜像删除（仓库删的对象桶里也删）。
+
+### 验证矩阵（部署完跑一遍）
+
+| 场景 | 命令 | 期望 |
+|---|---|---|
+| 浏览器贴签名 .md URL | `curl -H 'Accept: text/html' "<signed-md>"` | 200 + `text/html`（viewer 壳子内容） |
+| viewer JS 反向 fetch（同 URL + 改 Accept） | `curl -H 'Accept: text/plain' "<signed-md>"` | 200 + `text/markdown` + md 原文 |
+| CLI 默认（Accept:*/*） | `curl "<signed-md>"` | 200 + `text/markdown` + md 原文 |
+| 浏览器贴**未签名** .md URL | `curl -H 'Accept: text/html' "<S3>/<bucket>/foo.md"` | 200 + viewer 壳子（viewer 是 Caddy 本地 serve，无需签名；viewer JS 后续 fetch 拿 403） |
+| CLI 未签名 | `curl "<S3>/<bucket>/foo.md"` | 403（透传 RustFS，SigV4 验签拒） |
+| 兼容 Idiom A | `curl "<S3>/<bucket>/viewer.html"` | 200（桶内匿名 viewer.html 仍可访问，老工作流不破） |
 
 ### 这套方案踩过的坑
 
-- **`rewrite` 是服务端内部重写，浏览器地址栏不变**  
-  viewer 不能靠 `?src={uri}` 取原文地址，要直接看 `location.pathname`。
+- **Caddy matcher 是按 client 请求的 path + header 判断**，**不**按 backend 返 Content-Type；所以匹配 `*.md` 与 RustFS 把 `.md` 返成 `text/markdown` 还是别的无关。
 
-- **浏览器按 URL 缓存响应，不看 `Accept`**  
-  首访 `Accept: text/html` 可能把 viewer 壳子缓存下来，之后 viewer 内 `fetch()` 同 URL 时也吃缓存。  
-  这里靠三件事一起修：
+- **`rewrite` 是服务端内部重写，浏览器地址栏不变**
+  viewer 不能靠 `?src={uri}` 取原文地址，要直接看 `location.pathname` + `location.search`。
+
+- **浏览器按 URL 缓存响应，不看 `Accept`**
+  首访 `Accept: text/html` 可能把 viewer 壳子缓存下来，之后 viewer 内 `fetch()` 同 URL 时也吃缓存。靠三件事一起修：
   - viewer 分支发 `Vary: Accept`
-  - raw 分支也发 `Vary: Accept`
-  - viewer 分支额外发 `Cache-Control: no-cache`，前端 fetch 再加 `cache: 'no-store'`
+  - raw 分支由 RustFS 控制（默认带 `Vary`，必要时在 caddy fallback handle 里也加）
+  - viewer 分支额外发 `Cache-Control: no-cache`，前端 fetch 加 `cache: 'no-store'`
 
-- **`path /<TOKEN>/*` 不匹配 bare token**  
-  `/x` 不等于 `/x/*`，所以要单独加：
-  ```caddyfile
-  redir /<TOKEN> /<TOKEN>/ 301
-  ```
+- **`<base href>` 会把 `#anchor` 解析成 `base-origin/#anchor`**
+  TOC 里的 `<a href="#section">` 会跳目录页而不是当前文档内滚动。解决方式是在 `document` 上用 capture 阶段监听 click，拦截 `href` 以 `#` 开头的链接，改成 `location.hash = h`。其他相对/绝对链接仍交给 `<base href>` 处理。
 
-- **`<base href>` 会把 `#anchor` 解析成 `base-origin/#anchor`**  
-  TOC 里的 `<a href="#section">` 会跳目录页而不是当前文档内滚动。  
-  解决方式是在 `document` 上用 capture 阶段监听 click，拦截 `href` 以 `#` 开头的链接，改成 `location.hash = h`。其他相对/绝对链接仍交给 `<base href>` 处理。
-
-- **`tocStyle` 没官方文档**  
+- **`tocStyle` 没官方文档**
   可用字面量是 `"auto"`、`"short"`、`"medium"`、`"long"`、`"none"`，是从 `markdeep.min.js` 源码里 grep 出来的。当前 viewer 用 `"auto"`。
 
-- **Markdeep 默认给标题和 TOC 都加自动序号**  
-  官方没有直接关掉的配置项。viewer 里扩了一个自定义选项 `noSectionNumbers`：  
-  设为 `true` 时，注入 CSS 同时隐藏正文标题的 `::before` counter 内容和 TOC 里的 `.tocNumber`；改回 `false` 两处编号都会恢复。
+- **Markdeep 默认给标题和 TOC 都加自动序号**
+  官方没有直接关掉的配置项。viewer 里扩了一个自定义选项 `noSectionNumbers`：设为 `true` 时注入 CSS 同时隐藏正文标题的 `::before` counter 内容和 TOC 里的 `.tocNumber`；改回 `false` 两处编号都会恢复。
 
-- **CDN 用 `casual-effects.com/markdeep/latest/markdeep.min.js`**  
+- **CDN 用 `casual-effects.com/markdeep/latest/markdeep.min.js`**
   这是作者 Morgan McGuire 的官方站。
 
-- **微信 WebView 无法下载文件**  
-  这是微信平台层面的下载拦截。viewer 检测 `MicroMessenger` UA 后，下载按钮要改成弹出蒙层，引导用户“在浏览器中打开”；其他浏览器再正常用 `download` 属性。
+- **微信 WebView 无法下载文件**
+  这是微信平台层面的下载拦截。viewer 检测 `MicroMessenger` UA 后，下载按钮要改成弹出蒙层，引导用户"在浏览器中打开"；其他浏览器再正常用 `download` 属性。
+
+- **`_viewer.html` 直接访问 `https://<S3_HOST>/_viewer.html`（没带 .md 后缀）会 400**
+  因为不命中 matcher，落到 fallback handle 透传 RustFS → "桶名 = `_viewer.html`, key = 空" → `InvalidBucketName`。这是预期：viewer 总是通过 rewrite 内部 serve，外部不该直接访问。
+
+- **不要把 `?raw` 或 `?download` 这种 copyparty / file_server 习惯的 query 拼到 fetch URL**
+  会破坏 SigV4 签名，RustFS 直接 403。下载按钮直接 `dl.href = location.pathname + location.search` 即可（presigned `.md` GET 本来就是原文，不需要 `?raw` 切换 inline/attachment）。
+
+- **`_viewer.html` 是公共组件**
+  任何修改都同时影响所有 .md 在浏览器的渲染行为。改前测 6 场景矩阵，改后保留 `<TIMESTAMP>.bak` 至少 7 天。改完后**新版 viewer 对所有用 viewer 渲染的 .md 立即生效**——这是公共组件，改前确认不破老工作流（`viewer.html?doc=<URL>` 这种 query 模式必须仍可用）。
 
 ### 撤销与过期
 
-这一套**没有**单条撤销 / 过期语义。
+S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capability URL 强：
 
-做法只有：
+| 需求 | 做法 |
+|---|---|
+| 单链接撤销 | 链接到期自动失效；要立刻作废所有在途链接，用 root key `mc admin accesskey rm` 删掉受限 CI key 再重发一把（**让所有已发链接同时失效**） |
+| 链接过期时间 | `mc share download --expire 168h` 生成时指定；最大 7 天（S3 SigV4 协议上限） |
+| 后台管理 | RustFS console (`:9001`) 看对象级访问日志；forgejo Actions 看 sync 历史；细粒度审计：开 RustFS audit log |
 
-- **换 token**，然后 `sudo systemctl reload caddy`
-- 必要时移动或删除底层文件
+### 不要做的事
 
-如果你需要：
-
-- 单链接撤销
-- 链接过期时间
-- 后台管理
-
-那就不要用 capability URL 这套，改用：
-
-- `sftpgo`：自带 share 链接管理
-- `caddy-signed-urls`：签名 + `expires`，但 README 自标 `not production`
+- **不要让 `:9001`（RustFS console）暴露到公网**——Caddy 反代只对 `:9000`（S3 API）做。
+- **不要绕过 forgejo / rclone sync 直接 mc cp 写桶**——下次 sync `--remove` 会把它抹掉，除非你**确实**在做"对齐桶到 main HEAD" 这种 hot-fix（见 `~/TiMidlY-projects/docs-share/.github/copilot-instructions.md` 的 rerun 覆盖事故说明）。
+- **不要对早 sha 的 forgejo Actions run 做 rerun**——`rclone sync --remove` 会按那个 sha 的 tree mirror，覆盖更新 commit 的产物。要重新对齐桶用：rerun **当前 HEAD 对应那条 run**，或 push 一个空 commit。
 
 ## 实用备忘
 
@@ -756,7 +717,8 @@ share.example.com {
   - 域名模式：**必须写** `cookie domain`
   - IP 模式：**必须不写** `cookie domain`
   - `JWT_SHARED_KEY`：**必须固定**
-- WebDAV 私链：
-  - 上传口和分享口共用同一份目录
-  - capability URL 本身就是凭据
-  - 浏览器和脚本靠 `Accept` 分流
+- docs-share（S3 + viewer rewrite）：
+  - 后端 RustFS S3，鉴权 SigV4 presigned，**自带过期 ≤ 7d**
+  - viewer 壳子是 Caddy 本地 file_server（`/srv/viewer/_viewer.html`），**不在桶里**
+  - 浏览器和脚本靠 `Accept` 分流：`text/html` → viewer rewrite；其他 → 透传 RustFS
+  - viewer JS 必须用 `pathname + search` 把 SigV4 query 透传给反向 fetch
