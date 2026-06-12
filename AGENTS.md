@@ -5,11 +5,12 @@
 ## 核心规则
 
 - Python 环境优先级：Pixi > uv > python/python3。
-- Python 依赖优先写进脚本的 PEP 723 元数据；已有的 Python 文件运行需要临时依赖用 `uv run --with <package> <script>`；非必要时不用 `uv pip install`，而是使用 `uv add` 或 `uv run --with`。
+- Python 依赖优先写进脚本的 PEP 723 元数据；临时依赖用 `uv run --with <pkg> <script>`，项目级依赖用 `uv add`。**禁止任何写入系统 Python 的方式**（`uv pip install --system` / `pip install` / `pip install --break-system-packages` 等）——Ubuntu/Debian 的 PEP 668 标记会让这些操作静默失败或与 apt 包打架；需要隔离环境就 `uv venv` 起一个，绝不污染系统解释器。
 - 遇到需求不清、行为有分歧、边界不明确时，优先调用当前环境可用的提问工具向用户确认；如果没有可用工具，也必须用普通对话直接提问，不要直接暂停对话或跳过确认。
 - 未经用户明确指令，严禁自动执行 `git add` 或 `git commit`。
 - 若暂存区为空，且用户明确要求提交：只暂存用户明确要求提交的文件或改动；如果提交范围不明确，或工作区存在其他未说明改动，先说明当前状况，再按上述提问原则确认提交范围。
 - 若暂存区非空，且用户明确要求提交：先说明当前状况，再按上述提问原则确认提交范围。
+- 未经用户**对发布动作本身**显式同意，严禁自动执行任何"对外发布 / 版本化"动作：`cz bump` / `git tag` / `git push --tags` / `git push --follow-tags` / `twine upload` / `npm publish` / `cargo publish` / `uv publish` / GitHub release 创建 / pypi 等任何注册仓库上传等。`--dry-run` / `--check` 之类只读探查可以做。**即使用户已经同意本轮的代码 commit，也要单独再确认一次发布动作**，不要把"commit + bump + push --follow-tags"打包成一步执行。
 - 删除文件时**强制使用 `trash-put` 代替 `rm`，无任何例外**。即使跨 filesystem（NTFS / drvfs / CIFS / FUSE / overlay 等）也用 `trash-put`：
   - 跨 filesystem 时 trash-cli 会在挂载点根目录建 `.Trash-<UID>/`，文件留在源 filesystem 内可恢复；不会自动跨 filesystem 拷回本地，不影响"可恢复"这一核心保证。
   - NTFS / Windows 盘没有 freedesktop trash spec，trash-cli 仍会在该卷的挂载点根目录建 `.Trash-<UID>/` 落实回收站语义；Windows 端虽然不会出现在资源管理器回收站，但 agent 仍能从该目录恢复——比 `rm` 安全得多。
@@ -37,4 +38,6 @@
 - **demo first**（≈ mentor-skill）：能跑出来看见的现象，先让我跑一下再解释理论。
 - **循环检测**（≈ mentor-skill）：同一点解释 2 轮我还没懂，就换形式（文字→类比→demo→更小拆解），不要堆更多字。
 - **最小可行解释**（≈ mentor-skill）：默认 1~3 句，更多内容等我要。
+- **澄清类短问题先答问题、不要顺手开干**：用户提"X 是什么 / 为什么 / ……对吗 / ……对不对 / 这样行不行"这类校对/澄清问题时，先用文字答清楚问题本身，**不要**顺手改文件、跑长命令、自动调起重 skill。如果你判断后续需要做事，先告诉我你想做什么，我同意了再做。
 - **诚实不确定**：不确定就标"不确定/待验证"，别用模棱两可糊弄。
+- **截图先转录再判断**：用户给截图/图片时，先把屏幕上**已经写出来的关键文本**（错误码、版本号、状态字段、按钮文字、表格里的数）逐字复述给我，再做推断。不要总结性带过，也不要凭印象编一个差不多的——读图的反馈回路是用来核对客观事实的，不是用来产生印象的。
