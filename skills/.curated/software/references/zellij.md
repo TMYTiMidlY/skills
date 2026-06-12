@@ -47,9 +47,16 @@ web_sharing "on"
 
 ## login token 与 session token
 
-`zellij web --create-token` 用于生成登录令牌。该令牌只显示一次，Zellij 本地仅保存其 hash。需要在反代中透传认证时，应针对目标端口重新登录并提取对应的 `session_token`，不要复用其他端口或其他实例生成的 token。
+zellij web 的认证是**两层 token**：
 
-以下示例使用本机 HTTP 端口；如果目标端口已启用 HTTPS，将 URL 改为 `https://127.0.0.1:<PORT>`：
+| 层 | 怎么拿到 | 存储 | 有效期 |
+|---|---|---|---|
+| **login token**（管理员侧） | `zellij web --create-token`，输出 `token_<N>: <uuid>` | sqlite `tokens` 表，**只存 sha256 hash**；明文只返回一次，事后**无法找回** | **永久**（`tokens` 表没有 `expires_at` 列，`validate_token` 也不查时间） |
+| **session_token**（反代/浏览器侧） | `POST /command/login` 后 `Set-Cookie` 返回的 `session_token=<uuid>` | sqlite `session_tokens` 表，与 login token 多对一关联 | **硬编码**：`remember_me=true` 4 周 / `remember_me=false` 5 分钟（源码 `zellij-utils/src/web_authentication_tokens.rs::create_session_token`） |
+
+login token 丢了**只能 revoke 后重建**——管理工具只剩 `--list-tokens`（看名字 + 创建时间，没值）、`--revoke-token <name>` / `--revoke-all-tokens`。反代注入 Cookie 时要**针对目标端口重新登录并提取对应的 `session_token`**，不要复用其它端口或其它实例的 token。
+
+以下示例使用本机 HTTP 端口；目标端口走 HTTPS 时把 URL 改为 `https://127.0.0.1:<PORT>`：
 
 ```bash
 PORT=<PORT>
@@ -67,6 +74,76 @@ RESPONSE=$(curl -sk "${ZELLIJ_WEB_BASE_URL}/command/login" \
 SESSION_TOKEN=$(echo "$RESPONSE" | grep -oP 'session_token=\K[^;]+')
 echo "会话令牌: $SESSION_TOKEN"
 ```
+
+### session_token 为什么会过期、谁说了算
+
+- **真理由是 server 端 sqlite 那一行 `expires_at`**：`validate_session_token` 的 SQL 就是 `SELECT COUNT(*) FROM session_tokens WHERE session_token_hash='<hash>' AND expires_at > datetime('now')`，过期立刻 401。
+- **cookie 的 `Max-Age=2419200`（28 天）只是同一个数往浏览器抄了一份**：Caddy 注入固定 Cookie 跳过浏览器的反代场景里它**完全不起作用**，过期完全由 DB 决定。
+- `create_session_token` 每次进入还会顺手调 `cleanup_expired_sessions()` 把所有 `expires_at <= now` 的行**物理 DELETE**。所以过期的 session_token 在 DB 里**会消失**，不是只是被打无效标记。
+- CLI 和配置文件**都没暴露这个 TTL**——不重编译 / 不改 DB 没法改有效期。
+
+### 判断是不是 session_token 过期
+
+直接打 zellij 自己的 `/ws/control`（WebSocket 升级端点），对照伪造 token：
+
+```bash
+ZELLIJ=http://127.0.0.1:8082   # 或 https://...
+TOKEN=<可疑的 session_token>
+
+curl --noproxy '*' -sk -o /dev/null -m 4 -w "real=%{http_code}\n" \
+  -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  -H "Cookie: session_token=$TOKEN" "$ZELLIJ/ws/control"
+curl --noproxy '*' -sk -o /dev/null -m 4 -w "fake=%{http_code}\n" \
+  -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  -H "Cookie: session_token=00000000-0000-0000-0000-000000000000" "$ZELLIJ/ws/control"
+```
+
+读法：
+
+- `real=401` 且 `fake=401` → 你这个 token 已无效（过期 / 已 revoke / 拼错）。
+- `real=101`（WebSocket 升级成功）或 `real=405`（method/upgrade 后续校验挑剔，但**认证已过**），而 `fake=401` → token 有效。
+
+`--noproxy '*'` 不可省：很多 dev 机 shell 环境里有 `http_proxy=http://127.0.0.1:7890`，curl 默认会把 `localhost` 也送进 proxy 导致请求被吃掉，必须强制绕开。`curl < 7.86` 还会把 zellij WebSocket 后续帧当 "HTTP/0.9" 报错，把测试机 curl 升一下（或换 Python `socket` 直连）就稳。
+
+### 让 session_token 永不过期：直接改 DB
+
+CLI 没暴露 TTL，要彻底免维护就改 DB 里那行 `expires_at`。**保留 hash 即可，session_token 明文继续用**，不需要重新生成：
+
+```bash
+DB=~/.local/share/zellij/tokens.db                                                # Linux
+# DB="$HOME/Library/Application Support/org.Zellij Contributors.Zellij/tokens.db" # macOS
+# Windows: %APPDATA%\Zellij\data\tokens.db （从 WSL 走 /mnt/c/Users/<USER>/AppData/Roaming/Zellij/data/tokens.db）
+cp -a "$DB" "$DB.bak-$(date +%Y%m%d-%H%M%S)"     # 必做：先备份
+
+TOKEN=<session_token 明文>
+HASH=$(printf '%s' "$TOKEN" | sha256sum | awk '{print $1}')
+
+sqlite3 "$DB" "UPDATE session_tokens SET expires_at='2099-12-31 00:00:00' WHERE session_token_hash='$HASH'"
+sqlite3 -header -column "$DB" "SELECT id, remember_me, created_at, expires_at FROM session_tokens WHERE session_token_hash='$HASH'"
+```
+
+要点：
+
+- **不用重启 zellij**：`validate_session_token` 每个请求都现查 DB，UPDATE 立即生效。
+- `cleanup_expired_sessions()` 的 WHERE 是 `expires_at <= datetime('now')`，**未来时间的行不会被清**，所以 2099 这条永远活着。
+- **zellij schema 升级的话这个 hack 就废**——`session_tokens` 表结构改了或加严格迁移可能直接清表。语义上 zellij 设计 session_token 就该轮换，改 DB 是绕设计意图，**不要批量用、也不要对生产无人值守服务依赖**；本工作区把它用在自用 zellij web 反代 Cookie 这种"我自己一个人用 + Caddy 还有外层 OAuth 兜底"的场景。
+- 没装 `sqlite3` 的环境（干净 WSL / Windows pwsh）用 Python stdlib 等价做：
+
+```python
+import sqlite3, hashlib
+db = '<path/to/tokens.db>'
+tok = '<session_token>'
+h = hashlib.sha256(tok.encode()).hexdigest()
+c = sqlite3.connect(db); c.execute(
+  "UPDATE session_tokens SET expires_at=? WHERE session_token_hash=?",
+  ('2099-12-31 00:00:00', h)); c.commit(); c.close()
+```
+
+### 长期替代方案：systemd timer 自动续期
+
+如果不想动 DB schema 直接挂死，正路是定期用还活着的 login token 重新跑 `/command/login` 拿新 `session_token` → 写回 Caddy（或其它反代）→ reload。login token 永久有效是这套方案的前提。坑：reload Caddy 通常要 sudo / root 写 Caddyfile，得给 timer 一条窄 sudoers 口子（`NOPASSWD: /bin/systemctl reload caddy, /usr/bin/sed …`），或把这条 Cookie 拆到非 root 的 include 文件里再让 timer 自己改。
 
 ## Caddyfile 示例
 Caddy 反代 Zellij Web 时，常见场景分为两类：本机部署和远程部署。`header_up Cookie "session_token=..."` 仅用于把登录后得到的 `session_token` 透传给 Zellij，本身不决定反代拓扑。
@@ -150,6 +227,47 @@ WantedBy=multi-user.target
 如需新增端口，可使用独立 config，或在配置中显式设置 `web_server_port <PORT>`。反代前应先对该端口重新生成并登录，拿到新的 `session_token` 后再写入 `header_up Cookie`。
 
 重启 `zellij.service` 会让 Web 配置重新下发；如果该 service cgroup 中已有活跃 session/pane/agent 进程，可能中断现有会话，执行前先提醒用户。
+
+## Windows 安装与数据目录
+
+官方在 [zellij.dev/documentation/installation](https://zellij.dev/documentation/installation) 对 Windows 只说一句"从 release 页下载 binary，解压后运行 `zellij.exe`"，没规定安装路径。但每个 release 实际同时提供 4 个 Windows asset：
+
+| 文件名（`<ver>` 为版本号，如 `0.44.3`） | 含 web client | 形态 |
+|---|---|---|
+| `zellij-x86_64-pc-windows-msvc.zip` | 是 | 便携 zip |
+| `zellij-x86_64-pc-windows-msvc-installer.msi` | 是 | **MSI 安装包** |
+| `zellij-no-web-x86_64-pc-windows-msvc.zip` | 否 | 便携 zip |
+| `zellij-no-web-x86_64-pc-windows-msvc-installer.msi` | 否 | **MSI 安装包** |
+
+推荐用 **MSI**：装完会进"添加/删除程序"、per-user 独立、卸载干净；比 zip 便于排查、比 `cargo install --locked zellij` 省事（后者要 perl/strawberry/MSVC build tools，zellij 0.43 之前 Windows 还标 experimental）。MSI 不会写 PATH，要么用绝对路径调用，要么手动把安装目录加进用户 PATH。
+
+### 关键路径速查
+
+| 类别 | 路径 | 备注 |
+|---|---|---|
+| **可执行文件**（MSI 默认） | `%LOCALAPPDATA%\Zellij\zellij.exe`，即 `C:\Users\<USER>\AppData\Local\Zellij\zellij.exe` | MSI per-user 安装的默认位置 |
+| **数据目录**（含 `tokens.db`、配置等） | `%APPDATA%\Zellij\`，即 `C:\Users\<USER>\AppData\Roaming\Zellij\` | 由 [`directories` crate](https://docs.rs/directories) 的 `ProjectDirs::from("", "", "Zellij")` 决定，与是否走 MSI 无关；`tokens.db` 具体在 `%APPDATA%\Zellij\data\tokens.db` |
+| 自编译产物（参考） | `<repo>\target\release\zellij.exe` | `cargo install --locked zellij` 或源码 `cargo build` 出来的位置；MSI 与之独立 |
+
+可执行文件落在 `Local`、数据目录在 `Roaming`——**两个分散在不同根目录**，不要假设它们同父。这一点和 Linux/macOS 不一样：
+
+| 平台 | 数据目录（`tokens.db` 在 `<data>/tokens.db`） |
+|---|---|
+| Linux | `~/.local/share/zellij/` |
+| macOS | `~/Library/Application Support/org.Zellij Contributors.Zellij/` |
+| Windows | `%APPDATA%\Zellij\data\` |
+
+### 第三方 Windows 包管理器
+
+`docs/THIRD_PARTY_INSTALL.md` **不列任何 Windows 渠道**（只列 Arch / Fedora / macOS Homebrew / MacPorts / Void）。winget / scoop / chocolatey 上的 zellij 都是社区维护，zellij 团队不背书。要稳定就 MSI。
+
+### Windows 上做后台 service
+
+Windows 上没有 systemd 对等物。常见做法：
+
+- **NSSM** 把 `zellij.exe web` 包成 Windows Service（推荐，跟登录 session 解耦）。
+- 用户登录脚本 `Start-Process -WindowStyle Hidden zellij.exe web`（不解耦，注销/锁屏可能受影响）。
+- `zellij.exe web --daemonize` 直接后台化：Unix 走 pipe 信号，**Windows 走 TCP 探测启动完成**，所以 `--server-startup-timeout`（默认 10s）只在 Windows 起作用，慢机/冷启动可能要调大。
 
 ## Zellij Web 浅色主题与 Codex 颜色踩坑
 
