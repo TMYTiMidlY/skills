@@ -91,3 +91,56 @@ export https_proxy=http://<用户名>:<密码>@127.0.0.1:10131
 - 如果远程机器上 10131 已被占用，SSH 会报 `bind: Address already in use`，转发不生效但连接本身可能仍然建立。换端口，或检查 `ss -tlnp | grep 10131`。
 - 修改 SSH config 添加 RemoteForward 后，已有 ControlMaster 连接不含新配置，需要先执行 `ssh -O exit <远程机器名>`，重新连接才会生效。
 - 两边都显式写 `127.0.0.1` 更清晰；本地端写 `127.0.0.1` 比 `localhost` 可靠，可避免 `localhost` 解析到 IPv6 `::1` 而代理只听 IPv4。
+
+## 主机密钥校验：known_hosts、CheckHostIP 与不同 SSH 实现的差异
+
+SSH 连接时验证的是服务器的**主机密钥**（host key），不是 IP，也不是域名。`known_hosts` 记录"某主机名 / IP → 哪把 host key"。只有服务器重装、换了密钥才算"key 变了"；**只换 IP、host key 不变，从密码学角度还是同一台机器**。
+
+不同 SSH 实现对"IP"的态度不一样，这会造成同一台主机用一个客户端连得上、换一个客户端却报错：
+
+- **OpenSSH 默认 `CheckHostIP no`**（`man ssh_config`：默认不检查 IP；这是 OpenSSH 8.5 改的默认值，未逐版核证）。它**只按连接用的主机名**去 `known_hosts` 找 key 比对，完全不看 IP。后果：服务器 IP 变了（换 VPS、DNS 改解析），只要 host key 没变、主机名条目命中，OpenSSH 一声不吭就放行；副作用是它**从不写 IP→key 条目**，`known_hosts` 里往往只有主机名的明文条目。
+- **纯第三方 SSH 库**（如 [asyncssh](https://github.com/ronf/asyncssh)，纯 Python 实现，被一些 MCP / 自动化工具当底层引擎）没有 `CheckHostIP no` 这种放宽，校验时**把连接解析到的 IP 也纳入 `known_hosts` 匹配**（≈ `CheckHostIP yes` 的行为）。
+
+**典型症状**：同一台主机，`ssh <host>`（OpenSSH）正常，但走 asyncssh 之类的客户端报 `Host key is not trusted for host <host>`。**几乎总是**：主机 host key 没变、但解析 IP 变了，而 `known_hosts` 里只有主机名的明文条目、缺新 IP 的条目——不是真的 key 被篡改。
+
+诊断（确认"是 IP 变了"而非"key 变了"）：
+
+```bash
+# 存的 key 和服务器实时 key 是否一致（一致 = 不是 key 变了）
+diff <(ssh-keygen -F <host> | awk '/ssh-ed25519/{print $3}') \
+     <(ssh-keyscan -t ed25519 <host> 2>/dev/null | awk '{print $3}')
+ssh-keygen -F <新IP>     # 输出为空 = known_hosts 缺这个 IP 的条目
+```
+
+修复——补上"主机名 + IP"的条目（`-H` 顺带哈希，避免明文主机名/IP 落盘）：
+
+```bash
+ssh-keyscan -H <host> <新IP> >> ~/.ssh/known_hosts
+```
+
+追加不删旧条目，对 OpenSSH（只看主机名）无影响，同时补齐检查 IP 的客户端所需的 IP→key 映射。
+
+## ControlMaster 连接复用
+
+裸 `ssh` / `scp` 每次调用都新建 TCP 并重新认证（百毫秒级开销）。`ControlMaster` 让多次 ssh 复用同一条已认证的**主连接**（经一个 Unix domain socket），后续调用只开 channel，省掉重复握手；`ControlPersist` 让主连接在空闲后再保留一段时间。
+
+在 `~/.ssh/config` 的 `Host *` 下：
+
+```sshconfig
+Host *
+    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%r@%h-%p
+    ControlPersist 10m
+```
+
+- **Windows OpenSSH 不支持** `ControlMaster`（依赖 Unix domain socket，Windows 默认编译不带），复用不可靠；Win 上免重复输 passphrase 优先靠 `ssh-agent`（见上文）。
+- 改了 config（如新增 `RemoteForward`）后，**已存在的主连接不含新配置**，需 `ssh -O exit <host>` 关掉主连接、重连才生效。
+
+## 裸 ssh / scp：跑命令、交互式 sudo、编辑远端文件
+
+没有 hash 校验的远端编辑工具（如 portal MCP）时，纯 OpenSSH 也能干活，但有几个点要注意：
+
+- **`SSH_AUTH_SOCK` 可能缺失**：非交互 / 非登录 shell 不一定 source 过 `~/.bashrc`，agent 起的 shell 里 ssh-agent 的 socket 变量可能没设。先确保它指向 agent，例如 `export SSH_AUTH_SOCK=/run/user/$(id -u)/ssh-agent.socket`。
+- **跑一次性命令**：`ssh <host> "<command>"`。
+- **交互式 sudo 要 `ssh -t`**：`sudo` 从 TTY 读密码，普通 `ssh <host> "sudo ..."` 没分配 TTY，sudo 读不到输入（或直接报错）。用 `ssh -t <host> "sudo ..."`（`-t` 强制分配 TTY）。多步 sudo 操作合进一个脚本，`scp` 到远端 `/tmp/`，再 `ssh -t <host> "sudo bash /tmp/<script>.sh"`，避免反复输密码。脚本内部把日志重定向到固定文件（如开头 `exec > >(tee /tmp/<name>.log) 2>&1`），跑完再 `scp` 拉日志——别把重定向写在本地 ssh 命令行上（那是本地重定向，不是远端）。
+- **非平凡编辑别用 ssh 内联 `sed`/`awk`**（易错、不可审查）：`scp` 拉到本地用编辑器改、再 `scp` 传回；只有简单的单行追加 / 替换才直接 ssh 执行。
