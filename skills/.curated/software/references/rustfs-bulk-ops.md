@@ -2,7 +2,7 @@
 
 > 往 RustFS 桶上批量做 list / delete / copy 几万到几百万对象时，光用客户端默认设置经常 hang 或 silent fail。下面是踩过坑后的稳态补丁。主文档（versioning 语义、列举 bug、copy timeout、性能特征）在 [rustfs.md](rustfs.md)。
 >
-> ⚠️ **前置**：所有"靠 `list_objects_v2` 列源"的步骤，在 `≤ beta.7`（列举截断 bug 未修，见 [rustfs.md §4](rustfs.md)）的服务端上会**静默漏列**。受影响版本上列源改走 `list_object_versions()` / `mc ls --versions` 过滤可见集，或先升级 RustFS。
+> ⚠️ **前置**：所有"靠 `list_objects_v2` 列源"的步骤，在 `≤ beta.7`（列举截断 bug 未修，见 [rustfs.md §4](rustfs.md)）的服务端上会**静默漏列**。受影响版本上列源改走 `list_object_versions()` / `mc ls --versions` 过滤可见集，或升级到 `1.0.0-beta.8`+（已含修复）。
 
 ## (a) 大桶 list 慢 → per-shard 并发 list
 
