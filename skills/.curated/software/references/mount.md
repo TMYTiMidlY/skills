@@ -188,12 +188,44 @@ findmnt <absolute-local-mount>
 # 改 env 后只需 systemctl --user restart rclone@<remote>
 ```
 
-### 关键坑
+### systemd service 排障（起不来 / 反复重启 / ExecStop 失败）
 
-- **`ExecStart=` 的第一项（可执行文件路径）systemd 不展开 `$VAR`，只展开 `%` specifier。** 写 `ExecStart=${RCLONE_BIN} ...` 会直接 `status=203/EXEC: Failed to locate executable ${RCLONE_BIN}: No such file or directory`，即使 ExecStartPre 用同一个变量 `test -x` 是过的。`Environment=` 定义的 var 只在后续 args 里能展开。修法：用 `%h/.pixi/bin/rclone` 这种 specifier，或者写绝对路径。
-- **Ubuntu 22.04 / 24.04 默认是 fuse3**，要用 `fusermount3 -uz` 而不是 `fusermount -u`，否则 ExecStop 找不到。
-- **wiki 模板的 `After=network-online.target` 在 user unit 里无效**——user 单元不能依赖 system target。WSL2 网络一直在，删掉无影响。
-- **`loginctl enable-linger <user>` 需要 sudo**，没 sudo 就只能在用户 session 活着时跑（WSL 关掉，service 也停；重开 WSL 进 session 后 service 跟 `default.target` 自动起）。
+按"症状 → 根因 → 修法"列同类条目，每个独立成段。反复重启时先看 `systemctl --user status rclone@<remote>` 的 restart counter 一路涨即是；**重启间隔能区分根因**——`Type=notify` 90s 超时那种约 ~100s 一轮（连不上 server），`ExecStartPre` 立刻失败那种约 `RestartSec`(10s) 一轮（前置检查没过）。
+
+#### `status=203/EXEC: Failed to locate executable ${...}`
+
+`ExecStart=` 的第一项（可执行文件路径）systemd **不展开 `$VAR`，只展开 `%` specifier**。写 `ExecStart=${RCLONE_BIN} ...` 会直接 `status=203/EXEC: Failed to locate executable ${RCLONE_BIN}: No such file or directory`，即使 `ExecStartPre` 用同一个变量 `test -x` 是过的（`Environment=` 定义的 var 只在后续 args 里能展开）。修法：可执行文件写 `%h/.pixi/bin/rclone` 这种 specifier，或写绝对路径。
+
+#### ExecStop 报找不到 `fusermount`
+
+**Ubuntu 22.04 / 24.04 默认是 fuse3**，`ExecStop` 要用 `fusermount3 -uz` 而不是 `fusermount -u`，否则卸载命令找不到。
+
+#### `After=network-online.target` 不生效
+
+wiki 模板里的 `After=network-online.target` 在 **user unit 里无效**——user 单元不能依赖 system target。WSL2 网络一直在，删掉无影响。
+
+#### WSL 关掉后 service 就停了
+
+`loginctl enable-linger <user>` 需要 sudo。没 sudo 就只能在用户 session 活着时跑：WSL 关掉，service 也停；重开 WSL 进 session 后 service 跟 `default.target` 自动起。
+
+#### 反复重启、间隔 ~100s：SMB server 地址漂移（`host =` 写了 IP literal）
+
+**`rclone.conf` 的 `host =` 字段写 NetBIOS/DNS hostname，不要写 IP literal。** 现场 SMB server 经常被运维迁机器、换网段、改 DHCP 池——一旦 IP 漂移，写 IP literal 的 rclone 直接连不上，service 进入"`Type=notify` 90s 超时 → `Restart=always` 每 ~100s 重试"的循环。同 share 上跑内核 `mount.cifs` 的机器（如 1810）通常是写 `//Quantum/Team`，因为 hostname 路径只需要本机 `/etc/hosts` 改一行就跟得上。
+
+**hostname 解析的权威来源是"已经 work 的那台机器"。** 多机部署同一 share 时，新机器直接抄那台 work 机的 `/etc/hosts` 里关于这个 SMB host 的映射（例：`10.100.158.91  Quantum`），别去自己探/猜/写错的别名。本机能 ping 通 hostname + 445 端口 reachable 后，`rclone.conf` 的 `host =` 改成 hostname，重启 service 即可。
+
+```bash
+# 1. 抄已 work 机的 hosts 条目（在该机上 grep）
+ssh <work-host> "getent hosts <smb-server-hostname>"
+# 2. 本机加 sudo（需要 root）
+echo "<ip>  <hostname>" | sudo tee -a /etc/hosts
+# 3. 把 rclone.conf 的 host = <ip> 改成 host = <hostname>
+# 4. systemctl --user restart rclone@<remote>
+```
+
+#### 反复重启、间隔 ~10s（RestartSec）：`MOUNT_DIR` 目录不存在
+
+`MOUNT_DIR` 目录不存在 → `ExecStartPre=test -d ${MOUNT_DIR}` 立即失败、每 `RestartSec`(10s) 重试一次（比地址漂移那种 ~100s 快得多，用间隔即可区分）。常见于 fresh clone 后被 gitignore 的挂载子目录（如 `raw/`）没重建，`mkdir -p <absolute-local-mount>` 即自愈。
 
 ### 性能预期（重要）
 
@@ -230,21 +262,6 @@ RCLONE_VFS_CACHE_MAX_AGE=1h
 ### 备选：SSHFS 跳板
 
 如果直连 SMB 不通但有 SSH 到一台已经内核 `mount.cifs` 挂上同一 share 的机器，可以 `sshfs <hop>:<remote-mount> <local-mount>` 间接挂上。代价是每个 FUSE 操作多一跳 SSH RTT，对 metadata 密集操作更慢；优势是热路径文件会命中跳板机的内核 dentry/page cache，**读密集且热数据场景反而可能比 rclone 直连快**。sshfs 在 conda-forge 上只有 Python fsspec 版本（非 FUSE 二进制），原生 FUSE 二进制要自己 `apt download sshfs && dpkg -x` 解包到 `~/.local/bin`。
-
-### SMB server 地址漂移：用 hostname 不用 IP literal
-
-**`rclone.conf` 的 `host =` 字段写 NetBIOS/DNS hostname，不要写 IP literal。** 现场 SMB server 经常被运维迁机器、换网段、改 DHCP 池——一旦 IP 漂移，写 IP literal 的 rclone 直接连不上，service 进入"`Type=notify` 90s 超时 → `Restart=always` 每 ~100s 重试"的循环（看 `systemctl --user status` 里 restart counter 一路涨就是它）。同 share 上跑内核 `mount.cifs` 的机器（如 1810）通常是写 `//Quantum/Team`，因为 hostname 路径只需要本机 `/etc/hosts` 改一行就跟得上。
-
-**hostname 解析的权威来源是"已经 work 的那台机器"。** 多机部署同一 share 时，新机器直接抄那台 work 机的 `/etc/hosts` 里关于这个 SMB host 的映射（例：`10.100.158.91  Quantum`），别去自己探/猜/写错的别名。本机能 ping 通 hostname + 445 端口 reachable 后，`rclone.conf` 的 `host =` 改成 hostname，重启 service 即可。
-
-```bash
-# 1. 抄已 work 机的 hosts 条目（在该机上 grep）
-ssh <work-host> "getent hosts <smb-server-hostname>"
-# 2. 本机加 sudo（需要 root）
-echo "<ip>  <hostname>" | sudo tee -a /etc/hosts
-# 3. 把 rclone.conf 的 host = <ip> 改成 host = <hostname>
-# 4. systemctl --user restart rclone@<remote>
-```
 
 ### `find` / `grep -r` / `git status` 进 rclone 挂载点会卡死
 
