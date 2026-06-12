@@ -171,6 +171,31 @@ services:
 
 起服务：`docker compose up -d server db`，再 `curl -I http://127.0.0.1:3000/` 应得 200。
 
+### SSH 克隆地址形式：scp-like vs `ssh://`（`USE_COMPAT_SSH_URI`）
+
+Web 上「Clone」按钮给的 SSH 地址有两种写法，由 `[repository] USE_COMPAT_SSH_URI` + `SSH_PORT` 共同决定。生成逻辑就三个分支（Forgejo 15 / Gitea 1.22 源码 `models/repo/repo.go` 的 `ComposeSSHCloneURL`）：
+
+| 条件 | 生成形式 |
+|---|---|
+| `SSH_PORT != 22` | `ssh://git@<host>:<port>/<owner>/<repo>.git`（带端口，只能 `ssh://`） |
+| `SSH_PORT == 22` 且 `USE_COMPAT_SSH_URI = true` | `ssh://git@<host>/<owner>/<repo>.git`（无端口的 `ssh://`） |
+| `SSH_PORT == 22` 且 `USE_COMPAT_SSH_URI = false` | `git@<host>:<owner>/<repo>.git`（**scp-like**，即 GitHub 那种） |
+
+**想要 GitHub 那种 scp-like 短形式** → 显式设 `USE_COMPAT_SSH_URI=false`（本部署经 compose 注入）：
+
+```yaml
+- FORGEJO__repository__USE_COMPAT_SSH_URI=false
+```
+
+改完 `docker compose up -d server` 重建容器即可；可用 `docker exec -u git forgejo grep -i USE_COMPAT_SSH_URI /data/gitea/conf/app.ini` 确认落盘，再查 API `ssh_url` 字段验证生成形式。
+
+**为什么默认是 `ssh://` 形式、这名字为什么叫「compat」**：
+
+- **Forgejo 默认 `true`**（`modules/setting/repository.go` 里 `UseCompatSSHURI: true`）——所以**开箱即 `ssh://` 形式**，即便 22 端口、即便没写这一行。注意 **Gitea 默认是 `false`**（scp-like），两个项目默认值相反，从 Gitea 迁来会"莫名其妙变形式"。
+- **「compat」=「兼容早期 Gitea 的展示行为」**：这个开关由 Gitea [PR #2356](https://github.com/go-gitea/gitea/pull/2356)（2017-08 合入）引入。早期 Gitea **一直只用 `ssh://` 显式 URI**；后来把默认改成了 scp-like 短形式（更贴近 GitHub 习惯），于是加这个开关让你能**强制切回旧的 `ssh://` 形式**——"compat" 指的就是兼容这套老的 `ssh://` URI 展示，名字和直觉相反（compat 反而是 `ssh://`，不是 scp-like）。
+
+> 两种写法在 22 端口下**功能完全等价**，落到同一个仓库。区别只在：scp-like 语法**无法表达端口**——所以一旦 `SSH_PORT != 22`，无论 `USE_COMPAT_SSH_URI` 设什么都只会给带端口的 `ssh://` 形式。本部署若 web 与 SSH 分流到不同入口（如 web 走域名经边缘反代、SSH 直连另一台），`SSH_DOMAIN` 单独指向 SSH 入口、`SSH_PORT=22` 保持，配 `USE_COMPAT_SSH_URI=false` 即得 `git@<ssh-host>:<owner>/<repo>.git`。
+
 ### 镜像与数据目录：用非 rootless，注意挂载路径
 
 Forgejo 官方镜像有两种（[官方 docker.md](https://forgejo.org/docs/latest/admin/installation/docker/)）：
