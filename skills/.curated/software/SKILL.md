@@ -87,6 +87,10 @@ FunASR、Fun-ASR-Nano、Paraformer + VAD + Punc + CAM++、SenseVoiceSmall、Whis
 
 服务端（Caddy site block、WebDAV handler、viewer 实现、目录权限）由 `vps-maintenance` skill 覆盖。如果源文件需要先做格式转换，看 [references/format-conversion.md](references/format-conversion.md)。
 
+## 私有 docs-share 站点（Git 仓库 → S3 直链分享）
+
+把要公网呈现的 md/html 放进一个私有 Git 仓库，每次 `git push` 或网页端上传/编辑即触发 CI（`rclone sync --checksum`）**增量同步**到一个 S3 兼容桶（桶结构 = 仓库树）；对外不靠反代鉴权，走 S3 **presigned 直链**（URL 自带签名 + 有效期）分享；`.md` 原样存（下载=raw），由 `viewer.html` markdeep 客户端渲染。完整内容见 [references/docs-share.md](references/docs-share.md)：AK/SK 是什么、持 root key 从零部署全流程（建桶 / 受限 access key 绑桶 policy 并实测隔离 / viewer 单对象匿名读 / 仓库 + secrets + workflow）、**不持 root key 与 CI token 的日常运维**（git push 上传、一次 push 多 commit 只跑一次同步、受限 mc alias 生成 presigned 分享链接）、`mc mirror`/`rsync` 因 `git checkout` 重置 mtime 全量重传的坑（故用 `rclone --checksum` 按内容哈希）、以及与 doc-share 一致的 markdeep 写作惯例（`[#key]` 引用 vs `[^name]` 脚注、GFM 不兼容点、研报模板）。S3 兼容存储底层行为见 [references/rustfs.md](references/rustfs.md)。
+
 ## Markdown → PDF 导出
 
 CSS Paged Media 路线的工具生态定位（Prince / Vivliostyle / Paged.js / WeasyPrint / Typst 选型）、Prince XML 无 sudo pixi 安装与 CJK 字体大坑（Variable Font 静默失败、fontconfig 隔离）、Paged.js Chromium 依赖的 pixi 补齐、以及引用标签预处理 → pandoc → Prince 的一键 PDF 流水线见 [references/pdf-export.md](references/pdf-export.md)。
