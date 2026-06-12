@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的配置与排障。涵盖 SSH 与 systemd、Zellij 终端复用与反代、文档格式转换（pandoc/feishu2md/MinerU）、自托管文档分享（WebDAV/Markdeep）与 PDF 导出（Prince XML/Vivliostyle/Paged.js/Typst 选型与 pixi 部署）、WSL 与 Windows 互操作（VS Code serve-web、portproxy）、EasyTier 客户端组网、Hermes agent 部署、GitHub Copilot CLI 内部行为与排障、RustFS + MinIO mc 客户端（versioning 桶语义 + ListObjectsV2 paginator bug + 软硬删恢复链路 + `mc rb --force` 真相 + HDD 后端"对象数 ≫ 字节数"性能特征 + 大批量 op 可靠性模式实测）等。
+description: 本地软件、CLI 工具与自托管服务的配置与排障。涵盖 SSH 与 systemd、Zellij 终端复用与反代、文档格式转换（pandoc/feishu2md/MinerU）、自托管文档分享（WebDAV/Markdeep）与 PDF 导出（Prince XML/Vivliostyle/Paged.js/Typst 选型与 pixi 部署）、WSL 与 Windows 互操作（VS Code serve-web、portproxy）、EasyTier 客户端组网、Hermes agent 部署、GitHub Copilot CLI 内部行为与排障、RustFS + MinIO mc 客户端（mc/boto3 选型 + versioning 软硬删恢复链路 + 已修复的 ListObjectsV2 静默截断 bug + 跨桶 copy 的 `Io error: timeout` 调参 + `mc rb --force`/force-delete 清桶真相 + HDD 后端"对象数 ≫ 字节数"性能特征 + 大批量 op 可靠性模式）等。
 ---
 
 # Software
@@ -57,7 +57,7 @@ EasyTier 组网的 Windows 客户端：安装、TOML 配置模板、Peer 配置�
 
 ## RustFS + MinIO mc 客户端
 
-RustFS（Rust 实现的 S3 兼容对象存储，github.com/rustfs/rustfs）+ MinIO `mc` CLI 的稳定行为：bucket versioning 是桶级开关、软删（`mc rm` 不带 `--versions` = 写 delete marker，可 `mc undo` 恢复）vs 硬删（`mc rm --versions --force` = 按 vid 物理 delete，不可恢复）的源码级机制、`mc undo` 的实现、`NoncurrentVersionExpiration` lifecycle 与 noncurrent 累积规则；**重点：RustFS 在 versioning 桶 + 大量 delete marker 时 `ListObjectsV2` 服务端会错误返回 `IsTruncated=false` 提前截断（已读 Rust 源码确诊 root cause 在 `crates/ecstore/src/disk/local.rs::scan_dir` 一处被注释掉的 `all_hidden` guard），mc 客户端用 StartAfter workaround 绕过、boto3 严格遵守 spec 反而被骗 → 列 versioning 桶用 mc 或自写 StartAfter loop，列版本历史反过来要 boto3 `list_object_versions()`**，并附诊断/恢复命令清单。见 [references/rustfs.md](references/rustfs.md)。配套的 CopyObject 跨桶 server-side 行为 + `Io error: timeout` 调参等故障经验在 `mess/references/rustfs.md`。
+RustFS（Rust 实现的 S3 兼容对象存储，github.com/rustfs/rustfs）+ MinIO `mc` CLI 的对接经验：**mc（CLI 二进制）与 boto3（Python SDK）互为补集，建议混用 crosscheck**；versioning 是桶级开关、软删（`mc rm` 不带 `--versions` = 写 delete marker，可 `mc undo` 恢复）vs 硬删（`mc rm --versions --force` = 物理删，不可逆）的语义与恢复/GC 链路；**列举 bug：versioning 桶 + 大量 delete marker 时 `ListObjectsV2` 服务端会静默返回 `IsTruncated=false` 提前截断——我提的 issue rustfs/rustfs#3217，已由 PR #3224 修复（beta.7 之后的发布带修复）；`≤ beta.7` 仍中招，且没有任何客户端能自动绕过（mc 同样只发一次请求、不接力，旧笔记"mc 用 StartAfter 免疫"是误判），唯一可靠枚举走 ListObjectVersions（`mc ls --versions` / boto3 `list_object_versions()`）**；跨桶 server-side copy 在 HDD 后端高并发会撞 `Io error: timeout` 500（`--max-workers` 限并发 / 调 RustFS timeout env）；`mc rb --force` 在大 versioning 桶会 hang、改用 `x-minio-force-delete` header server 端清桶（脚本 `scripts/rustfs_force_delete_bucket.py`）；HDD 后端 wall-clock ∝ 对象数（打 zip 聚合 ~10× 加速）。见 [references/rustfs.md](references/rustfs.md)；大批量 op 可靠性模式（并发 list/delete/copy + 断点续传骨架）见 [references/rustfs-bulk-ops.md](references/rustfs-bulk-ops.md)。
 
 ## Windows / WSL 宿主侧速记
 
