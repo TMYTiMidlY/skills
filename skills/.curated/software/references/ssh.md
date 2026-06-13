@@ -13,9 +13,9 @@ ssh-keygen -p -f <key_path>              # 给已有 key 加 / 改 / 去 passphr
 - 这些命令要**交互式**执行（agent 替不了用户输 passphrase），让用户自己跑。
 - 判断一把私钥是否带 passphrase（不暴露私钥内容）：`ssh-keygen -y -f <key> -P ""`——成功打印公钥 = 无 passphrase；报 `incorrect passphrase` = 有。
 
-> 给私钥设 passphrase 是好习惯（私钥文件泄露也不能直接用），代价是每次用都要解锁——这正是 ssh-agent 要解决的：解锁一次，缓存在内存里反复用。
+> 给私钥设 passphrase 是好习惯（私钥文件泄露也不能直接用），代价是每次用都要解锁——这正是 ssh-agent 要解决的：解锁一次，缓存在内存里反复用。**注意**：带 passphrase 的私钥在**没有可用 agent 的环境**（非交互 shell / CI）里会让认证悄悄失败（详见 §2.5），所以 agent 不是可选项而是刚需。
 
-## 2. ssh-agent：是什么、客户端怎么找到它
+## 2. ssh-agent：是什么、客户端怎么找到它、找不到怎么办
 
 ### 2.1 agent 是什么
 
@@ -41,7 +41,7 @@ ssh-agent 是个**常驻进程**，内存里持有**已解密**的私钥。`ssh`
 | GNOME Keyring | `/run/user/<UID>/keyring/ssh` |
 | 新版 gcr-ssh-agent（GNOME 42+） | `/run/user/<UID>/gcr/ssh` |
 | macOS（launchd 托管） | 登录时已设好 `SSH_AUTH_SOCK`，形如 `/private/tmp/com.apple.launchd.*/Listeners` |
-| Windows OpenSSH | 命名管道 `\\.\pipe\openssh-ssh-agent`，**不是 socket、不读 `SSH_AUTH_SOCK`**（见 §4） |
+| Windows OpenSSH | 命名管道 `\\.\pipe\openssh-ssh-agent`，**不是 socket、不读 `SSH_AUTH_SOCK`**（见 §3） |
 | 1Password / KeePassXC / yubikey-agent 等 | 各自路径，查其文档 |
 
 > 上表的具体路径**当线索用、不当真理**——拿不准就用 §2.3 的 `ssh-add -l` 逐个验。
@@ -92,37 +92,15 @@ Host *
     IdentityFile ~/.ssh/id_ed25519
 ```
 
-- `IdentityAgent` 比环境变量稳：**非交互 / 没 source `.bashrc` 的 shell** 里 `ssh` 也能找到 agent（环境变量法在那种 shell 里会丢——正是 §3 那个坑）。
+- `IdentityAgent` 比环境变量稳：**非交互 / 没 source `.bashrc` 的 shell** 里 `ssh` 也能找到 agent（环境变量法在那种 shell 里会丢，正是 §2.5 那个坑）。
 - `AddKeysToAgent yes`：首次输 passphrase 后自动缓存进 agent；`IdentityFile`：默认用哪把 key。
 - WSL 下可能还要确保 `XDG_RUNTIME_DIR` 有值（pam_systemd 没设时 `%t` 会空）。
 
-## 3. 非交互环境拿不到 agent：`Server accepts key` 却 `Permission denied`
+### 2.5 非交互 shell 里找不到 agent：发现并复用它
 
-### 症状
+**非交互 / 非登录 shell（CI、`bash -c`、各类 agent 远程执行）默认 `SSH_AUTH_SOCK` 为空、不读 `.bashrc`**。典型症状：`git push` / `ssh` 一直 `Permission denied (publickey)`，但人在交互终端连同一台是好的。`ssh -vv` 里会看到迷惑性的 `Server accepts key`（服务器认这把公钥）紧接着 `Permission denied`——**这不是公钥的问题**：公钥不需解密能"亮出来"过预检，但带 passphrase 的私钥在没有已解锁 agent 时**签不了名**。`ssh-add -l` 此时 exit 2（连不上 agent，见 §2.3）。
 
-在**非交互 SSH**（CI / `bash -c` / 各类 agent 远程执行，不 source `~/.bashrc`）里 `git push` / `git ls-remote` 到一台 Forgejo（或裸 git-over-sshd），始终 `git@HOST: Permission denied (publickey,...)`。但公钥明明加对了——服务端（如 Forgejo web 的 SSH keys 页）能看到这把 key、且"上次使用"为空（＝从没认证成功过），而且**人在交互终端 `ssh git@HOST` 是成功的**。
-
-### 排查关键转折
-
-1. **先排除网络**：一旦出现 `Permission denied`（而不是 `Connection timed out`），就说明 TCP+SSH 握手已成功，是**认证**问题、不是网络。
-2. **`Server accepts key` 是关键迷雾**：`ssh -vv -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 git@HOST true` 看握手，关键几行：
-   ```
-   Offering public key: .../id_ed25519 ED25519 SHA256:xxxx
-   Server accepts key:  .../id_ed25519 ED25519 SHA256:xxxx   ← 服务器认这把公钥
-   ...
-   No more authentication methods to try.
-   Permission denied (publickey).
-   ```
-   `Server accepts key` 证明**公钥确实在 authorized_keys 里** → 问题转到客户端**私钥签名**这一步。
-3. **判断私钥是不是加密的**：`ssh-keygen -y -f ~/.ssh/id_ed25519 -P ""` → `incorrect passphrase supplied to decrypt private key`，说明私钥**带 passphrase**。再 `ssh-add -l` → exit 2（当前环境没 agent，见 §2.3）。
-
-### 根因
-
-私钥有 passphrase；非交互环境（`BatchMode` / `bash -c`，`SSH_AUTH_SOCK` 为空、又无法交互输 passphrase）拿不到一个已解锁该私钥的 ssh-agent。公钥不需解密所以能"亮出来"让服务器回 `Server accepts key`，但真正用私钥**签名**时无法解密 → 失败。人在自己终端能连，是因为那个交互 session 里有解锁好的 agent。**`Server accepts key`（公钥预检通过）≠ 认证成功**，极具迷惑性。
-
-### 解决：发现并复用已解锁的 agent（别硬编码 socket）
-
-宿主上通常已有一个用户登录时就解锁好的常驻 agent。要复用它，**不要猜 socket 路径**（UID 未必 1000、agent 实现也不一定，见 §2.2），而是先看用户自己怎么配的、再逐个候选用 `ssh-add -l` 验：
+解决 = 复用宿主上那个用户登录时早已解锁好的常驻 agent，**别猜 socket 路径**（UID 未必 1000、实现也不一定，见 §2.2），而是先看用户自己怎么配的、再逐个候选用 `ssh-add -l` 验：
 
 ```bash
 # 1. 优先：用户交互 shell 用的就是这个，直接抄
@@ -140,20 +118,14 @@ for sock in \
   [ -S "$sock" ] && SSH_AUTH_SOCK="$sock" ssh-add -l >/dev/null 2>&1 \
     && { export SSH_AUTH_SOCK="$sock"; break; }
 done
-
 ssh-add -l        # 列出 key = 成功；passphrase 全程不经过你 / 不进对话
-git push ...
 ```
 
-实在没有现成 agent 时，最后兜底是从运行中的进程扒它的 `-a` socket：`ps -u "$(id -u)" -o args= | grep '[s]sh-agent'` 看有没有 `-a <socket>`。再没有就是这个 session 根本没起 agent——只能新起一个 + `ssh-add`（要 passphrase，得交互）。
+兜底：从运行中的进程扒 socket——`ps -u "$(id -u)" -o args= | grep '[s]sh-agent'` 看有没有 `-a <socket>`。根治：给 `~/.ssh/config` 配 `IdentityAgent`（§2.4），非交互 shell 也能命中，从此不用每次找。
 
-### 教训
+> 排错口诀：`Server accepts key` + `Permission denied` = 公钥没问题、私钥签名出了问题，往 passphrase / agent 方向查，别反复重加公钥。`git ls-remote <url>` 是"网络+认证+仓库存在"三合一的最快只读探针。
 
-- **`Server accepts key` + `Permission denied` 的组合 = 公钥没问题、私钥签名出了问题**。别再反复查 authorized_keys / 重加公钥；往 passphrase、agent、私钥文件不可用方向查。
-- **非交互 SSH（`BatchMode` / CI）默认 `SSH_AUTH_SOCK` 为空、不读 `.bashrc`**。找可复用 agent 别硬编码路径——先抄用户配置、再 `ssh-add -l` 逐个验候选（见上）。根治是给 `~/.ssh/config` 配 `IdentityAgent`（§2.4），非交互 shell 也能命中。
-- `git ls-remote <url>` 是"网络+认证+仓库存在"三合一的最快只读探针，改 remote / push 前先用它探。
-
-## 4. Windows：Git Bash 与 PowerShell 的 ssh-agent 差异
+## 3. Windows：Git Bash 与 PowerShell 的 ssh-agent 差异
 
 Windows 上最容易踩的是 Git Bash 和 PowerShell 可能调用不同的 `ssh.exe`，因此连到不同的 agent。Windows OpenSSH 的 agent 是**命名管道** `\\.\pipe\openssh-ssh-agent`，不用 `SSH_AUTH_SOCK`。
 
@@ -171,7 +143,7 @@ Windows 上最容易踩的是 Git Bash 和 PowerShell 可能调用不同的 `ssh
 - Windows PowerShell 下也别依赖 `ControlMaster`/`ControlPath`/`ControlPersist`（面向 Unix socket，Windows OpenSSH 组合下通常不可用）；免重复输 passphrase 优先靠 `ssh-agent`。
 - 自动启动参考 [Auto-launching ssh-agent on Git for Windows](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/working-with-ssh-key-passphrases#auto-launching-ssh-agent-on-git-for-windows)。
 
-## 5. SSH RemoteForward 代理转发
+## 4. SSH RemoteForward 代理转发
 
 把本地代理端口通过 SSH 反向隧道提供给远程机器。先在本地 `~/.ssh/config` 对应 Host 下添加：
 
@@ -196,7 +168,7 @@ export https_proxy=http://<用户名>:<密码>@127.0.0.1:10131
 - 修改 SSH config 添加 RemoteForward 后，已有 ControlMaster 连接不含新配置，需要先执行 `ssh -O exit <远程机器名>`，重新连接才会生效。
 - 两边都显式写 `127.0.0.1` 更清晰；本地端写 `127.0.0.1` 比 `localhost` 可靠，可避免 `localhost` 解析到 IPv6 `::1` 而代理只听 IPv4。
 
-## 6. 主机密钥校验：known_hosts、CheckHostIP 与不同 SSH 实现的差异
+## 5. 主机密钥校验：known_hosts、CheckHostIP 与不同 SSH 实现的差异
 
 SSH 连接时验证的是服务器的**主机密钥**（host key），不是 IP，也不是域名。`known_hosts` 记录"某主机名 / IP → 哪把 host key"。只有服务器重装、换了密钥才算"key 变了"；**只换 IP、host key 不变，从密码学角度还是同一台机器**。
 
@@ -224,7 +196,7 @@ ssh-keyscan -H <host> <新IP> >> ~/.ssh/known_hosts
 
 追加不删旧条目，对 OpenSSH（只看主机名）无影响，同时补齐检查 IP 的客户端所需的 IP→key 映射。
 
-## 7. ControlMaster 连接复用
+## 6. ControlMaster 连接复用
 
 裸 `ssh` / `scp` 每次调用都新建 TCP 并重新认证（百毫秒级开销）。`ControlMaster` 让多次 ssh 复用同一条已认证的**主连接**（经一个 Unix domain socket），后续调用只开 channel，省掉重复握手；`ControlPersist` 让主连接在空闲后再保留一段时间。
 
@@ -237,14 +209,31 @@ Host *
     ControlPersist 10m
 ```
 
-- **Windows OpenSSH 不支持** `ControlMaster`（依赖 Unix domain socket，Windows 默认编译不带），复用不可靠；Win 上免重复输 passphrase 优先靠 `ssh-agent`（见 §4）。
+- **Windows OpenSSH 不支持** `ControlMaster`（依赖 Unix domain socket，Windows 默认编译不带），复用不可靠；Win 上免重复输 passphrase 优先靠 `ssh-agent`（见 §3）。
 - 改了 config（如新增 `RemoteForward`）后，**已存在的主连接不含新配置**，需 `ssh -O exit <host>` 关掉主连接、重连才生效。
 
-## 8. 裸 ssh / scp：跑命令、交互式 sudo、编辑远端文件
+## 7. 在远端连续跑命令 / sudo / 拉日志
 
-没有 hash 校验的远端编辑工具（如 portal MCP）时，纯 OpenSSH 也能干活，但有几个点要注意：
+没有 hash 校验的远端编辑/执行工具（如 portal MCP）时，纯 OpenSSH 也能干活。前提：agent 起的非交互 shell 里 `SSH_AUTH_SOCK` 可能没设——先按 §2.5 找到并复用 agent，否则带 passphrase 的 key 会让下面这些 ssh/scp 全 `Permission denied`。
 
-- **`SSH_AUTH_SOCK` 可能缺失**：非交互 / 非登录 shell 不一定 source 过 `~/.bashrc`，agent 起的 shell 里 socket 变量可能没设——稳地找到并复用 agent 的方法见 §3「解决」。
-- **跑一次性命令**：`ssh <host> "<command>"`。
-- **交互式 sudo 要 `ssh -t`**：`sudo` 从 TTY 读密码，普通 `ssh <host> "sudo ..."` 没分配 TTY，sudo 读不到输入（或直接报错）。用 `ssh -t <host> "sudo ..."`（`-t` 强制分配 TTY）。多步 sudo 操作合进一个脚本，`scp` 到远端 `/tmp/`，再 `ssh -t <host> "sudo bash /tmp/<script>.sh"`，避免反复输密码。脚本内部把日志重定向到固定文件（如开头 `exec > >(tee /tmp/<name>.log) 2>&1`），跑完再 `scp` 拉日志——别把重定向写在本地 ssh 命令行上（那是本地重定向，不是远端）。
-- **非平凡编辑别用 ssh 内联 `sed`/`awk`**（易错、不可审查）：`scp` 拉到本地用编辑器改、再 `scp` 传回；只有简单的单行追加 / 替换才直接 ssh 执行。
+### 单条 / 连续多条命令
+
+- 单条：`ssh <host> "<command>"`。
+- 连续多条：配好 §6 的 `ControlMaster` 后，多次 `ssh <host> "..."` 复用同一条已认证主连接（省握手）；或把多步合进**一个脚本**一次跑（尤其要 sudo 时，避免反复输密码，见下）。
+
+### 交互式 sudo：让用户只敲一行 `ssh -t`
+
+`sudo` 从 TTY 读密码，普通 `ssh <host> "sudo ..."` 没分配 TTY、读不到密码（或直接报错）。把"用户负责的事"压到极小——只敲一行 `ssh -t`，其余 agent 在本地做：
+
+1. **agent 在本地** `/tmp/` 用编辑器写脚本（不在远端 `cat <<EOF` 手敲）。脚本开头固化 `exec > >(tee /tmp/<name>.log) 2>&1`——日志路径写死在脚本里，别拼到 ssh 命令行的 `>` 重定向上（那是**本地**重定向、不是远端）。
+2. **agent 自己 `scp`** 推到远端 `/tmp/`；不要让用户 scp、也不要让用户手敲建脚本。
+3. 给用户**唯一一条命令**：`ssh -t <host> "sudo bash /tmp/<name>.sh"`（`-t` 强制分配 TTY，让 sudo 能弹密码）。多步操作合进一个脚本，别拆成多次 `ssh -t` 让用户反复输密码。
+4. 用户跑完通知 agent，**agent 自己 `scp` 拉** `/tmp/<name>.log` 回来解读，别让用户复制粘贴终端输出。
+
+### 看 log / 拉文件回本地
+
+远端日志、产物一律 `scp <host>:/tmp/<name>.log /tmp/` 拉回本地读，不要让用户贴终端。
+
+### 非平凡编辑
+
+别用 ssh 内联 `sed`/`awk`（易错、不可审查）：`scp` 拉到本地用编辑器改、再 `scp` 传回；只有简单的单行追加 / 替换才直接 ssh 执行。
