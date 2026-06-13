@@ -43,7 +43,8 @@ Zellij Web client、HTTPS 证书要求、login token/session token、反代注�
 
 ## 网络与远程连接
 
-RDP、向日葵、WSL Mirror 模式网络、VS Code serve-web（浏览器访问本机开发环境 + WSL portproxy 链路 + 排障查询）、WSL NAT + portproxy 与 Docker Desktop wslrelay/IPv6 坑、会话管理（tsdiscon / logoff）、MTU 排障见 [references/network.md](references/network.md)。
+RDP / 向日葵、WSL Mirror 模式网络、VS Code serve-web（浏览器访问本机开发环境 + WSL portproxy 链路）、WSL/Docker 服务入站（`netsh portproxy` + wslrelay 的 IPv6 dual-stack #14154 坑：纯 v4 监听才不 RST）、EasyTier/WSL 组网杂项、会话管理（tsdiscon / logoff）见 [references/network.md](references/network.md)。
+
 
 ChatGPT 网页端 Pro / Extended 自动化、`steipete/oracle` browser engine、Windows Chrome DevTools、WSL Mirror / NAT 差异、以及必须用 network payload 验证真实模型与 thinking effort 的经验见 [references/oracle-pro.md](references/oracle-pro.md)。
 
