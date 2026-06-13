@@ -14,7 +14,8 @@ reference 文件的目标：让**任意** agent 或用户照着就能在**自己
 3. **命令 / 示例文件优先**：能贴一段可直接套用的 compose / 配置 / 脚本 / 命令就贴出来（敏感值留占位符），胜过大段散文。
 4. **每条说法要有据**：自己实测的直接陈述（不用写"实测"二字）；来自官方/外部的**挂可点开的官方文档链接**；拿不准的标注不确定，别凭记忆编。多给客观证据（版本号、命令输出、API 返回等）。
 5. **踩坑 / 排障紧贴主题**：记录真实踩过的坑和诊断/恢复办法，但只留与本主题强相关、对复现有用的；琐碎、一次性、跑题的不写。
-6. **不写"怎么改文件、在哪跑命令"的操作流程**：用什么工具、要不要 sudo、怎么备份回滚、删文件用什么——这些是操作者各自的事，不进 reference。reference 只描述**目标产物长什么样**。
+6. **少写"给 agent 自动执行的操作流程"**：用什么 CLI 工具、要不要 sudo、怎么备份回滚、删文件用什么——这些是操作者临场决定的事，不进 reference，reference 只描述**目标产物长什么样**。
+   - **例外：面向人的操作可以写详细。** GUI 点选路径、必须物理接触设备 / 进某台机器桌面才能做的步骤，是**只能由人来做、agent 读了也不会自动执行**的部署说明——这类写具体反而有用（人照着点）。判断标准：这段是给 agent 读了去跑命令的，还是给人读了自己动手的？后者放开写。
 7. **不过度限制、少堆告诫**：陈述事实与权衡（必要时给出被否决的备选及代价），让读者自己判断，少用"绝不能 / 务必"这类防御句；复杂链路优先用 GitHub 能渲染的图（mermaid / 表格 / blockquote）。
 
 ## SSH
@@ -99,7 +100,9 @@ CSS Paged Media 路线的工具生态定位（Prince / Vivliostyle / Paged.js / 
 
 ## OpenList 网盘聚合面板
 
-OpenList（AList 的活跃 fork）的 **REST API 编程接入**（两种 token——登录 JWT vs 固定 admin token——的对比与为什么 agent 该用后者、CLI `openlist admin token` 取值、OpenList-Desktop 桌面版的 session/盘符隔离坑、token 不进 agent context 的 side-channel 取法、核心端点速查、跨存储 mv/cp 是异步任务且进度可经 `/api/admin/task/*` 轮询、HTTP 恒 200 真码在 `body.code`）、坑分类速查（共性坑 / 不借助 Mac 的 rclone 直连专属坑 / 借助 Mac SMB 中转专属注意点，含源码 + issue 引用）、与 iCloud Drive 集成的两条路径选型对比、Mac SMB 中转部署流程（Optimize Storage 取舍、`~/Library/...` symlink、OpenList 加 SMB 存储参数）、`dd over ssh` 通用测速法与体验对照表、EasyTier 双向不对称排查思路见 [references/openlist.md](references/openlist.md)。本机的 exe 路径 / data 目录 / API 入口等私货存工作区 `.envrc` 的 `OPENLIST_*`。
+OpenList（AList 的活跃 fork）的 **REST API 编程接入**（两种 token——登录 JWT vs 固定 admin token——的对比与为什么 agent 该用后者、CLI `openlist admin token` 取值、OpenList-Desktop 桌面版的 session/盘符隔离坑、token 不落进对话/日志的 side-channel 取法、核心端点速查、跨存储 mv/cp 是异步任务且进度可经 `/api/admin/task/*` 轮询、HTTP 恒 200 真码在 `body.code`）、任何 backend 都成立的共性行为坑（C 系列：缩略图懒加载、DirectorySize 全 stat、搜索索引手动）见 [references/openlist.md](references/openlist.md)。
+
+把 **iCloud Drive 接入 OpenList**（rclone 直连 vs 借道常开 Mac 用 SMB 中转的选型对比、R 系列 rclone 直连专属坑、M 系列 Mac SMB 中转专属坑、macOS SMB 部署步骤含 GUI 路径、嵌套挂载还原完整 iCloud 视图、`dd over ssh` 远程链路测速 + 体验对照、EasyTier 双向不对称排查）见 [references/openlist-icloud.md](references/openlist-icloud.md)——这篇大量是 macOS GUI / 桌面操作，给人照做的部署说明。
 
 ## MinerU PDF→Markdown 转换
 
