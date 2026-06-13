@@ -99,7 +99,7 @@ CSS Paged Media 路线的工具生态定位（Prince / Vivliostyle / Paged.js / 
 
 ## OpenList 网盘聚合面板
 
-OpenList（AList 的活跃 fork）的坑分类速查（共性坑 / 不借助 Mac 的 rclone 直连专属坑 / 借助 Mac SMB 中转专属注意点，含源码 + issue 引用）、与 iCloud Drive 集成的两条路径选型对比、Mac SMB 中转部署流程（Optimize Storage 取舍、`~/Library/...` symlink、OpenList 加 SMB 存储参数）、`dd over ssh` 通用测速法与体验对照表、EasyTier 双向不对称排查思路见 [references/openlist.md](references/openlist.md)。
+OpenList（AList 的活跃 fork）的 **REST API 编程接入**（两种 token——登录 JWT vs 固定 admin token——的对比与为什么 agent 该用后者、CLI `openlist admin token` 取值、OpenList-Desktop 桌面版的 session/盘符隔离坑、token 不进 agent context 的 side-channel 取法、核心端点速查、跨存储 mv/cp 是异步任务且进度可经 `/api/admin/task/*` 轮询、HTTP 恒 200 真码在 `body.code`）、坑分类速查（共性坑 / 不借助 Mac 的 rclone 直连专属坑 / 借助 Mac SMB 中转专属注意点，含源码 + issue 引用）、与 iCloud Drive 集成的两条路径选型对比、Mac SMB 中转部署流程（Optimize Storage 取舍、`~/Library/...` symlink、OpenList 加 SMB 存储参数）、`dd over ssh` 通用测速法与体验对照表、EasyTier 双向不对称排查思路见 [references/openlist.md](references/openlist.md)。本机的 exe 路径 / data 目录 / API 入口等私货存工作区 `.envrc` 的 `OPENLIST_*`。
 
 ## MinerU PDF→Markdown 转换
 
