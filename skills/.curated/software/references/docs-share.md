@@ -1,81 +1,57 @@
-# docs-share：用 S3 presigned 直链分享私密文档
+# docs-share：Git 仓库 → S3 presigned 直链分享
 
-把 Markdown / HTML 放进**私有 Git 仓库** → forgejo runner 自动把仓库内容 sync 到 RustFS S3 桶 → 用 **S3 presigned URL** 分享。`.md` 浏览器贴地址栏自动 markdeep 渲染，`curl/wget` 拿原始文本。
+私有 Git 仓库 → forgejo runner `rclone sync --checksum --remove` → RustFS S3 桶（桶结构 = 仓库树）。`public/*` 匿名可读，其他路径走 presigned URL。`.md` 浏览器直贴自动 markdeep 渲染。
 
-> 服务端部署 / Caddy / `_viewer.html` 壳子 / 桶 + CI key 创建：见 `vps-maintenance` skill 的 [`references/caddy.md` §「文档私链分享站」](../../vps-maintenance/references/caddy.md)。
->
->
-> 本节只覆盖**客户端使用**：凭据放哪、生成分享链接、撤销分享、markdeep 写作惯例。
+> 服务端部署（Caddy / viewer / CI key 创建 / bucket policy 设置）→ caddy.md §「文档私链分享站」。仓库目录结构与本机 alias 细节 → 仓库 `README.md`。
 
-## 客户端凭据：受限 `ci` access key
+---
 
-部署完成后，**唯一会持久存在的凭据**就是一把绑了 policy 的**受限 access key**，只能操作 `docs-share/*` 这一个桶（policy 在服务端配置时已固化）。
+## 密钥体系
 
-| 凭据 | 存哪 | 用途 |
+| 角色 | 能力 | 生命周期 |
 |---|---|---|
-| 受限 CI key（AK + SK） | 本机 `~/.mc/config.json` 一个 alias | 日常生成 presigned URL |
-| 同上 | forgejo 仓库 secret `RUSTFS_CI_AK` / `RUSTFS_CI_SK` | runner 跑 `rclone sync` |
-| **root key** | **不该出现在客户端**——部署时 mc admin 用一次就删掉本地 alias | 只用于建桶 / 发 CI key / 配 policy（一次性） |
+| **root key** | 建桶 / 发 CI key / 设 bucket policy | 部署时临时用，用完删 alias，不留客户端 |
+| **受限 CI key** | 只能操作 `<BUCKET>/*` | 长期存在，日常唯一凭据 |
 
-本机 alias 命名建议两个：
+CI key 存两处：本机 `~/.mc/config.json`（若干 alias）+ forgejo 仓库 secret（AK + SK，注入 rclone env）。
 
-```bash
-# 走公网域名（生成外发链接用）
-mc alias set <PUB_ALIAS> https://<S3_HOST>      <CI_AK> <CI_SK> --api s3v4
-# 走 mesh 内网（自己机器测 / CI 用，省一跳）
-mc alias set <MESH_ALIAS> http://<MESH_HOST>:9000 <CI_AK> <CI_SK> --api s3v4
+同一把 key 可配多个 alias（不同入口 URL）。**SigV4 签名包含 host**——内网 alias 签出的链接外部不可用，外发链接必须用公网入口 alias。
+
+## 公开路径
+
+桶默认全私有。`public/*` 前缀通过 bucket policy 允许匿名 `GetObject`：
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {"AWS": ["*"]},
+    "Action": ["s3:GetObject"],
+    "Resource": ["arn:aws:s3:::<BUCKET>/public/*"]
+  }]
+}
 ```
 
-> SigV4 把 host 也签进签名了——**生成对外链接必须用 alias 对应公网域名**；mesh alias 签出来的链接外部访问会签名失败。
+仓库里放进 `public/` → push → 匿名可访问 `https://<S3_HOST>/<BUCKET>/public/<path>`。
 
 ## 生成分享链接
 
-### 方式 A：地址栏直贴 .md → 自动渲染（推荐）
+**私有文件**：`mc share download --expire <TTL> <PUB_ALIAS>/<BUCKET>/<path>`，输出 `Share:` 行即完整 presigned URL。`<PUB_ALIAS>` 必须是公网入口 alias。
 
-```bash
-mc share download --expire 168h <PUB_ALIAS>/docs-share/<dir>/<file>.md
-```
+**公开文件**：直拼 `https://<S3_HOST>/<BUCKET>/public/<path>`。
 
-输出里 `Share:` 那行就是完整 presigned URL。**直接发给读者**——浏览器贴地址栏看到排版页（Caddy `Accept: text/html` 分流到 viewer rewrite），`curl/wget` 拿到原文。
+## 更新内容
 
-### 方式 B：viewer.html?doc= 包装（向后兼容，跨 S3 后端通用）
-
-```bash
-RAW=$(mc share download --expire 168h <PUB_ALIAS>/docs-share/<dir>/<file>.md | sed -n 's/.*Share: *//p')
-ENC=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$RAW")
-echo "https://<S3_HOST>/docs-share/viewer.html?doc=$ENC"
-```
-
-适用：后端是 MinIO / 其他 S3 但没装 viewer rewrite 的边缘 Caddy。
-
-### 非 .md 资源（图片 / pdf / html / mp4）
-
-直接用方式 A 的命令。S3 把这些对象的 Content-Type 设对就行，浏览器自然渲染。
-
-```bash
-mc share download --expire 168h <PUB_ALIAS>/docs-share/<dir>/<file>.png
-mc share download --expire 168h <PUB_ALIAS>/docs-share/<dir>/<file>.pdf
-```
-
-## 更新内容（git push 即同步）
-
-```bash
-git clone <forgejo>/TiMidlY/docs-share
-# 编辑（一次改多个文件都行）
-git push
-```
-
-- **一次 push 推多个 commit 只触发一次同步**：`on: push` 按 push 事件触发不是按 commit；rclone sync 是「对齐到最终状态」的幂等操作，同步 push 后的最终 tree，不在乎中间几个 commit。
-- **本地 git status 干净 = 桶状态干净？不一定**：如果你（或别人）做过 forgejo rerun 早 sha 的操作，桶可能被回滚（详见 `~/TiMidlY-projects/docs-share/.github/copilot-instructions.md`）。
-- **想立刻让桶对齐 main HEAD**：`git commit --allow-empty -m "trigger sync" && git push`。
+`git push` 即触发同步（rclone 幂等对齐最终 tree）。forgejo rerun 早 sha 的 run 会回滚桶——想对齐当前 HEAD 推空 commit 或 rerun HEAD 对应的 run。
 
 ## 撤销分享
 
 | 想做的 | 怎么做 |
 |---|---|
-| 单条链接到期 | 啥都不用做，`X-Amz-Expires` 自动失效 |
-| **立刻作废所有在途链接** | 在持 root key 的机器上 `mc admin accesskey rm rootadmin/ <CI_AK>` + 重新建一把新 CI key + 替换 forgejo secret + 替换本机 `~/.mc/config.json`（**让所有已发链接同时失效**） |
-| 撤回单个对象 | git 仓库 `git rm <path> && git push`，下次 sync 会把桶里对应对象删掉；已发出去的链接 GET 该对象会 404 |
+| 单条链接到期 | `X-Amz-Expires` 自动失效 |
+| 作废所有在途链接 | 用 root key 删当前 CI key + 重建 + 替换 forgejo secret + 本机 alias |
+| 撤回单个对象 | `git rm <path> && git push`，sync 后桶里对象消失 |
 
 ## markdeep 写作惯例：依据引用 vs 说明脚注（可选）
 

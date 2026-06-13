@@ -577,14 +577,9 @@ git push → forgejo (gitea-self-hosted) → forgejo-runner (DinD)
 | **A. viewer 包装** | `<S3>/<bucket>/viewer.html?doc=<URL-encoded presigned>` | 桶根放 `viewer.html`（**单对象匿名可读**） | 仅普通反代 | 简单、跨 S3 后端通用 |
 | **B. 地址栏直贴** | `<S3>/<bucket>/<path>.md?<presigned>` | 不需要 | `s3.example.com` 加 Accept matcher + 本地 `_viewer.html` | 想要 "同一 URL 浏览器排版 / `curl` 拿原文" |
 
-### 客户端配置参考（详见 `software/docs-share.md`）
+### 客户端配置
 
-服务端部署完成后，把**受限 CI key**（绑 policy 只允许操作 `docs-share/*` 这一个桶）写入：
-
-- forgejo 仓库 secret：`RUSTFS_CI_AK` / `RUSTFS_CI_SK`（让 runner 跑 rclone sync）
-- 操作者本机 `~/.mc/config.json` 的一个 alias（让本人 `mc share download` 生成 presigned）
-
-**root key 绝不写进 CI、不进 git、不留本机**。
+服务端部署完成后，把受限 CI key 交给两个位置：forgejo 仓库 secret（runner 跑 rclone sync）和操作者本机 mc alias（生成 presigned URL）。密钥体系、alias 组织、presigned 生成方式的完整说明见 `software` skill 的 [`references/docs-share.md`](../../software/references/docs-share.md)。
 
 ### 安装 viewer 壳子
 
