@@ -254,6 +254,121 @@ $body = @{ path = "$env:USERPROFILE\.config\mihomo\config.yaml" } | ConvertTo-Js
 Invoke-WebRequest -Uri 'http://127.0.0.1:9090/configs?force=true' -Method Put -ContentType 'application/json' -Body $body
 ```
 
+### HTTPS_PROXY 只决定入口、不决定出口（rule + group 链路）
+
+新手常见误解：在 WSL 里设了 `HTTPS_PROXY=http://<gw>:7890`，curl 就一定走代理节点出去。**错**。env 只告诉 client "把流量送到 Mihomo 这个端口"，**实际出口节点由 Mihomo 自己的 `rules` + `proxy-groups` 链决定**。链路上任何一层选了 `DIRECT`，流量就回到本机直连——HTTPS_PROXY 显示设了也照样被 GFW RST。
+
+典型链路（按 `config.yaml` 走）：
+
+```
+TCP from client → Mihomo mixed-port
+  → rules:  DOMAIN-SUFFIX,xxx,☁️ 云服务      (rule 命中决定走哪个 group)
+  → ☁️ 云服务 (Selector) now=🚀 节点选择     (group 当前选哪一项)
+  → 🚀 节点选择 (Selector) now=Hysteria2-Node
+  → 真实 outbound：Hysteria2 协议 → proxy.example.com
+```
+
+排障时**每一层都要看 `.now`**，而不是只看 GLOBAL 或某一个 group。常见踩坑：
+
+1. **改 GLOBAL 没效果** —— GLOBAL 只在没有 rule 命中时兜底。如果 `rules` 段有 `RULE-SET,aws,☁️ 云服务`，AWS 流量根本不到 GLOBAL，改 GLOBAL 白改。先 `cat config.yaml` 找命中目标域名的 rule，定位到具体 group。
+2. **改外层 group 报 "proxy not exist"** —— `.all` 里没有目标 proxy 就 PUT 失败。比如 `☁️ 云服务.all = [🚀 节点选择, vless-ws-Node, DIRECT, REJECT]`，想切到 `Hysteria2-Node` 必须先 PUT `🚀 节点选择` → `Hysteria2-Node`，再 PUT `☁️ 云服务` → `🚀 节点选择`。**两层都要改**。
+3. **PUT 后老连接不切** —— Mihomo 切节点只对**新建连接**生效。`curl --no-keepalive` 强制每次重连；长跑的下载/上传进程要重启才走新节点。
+
+### REST API 改节点 + 测延迟（PowerShell + emoji group 名）
+
+group 名常含 emoji 或中文，URL path 必须 `EscapeDataString`：
+
+```powershell
+# 写到 .ps1 文件后 pwsh -ExecutionPolicy Bypass -File 跑
+# （bash -c "pwsh -Command @\"...\"@" 引号嵌套地狱，强烈不推荐）
+$h = @{ "Content-Type" = "application/json" }
+$enc = [uri]::EscapeDataString("🚀 节点选择")
+# 切节点
+Invoke-RestMethod -Method Put -Uri "http://127.0.0.1:9090/proxies/$enc" `
+  -Headers $h -Body '{"name":"Hysteria2-Node"}' -TimeoutSec 5
+# 查当前
+(Invoke-RestMethod -Uri "http://127.0.0.1:9090/proxies/$enc").now
+# 列可选
+(Invoke-RestMethod -Uri "http://127.0.0.1:9090/proxies/$enc").all
+```
+
+测节点对**真实目标**的 delay（比 curl 测 throughput 快几十倍，几秒拿结果）：
+
+```powershell
+$target = "https://<公共大文件-test-url>"
+foreach ($n in @("vless-ws-Node","vless-ws-Node2","Hysteria2-Node")) {
+    $r = Invoke-RestMethod -Uri "http://127.0.0.1:9090/proxies/$([uri]::EscapeDataString($n))/delay?url=$([uri]::EscapeDataString($target))&timeout=10000"
+    Write-Host "$n delay=$($r.delay)ms"
+}
+# 失败的节点会抛 504 Gateway Timeout
+```
+
+**WSL 跨边界调 Windows pwsh 的固定套路**：
+
+```bash
+PSEXE="/mnt/c/Program Files/PowerShell/7/pwsh.exe"   # pwsh 7 路径，不是 powershell.exe
+# 在 WSL 写 ps1 → Windows 侧通过 \\wsl.localhost\<distro>\... 读
+# 默认 ExecutionPolicy 拦未签名脚本：
+"$PSEXE" -NoProfile -ExecutionPolicy Bypass -File /tmp/foo.ps1
+```
+
+### 协议选错可以慢 100×（vless+ws vs hysteria2）
+
+实测：同一台落地服务器，同一国内 ISP 出口，拉 AWS S3 公共 bucket 的 1 MB part：
+
+| 节点 / 协议 | throughput | 备注 |
+|---|---|---|
+| vless + WS over TCP | **8.4 KB/s** | TCP 拥塞控制 + WS handshake/帧头开销；同服务器但跑不起来 |
+| Hysteria2 / QUIC + BBR | **14.6 MB/s** | 实测，1 GB part 78s |
+
+> Hysteria2：基于 QUIC 的代理协议，自带 BBR 拥塞控制，单连接多 stream 不受 TCP head-of-line blocking。WebSocket-vless：vless 协议套在 WebSocket 上（穿 CDN/反代友好），但传输层还是 TCP cubic，长肥管道（high BDP，跨国 GFW 后大延迟）下吞吐被拥塞算法压死。
+
+排障思路：
+
+1. **节点 delay 通 ≠ 节点能跑全速**。`/delay` 只测 1 KB 级请求 RTT，遇到大文件可能崩。换协议（Hysteria2 / 直连 QUIC / TUIC 都比 ws over TCP 稳）。
+2. **测吞吐别用 KB 级文件**。前几 MB 在 TCP 慢启动阶段，speed 数字偏小；要测真实带宽至少 50 MB 以上。
+3. **看进度别看 "MiB/s"，看 "part/s"**。如果 mirror 跑大量 KB 级小文件，per-part RTT 主导，整体 MiB/s 显示很低但实际**带宽没饱和**——继续跑到大文件阶段会爆发。
+
+#### 健康检查 jitter & 上层调用稳定性（vless+ws → Hysteria2 切换）
+
+吞吐之外，**节点稳定性**（延迟波动 + 上层 agent 调用的成功率）也呈现明显差异。某段长期观测 (`/proxies` API 拉 history) 数据：每 5min 一次 `cp.cloudflare.com/generate_204` 健康检查，10 个采样窗口里——
+
+| 协议 | 平均 delay | jitter (max - min) | 节点报错次数 |
+|---|---|---|---|
+| vless + WebSocket (多节点 URLTest 群组) | ~355 ms | **250+ ms** | 0（但偶发 dial timeout，见下） |
+| Hysteria2 / QUIC | ~378 ms | **~150 ms** | 同窗口 0 |
+
+> 平均 delay Hysteria2 略高，但 jitter 小一半左右。**对长连接 / 大文件 / agent 流式 API 而言，jitter 远比绝对 delay 重要**——抖动大会触发 URLTest 在多个 vless 节点之间反复横跳，每次切换都打断已建立的 TCP 长连接。
+
+链路拓扑差异是关键：vless+ws 节点群常常落在某海外 HTTPS 反代后面（多一跳），日志里可观察到形如 `dial xxx error: <反代-host>:443 connect error: i/o timeout` 的偶发 warning——表面是节点超时，根因是**前置反代瞬时抖动**。Hysteria2 直连落地服务器时少一跳，规避了这个失败模式。
+
+操作建议：
+
+1. **不要盲信"自动选择"**。若节点群里 2~3 个候选 delay 接近，URLTest 默认 tolerance 容易让它在小幅波动时来回切，体感就是"偶尔掉线"。要么手动钉死到稳定节点，要么给 URLTest 加 `tolerance: 150`（差距小于 150ms 不切）。
+2. **节点名带 "Fast" 不一定快**。同协议同链路的两个节点常常实测差不多甚至更慢，**只能用 history / `/delay` 实测决定**。
+3. **挑节点的优先级**：`协议（QUIC/Hysteria2 > vless+TCP+WS）> 链路跳数（直连落地 > 经反代）> 平均 delay`，平均 delay 排最后。
+
+**预设结论（待长期验证）**：从 vless+ws URLTest 自动组切到手动钉死 Hysteria2 节点后，agent 调用（Copilot CLI / Claude Code 之类的第三方 API 长连接）不再出现偶发 `API error`。如果后续观察到反例，回来订正这一段。
+
+#### 已知风险：长期跑 Hysteria2 落地 IP 疑似被针对性屏蔽（待长期验证）
+
+> 2026-06-08 单次事件，**根因尚未坐实**，记录现象供下次出现时对照。
+
+现象：长期把某海外 VPS 上的 Hysteria2 节点钉死成主节点跑了一段时间后，某天起从**大陆**任何出口（家里 ISP 出口、阿里云大陆区域绕开 TUN 走真实国际出口）对这台 VPS 的 IP 任何端口（22 / 443 / ICMP）全部 timeout；**同机房同 /24 子网邻居 IP** 一切正常；第三方多地探测站（含越南 / 印尼等近大陆地区节点）全部 ping 通；VPS 本机上 sshd / Caddy / ufw 全部健康，日志里能看到其它源 IP 正常进来。**症状形态 = 大陆精准屏蔽这一个 IP**，机房 / 主机 / 防火墙都可以排除。
+
+可能原因（**未验证**）：
+- Hysteria2 跑 QUIC over UDP，单 IP 持续大流量 UDP 是 GFW 主动探测的明显特征之一
+- 落地 IP 注册了公开域名长期暴露，扫描器易识别
+- 也可能是机房 IP 段被整体波及，跟 Hysteria2 无关——这就是为什么标"待验证"
+
+下次再撞上需要确认的对照实验：
+1. 临时停掉该 VPS 上 Hysteria2 监听，等 24~72 小时看 IP 是否恢复（恢复 = 强证据支持"代理流量触发"假设）
+2. 同时观察新换的 IP 在不跑 Hysteria2 / 跑别的协议时多久会被屏蔽，作横向对照
+
+短期可用的缓解：
+- **进入仍可达**：从大陆侧 ssh 改走 `ProxyJump` 经另一台**境外不受影响**的 VPS 跳板；Caddy 上的网页同理可经境外节点访问
+- **彻底解决**：换 IP（一般机房很快生效），并把代理协议迁离这台（或换成 Reality / 强 fingerprint masking 的 vless），降低同样路径被复现的概率
+
 ### Windows TUN / 代理端口稳定性排障
 
 先区分是远端节点不通，还是本机 TUN / 代理入口没有正确接管。常用对照：
@@ -276,11 +391,9 @@ bind-address: '*'
 
 如果绑定到某个具体虚拟网卡地址，网卡重连、地址变化、服务启动顺序变化都可能导致本机工具或其他设备间歇性连不上代理端口。
 
-### WSL NAT + Mihomo TUN / fake-ip
+### WSL NAT 下出站走 Mihomo / fake-ip
 
-在无法使用 WSL Mirror / mirrored networking、必须继续使用 WSL NAT 时，不要假设 Windows 宿主能走 Mihomo TUN 就等于 WSL 裸 TCP 也会被稳定接管。更稳的做法是：WSL 内的 HTTP 类工具显式走 Windows 宿主 `mixed-port`，SSH 等不读代理环境变量的工具单独配置 `ProxyCommand`。这是 **WSL -> Windows/外网** 方向，不需要 `portproxy`。
-
-反过来，如果是 **Windows / EasyTier / 远端入口 -> WSL 内服务**，WSL NAT 下需要 Windows `netsh interface portproxy` 做 TCP 转发。`portproxy` 负责把 Windows 宿主某个监听地址和端口转到 WSL 内服务；它不负责让 WSL 出站流量走 Mihomo，也不支持 UDP。
+在无法使用 WSL Mirror / mirrored networking、必须继续使用 WSL NAT 时，不要假设 Windows 宿主能走 Mihomo TUN 就等于 WSL 裸 TCP 也会被稳定接管。更稳的做法是：WSL 内的 HTTP 类工具显式走 Windows 宿主 `mixed-port`，SSH 等不读代理环境变量的工具单独配置 `ProxyCommand`。
 
 典型现象：
 
@@ -346,113 +459,21 @@ Host <name>
   ProxyCommand nc -x <wsl-gateway-ip>:7890 -X 5 %h %p
 ```
 
-WSL 内服务要暴露给 Windows / EasyTier / 远端反代时，使用 `portproxy`：
+### Mihomo TUN 路由规则（IP-CIDR / route-exclude）
+
+`IP-CIDR,...,DIRECT` 不等于绕过 Mihomo TUN。它只表示流量进入 TUN 后，mihomo 选择 `DIRECT` outbound；运行态 `/connections` 里仍可能看到 `inboundName: DEFAULT-TUN`、`chains: [DIRECT, ...]`。
+
+规则顺序会影响策略选择。宽泛的 `RULE-SET,private-ip`、`RULE-SET,cn-ip` 如果放在显式 `IP-CIDR` 前，会先命中特例地址。需要特例策略时，把特例规则放到宽泛规则前；但即使提前命中 `DIRECT`，它仍不是 TUN bypass。
+
+`route-exclude-address` 有坑，不要把它当成稳定通用方案。它只让 mihomo 不接管这些目的地址，不保证 Windows 自动补出可用的物理网卡路由；排除异地组网依赖的公网服务器 IP 后，可能直接把异地组网服务本身断开。
 
 ```powershell
-# 示例：Windows 在 <windows-listen-ip>:18080 监听，转发到 WSL localhost:18080
-netsh interface portproxy add v4tov4 `
-  listenaddress=<windows-listen-ip> listenport=18080 `
-  connectaddress=127.0.0.1 connectport=18080
-
-netsh interface portproxy show all
+route print <peer-ip>
 ```
 
-在当前 Windows/WSL localhost forwarding 正常时，`connectaddress=127.0.0.1` 往往比写 WSL NAT IP 更稳，因为 WSL NAT IP 会随重启变化。若服务只监听 WSL 内部地址而没有被 Windows localhost forwarding 接住，再改用当前 WSL IP 或让服务监听 `0.0.0.0`。
+本次排障里，`route-exclude-address + 手动 host route` 没作为最终方案采用。
 
-#### WSL2 容器端口的 wslrelay / IPv6 dual-stack 坑
-
-**症状**：portproxy 表正确建立，从 Windows 或 EasyTier 远端 TCP 能 connect，但请求一发出立刻 `Connection reset by peer` / `Recv failure: Connection was reset`（TCP **RST**，下文同——对方在 TCP 层主动拆掉连接），或直接 `Failed to connect`。
-
-**根因（坐实）**：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) — "Dual-mode IPv6 sockets do not accept IPv4 connections via localhost"，**open** 状态、`network` label、2026-02 提交、2026-05 仍在更新（数月未修）。issue 里 distro 内部 `curl -4 http://localhost:N` 就已经 refused，跨 wslrelay 到 Windows 必然继承同样症状。
-
-**和 Docker Desktop 无关、native dockerd 一样踩**：1810 上跑的就是 WSL 内 systemd 起的 native dockerd，实测 bare `ports: 9000:9000` 时 docker-proxy 默认开 dual-stack v6 socket，照样 RST。原文档把这段写成"Docker Desktop 容器端口的 wslrelay/IPv6 坑"是窄了。
-
-##### WSL 里的 socket 形态 → wslrelay 实际行为
-
-| WSL 里 `ss -tlnp` 显示 | family | `IPV6_V6ONLY` | wslrelay 在 Windows 这边建 | 实测结果 |
-|---|---|---|---|---|
-| `0.0.0.0:N` 纯 v4 | AF_INET | n/a | `127.0.0.1:N` (v4) | ✅ 通 |
-| `[::]:N` 纯 v6 | AF_INET6 | 1 | `[::1]:N` (v6) | 一致；v4 client refused |
-| `*:N` dual-stack v6 | AF_INET6 | **0** | **只建 `[::1]:N`，不补 v4** | ❌ portproxy `connectaddress=127.0.0.1` → RST |
-
-第三行就是 #14154 的形态。原因（这部分是推测）：wslrelay 看 socket family 为 v6 就照镜子建一个 v6 listener，没读 `IPV6_V6ONLY=0` 这个 bit，所以漏掉了对应的 v4 listener。
-
-##### 端到端链路（NAT 模式 + EasyTier + WSL distro）
-
-```
-[EasyTier peer (e.g. Alibaba 10.144.18.66)]
-            ↓ TCP
-[Windows host kernel + EasyTier wintun]                受 10.144.18.0/24 路由
-            ↓
-[svchost.exe / iphlpsvc] LISTEN 10.144.18.10:9000    ← netsh portproxy 这条
-            ↓ connectaddress=127.0.0.1 connectport=9000
-[wslrelay.exe]           LISTEN 127.0.0.1:9000        ← Microsoft 官方进程，NAT 模式触发
-            ↓ Hyper-V vsock
-[WSL distro socket]      0.0.0.0:9000 / *:9000        ← 必须是纯 v4 才不触发 #14154
-            ↓
-[Docker bridge / process]
-```
-
-两个组件都不能省、互不感知：
-
-- `netsh portproxy` 由 Windows `iphlpsvc` 承载，只是个通用 TCP 转发表，**不知道 WSL 存在**；它需要 connectaddress 那端有人接，正好 `127.0.0.1` 那端是 wslrelay 在 listen。
-- `wslrelay.exe` 是 WSL2 NAT 模式的 localhost forwarding 实现，**只在 Windows host 的 `127.0.0.1` / `[::1]` 上 listen**，不会 listen 任意 host IP（如 EasyTier 的 `10.144.18.10`）。
-- `.wslconfig` 里 `hostAddressLoopback=true` 容易让人误以为是"让 host IP 也能 forward 进 WSL"——**不是**。它的方向是反的：让 WSL 进程能通过 host IP 访问 host loopback service。见下面实测。
-
-##### 实测：删掉 portproxy、靠 wslrelay 单独扛行不行（结论：不行）
-
-测试机 `.wslconfig`：`hostAddressLoopback=true`（已开）、`networkingMode` 默认 NAT。删 portproxy `10.144.18.10:9000 → 127.0.0.1:9000` 那一条，其他 14 条保留。
-
-| 测试 | baseline | 删 portproxy 后 |
-|---|---|---|
-| netsh portproxy 表里 9000 | ✅ 在 | ❌ 已删 |
-| Windows 这边 listen 127.0.0.1:9000 | wslrelay | wslrelay（不变） |
-| Windows 这边 listen 10.144.18.10:9000 | svchost | ❌ 无人 listen |
-| Windows → 127.0.0.1:9000 | 200 | **200** |
-| Windows → 10.144.18.10:9000 | 200 | ❌ refused 2s 立刻 |
-| Alibaba (mesh peer) → 10.144.18.10:9000 | 200 | ❌ timeout 5s |
-| RackNerd (mesh peer) → 10.144.18.10:9000 | 200 | ❌ timeout 5s |
-
-结论：
-
-- wslrelay **始终只在 `127.0.0.1` listen**，不会自动 listen mesh IP；`hostAddressLoopback=true` 不改变这件事。
-- NAT 模式下，要让 host 网卡 / 虚拟网卡 (EasyTier wintun) 的 IP 上某个端口能进 WSL distro，**netsh portproxy 这一跳无法省**。
-- 删 portproxy 后立即 `Could not connect`（不是 RST、不是 timeout-after-handshake），印证那个 IP 上根本没有 listener。
-
-##### 辨识与修复
-
-辨识：
-
-```bash
-# WSL 里
-ss -tlnp | grep :<port>
-#  0.0.0.0:<port>  → 纯 v4，没问题
-#  *:<port>        → dual-stack v6（#14154 形态）
-#  [::]:<port>     → 纯 v6（v4 client 也会 refused，但形态不同）
-```
-
-```powershell
-# Windows
-Get-NetTCPConnection -State Listen -LocalPort <port> | Format-Table LocalAddress,LocalPort,OwningProcess
-# 看 127.0.0.1 那一行进程是不是 wslrelay；如果只有 [::1] 没有 127.0.0.1
-# 而且 listenaddress=<host-ip> 的 portproxy 配过了仍 RST，几乎可以确认 #14154
-
-# 直接验证 Windows 侧 [::1] 是否能接连接（#14154 形态下通常 RST）：
-curl.exe --noproxy * -v --max-time 5 "http://[::1]:<port>/"
-```
-
-修复（按推荐度）：
-
-1. **显式 v4 监听地址**（首选，零代价）：
-   - Docker / docker-compose：`ports: ["0.0.0.0:9000:9000"]` 而不是 `"9000:9000"`；后者让 docker-proxy 选 dual-stack v6 socket，恰好触发 #14154。
-   - 服务直接 listen：用 `0.0.0.0` 不要用 `::`。Python `http.server` 默认 v4，Go `net.Listen("tcp", ":N")` 默认 dual-stack v6，要写 `net.Listen("tcp4", ":N")` 或 `"0.0.0.0:N"`。
-   - **Java / JVM 服务**（Neo4j / Elasticsearch / Kafka / Spark 等）：JVM 默认开 dual-stack v6，**即使配置文件写 `listen_address=0.0.0.0` 也会落到 `*:N` 形态**（socket 是 AF_INET6 + V6ONLY=0，恰好是 #14154 触发点）。fix 是加 JVM flag `-Djava.net.preferIPv4Stack=true` 强制纯 v4 socket。**Neo4j 5.x apt 包实测**：编辑 `/etc/neo4j/neo4j.conf`，把 `#server.bolt.listen_address=:7687` 取消注释改成 `server.bolt.listen_address=0.0.0.0:7687`，再追加一行 `server.jvm.additional=-Djava.net.preferIPv4Stack=true`，`systemctl restart neo4j` 之后 `ss -tlnp` 从 `*:7687` 变 `0.0.0.0:7687`，wslrelay 看到纯 v4 listener 才会在 Windows 端补 `127.0.0.1:7687` 的 v4 listener，portproxy `connectaddress=127.0.0.1` 这条才不会 RST。**单改 `listen_address=0.0.0.0` 一行不够**，必须同时给 JVM 加 preferIPv4Stack=true。
-2. **portproxy `connectaddress` 指 WSL eth0 IP**：跳过 wslrelay 那一跳，走 NAT。缺点：WSL 重启 eth0 IP 可能变。
-3. **portproxy 改用 `v4tov6` 转 `::1`**：理论可行，但实测在不少 WSL 版本上 wslrelay 的 `[::1]` listener 也 RST，所以不一定通。作为快速试探可用，长期不推荐。
-4. **切 `networkingMode=mirrored`**（Win11 22H2+）：彻底没 wslrelay。代价是重排所有 portproxy + 评估对 EasyTier wintun 路由优先级的影响。
-5. **WSL 内补 socat v4 relay**：`socat TCP4-LISTEN:<port>,reuseaddr,fork,bind=0.0.0.0 TCP:[::1]:<port>`，让 wslrelay 看到的是纯 v4 listener。多一跳进程，仅作 fallback。
-
-历史背景与 issue：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) (open)、[#10688](https://github.com/microsoft/WSL/issues/10688) (open，wslrelay 全双工 hang)；类似 v4/v6 困扰在 WSL repo 里有十几个独立 issue，labels 多数 `network`。
+### VLESS + ws + TLS 客户端配置（DNS / 节点组 / MTU 默认值 / 延迟判断）
 
 VLESS + WebSocket + TLS 放在 Caddy/Nginx 后面不是错误方案，适合已有 HTTPS 站点、证书自动维护、端口复用和反代隐藏。但客户端配置要补齐 TLS 侧信息：
 
@@ -518,41 +539,9 @@ curl.exe "http://127.0.0.1:9090/proxies/$node/delay?timeout=8000&url=<encoded-te
 
 如果 API delay 较低但真实 `total` 明显更高，说明节点 TCP/TLS 探测和完整 HTTP 请求体感不同。此时应关注是否稳定、是否丢请求、是否存在反代/目标站差异，而不是只追求面板数字。
 
-### Mihomo TUN 与 EasyTier / WSL NAT
+### 从源码构建 mihomo（Windows）
 
-`IP-CIDR,...,DIRECT` 不等于绕过 Mihomo TUN。它只表示流量进入 TUN 后，mihomo 选择 `DIRECT` outbound；运行态 `/connections` 里仍可能看到 `inboundName: DEFAULT-TUN`、`chains: [DIRECT, ...]`。
-
-规则顺序会影响策略选择。宽泛的 `RULE-SET,private-ip`、`RULE-SET,cn-ip` 如果放在显式 `IP-CIDR` 前，会先命中特例地址。需要特例策略时，把特例规则放到宽泛规则前；但即使提前命中 `DIRECT`，它仍不是 TUN bypass。
-
-`route-exclude-address` 有坑，不要把它当成稳定通用方案。它只让 mihomo 不接管这些目的地址，不保证 Windows 自动补出可用的物理网卡路由；排除异地组网依赖的公网服务器 IP 后，可能直接把异地组网服务本身断开。
-
-```powershell
-route print <peer-ip>
-```
-
-本次排障里，`route-exclude-address + 手动 host route` 没作为最终方案采用。
-
-WSL NAT + Windows EasyTier + 远端 Caddy 的简单稳定方案：
-
-```text
-远端 Caddy reverse_proxy -> Windows EasyTier IP:port
-Windows portproxy -> 127.0.0.1:port
-WSL 服务监听并由 Windows localhost 转发访问
-```
-
-`netsh interface portproxy` 是 TCP 转发，不支持 UDP。WSL NAT 下优先尝试 `connectaddress=127.0.0.1`，这样比写 WSL NAT IP 更少受 WSL 重启后地址变化影响。批量检查：
-
-```powershell
-netsh interface portproxy show all
-```
-
-从云服务器探测 TCP 时，避免用 Bash `/dev/tcp/...` 形式；这类命令容易被云安全产品识别为反弹 shell 特征。HTTP(S) 端口优先用：
-
-```bash
-curl -k -I --connect-timeout 5 --max-time 8 https://<target>:<port>/
-```
-
-### 切换到 release tag
+#### 切换到 release tag
 
 构建指定 release 前先切 tag：
 
@@ -564,7 +553,7 @@ git describe --tags --exact-match
 
 如果工作区有本地配置文件、脚本或生成物，它们会显示为 untracked；不要因为切 tag 或构建而清理这些文件，除非用户明确要求。
 
-### 官方 workflow 的 windows-amd64 构建
+#### 官方 workflow 的 windows-amd64 构建
 
 GitHub Actions 里无 `v1/v2/v3` 文件名后缀的 `mihomo-windows-amd64` 对应：
 
@@ -588,7 +577,7 @@ go build -v -tags "with_gvisor" -trimpath -ldflags "-X 'github.com/metacubex/mih
 
 这条命令不指定 `-o`，所以会在当前目录生成或覆盖 `mihomo.exe`。如果 `mihomo.exe` 正在运行，Windows 会因为文件占用导致构建失败，需要先停掉 mihomo。
 
-### 不覆盖 release exe 的构建
+#### 不覆盖 release exe 的构建
 
 需要保留现有 `mihomo.exe` 时，显式输出到其他文件：
 
@@ -601,7 +590,7 @@ $env:GOAMD64 = "v3"
 go build -v -tags "with_gvisor" -trimpath -ldflags "-X 'github.com/metacubex/mihomo/constant.Version=v1.19.24' -X 'github.com/metacubex/mihomo/constant.BuildTime=$(Get-Date -Format r)' -w -s -buildid=" -o mihomo-windows-amd64.exe .
 ```
 
-### zip 不是 go build 默认产物
+#### zip 不是 go build 默认产物
 
 `go build` 只生成 exe。Release 包里的 `mihomo-windows-amd64-v1.19.24.zip` 是 workflow 在构建后额外压缩出来的，逻辑相当于：
 
@@ -610,7 +599,7 @@ Copy-Item .\mihomo.exe .\mihomo-windows-amd64.exe -Force
 Compress-Archive -LiteralPath .\mihomo-windows-amd64.exe -DestinationPath .\mihomo-windows-amd64-v1.19.24.zip -Force
 ```
 
-### 验证
+#### 验证
 
 构建后用：
 
@@ -625,8 +614,146 @@ Mihomo Meta v1.19.24 windows amd64
 Use tags: with_gvisor
 ```
 
-### MTU 问题
+## WSL / Docker 服务暴露（入站：portproxy + wslrelay）
+
+> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。WSL 出站流量走 Mihomo 的部分在上面的 [WSL NAT 下出站走 Mihomo / fake-ip](#wsl-nat-下出站走-mihomo--fake-ip)，两者互不相干。
+
+WSL NAT 下，要把 WSL 内服务暴露给 Windows / EasyTier / 远端反代，需要 Windows `netsh interface portproxy` 做 TCP 转发：它把 Windows 宿主某个监听地址和端口转到 WSL 内服务。`portproxy` 不负责让 WSL 出站走 Mihomo，也**不支持 UDP**。
+
+```powershell
+# 示例：Windows 在 <windows-listen-ip>:18080 监听，转发到 WSL localhost:18080
+netsh interface portproxy add v4tov4 `
+  listenaddress=<windows-listen-ip> listenport=18080 `
+  connectaddress=127.0.0.1 connectport=18080
+
+netsh interface portproxy show all
+```
+
+**推荐 `connectaddress=127.0.0.1`**（靠 wslrelay 的 localhost forwarding），而非 WSL NAT IP——NAT IP 会随 WSL 重启变化、不稳。配套：WSL 内服务也监听 `127.0.0.1`（纯 v4）——docker 写 `127.0.0.1:N:N`、native 服务 listen `127.0.0.1`，别用 `::`（避免 #14154 的 dual-stack v6 形态，见下）。
+
+### wslrelay / IPv6 dual-stack 坑（#14154）
+
+**症状**：portproxy 表正确建立，从 Windows 或 EasyTier 远端 TCP 能 connect，但请求一发出立刻 `Connection reset by peer` / `Recv failure: Connection was reset`（TCP **RST**，下文同——对方在 TCP 层主动拆掉连接），或直接 `Failed to connect`。
+
+**根因（坐实）**：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) — "Dual-mode IPv6 sockets do not accept IPv4 connections via localhost"，**open** 状态、`network` label、2026-02 提交、2026-05 仍在更新（数月未修）。issue 里 distro 内部 `curl -4 http://localhost:N` 就已经 refused，跨 wslrelay 到 Windows 必然继承同样症状。
+
+**和 Docker Desktop 无关、native dockerd 一样踩**：实测一台 WSL 内 systemd 起的 native dockerd（非 Docker Desktop），bare `ports: 9000:9000` 时 docker-proxy 默认开 dual-stack v6 socket，照样 RST。原文档把这段写成"Docker Desktop 容器端口的 wslrelay/IPv6 坑"是窄了。
+
+#### WSL 里的 socket 形态 → wslrelay 实际行为
+
+| WSL 里 `ss -tlnp` 显示 | family | `IPV6_V6ONLY` | wslrelay 在 Windows 这边建 | 实测结果 |
+|---|---|---|---|---|
+| `127.0.0.1:N` 纯 v4 | AF_INET | n/a | `127.0.0.1:N` (v4) | ✅ 通（**推荐**） |
+| `0.0.0.0:N` 纯 v4 | AF_INET | n/a | `127.0.0.1:N` (v4) | ✅ 通 |
+| `[::]:N` 纯 v6 | AF_INET6 | 1 | `[::1]:N` (v6) | 一致；v4 client refused |
+| `*:N` dual-stack v6 | AF_INET6 | **0** | **只建 `[::1]:N`，不补 v4** | ❌ portproxy `connectaddress=127.0.0.1` → RST |
+
+第三行就是 #14154 的形态。原因（这部分是推测）：wslrelay 看 socket family 为 v6 就照镜子建一个 v6 listener，没读 `IPV6_V6ONLY=0` 这个 bit，所以漏掉了对应的 v4 listener。
+
+#### 端到端链路（NAT 模式 + EasyTier + WSL distro）
+
+```
+[EasyTier peer (e.g. <mesh peer> <mesh-peer-IP>)]
+            ↓ TCP
+[Windows host kernel + EasyTier wintun]                受 <mesh 子网> 路由
+            ↓
+[svchost.exe / iphlpsvc] LISTEN <Windows机 mesh IP>:9000    ← netsh portproxy 这条
+            ↓ connectaddress=127.0.0.1 connectport=9000
+[wslrelay.exe]           LISTEN 127.0.0.1:9000        ← Microsoft 官方进程，NAT 模式触发
+            ↓ Hyper-V vsock
+[WSL distro socket]      0.0.0.0:9000 / *:9000        ← 必须是纯 v4 才不触发 #14154
+            ↓
+[Docker bridge / process]
+```
+
+两个组件都不能省、互不感知：
+
+- `netsh portproxy` 由 Windows `iphlpsvc` 承载，只是个通用 TCP 转发表，**不知道 WSL 存在**；它需要 connectaddress 那端有人接，正好 `127.0.0.1` 那端是 wslrelay 在 listen。
+- `wslrelay.exe` 是 WSL2 NAT 模式的 localhost forwarding 实现，**只在 Windows host 的 `127.0.0.1` / `[::1]` 上 listen**，不会 listen 任意 host IP（如 EasyTier 的 `<Windows机 mesh IP>`）。
+- `.wslconfig` 里 `hostAddressLoopback=true` 容易让人误以为是"让 host IP 也能 forward 进 WSL"——**不是**。它的方向是反的：让 WSL 进程能通过 host IP 访问 host loopback service。见下面实测。
+
+#### 实测：删掉 portproxy、靠 wslrelay 单独扛行不行（结论：不行）
+
+测试机 `.wslconfig`：`hostAddressLoopback=true`（已开）、`networkingMode` 默认 NAT。删 portproxy `<Windows机 mesh IP>:9000 → 127.0.0.1:9000` 那一条，其他 14 条保留。
+
+| 测试 | baseline | 删 portproxy 后 |
+|---|---|---|
+| netsh portproxy 表里 9000 | ✅ 在 | ❌ 已删 |
+| Windows 这边 listen 127.0.0.1:9000 | wslrelay | wslrelay（不变） |
+| Windows 这边 listen <Windows机 mesh IP>:9000 | svchost | ❌ 无人 listen |
+| Windows → 127.0.0.1:9000 | 200 | **200** |
+| Windows → <Windows机 mesh IP>:9000 | 200 | ❌ refused 2s 立刻 |
+| mesh peer A → <Windows机 mesh IP>:9000 | 200 | ❌ timeout 5s |
+| mesh peer B → <Windows机 mesh IP>:9000 | 200 | ❌ timeout 5s |
+
+结论：
+
+- wslrelay **始终只在 `127.0.0.1` listen**，不会自动 listen mesh IP；`hostAddressLoopback=true` 不改变这件事。
+- NAT 模式下，要让 host 网卡 / 虚拟网卡 (EasyTier wintun) 的 IP 上某个端口能进 WSL distro，**netsh portproxy 这一跳无法省**。
+- 删 portproxy 后立即 `Could not connect`（不是 RST、不是 timeout-after-handshake），印证那个 IP 上根本没有 listener。
+
+#### 辨识与修复
+
+辨识：
+
+```bash
+# WSL 里
+ss -tlnp | grep :<port>
+#  127.0.0.1:<port> / 0.0.0.0:<port>  → 纯 v4，没问题（推荐用 127.0.0.1）
+#  *:<port>        → dual-stack v6（#14154 形态）
+#  [::]:<port>     → 纯 v6（v4 client 也会 refused，但形态不同）
+```
+
+```powershell
+# Windows
+Get-NetTCPConnection -State Listen -LocalPort <port> | Format-Table LocalAddress,LocalPort,OwningProcess
+# 看 127.0.0.1 那一行进程是不是 wslrelay；如果只有 [::1] 没有 127.0.0.1
+# 而且 listenaddress=<host-ip> 的 portproxy 配过了仍 RST，几乎可以确认 #14154
+
+# 直接验证 Windows 侧 [::1] 是否能接连接（#14154 形态下通常 RST）：
+curl.exe --noproxy * -v --max-time 5 "http://[::1]:<port>/"
+```
+
+修复（按推荐度）：
+
+1. **显式 v4 监听地址**（首选，零代价）：
+   - Docker / docker-compose：**推荐写 `ports: ["127.0.0.1:9000:9000"]`**，不要 bare `"9000:9000"`（bare 让 docker-proxy 选 dual-stack v6 socket，触发 #14154）。显式写 v4 host IP `127.0.0.1` 即纯 v4，不踩坑。
+   - 服务直接 listen：**推荐 listen `127.0.0.1`**，不要用 `::`。Python `http.server` 默认 v4，Go `net.Listen("tcp", ":N")` 默认 dual-stack v6，要写 `net.Listen("tcp4", "127.0.0.1:N")`。
+   - **Java / JVM 服务**（Neo4j / Elasticsearch / Kafka / Spark 等）：JVM 默认开 dual-stack v6，**即使配置文件写 `listen_address=0.0.0.0` 也会落到 `*:N` 形态**（socket 是 AF_INET6 + V6ONLY=0，恰好是 #14154 触发点）。fix 是加 JVM flag `-Djava.net.preferIPv4Stack=true` 强制纯 v4 socket。**Neo4j 5.x apt 包实测**：编辑 `/etc/neo4j/neo4j.conf`，把 `#server.bolt.listen_address=:7687` 取消注释改成 `server.bolt.listen_address=0.0.0.0:7687`，再追加一行 `server.jvm.additional=-Djava.net.preferIPv4Stack=true`，`systemctl restart neo4j` 之后 `ss -tlnp` 从 `*:7687` 变 `0.0.0.0:7687`，wslrelay 看到纯 v4 listener 才会在 Windows 端补 `127.0.0.1:7687` 的 v4 listener，portproxy `connectaddress=127.0.0.1` 这条才不会 RST。**单改 `listen_address=0.0.0.0` 一行不够**，必须同时给 JVM 加 preferIPv4Stack=true。（listen 用 `127.0.0.1` 或 `0.0.0.0` 都是纯 v4、等效；上面是当时实测的 `0.0.0.0` 原值，关键是 `preferIPv4Stack`。）
+2. **portproxy `connectaddress` 指 WSL eth0 IP**（跳过 wslrelay 走 NAT）——**不推荐**：eth0 IP 随 WSL 重启变化、不稳；优先第 1 条（服务监听 `127.0.0.1` + `connectaddress=127.0.0.1`）。
+3. **portproxy 改用 `v4tov6` 转 `::1`**：理论可行，但实测在不少 WSL 版本上 wslrelay 的 `[::1]` listener 也 RST，所以不一定通。作为快速试探可用，长期不推荐。
+4. **切 `networkingMode=mirrored`**（Win11 22H2+）：彻底没 wslrelay。代价是重排所有 portproxy + 评估对 EasyTier wintun 路由优先级的影响。
+5. **WSL 内补 socat v4 relay**：`socat TCP4-LISTEN:<port>,reuseaddr,fork,bind=0.0.0.0 TCP:[::1]:<port>`，让 wslrelay 看到的是纯 v4 listener。多一跳进程，仅作 fallback。
+
+历史背景与 issue：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) (open)、[#10688](https://github.com/microsoft/WSL/issues/10688) (open，wslrelay 全双工 hang)；类似 v4/v6 困扰在 WSL repo 里有十几个独立 issue，labels 多数 `network`。
+
+#### EasyTier + 远端 Caddy 的入站稳定方案
+
+WSL NAT + Windows EasyTier + 远端 Caddy 的简单稳定方案：
+
+```text
+远端 Caddy reverse_proxy -> Windows EasyTier IP:port
+Windows portproxy -> 127.0.0.1:port
+WSL 服务监听 127.0.0.1，由 Windows localhost forwarding (wslrelay) 转发访问
+```
+
+`netsh interface portproxy` 是 TCP 转发，不支持 UDP。WSL NAT 下**推荐 `connectaddress=127.0.0.1`**（配套服务监听 `127.0.0.1`），而非 WSL NAT IP——NAT IP 会随 WSL 重启变化。批量检查：
+
+```powershell
+netsh interface portproxy show all
+```
+
+从云服务器探测 TCP 时，避免用 Bash `/dev/tcp/...` 形式；这类命令容易被云安全产品识别为反弹 shell 特征。HTTP(S) 端口优先用：
+
+```bash
+curl -k -I --connect-timeout 5 --max-time 8 https://<target>:<port>/
+```
+
+## EasyTier / WSL 组网杂项
+
+### MTU 问题（WSL 内组网，已弃用）
 
 曾在 WSL 内部署 EasyTier 时遇到过 MTU 不匹配问题——必须手动降低 EasyTier 的 MTU 以匹配 WSL 网卡的 MTU。
 
 **当前方案**：不再在 WSL 内配置组网，EasyTier 运行在 Windows 宿主机上，避免了此问题。
+
