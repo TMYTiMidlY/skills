@@ -13,6 +13,9 @@ Config via env (nothing hardcoded; password injected via portal secret):
   OIH_APP_ID    app id
   OIH_IID       installation id
   OIH_SCOPES    JSON array, default '["message:write","message:read","bot:read","contact:read"]'
+  OIH_EVENTS    (optional) JSON array of event subscriptions to also set on the app,
+                e.g. '["message"]' (wildcard) or '["message.text","message.image"]'.
+                Receiving messages needs BOTH the message:read scope AND a message.* subscription.
 """
 import os, json, ssl, urllib.request, http.cookiejar
 
@@ -23,6 +26,7 @@ APP = os.environ["OIH_APP_ID"]
 IID = os.environ["OIH_IID"]
 SCOPES = json.loads(os.environ.get(
     "OIH_SCOPES", '["message:write","message:read","bot:read","contact:read"]'))
+EVENTS = os.environ.get("OIH_EVENTS")  # optional; if set, also update app event subscriptions
 
 ctx = ssl.create_default_context()
 ctx.check_hostname = False
@@ -45,9 +49,20 @@ def req(method, path, body=None):
 
 st, _ = req("POST", "/api/auth/login", {"username": USER, "password": PW})
 print("login            ->", st)
-st, bd = req("PUT", "/api/apps/" + APP, {"scopes": SCOPES})
-print("update-app scopes->", st, bd[:120])
+app_body = {"scopes": SCOPES}
+if EVENTS:
+    app_body["events"] = json.loads(EVENTS)
+st, bd = req("PUT", "/api/apps/" + APP, app_body)
+print("update-app " + ("scopes+events" if EVENTS else "scopes") + "->", st, bd[:160])
 st, bd = req("POST", "/api/apps/" + APP + "/installations/" + IID + "/reauthorize")
 print("reauthorize      ->", st, bd[:120])
 st, bd = req("GET", "/api/apps/" + APP + "/installations/" + IID)
-print("get-installation ->", st, bd[:300])
+try:
+    inst = json.loads(bd)
+    for k in ("app_token", "webhook_secret"):  # never print secrets in full
+        v = inst.get(k)
+        if isinstance(v, str) and v:
+            inst[k] = v[:8] + "…(redacted,len=%d)" % len(v)
+    print("get-installation ->", st, json.dumps(inst, ensure_ascii=False)[:400])
+except Exception:
+    print("get-installation ->", st, "(body not printed to avoid leaking app_token)")
