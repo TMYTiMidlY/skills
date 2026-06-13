@@ -67,6 +67,50 @@ Host *
 
 `AddKeysToAgent yes` 表示首次连接输入 passphrase 后自动缓存到 agent；`IdentityFile` 指定默认使用的密钥。
 
+## 非交互环境 `Server accepts key` 却 `Permission denied`：私钥有 passphrase，但没有已解锁的 agent
+
+### 症状
+
+在**非交互 SSH**（CI / `bash -c` / 各类 agent 远程执行，不 source `~/.bashrc`）里 `git push` / `git ls-remote` 到一台 Forgejo（或裸 git-over-sshd），始终 `git@HOST: Permission denied (publickey,...)`。但公钥明明加对了——服务端（如 Forgejo web 的 SSH keys 页）能看到这把 key、且"上次使用"为空（＝从没认证成功过），而且**人在交互终端 `ssh git@HOST` 是成功的**。
+
+### 排查关键转折
+
+1. **先排除网络**：一旦出现 `Permission denied`（而不是 `Connection timed out`），就说明 TCP+SSH 握手已成功，是**认证**问题、不是网络。
+2. **`Server accepts key` 是关键迷雾**：`ssh -vv -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 git@HOST true` 看握手，关键几行：
+   ```
+   Offering public key: .../id_ed25519 ED25519 SHA256:xxxx
+   Server accepts key:  .../id_ed25519 ED25519 SHA256:xxxx   ← 服务器认这把公钥
+   ...
+   No more authentication methods to try.
+   Permission denied (publickey).
+   ```
+   `Server accepts key` 证明**公钥确实在 authorized_keys 里** → 问题转到客户端**私钥签名**这一步。
+3. **判断私钥是不是加密的**（不暴露私钥内容）：`ssh-keygen -y -f ~/.ssh/id_ed25519 -P ""` → `Load key ...: incorrect passphrase supplied to decrypt private key`，说明私钥**带 passphrase**。再 `ssh-add -l` → `Could not open a connection to your authentication agent`（当前环境没 agent）。
+
+### 根因
+
+私钥有 passphrase；非交互环境（`BatchMode` / `bash -c`，`SSH_AUTH_SOCK` 为空、又无法交互输 passphrase）拿不到一个已解锁该私钥的 ssh-agent。公钥不需解密所以能"亮出来"让服务器回 `Server accepts key`，但真正用私钥**签名**时无法解密 → 失败。人在自己终端能连，是因为那个交互 session 里有解锁好的 agent。**`Server accepts key`（公钥预检通过）≠ 认证成功**，极具迷惑性。
+
+### 解决
+
+宿主上通常已有一个**固定路径的常驻 ssh-agent**（如上面那个 systemd user agent），用户登录时早已 `ssh-add` 解锁。直接复用它，不必去 passphrase、也不必把 passphrase 交给 agent / 对话：
+
+```bash
+ps -u "$(id -u)" -o pid,cmd | grep [s]sh-agent
+# /usr/bin/ssh-agent -D -a /run/user/1000/ssh-agent.socket   ← 固定 socket
+
+export SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket
+ssh-add -l          # 确认里面有那把解锁的 key
+git push ...        # 用它认证，passphrase 全程不经过 agent / 对话
+```
+
+### 教训
+
+- **`Server accepts key` + `Permission denied` 的组合 = 公钥没问题、私钥签名出了问题**。别再反复查 authorized_keys / 重加公钥；往 passphrase、agent、私钥文件不可用方向查。
+- **非交互 SSH（`BatchMode` / CI）默认 `SSH_AUTH_SOCK` 为空、不读 `.bashrc`**。找可复用 agent 别只 `ls /tmp/ssh-*`，要 `ps … | grep ssh-agent` 看有没有 `-a <固定socket>` 的常驻 agent（systemd user 的在 `/run/user/<UID>/ssh-agent.socket`），`export` 它即可白嫖已解锁的 key。
+- 判断私钥是否加密：`ssh-keygen -y -f <key> -P ""`（成功输出公钥＝无 passphrase；报 `incorrect passphrase`＝有），不泄漏私钥材料。
+- `git ls-remote <url>` 是"网络+认证+仓库存在"三合一的最快只读探针，改 remote / push 前先用它探。
+
 ## SSH RemoteForward 代理转发
 
 把本地代理端口通过 SSH 反向隧道提供给远程机器。先在本地 `~/.ssh/config` 对应 Host 下添加：
