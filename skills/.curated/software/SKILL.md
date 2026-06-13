@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的配置与排障。涵盖 SSH 与 systemd、Zellij 终端复用与反代、文档格式转换（pandoc/feishu2md/MinerU）、自托管文档分享（WebDAV/Markdeep）与 PDF 导出（Prince XML/Vivliostyle/Paged.js/Typst 选型与 pixi 部署）、WSL 与 Windows 互操作（VS Code serve-web、portproxy）、EasyTier 客户端组网、Hermes agent 部署、GitHub Copilot CLI 内部行为与排障、RustFS + MinIO mc 客户端（mc/boto3 选型 + versioning 软硬删恢复链路 + 已修复的 ListObjectsV2 静默截断 bug + 跨桶 copy 的 `Io error: timeout` 调参 + `mc rb --force`/force-delete 清桶真相 + HDD 后端"对象数 ≫ 字节数"性能特征 + 大批量 op 可靠性模式）等。
+description: 本地软件、CLI 工具与自托管服务的配置与排障。涵盖 SSH 与 systemd、Zellij 终端复用与反代、文档格式转换（pandoc/feishu2md/MinerU）、自托管文档分享（WebDAV/Markdeep）与 PDF 导出（Prince XML/Vivliostyle/Paged.js/Typst 选型与 pixi 部署）、WSL 与 Windows 互操作（VS Code serve-web、portproxy）、EasyTier 客户端组网、Hermes agent 部署、GitHub Copilot CLI 内部行为与排障、RustFS + MinIO mc 客户端（mc/boto3 选型 + versioning 软硬删恢复链路 + 列举数可疑时 boto3/mc 交叉验证兜底 + 跨桶 copy 的 `Io error: timeout` 调参 + `mc rb --force`/force-delete 清桶真相 + HDD 后端"对象数 ≫ 字节数"性能特征 + 大批量 op 可靠性模式）等。
 ---
 
 # Software
@@ -57,7 +57,7 @@ EasyTier 组网的 Windows 客户端：安装、TOML 配置模板、Peer 配置�
 
 ## RustFS + MinIO mc 客户端
 
-RustFS（Rust 实现的 S3 兼容对象存储，github.com/rustfs/rustfs）+ MinIO `mc` CLI 的对接经验：**mc（CLI 二进制）与 boto3（Python SDK）互为补集，建议混用 crosscheck**；versioning 是桶级开关、软删（`mc rm` 不带 `--versions` = 写 delete marker，可 `mc undo` 恢复）vs 硬删（`mc rm --versions --force` = 物理删，不可逆）的语义与恢复/GC 链路；**列举 bug：versioning 桶 + 大量 delete marker 时 `ListObjectsV2` 服务端会静默返回 `IsTruncated=false` 提前截断——我提的 issue rustfs/rustfs#3217，已由 PR #3224 修复（`1.0.0-beta.8` 起带修复，`≤ beta.7` 仍中招），且没有任何客户端能自动绕过（mc 同样只发一次请求、不接力，旧笔记"mc 用 StartAfter 免疫"是误判），唯一可靠枚举走 ListObjectVersions（`mc ls --versions` / boto3 `list_object_versions()`）**；跨桶 server-side copy 在 HDD 后端高并发会撞 `Io error: timeout` 500（`--max-workers` 限并发 / 调 RustFS timeout env）；`mc rb --force` 在大 versioning 桶会 hang、改用 `x-minio-force-delete` header server 端清桶（脚本 `scripts/rustfs_force_delete_bucket.py`）；HDD 后端 wall-clock ∝ 对象数（打 zip 聚合 ~10× 加速）。见 [references/rustfs.md](references/rustfs.md)；大批量 op 可靠性模式（并发 list/delete/copy + 断点续传骨架）见 [references/rustfs-bulk-ops.md](references/rustfs-bulk-ops.md)。
+RustFS（Rust 实现的 S3 兼容对象存储，github.com/rustfs/rustfs）+ MinIO `mc` CLI 的对接经验：**mc（CLI 二进制）与 boto3（Python SDK）互为补集，建议混用 crosscheck**；versioning 是桶级开关、软删（`mc rm` 不带 `--versions` = 写 delete marker，可 `mc undo` 恢复）vs 硬删（`mc rm --versions --force` = 物理删，不可逆）的语义与恢复/GC 链路；**列举数可疑时用 boto3 + mc 交叉验证、`ListObjectVersions`（`mc ls --versions` / boto3 `list_object_versions()`）当兜底 oracle**（这套习惯曾帮忙定位一个上游已修复的服务端列举问题）；跨桶 server-side copy 在 HDD 后端高并发会撞 `Io error: timeout` 500（`--max-workers` 限并发 / 调 RustFS timeout env）；`mc rb --force` 在大 versioning 桶会 hang、改用 `x-minio-force-delete` header server 端清桶（脚本 `scripts/rustfs_force_delete_bucket.py`）；HDD 后端 wall-clock ∝ 对象数（打 zip 聚合 ~10× 加速）。见 [references/rustfs.md](references/rustfs.md)；大批量 op 可靠性模式（并发 list/delete/copy + 断点续传骨架）见 [references/rustfs-bulk-ops.md](references/rustfs-bulk-ops.md)。
 
 ## Windows / WSL 宿主侧速记
 
@@ -89,7 +89,7 @@ FunASR、Fun-ASR-Nano、Paraformer + VAD + Punc + CAM++、SenseVoiceSmall、Whis
 
 ## 私有 docs-share 站点（Git 仓库 → S3 直链分享）
 
-把要公网呈现的 md/html 放进一个私有 Git 仓库，每次 `git push` 或网页端上传/编辑即触发 CI（`rclone sync --checksum`）**增量同步**到一个 S3 兼容桶（桶结构 = 仓库树）；对外不靠反代鉴权，走 S3 **presigned 直链**（URL 自带签名 + 有效期）分享；`.md` 原样存（下载=raw），由 `viewer.html` markdeep 客户端渲染。完整内容见 [references/docs-share.md](references/docs-share.md)：AK/SK 是什么、持 root key 从零部署全流程（建桶 / 受限 access key 绑桶 policy 并实测隔离 / viewer 单对象匿名读 / 仓库 + secrets + workflow）、**不持 root key 与 CI token 的日常运维**（git push 上传、一次 push 多 commit 只跑一次同步、受限 mc alias 生成 presigned 分享链接）、`mc mirror`/`rsync` 因 `git checkout` 重置 mtime 全量重传的坑（故用 `rclone --checksum` 按内容哈希）、以及与 doc-share 一致的 markdeep 写作惯例（`[#key]` 引用 vs `[^name]` 脚注、GFM 不兼容点、研报模板）。S3 兼容存储底层行为见 [references/rustfs.md](references/rustfs.md)。
+把要公网呈现的 md/html 放进一个私有 Git 仓库，每次 `git push` 或网页端上传/编辑即触发 CI（`rclone sync --checksum`）**增量同步**到一个 S3 兼容桶（桶结构 = 仓库树）；对外走 S3 **presigned 直链**（URL 自带签名 + 有效期）分享；`public/` 前缀通过 bucket policy 开放匿名读、无需签名——知道 URL 即可访问。`.md` 原样存（下载=raw），由 Caddy Accept rewrite + markdeep viewer 客户端渲染。完整内容见 [references/docs-share.md](references/docs-share.md)：密钥体系（root key 派生受限 CI key、凭据存储位置）、public 路径 vs 私有路径的 bucket policy 机制、presigned URL 生成（直贴/viewer 包装/脚本批量）、更新与撤销、markdeep 写作惯例（`[#key]` 引用 vs `[^name]` 脚注、GFM 不兼容点、研报模板）。服务端部署（Caddy 配置 / viewer 壳子 / CI key 创建 / bucket policy 设置命令）由 `vps-maintenance` skill 的 caddy.md 覆盖。S3 兼容存储底层行为见 [references/rustfs.md](references/rustfs.md)。
 
 ## Markdown → PDF 导出
 

@@ -1,8 +1,8 @@
 # RustFS 大批量 op 的可靠性模式
 
-> 往 RustFS 桶上批量做 list / delete / copy 几万到几百万对象时，光用客户端默认设置经常 hang 或 silent fail。下面是踩过坑后的稳态补丁。主文档（versioning 语义、列举 bug、copy timeout、性能特征）在 [rustfs.md](rustfs.md)。
+> 往 RustFS 桶上批量做 list / delete / copy 几万到几百万对象时，光用客户端默认设置经常 hang 或漏传。下面是踩过坑后的稳态补丁。主文档（versioning 语义、列举交叉验证、copy timeout、性能特征）在 [rustfs.md](rustfs.md)。
 >
-> ⚠️ **前置**：所有"靠 `list_objects_v2` 列源"的步骤，在 `≤ beta.7`（列举截断 bug 未修，见 [rustfs.md §4](rustfs.md)）的服务端上会**静默漏列**。受影响版本上列源改走 `list_object_versions()` / `mc ls --versions` 过滤可见集，或升级到 `1.0.0-beta.8`+（已含修复）。
+> ⚠️ **前置**：用 `list_objects_v2` 列源时，先跟 `list_object_versions()` / `mc ls --versions` 交叉验证一下数对不对（边界场景下 V2 列举未必全，原理见 [rustfs.md §4](rustfs.md)）。
 
 ## (a) 大桶 list 慢 → per-shard 并发 list
 
@@ -79,9 +79,9 @@ for fut in as_completed(futs):
     if err: failed.append((s, err))  # 否则单 shard timeout 直接炸整个 pool
 ```
 
-## (e) `mc mirror` 在 versioning 桶大 prefix silent fail → boto3 per-object copy
+## (e) 要可校验的批量复制：用 boto3 显式 copy，别盲信 `mc mirror`
 
-`mc mirror src/ dst/` 在 versioning 桶大 prefix 上经常**退码 0 + 0 transferred** 却一个字节没传（mc 内部 list 比对撞列举 bug，误判"src 和 dst 已一致"）。改用 boto3 单对象 server-side copy + 限并发 worker：
+`mc mirror` 在大批量 / versioning 桶上复制，结果不容易核对（曾遇到它判定"已一致"而实际没传）。要可校验的批量复制，改用 boto3 单对象 server-side copy + 限并发 worker，事后再 key set 比对：
 
 ```python
 def copy_one(src_key):
