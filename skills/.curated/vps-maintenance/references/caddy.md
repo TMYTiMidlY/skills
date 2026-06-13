@@ -99,6 +99,35 @@ https://<主 IP>:<对外端口> {
 
 > 如果你刻意让 **Caddy 只绑定主 IP**、后端只绑定 `127.0.0.1`，那么“外部端口”和“后端端口”写成同一个数字也可以共存；文档里分开写只是更不容易看错。
 
+### HTTP→HTTPS 跳转（IP 模式的边界）
+
+开了 `auto_https disable_redirects` 后，Caddy 不再自动做任何 HTTP→HTTPS 跳转，需要的话自己写。有一条硬约束决定了能做到什么程度：**同一个端口要么是 TLS 监听、要么是明文 HTTP 监听，不能两者兼有。**
+
+- **`80 → 443` 能干净地跳。** `80` 没被任何 HTTPS 站点占用，单独写一个明文站点做 308 即可，裸 IP 访问会自动升到 HTTPS：
+
+  ```caddyfile
+  http://<主 IP>:80 {
+      redir https://{host}{uri} 308
+  }
+  ```
+
+- **非标 HTTPS 端口（如 `:8082`）无法同口跳转。** 该端口已是 `tls internal` 的 TLS 监听，明文请求会被 Go 的 HTTP 栈在进入 Caddy 路由之前直接挡掉，固定返回下面这个 400，且无法改写成 302/308：
+
+  ```text
+  HTTP/1.0 400 Bad Request
+  Client sent an HTTP request to an HTTPS server.
+  ```
+
+  所以 `http://<主 IP>:8082` → `https://<主 IP>:8082` 这种「同口自动跳」做不到，只能要求访问方显式写 `https://`。
+
+- **「对某几个端口做跳转」只能跨端口。** 另起一个**未被 HTTPS 占用**的端口 A 当明文入口，跳到真正的 HTTPS 端口 B。代价是对外端口号变了；访问方既然已知道端口，多半不如直接写 `https://`，按需取舍：
+
+  ```caddyfile
+  http://<主 IP>:<端口A> {
+      redir https://{host}:<端口B>{uri} 308
+  }
+  ```
+
 ### 导入 Caddy local root CA（仅 `tls internal` 场景）
 
 使用 `tls internal` 时，Caddy 的本机 PKI 默认放在：
