@@ -112,7 +112,7 @@
     "description": "代码驱动的幻灯片制作"
   },
   ".experimental/diagnose": {
-    "repo": "smll-ai/mattpocock-skills",
+    "repo": "mattpocock/skills",
     "path": "skills/engineering/diagnose",
     "branch": "main",
     "synced_commit": "7afa86d",
@@ -120,15 +120,15 @@
     "description": "困难 bug 与性能回归诊断流程"
   },
   ".experimental/grill-with-docs": {
-    "repo": "smll-ai/mattpocock-skills",
+    "repo": "mattpocock/skills",
     "path": "skills/engineering/grill-with-docs",
     "branch": "main",
-    "synced_commit": "7afa86d",
-    "synced_date": "2026-04-28T15:33:37Z",
+    "synced_commit": "e3b90b5",
+    "synced_date": "2026-05-28T15:48:30Z",
     "description": "结合项目文档压力测试计划"
   },
   ".experimental/triage": {
-    "repo": "smll-ai/mattpocock-skills",
+    "repo": "mattpocock/skills",
     "path": "skills/engineering/triage",
     "branch": "main",
     "synced_commit": "179a14e",
@@ -136,23 +136,23 @@
     "description": "基于状态机的问题分诊流程"
   },
   ".experimental/improve-codebase-architecture": {
-    "repo": "smll-ai/mattpocock-skills",
+    "repo": "mattpocock/skills",
     "path": "skills/engineering/improve-codebase-architecture",
     "branch": "main",
-    "synced_commit": "7afa86d",
-    "synced_date": "2026-04-28T15:33:37Z",
+    "synced_commit": "a36584e",
+    "synced_date": "2026-05-20T08:46:51Z",
     "description": "识别并改进代码库架构机会"
   },
   ".experimental/setup-matt-pocock-skills": {
-    "repo": "smll-ai/mattpocock-skills",
+    "repo": "mattpocock/skills",
     "path": "skills/engineering/setup-matt-pocock-skills",
     "branch": "main",
-    "synced_commit": "179a14e",
-    "synced_date": "2026-04-28T18:06:32Z",
+    "synced_commit": "3bb0b1b",
+    "synced_date": "2026-05-07T06:20:57Z",
     "description": "初始化 Matt Pocock 工程 skills 项目上下文"
   },
   ".experimental/tdd": {
-    "repo": "smll-ai/mattpocock-skills",
+    "repo": "mattpocock/skills",
     "path": "skills/engineering/tdd",
     "branch": "main",
     "synced_commit": "7afa86d",
@@ -160,23 +160,23 @@
     "description": "红绿重构测试驱动开发流程"
   },
   ".experimental/to-issues": {
-    "repo": "smll-ai/mattpocock-skills",
+    "repo": "mattpocock/skills",
     "path": "skills/engineering/to-issues",
     "branch": "main",
-    "synced_commit": "179a14e",
-    "synced_date": "2026-04-28T18:06:32Z",
+    "synced_commit": "ff3ee1d",
+    "synced_date": "2026-05-06T08:26:48Z",
     "description": "将计划拆分为可执行 issue"
   },
   ".experimental/to-prd": {
-    "repo": "smll-ai/mattpocock-skills",
+    "repo": "mattpocock/skills",
     "path": "skills/engineering/to-prd",
     "branch": "main",
-    "synced_commit": "179a14e",
-    "synced_date": "2026-04-28T18:06:32Z",
+    "synced_commit": "aaf2453",
+    "synced_date": "2026-05-31T09:08:36Z",
     "description": "根据上下文生成 PRD"
   },
   ".experimental/zoom-out": {
-    "repo": "smll-ai/mattpocock-skills",
+    "repo": "mattpocock/skills",
     "path": "skills/engineering/zoom-out",
     "branch": "main",
     "synced_commit": "7afa86d",
@@ -184,7 +184,7 @@
     "description": "从更高层次理解代码上下文"
   },
   ".experimental/caveman": {
-    "repo": "smll-ai/mattpocock-skills",
+    "repo": "mattpocock/skills",
     "path": "skills/productivity/caveman",
     "branch": "main",
     "synced_commit": "62f43a1",
@@ -192,7 +192,7 @@
     "description": "超压缩沟通模式"
   },
   ".experimental/grill-me": {
-    "repo": "smll-ai/mattpocock-skills",
+    "repo": "mattpocock/skills",
     "path": "skills/productivity/grill-me",
     "branch": "main",
     "synced_commit": "62f43a1",
@@ -200,7 +200,7 @@
     "description": "通过连续追问压力测试方案"
   },
   ".experimental/write-a-skill": {
-    "repo": "smll-ai/mattpocock-skills",
+    "repo": "mattpocock/skills",
     "path": "skills/productivity/write-a-skill",
     "branch": "main",
     "synced_commit": "62f43a1",
@@ -230,5 +230,21 @@
     "synced_commit": "8dde312",
     "synced_date": "2026-05-29T01:04:44Z",
     "description": "用六段式（直觉 → 可跑示例 / 伪代码 → 逐段讲解 → 陷阱 → 延伸 → 自测题）把一个技术概念讲清楚；DL/ML 概念默认 PyTorch 伪代码 + 张量形状标注"
+  },
+  ".experimental/handoff": {
+    "repo": "mattpocock/skills",
+    "path": "skills/productivity/handoff",
+    "branch": "main",
+    "synced_commit": "d54c497",
+    "synced_date": "2026-05-19T16:07:02Z",
+    "description": "把当前对话压缩成 handoff 文档，便于另一个 agent 接手；自动建议下一步可用 skill、去除敏感信息、保存到临时目录"
+  },
+  ".experimental/prototype": {
+    "repo": "mattpocock/skills",
+    "path": "skills/engineering/prototype",
+    "branch": "main",
+    "synced_commit": "f304057",
+    "synced_date": "2026-05-12T07:36:19Z",
+    "description": "构建可丢弃的原型快速打磨设计：分\"可运行 terminal app\"（验证状态/业务逻辑）与\"多套 UI 变体可切换路由\"两条路线"
   }
 }

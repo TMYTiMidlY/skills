@@ -45,19 +45,21 @@
 | `jupyter-notebook` | [openai/skills](https://github.com/openai/skills) | Jupyter Notebook 创建与编辑 |
 | `screenshot` | [openai/skills](https://github.com/openai/skills) | 桌面截图 |
 | `slides` | [openai/skills](https://github.com/openai/skills) | 代码驱动的幻灯片制作 |
-| `diagnose` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 困难 bug 与性能回归诊断流程 |
-| `grill-with-docs` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 结合项目文档压力测试计划 |
-| `triage` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 基于状态机的问题分诊流程 |
-| `improve-codebase-architecture` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 识别并改进代码库架构机会 |
-| `setup-matt-pocock-skills` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 初始化 Matt Pocock 工程 skills 项目上下文 |
-| `tdd` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 红绿重构测试驱动开发流程 |
-| `to-issues` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 将计划拆分为可执行 issue |
-| `to-prd` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 根据上下文生成 PRD |
-| `zoom-out` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 从更高层次理解代码上下文 |
-| `caveman` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 超压缩沟通模式 |
-| `grill-me` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 通过连续追问压力测试方案 |
-| `write-a-skill` | [smll-ai/mattpocock-skills](https://github.com/smll-ai/mattpocock-skills) | 创建结构化 agent skill |
-| `humanizer-zh` | [op7418/Humanizer-zh](https://github.com/op7418/Humanizer-zh) | 去除中文文本中的 AI 生成痕迹（Humanizer 汉化版） |<!-- skills-table:end -->
+| `diagnose` | [mattpocock/skills](https://github.com/mattpocock/skills) | 困难 bug 与性能回归诊断流程 |
+| `grill-with-docs` | [mattpocock/skills](https://github.com/mattpocock/skills) | 结合项目文档压力测试计划 |
+| `triage` | [mattpocock/skills](https://github.com/mattpocock/skills) | 基于状态机的问题分诊流程 |
+| `improve-codebase-architecture` | [mattpocock/skills](https://github.com/mattpocock/skills) | 识别并改进代码库架构机会 |
+| `setup-matt-pocock-skills` | [mattpocock/skills](https://github.com/mattpocock/skills) | 初始化 Matt Pocock 工程 skills 项目上下文 |
+| `tdd` | [mattpocock/skills](https://github.com/mattpocock/skills) | 红绿重构测试驱动开发流程 |
+| `to-issues` | [mattpocock/skills](https://github.com/mattpocock/skills) | 将计划拆分为可执行 issue |
+| `to-prd` | [mattpocock/skills](https://github.com/mattpocock/skills) | 根据上下文生成 PRD |
+| `zoom-out` | [mattpocock/skills](https://github.com/mattpocock/skills) | 从更高层次理解代码上下文 |
+| `caveman` | [mattpocock/skills](https://github.com/mattpocock/skills) | 超压缩沟通模式 |
+| `grill-me` | [mattpocock/skills](https://github.com/mattpocock/skills) | 通过连续追问压力测试方案 |
+| `write-a-skill` | [mattpocock/skills](https://github.com/mattpocock/skills) | 创建结构化 agent skill |
+| `humanizer-zh` | [op7418/Humanizer-zh](https://github.com/op7418/Humanizer-zh) | 去除中文文本中的 AI 生成痕迹（Humanizer 汉化版） |
+| `handoff` | [mattpocock/skills](https://github.com/mattpocock/skills) | 把当前对话压缩成 handoff 文档，便于另一个 agent 接手；自动建议下一步可用 skill、去除敏感信息、保存到临时目录 |
+| `prototype` | [mattpocock/skills](https://github.com/mattpocock/skills) | 构建可丢弃的原型快速打磨设计：分"可运行 terminal app"（验证状态/业务逻辑）与"多套 UI 变体可切换路由"两条路线 |<!-- skills-table:end -->
 
 此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 
