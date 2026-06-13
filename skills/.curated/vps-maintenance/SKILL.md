@@ -152,6 +152,10 @@ Caddy 反向代理、域名/IP 模式、local root CA、Caddyfile 修改流程�
 
 尤其是修改 Caddyfile、EasyTier、SSH 转发、systemd 单元、防火墙规则时，不要凭记忆改，先读对应 reference。
 
+### 微信 ClawBot Hub（OpeniLink Hub）
+
+自托管微信 ClawBot/iLink 消息平台 `oih`（二进制 / docker，默认 SQLite，监听 `:9800`）的部署：最小起步、PostgreSQL/MinIO 生产 compose、关键 env、Caddy 反代，以及 **`RP_ORIGIN`/`RP_ID` 必须等于对外 origin 否则 Passkey 登录失败** 这个必踩坑见 [references/wechat-clawbot.md](references/wechat-clawbot.md)。**收发消息 / Bot/管理 API / scope 等使用侧操作由 `wechat-clawbot` skill 覆盖。**
+
 ### error-pages
 
 自定义错误页面服务，用于反向代理后端不可用时展示友好的错误页。
