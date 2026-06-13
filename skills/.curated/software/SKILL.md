@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的配置与排障。涵盖 SSH 与 systemd、Zellij 终端复用与反代、文档格式转换（pandoc/feishu2md/MinerU）、自托管文档分享（WebDAV/Markdeep）与 PDF 导出（Prince XML/Vivliostyle/Paged.js/Typst 选型与 pixi 部署）、WSL 与 Windows 互操作（VS Code serve-web、Mihomo 内核、portproxy）、EasyTier 客户端组网、Hermes agent 部署、GitHub Copilot CLI 内部行为与排障、RustFS + MinIO mc 客户端（mc/boto3 选型 + versioning 软硬删恢复链路 + 列举数可疑时 boto3/mc 交叉验证兜底 + 跨桶 copy 的 `Io error: timeout` 调参 + `mc rb --force`/force-delete 清桶真相 + HDD 后端"对象数 ≫ 字节数"性能特征 + 大批量 op 可靠性模式）等。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 互操作及网络（VS Code serve-web/portproxy/RDP/Mihomo 代理/EasyTier 组网）、挂载与 SMB/CIFS 文件共享、Git 镜像与自建 Forgejo、RustFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（WebDAV/copyparty/S3 直链）、本地中文 ASR、OpenList 网盘聚合、Hermes agent、GitHub Copilot CLI 行为排障、Windows/Office 激活与 macOS 杂项等。
 ---
 
 # Software
