@@ -225,28 +225,58 @@ APT 安装的系统自带 Caddy **不包含** `caddy-security`、`caddy-webdav` 
 - 用它替换系统自带的 `/usr/bin/caddy`。
 
 > 已经装过一个插件、后面还想加另一个插件时，不是再叠一层，而是**重新下载一个同时包含两者的新二进制**。
+>
+> **下载时优先取页面默认的最新 stable 版本**（caddy 本体和插件都取最新）。多台机共用同一套 `caddy-security` 时（尤其跨主机的 portal↔gatekeeper 分离部署），**各台的 caddy-security 版本要尽量一致**——否则会踩下文「caddy-security 跨版本 cookie 名陷阱」。
 
-替换步骤：
+### 下载（不带版本参数 = 始终最新 stable）
 
 ```bash
-sudo dpkg-divert --divert /usr/bin/caddy.default --rename /usr/bin/caddy   # 首次替换才需要
-sudo mv ./caddy /usr/bin/caddy.custom
+curl -fsSL -A "Mozilla/5.0" -o caddy.new \
+  "https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com/greenpau/caddy-security"
+chmod +x caddy.new
+./caddy.new version; ./caddy.new list-modules --versions | grep -i security   # 确认版本
+```
+
+- 多插件就追加多个 `&p=...`（如 `&p=github.com/mholt/caddy-webdav`），一次下一个**包含全部插件**的二进制。
+- **没带 `-A "Mozilla/5.0"` User-Agent 会被拒**（返回 ~22 字节的 `Contact: ...` 文本，不是二进制）。
+- 不带版本参数时该 API **默认给最新 stable**（caddy 本体 + 各插件都最新）。
+
+> ⚠️ **自定义二进制不会自动更新**。`dpkg-divert` 之后 APT 只更 `caddy.default`，**`caddy.custom` 冻结在你上次下载的版本**——这就是版本会悄悄落后、多机出现版本 skew 的根源（见下文「跨版本 cookie 名陷阱」）。想升级**只能手动重新下载**；多机共用 portal 时要把各台一起升、保持版本一致。
+
+### 首次安装（`caddy.custom` 还不存在）
+
+```bash
+sudo dpkg-divert --divert /usr/bin/caddy.default --rename /usr/bin/caddy   # 只做一次
+sudo install -m 0755 caddy.new /usr/bin/caddy.custom
 sudo update-alternatives --install /usr/bin/caddy caddy /usr/bin/caddy.default 10
 sudo update-alternatives --install /usr/bin/caddy caddy /usr/bin/caddy.custom 50
 sudo systemctl restart caddy
 ```
 
-说明：
+- `dpkg-divert` 把原始 `/usr/bin/caddy` 移到 `caddy.default`，防 APT 升级覆盖；`custom`(50) 优先 `default`(10)；`sudo update-alternatives --config caddy` 可切换。**`dpkg-divert` 只做一次**。
+- **RHEL 系通常没有 `dpkg-divert`**，改用发行版自己的 alternatives 机制。
 
-- `dpkg-divert`：把原始 `/usr/bin/caddy` 移到 `/usr/bin/caddy.default`，防止 APT 升级时覆盖自定义二进制。
-- `update-alternatives`：管理多版本，`custom`（50）优先于 `default`（10）。
-- 以后可用 `sudo update-alternatives --config caddy` 切换版本。
-- **`dpkg-divert` 只做一次**。之后你只需要覆盖 `/usr/bin/caddy.custom` 并重启服务。
+### 更新到最新版（`caddy.custom` 已存在且正在运行）
 
-额外坑：
+**坑：不能直接 `cp` 覆盖正在运行的二进制**——会报 `Text file busy`；从 `/tmp` 跨文件系统 `mv` 也会退化成 copy 同样失败。正解是**拷到目标同目录再用 `mv` 原子 rename**（rename 只换目录项，运行中的旧 inode 不受影响，重启才加载新的）：
 
-- 如果直接请求 `caddyserver.com/api/download` 拿到的内容不对（比如只有 22 字节的 `Contact: ...` 拒绝文本），通常是**没带 User-Agent 被拒**。加一个 `-A "Mozilla/5.0"` 重试即可。
-- **RHEL 系通常没有 `dpkg-divert`**。替换系统自带 caddy 时用发行版自己的 `alternatives` 机制，具体写法查对应文档。
+```bash
+B=/usr/bin/caddy.custom
+# 1) 先用新二进制验证当前配置兼容（大版本升级可能改 Caddyfile 语法 / 默认值）。
+#    {env.*} 占位符给 dummy 值（validate 只查能否解析，不查值是否合法）。
+GITHUB_CLIENT_ID=x GITHUB_CLIENT_SECRET=x \
+JWT_SHARED_KEY=0000000000000000000000000000000000000000000000000000000000000000 \
+  ./caddy.new validate --config /etc/caddy/Caddyfile --adapter caddyfile   # 出 "Valid configuration" 才继续
+# 2) 备份 → 同目录暂存 → 原子 rename 覆盖忙文件 → 重启
+sudo cp -a "$B" "$B.bak-$(date +%Y%m%d-%H%M%S)"
+sudo cp caddy.new "$B.new" && sudo chmod +x "$B.new"
+sudo mv -f "$B.new" "$B"
+sudo systemctl restart caddy
+# 3) 确认新版真在跑（不是还在跑旧 inode）；起不来就 cp -a 把 .bak 拷回再 restart
+caddy list-modules --versions | grep -i security
+```
+
+升级 `caddy-security` **大版本**前务必看下文「跨版本 cookie 名陷阱」：默认 cookie 名变过，**升级会让所有现存会话失效（全员重登）**，且共用同一 portal 的各机要一起升、否则签发/读取的 cookie 名对不上会登录死循环。
 
 ## `caddy-security`：GitHub OAuth 认证
 
@@ -255,6 +285,23 @@ sudo systemctl restart caddy
 从 [Caddy Download Page](https://caddyserver.com/download) 下载带 `github.com/greenpau/caddy-security` 的二进制，然后按上一节的方法替换系统自带 Caddy。
 
 官方完整示例可参考：[authcrunch GitHub OAuth Caddyfile](https://github.com/authcrunch/authcrunch.github.io/blob/main/assets/conf/oauth/github/Caddyfile)
+
+### ⚠️ 跨版本 cookie 名陷阱（多机共用 portal 必看）
+
+`caddy-security` 在版本演进中**改过 access token 的默认 cookie 名**：旧版（实测 `v1.1.49`）默认 `access_token`；新版（`v1.1.61`+）默认 `AUTHP_ACCESS_TOKEN`（= 前缀 `AUTHP` + `ACCESS_TOKEN`，源码 `go-authcrunch/pkg/authn/cookie/cookie_config.go`：`DefaultCookieNamePrefix="AUTHP"` + `DefaultAccessTokenCookieName="ACCESS_TOKEN"`）。
+
+**坑**：当**签发方**（`authentication portal`）和**读取方**（`authorization policy` / gatekeeper）跑在**不同版本**时——典型是跨主机部署（一台只跑 portal，另一台只跑 `authorize`）——两边默认 cookie 名对不上：portal 发 `access_token`，gatekeeper 默认找 `AUTHP_ACCESS_TOKEN`，**永远找不到 token → 登录后无限 302 回 login → 浏览器 `ERR_TOO_MANY_REDIRECTS`**。同一台机（portal+gatekeeper 同版本）天然自洽、不触发，所以极隐蔽，容易误判成网络 / JWT key 问题。
+
+**诊断**（Caddy admin API，默认 `http://localhost:2019/config/`）：
+
+- **读取方实际找哪个 cookie**：reload 时全局开 `debug`，捞 `journalctl -u caddy` 里 `msg="Configured gatekeeper"` 那条的 `auth_cookies` 字段（= gatekeeper 真正会读的 cookie 名集合）。
+- **浏览器实际带哪个 cookie**：全局加 `servers { log_credentials }` 临时取消 Cookie 脱敏，再看请求 `Cookie` 头里 JWT（`eyJ...`）挂在哪个名下。**抓完务必撤掉**，别把 JWT 长期写进 journal。
+- **portal 签发名**：`curl -s localhost:2019/config/` 看 `authentication_portals[].cookie_config.access_token_cookie_name`（新版 resolve 成 `AUTHP_ACCESS_TOKEN`；旧版为 `null` → 回退到 `crypto_key_configs[].token_name`，即 `access_token`）。
+
+**两种修法**：
+
+1. **各机版本对齐**（根治）：所有共用同一 portal 的机器升到同一 `caddy-security` 版本，默认名自然统一。**注意连锁后果**：升级会改变签发的 cookie 名 → **所有现存会话失效、全员重登**；且**所有 gatekeeper 要同步**（要么都用新默认 `AUTHP_ACCESS_TOKEN` 删掉显式 pin，要么都改成新名）——否则刚对齐又会对不上。
+2. **显式 pin cookie 名**（局部、抗版本漂移）：在 authorization policy 里写 `set access_token cookie name <portal 实际签发的名>`。要稳就多名全收：`set access_token cookie name AUTHP_ACCESS_TOKEN access_token jwt_access_token`（新旧默认 + query 默认一锅端）。**注意**：省略该指令 ≠ 安全默认——新版 gatekeeper 省略时默认只找 `AUTHP_ACCESS_TOKEN`，跨版本读旧 portal 的 `access_token` 必炸。
 
 ### 先理解 cookie 作用域
 
