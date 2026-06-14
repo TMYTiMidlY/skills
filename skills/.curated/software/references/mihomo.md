@@ -160,6 +160,19 @@ TCP from client → Mihomo mixed-port
 2. **改外层 group 报 "proxy not exist"** —— `.all` 里没有目标 proxy 就 PUT 失败。比如 `☁️ 云服务.all = [🚀 节点选择, vless-ws-Node, DIRECT, REJECT]`，想切到 `Hysteria2-Node` 必须先 PUT `🚀 节点选择` → `Hysteria2-Node`，再 PUT `☁️ 云服务` → `🚀 节点选择`。**两层都要改**。
 3. **PUT 后老连接不切** —— Mihomo 切节点只对**新建连接**生效。`curl --no-keepalive` 强制每次重连；长跑的下载/上传进程要重启才走新节点。
 
+## WSL ssh 借道宿主 mihomo（ProxyCommand + 动态网关）
+
+WSL2（NAT 模式）里 ssh 要走宿主 Windows 上的 mihomo：HTTP 客户端设 `HTTPS_PROXY` 即可，但 ssh 走 SOCKS、得用 `ProxyCommand`。难点：mihomo 监听宿主 `127.0.0.1:7890`，而 WSL 里的 `127.0.0.1` 是 WSL 自己；要用**宿主在 WSL 网段的 IP = WSL 默认网关**，且 NAT 下这个网关 IP **每次启动可能变**、不能写死。于是在 `ProxyCommand` 里现取网关再走它的 SOCKS5：
+
+```sshconfig
+Host <要走代理的远端>
+    # WSL2 NAT：动态取默认网关(=宿主)，经其 mihomo :7890 SOCKS5 出站
+    ProxyCommand sh -c 'gw=$(ip route show default 2>/dev/null | awk "{print \$3; exit}"); exec nc -x "${gw:-172.28.80.1}:7890" -X 5 "$0" "$1"' %h %p
+```
+
+- `%h %p` → ssh 替换成目标主机/端口（脚本里的 `$0`/`$1`）；`ip route show default | awk '{print $3}'` → 默认网关（NAT 下=宿主），`${gw:-…}` 是取不到时的兜底；`nc -x <网关>:7890 -X 5` → `-X 5`=SOCKS5，经网关的 mihomo 端口连目标。
+- **何时不需要**：宿主 mihomo 开 **TUN 模式**时透明路由（连 fake-IP 都接管），WSL 里 ssh 直连目标即被接管，这条 ProxyCommand 多余——解析成 fake-IP 的域名（自建服务等）直接通。只有**没被 TUN/规则覆盖、直连出不去**的目标才需要它：同一台 WSL 上 `github.com:443` 去掉 ProxyCommand 直连 `Connection timed out`，加上才通。Mirror 模式下 WSL 与宿主共享 `127.0.0.1`，可直接用 `127.0.0.1:7890`、不必取网关（见 [network.md](network.md)）。
+
 ## REST API 改节点 + 测延迟（PowerShell + emoji group 名）
 
 group 名常含 emoji 或中文，URL path 必须 `EscapeDataString`：
