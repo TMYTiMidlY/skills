@@ -5,7 +5,7 @@
 > **本文件只讲安装/部署。**日常操作（分享、bundle 带图私有文档、html 下载按钮、撤销、写作惯例、排障速查）全在仓库 `README.md`：
 > <https://github.com/TMYTiMidlY/docs-share/blob/main/README.md>
 >
-> 服务端基础设施（Caddy 边缘、viewer / `_viewer.html` 部署、Accept-rewrite 配置）→ `caddy.md` §「文档私链分享站」。S3 兼容存储底层行为 → `rustfs.md`。仓库目录结构与本机 alias 细节 → 仓库 `README.md`。
+> 服务端基础设施（建桶、CI key 创建、bucket policy、Caddy 边缘 + Accept-rewrite、viewer / `_viewer.html` 部署）→ **vps-maintenance** skill 的 `references/caddy.md` §「文档私链分享站」（含完整端到端部署步骤）。RustFS 桶日常操作的客户端坑（mc / boto3 行为差异、versioning、跨桶 copy、删桶）→ **software** skill 的 `references/rustfs.md`（同目录 `rustfs-bulk-ops.md` 写批量 ops 注意点）。仓库目录结构与本机 alias 细节 → 仓库 `README.md`。
 
 ---
 
@@ -24,7 +24,7 @@ CI key 部署后存两处：
 
 ### 1. 建桶 + 发受限 CI key
 
-完整步骤见 `caddy.md` / `rustfs.md`。建好 CI key 后存进仓库 secret 与本机 `~/.mc/config.json`。
+完整步骤（建桶 + 发 CI key + Caddy 反代 + viewer 部署）都在 **vps-maintenance** skill 的 `references/caddy.md` §「文档私链分享站」。建好 CI key 后存进仓库 secret 与本机 `~/.mc/config.json`。（**software** skill 的 `references/rustfs.md` 只讲 mc / boto3 客户端操作坑，**不**讲 RustFS 服务部署。）
 
 ### 2. 设 `public/*` 匿名可读的 bucket policy
 
