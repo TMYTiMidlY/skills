@@ -295,6 +295,15 @@ curl.exe --noproxy * -v --max-time 5 "http://[::1]:<port>/"
 4. **切 `networkingMode=mirrored`**（Win11 22H2+）：彻底没 wslrelay。代价是重排所有 portproxy + 评估对 EasyTier wintun 路由优先级的影响。
 5. **WSL 内补 socat v4 relay**：`socat TCP4-LISTEN:<port>,reuseaddr,fork,bind=0.0.0.0 TCP:[::1]:<port>`，让 wslrelay 看到的是纯 v4 listener。多一跳进程，仅作 fallback。
 
+#### 服务端先说话的协议（SSH 等）额外坑
+
+上面的 #14154 是 **dual-stack v6 → RST**（连上立刻断）。还有个相关但不同的 [microsoft/WSL#10688](https://github.com/microsoft/WSL/issues/10688)「wslrelay 全双工 hang」，专挑**服务端先开口**的协议下手：
+
+- **HTTP 不中招**——客户端先发请求，wslrelay 把 client→server 转过去后 server→client 也就通了，所以 web 服务经 `connectaddress=127.0.0.1` 一直稳。
+- **SSH 中招**——SSH 连上后是**服务端先吐 banner**（`SSH-2.0-…`），wslrelay 偶发不转发这段"服务端先发"的数据，client 干等到超时（OpenSSH 报 `Connection timed out during banner exchange`）。同理 SMTP / FTP 控制连接等"greet-first"协议。
+
+实测稳妥组合（公网压测 35/35）：**docker 发布写 `0.0.0.0:<port>:<port>`（纯 v4）+ portproxy `connectaddress=127.0.0.1`**。诡异处：同样纯 v4、改成 `127.0.0.1:<port>:<port>` 发布反而偶发 banner 卡死——机制没完全坐实（两者 `ss` 都显示纯 v4 listener），但 `0.0.0.0` 发布可复现地稳。`connectaddress` 仍用 `127.0.0.1`（走 wslrelay、不漂移），别为这个去指 eth0 IP（会随 WSL 重启漂移，得不偿失）。容器内服务（如 Forgejo 内置 SSH）的完整部署见 [`git-server.md`](git-server.md) ③ 方案 A。
+
 历史背景与 issue：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) (open)、[#10688](https://github.com/microsoft/WSL/issues/10688) (open，wslrelay 全双工 hang)；类似 v4/v6 困扰在 WSL repo 里有十几个独立 issue，labels 多数 `network`。
 
 #### EasyTier + 远端 Caddy 的入站稳定方案

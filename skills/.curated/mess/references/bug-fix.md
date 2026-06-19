@@ -492,3 +492,38 @@ https://update.code.visualstudio.com/1.115.0/cli-linux-x64/stable
 - **唯一对照组 ✅ 是宝藏**。当全网搜不到匹配症状时，找出"哪台是好的"，然后**把变量按字节列对照表**，逐个排除。本案三台 WSL 用同一条链路只有版本不同，前几轮乱猜参数全部白费，第三栏一列才直接给出答案。
 - **看 strings + cargo 编译路径**。Rust 二进制把 cargo 路径嵌死了，无源码也能拿到完整依赖图（含每个 crate 的精确版本号），用来 bisect 极快。
 - **「同 commit / 同 sha256 完全等价」是错觉**。本案 standalone tarball 和 deb 包内 binary 二进制完全一致，但跟 1.115.0 standalone tarball 的 commit 同样是 41dd792b 也可能 sha256 不同（不同时间 rebuild）—— 验证版本看 commit + `strings` 看依赖，别只看 sha。
+
+## WSL2 NAT：同机「Windows 宿主机能连自建服务、内嵌 WSL 连不上（fake-ip）」，切 Mihomo TUN off→on 后 WSL 恢复
+
+> 2026-06-20 | Mihomo TUN（fake-ip，跑在 Windows 宿主）| WSL2 NAT (Ubuntu) | 自建 Forgejo 内置 SSH `:222`，公网经阿里云 socat 中转 + EasyTier mesh
+
+> 记录原则：只记客观现象与实测值，**根因未坐实，不强行归因**。
+
+### 症状
+
+- 目标 `ssh.git.tmytimidly.com:222`（自建 Forgejo 内置 SSH）。该域名 DNS：外部机器解析真实 IP `47.102.36.175`；**1810 这台（Windows 宿主 + 内嵌 WSL）解析为 Mihomo fake-ip `198.18.x`**。
+- 多设备 `ssh -T git@…:222` / `git fetch` 实测：
+  - 本机 Ag-Workstation（也有 Mihomo，但解析真实 IP）✅；RackNerd / BSCC-M9 / Mac-mini（外部）✅
+  - **1810 Windows 宿主机（解析 fake-ip）✅** —— `ssh.exe -T` 回 `Permission denied (publickey)`，即端点已连通
+  - **1810 WSL 本体（解析同一 fake-ip）❌** —— `Connection timed out during banner exchange`；`git fetch` 约 3/5、或 rc=124 超时
+- 即「同一台物理机，Windows 宿主机连得上、内嵌 WSL 连不上」。
+
+### 排查中的实测值（不强行归因）
+
+- WSL 内绕开公网的路径都正常：`ssh -p222 git@127.0.0.1`（docker-proxy→容器）3/3；`git@10.144.18.10`（mesh，被 TUN `route-exclude` 覆盖）3/3 且 0.6s → 服务端/容器本身没问题。
+- WSL 强制真实 IP `git@47.102.36.175`（TUN 仍开）：1/3，仍偶发超时。
+- Mihomo 运行态（宿主机 interop `curl http://127.0.0.1:9090/configs` 与 `/rules`）：
+  - `tun.enable=true`、`dns-hijack:["any:53"]`、fake-ip 段在用、`route-exclude-address:["10.144.0.0/16"]`
+  - 规则含 `DomainSuffix tmytimidly.com → 直连`（hitCount 47953）、`IPCIDR 47.102.36.175/32 → 直连` —— 该域名/IP 配置即直连
+- `PATCH /configs {"tun":{"enable":false}}` 关 TUN 后：WSL DNS 解析变回**真实 IP** `47.102.36.175`，WSL `ssh -T` ✅、`git fetch` rc=0。
+- `PATCH … {"tun":{"enable":true}}` 重新开 TUN 后：WSL `ssh -T` **6/6**、`git fetch` rc=0（此时 DNS 仍解析 fake-ip `198.18.x`）。即开回 TUN，WSL 也通了。
+
+### 现象小结（客观）
+
+- 某时刻出现「WSL 不通 / 宿主机通」；把 Mihomo TUN `off→on` 切一遍后，WSL 变为稳定可通（6/6），**期间未改任何配置**（`*.tmytimidly.com` 自始至终是直连规则）。
+- **未能坐实**「切换前为何不通、切换后为何通」的机制，仅记录这一可复现的相关性。
+
+### 让它恢复的动作（可复现）
+
+- 经 9090 把 TUN 切一次：`curl.exe -X PATCH http://127.0.0.1:9090/configs -d '{"tun":{"enable":false}}'` 再 `-d '{"tun":{"enable":true}}'`（或在 Mihomo GUI 切 TUN 开关）。之后 1810 WSL 经 fake-ip 访问该自建服务恢复。
+- TUN 无关的稳定备选（本次未采用）：把该 remote 指向 mesh `10.144.18.10:222`（被 `route-exclude` 覆盖，开不开 TUN 都 0.6s 稳）。
