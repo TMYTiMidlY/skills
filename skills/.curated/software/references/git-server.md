@@ -199,6 +199,26 @@ Web 上「Clone」按钮给的 SSH 地址有两种写法，由 `[repository] USE
 
 > 两种写法在 22 端口下**功能完全等价**，落到同一个仓库。区别只在：scp-like 语法**无法表达端口**——所以一旦 `SSH_PORT != 22`，无论 `USE_COMPAT_SSH_URI` 设什么都只会给带端口的 `ssh://` 形式。本部署若 web 与 SSH 分流到不同入口（如 web 走域名经边缘反代、SSH 直连另一台），`SSH_DOMAIN` 单独指向 SSH 入口、`SSH_PORT=22` 保持，配 `USE_COMPAT_SSH_URI=false` 即得 `git@<ssh-host>:<owner>/<repo>.git`。
 
+**源码核实（2026-06，对照 [go-gitea/gitea](https://github.com/go-gitea/gitea) + [forgejo/forgejo](https://codeberg.org/forgejo/forgejo) 当前源码）**：上表三分支两家**逐字一致**，都出自 `models/repo/repo.go` 的 `ComposeSSHCloneURL`——`if setting.SSH.Port != 22` 时强制走带端口 `ssh://`（源码注释原文 `// non-standard port, it must use full URI`），22 端口才在 `UseCompatSSHURI` 上二选一。所以"是 Gitea 还是 Forgejo"**不影响分支判断、只影响默认值**。Gitea 还自带单元测试 `models/repo/repo_test.go` 的 `TestComposeSSHCloneURL`，把结果钉成行为契约，可直接当真值表照搬：
+
+| `SSH.Domain` | `SSH.Port` | `UseCompatSSHURI` | 断言输出 |
+|---|---|---|---|
+| `domain` | 22 | `false` | `git@domain:user/repo.git` |
+| `domain` | 22 | `true` | `ssh://git@domain/user/repo.git` |
+| `domain` | 123 | `false` | `ssh://git@domain:123/user/repo.git` |
+| `domain` | 123 | `true` | `ssh://git@domain:123/user/repo.git`（与上行**相同** → 非 22 端口下开关失效）|
+| `::1` | 22 | `false` | `git@[::1]:user/repo.git`（IPv6 host 自动包 `[]`）|
+| `::1` | 123 | `false` | `ssh://git@[::1]:123/user/repo.git` |
+
+**默认值的精确出处**（决定 app.ini 不写这条时取什么）——两家都在 `modules/setting/repository.go`，**写法不同、结果相反**：
+
+| | ini 解析行 | 缺省值 |
+|---|---|---|
+| **Forgejo** | `Repository.UseCompatSSHURI = sec.Key("USE_COMPAT_SSH_URI").MustBool(true)` | **`true`**（`ssh://`）|
+| **Gitea** | `... .MustBool()`（**无参**，取零值；结构体默认也是 `false`）| **`false`**（scp-like）|
+
+**Gitea 独有的 `(DOER_USERNAME)` 变体**（和本部署的 SSH 反代/relay 架构相关）：Gitea 的签名是 `ComposeSSHCloneURL(doer, owner, repo)`，比 Forgejo 的 `ComposeSSHCloneURL(owner, repo)` 多收一个 `doer`——当 `SSH_USER`（`setting.SSH.User`）设成字面量 `(DOER_USERNAME)` 时，clone 地址里的 SSH 用户名替换成**当前登录用户名**（给"按用户预先准备公钥"的 SSH 反代用），拿不到 doer 时回落内置用户。Forgejo 没有这个分支。
+
 ### 镜像与数据目录：用非 rootless，注意挂载路径
 
 Forgejo 官方镜像有两种（[官方 docker.md](https://forgejo.org/docs/latest/admin/installation/docker/)）：
