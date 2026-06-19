@@ -1,4 +1,4 @@
-# 自建 Forgejo（内网 WSL2 机）+ 公网 22 SSH relay + CI runner
+# 自建 Forgejo（内网 WSL2 机）+ 公网 git-SSH（内置 / relay 二选一）+ CI runner
 
 > 这是一份可照着部署的指南，用占位符代替具体主机/IP/用户名，换台机器时按自己环境替换：
 >
@@ -9,7 +9,9 @@
 > - `<入口VPS>`：唯一有公网 IP 的机器，做公网入口（本部署是一台 RHEL 系、未备案的云 VPS）。
 > - `<PUBLIC_IP>`：`<入口VPS>` 的公网入口地址，**可以是 IP，也可以是域名**（本部署后来改用了域名）。web 入口与 SSH 入口还能拆到不同主机（下文称 `<WEB_HOST>` / `<SSH_HOST>`）；最简单的单机情形里三者就是同一个值。
 >
-> 其余端口 22 / 3000 / 2376 是设计固定值，按原样保留即可。
+> - `<SSH_PORT>`：git-over-SSH 对外端口。两种方案取值不同（见 ③）：**relay 方案**复用标准 **22**；**内置 SSH 方案**用一个**专用端口**（22 留给入口机自己的运维 sshd，本部署用的是 222）。
+>
+> 其余端口 3000 / 2376 是设计固定值，按原样保留即可。
 
 ## 为什么选 Forgejo（选型背景）
 
@@ -23,14 +25,43 @@
 `<内网机>` 用 docker compose 跑 Forgejo，但它没有公网 IP；唯一的公网落点是 `<入口VPS>`。要在不破坏 `<入口VPS>` 自身运维的前提下，把三件事透到内网：
 
 - `ssh <user>@<PUBLIC_IP>` → 仍是 `<入口VPS>` 自己的运维 shell（**不能被破坏**）。
-- `git clone git@<PUBLIC_IP>:user/repo.git` → 透到内网 Forgejo，且走**标准 22 端口**（clone URL 不带端口号）。
+- `git clone` 透到内网 Forgejo（端口随方案：**A 用一个专用端口、B 复用标准 22**，见 ③）。
 - web UI + git-over-HTTPS → 经边缘 Caddy 反代（`https://<PUBLIC_IP>:3000/`；本部署 VPS 未备案，只能用 IP + `tls internal` 自签证书，client 需 `-k`）。
 
-git 和运维都要用 22 端口，没法简单端口转发。核心做法是 **SSH passthrough + 跨机 relay**：`<入口VPS>` 的 sshd 按**登录用户名**分流——`git` 用户的请求经一条到 `<内网机>` 的 SSH relay 转发进 Forgejo 容器，其它用户走全局默认 shell，完全不受影响。
+git-SSH 的难点全在「入口机的 22 已经是它自己的运维 sshd」这一条上，两套方案各自绕开它：
+
+- **方案 A（本部署在用）**：git 走一个**专用端口**，入口机对该端口做**无脑 TCP 转发**（不碰 sshd），git 落到 Forgejo 内置 SSH server。最简单；代价是 clone URL 带端口（`ssh://…:<port>/`）。
+- **方案 B**：要 git 也复用**标准 22**（clone URL 不带端口、像 GitHub）。靠 **SSH passthrough + 跨机 relay**：入口机 sshd 按**登录用户名**分流——`git` 用户的请求经 relay 转进 Forgejo 容器，其它用户走全局默认 shell，完全不受影响。
 
 ## 整体架构
 
-一句话：**公网入口 `<入口VPS>` 按"用谁的身份登录"分流**——`git@` 走 git 服务（经 relay 转到内网 Forgejo），`<user>@` 走正常运维 shell，`https://…:3000` 走 web。Forgejo 本体和 CI 都在内网 `<内网机>` 的 docker 里。
+Forgejo 本体 + web + CI 都在内网 `<内网机>` 的 docker 里（①②④），唯一的公网落点是 `<入口VPS>`。**web/HTTPS 统一走 ② 的边缘 Caddy 反代**；**git-over-SSH 有两套方案、二选一**（③）——下面两张图分别是它们的链路（运维 shell、web 都不受影响）。
+
+**方案 A：内置 SSH + dumb TCP 转发（本部署在用，更简单）**——入口机只做一层无脑 TCP 转发，git 落到 Forgejo 自己的内置 SSH server。
+
+```mermaid
+flowchart LR
+    C[client]
+
+    subgraph VPS["#60;入口VPS#62; 公网落点"]
+        FWD2["socat 专用端口<br/>(dumb TCP 转发)"]
+        CADDY[边缘 Caddy]
+    end
+
+    subgraph NEI["#60;内网机#62; WSL2 + docker (无公网IP)"]
+        FG[(Forgejo 容器<br/>内置 SSH server)]
+        RUN[forgejo-runner + DinD]
+    end
+
+    C -- "ssh git@ 专用端口" --> FWD2
+    C -- "https :3000" --> CADDY
+
+    FWD2 -- "TCP 原样转发" --> FG
+    CADDY -- "reverse_proxy" --> FG
+    FG --> RUN
+```
+
+**方案 B：公网 SSH relay（复用 22，clone URL 无端口短地址）**——入口机 sshd 按登录名分流，`git@` 经 relay 查 key / 跑 git，`<user>@` 仍是正常运维 shell。
 
 ```mermaid
 flowchart LR
@@ -58,16 +89,16 @@ flowchart LR
     FG --> RUN
 ```
 
-> relay 这一跳（`<入口VPS>` → `<内网机>`）走 EasyTier mesh，不经公网。
+> 两方案里"转发/relay 这一跳"（`<入口VPS>` → `<内网机>`）都走 EasyTier mesh，不经公网。
 
-`git clone git@<PUBLIC_IP>:…` 实际分两步，都由 `<入口VPS>` 的脚本经 relay 转发到内网、再 `docker exec` 进 Forgejo 容器：
+**方案 B 的两步**（方案 A 没有这套——Forgejo 内置 server 直接查库、连入口机都不碰）：`git clone git@<PUBLIC_IP>:…` 实际分两步，都由 `<入口VPS>` 的脚本经 relay 转发到内网、再 `docker exec` 进 Forgejo 容器：
 
 1. **查 key**：sshd 的 `AuthorizedKeysCommand` 当场问"这把公钥是谁的"→ relay → `docker exec forgejo forgejo keys` 查 Forgejo 数据库 → 返回一行带 forced command 的 `authorized_keys`。
 2. **跑 git**：那行 forced command → relay → `docker exec -i forgejo forgejo serv key-N` 收发 git 数据。
 
-> **为什么在 Forgejo 网页端加一把 SSH key，公网入口机马上就认得？** 因为入口机的 `git` 用户**没有** `authorized_keys` 文件——sshd 配的是 `AuthorizedKeysCommand`，每次连接**当场**经 relay 查 Forgejo 数据库里的公钥表（网页端加的 key 正存在这里）。key 始终只在 Forgejo 数据库里，**从不拷到入口机**。
+> **方案 B：为什么网页端加一把 SSH key，公网入口机马上就认得？** 因为入口机的 `git` 用户**没有** `authorized_keys` 文件——sshd 配的是 `AuthorizedKeysCommand`，每次连接**当场**经 relay 查 Forgejo 数据库里的公钥表（网页端加的 key 正存在这里）。key 始终只在 Forgejo 数据库里，**从不拷到入口机**。
 
-下面按 ①内网机 Forgejo → ②web 入口 → ③SSH relay → ④CI 的顺序部署。
+下面按 ①内网机 Forgejo → ②web 入口 → ③git-SSH（二选一）→ ④CI 的顺序部署。两套 git-SSH 方案的取舍对比与做法见 ③。
 
 ## ① 内网机：Forgejo + PostgreSQL
 
@@ -165,9 +196,9 @@ services:
 
 - **`ROOT_URL` / `SSH_DOMAIN` / `DOMAIN` 三者含义不同**，都可填 IP 或**域名**（本部署用的就是域名，且 web 与 SSH 还指向不同主机）；别一股脑填同一个值。理解关键：**"网页 URL""HTTPS clone 地址""SSH clone 地址"是三件事，但只有第一件是功能性的，后两件本质是展示**——
   - **`ROOT_URL`（功能性，最重要）** = 网页对外地址。浏览器地址栏、页面/邮件里生成的所有链接、**GitHub OAuth 回调的 base**（回调 = `<ROOT_URL>/user/oauth2/<name>/callback`）都用它；**HTTPS clone 地址不是独立配置项，而是由它派生**（`<ROOT_URL><owner>/<repo>.git`）。所以"改 HTTPS clone 显示"≡"改 `ROOT_URL`"，而改 `ROOT_URL` 会连带影响 web 访问和 OAuth。它必须和浏览器**实际**访问方式逐字一致：经边缘域名 + 443 就写 `https://<WEB_HOST>/`；边缘在非标端口上自签（如 `:3000`）就写 `https://<WEB_HOST>:3000/`。改了它，GitHub OAuth App 的回调 URL 要同步改。
-  - **`SSH_DOMAIN`（+ `SSH_PORT`，纯展示）** = 只决定仓库页「Clone」框里 SSH 地址显示成 `git@<SSH_DOMAIN>:…`（端口取 `SSH_PORT`、形式见下「scp-like vs ssh://」）。**实际 SSH 连到哪，由 `<SSH_HOST>` 的 DNS + relay 决定，Forgejo 不参与**——所以它可以指向和 web **完全不同的主机**（本部署 web 走一台边缘、SSH 直连另一台境内机，就是靠这里拆开的）。单独改它只动仓库页显示、不影响连通。`SSH_PORT=22` 是展示端口（配 22 relay），和内置 SSH server 的真实监听口 `SSH_LISTEN_PORT` 是两回事（本部署 `START_SSH_SERVER=false`，用不到后者）。
+  - **`SSH_DOMAIN`（+ `SSH_PORT`，纯展示）** = 只决定仓库页「Clone」框里 SSH 地址显示成 `git@<SSH_DOMAIN>:…`（端口取 `SSH_PORT`、形式见下「scp-like vs ssh://」）。**实际 SSH 连到哪，由 `<SSH_HOST>` 的 DNS + 入口机那一跳决定，Forgejo 不参与**——所以它可以指向和 web **完全不同的主机**（本部署 web 走一台边缘、SSH 直连另一台境内机，就是靠这里拆开的）。单独改它只动仓库页显示、不影响连通。`SSH_PORT` 是展示端口；和内置 SSH server 的真实监听口 `SSH_LISTEN_PORT` 是两回事——**relay 方案**（③ B）`START_SSH_SERVER=false`、用不到 `SSH_LISTEN_PORT`，`SSH_PORT=22` 只为展示；**内置方案**（③ A）`START_SSH_SERVER=true`、`SSH_PORT` 填专用端口、`SSH_LISTEN_PORT` 填容器内高端口。
   - **`DOMAIN`（默认值种子）** = 仅在 `ROOT_URL` / `SSH_DOMAIN` 没显式设时，拿它推默认值（`ROOT_URL` 默认 `{PROTOCOL}://{DOMAIN}:{HTTP_PORT}/`，`SSH_DOMAIN` 默认取 `DOMAIN`）。两者都显式写了时，`DOMAIN` 基本不再单独起作用；填成 web host 保持整洁即可。
-- `START_SSH_SERVER=false`：**关掉 Forgejo 内置 SSH server**（容器没公网、也不监听 22），但 `DISABLE_SSH=false` 保留 SSH 克隆能力——git transport 由 relay + `forgejo serv` 承担（见 ③）。
+- `START_SSH_SERVER` / `DISABLE_SSH`：选哪条 git-SSH 路线（见 ③ 二选一）。**relay 方案**（B）`START_SSH_SERVER=false`（关掉内置 server，容器不监听 SSH，git transport 由 relay + `forgejo serv` 承担）；**内置方案**（A）`START_SSH_SERVER=true`（起内置 server，另配 `SSH_PORT` / `SSH_LISTEN_PORT` 与端口发布，见 ③ 方案 A）。两者都要 `DISABLE_SSH=false` 才保留 SSH 克隆能力。
 - `COOKIE_NAME` 设成一个**独特名**（见「关键坑 · cookie 改名」）。
 - `POSTGRES_PASSWORD` 放同目录 `.env`（`POSTGRES_PASSWORD=...`，权限 600），compose 用 `${POSTGRES_PASSWORD}` 引用。
 - 镜像 tag `forgejo:15` 里的 `15` 会自动跟最新 15.x。撰写时最新已发布大版本是 15；官方文档示例里出现的 `16` 当时还没发布镜像，按实际能拉到的大版本填。
@@ -305,11 +336,87 @@ web UI + git-over-HTTPS 经 `<入口VPS>` 的边缘 Caddy 反代到 `<内网机>
 
 把整站默认语言设成简体中文：在 Caddy 里 forgejo 的 `reverse_proxy` 子块加 `header_up Accept-Language "zh-CN"`，压过浏览器的 `Accept-Language`。未登录/未设语言的用户即默认中文；用户在右下角切过语言后会写 cookie，cookie 优先级更高、记住其选择。
 
-## ③ 公网 SSH relay：VPS sshd 分流 + 中转脚本
+## ③ git-over-SSH：内置 SSH 还是 relay（二选一）
+
+git 的 SSH 传输有两条独立路线，**二选一**即可，web/HTTPS（②）不受影响。先看取舍再往下做：
+
+| 维度 | 方案 A：内置 SSH + dumb TCP 转发 | 方案 B：公网 SSH relay |
+|---|---|---|
+| 入口 VPS 角色 | 纯 TCP 转发（一个 socat 单元），**完全不碰 sshd** | sshd 按登录名 `git` 分流 + 两个 relay 脚本 |
+| 用哪个端口 | 一个**专用端口** `<SSH_PORT>`（入口机 22 留给运维 sshd） | 复用标准 **22** |
+| clone URL | `ssh://git@<SSH_HOST>:<SSH_PORT>/owner/repo.git`（带端口） | `git@<SSH_HOST>:owner/repo.git`（scp-like 短地址，像 GitHub） |
+| 入口机要装啥 | 只一个 socat 转发单元 | `git` 用户 + `AuthorizedKeysCommand` + 两个脚本 + relay 私钥 |
+| 公钥怎么认 | Forgejo 内置 server 直接查自己数据库 | 入口机每次连接经 relay 现查容器 `forgejo keys` |
+| 复杂度 / 维护面 | 低 | 高（多机、多脚本、有 ControlMaster 等坑） |
+| 什么时候选 | 能接受非 22 端口、想最简单直接 | clone URL 必须走标准 22 / 要 GitHub 式无端口短地址 |
+
+> 两方案 Forgejo 都要 `DISABLE_SSH=false`。区别只在 `START_SSH_SERVER`（A=`true` 起内置 server；B=`false`，git transport 由 relay + `forgejo serv` 承担）和入口机那一跳怎么搭。上面 ① 的 compose 是按 B 写的，选 A 就按「方案 A」改那几个 `FORGEJO__server__*` 并多发布一个端口。
+
+### 方案 A：内置 SSH server + 入口机 dumb TCP 转发
+
+最省事的一条：Forgejo 跑**自己的内置 SSH server**，入口 VPS 只做一层**无脑 TCP 端口转发**——不碰 sshd、不查 key、不装 forgejo 二进制。因为入口机的 22 已经是它自己的运维 sshd，这套用一个**专用端口** `<SSH_PORT>`（如 222 / 2222）。
+
+**Forgejo 容器**：在 ① 的 compose 上改这几个环境变量——
+
+```yaml
+      - FORGEJO__server__START_SSH_SERVER=true        # 起内置 SSH server
+      - FORGEJO__server__SSH_PORT=<SSH_PORT>          # 对外展示 + clone URL 用的端口
+      - FORGEJO__server__SSH_LISTEN_PORT=<容器内端口>  # 容器内真实监听口（高端口，见下）
+      - FORGEJO__server__SSH_DOMAIN=<SSH_HOST>        # clone URL 里显示的主机
+      - FORGEJO__server__DISABLE_SSH=false
+```
+
+ports 里把内置 server 发布出来（发布到本机回环，对外由入口机转发；WSL 场景见下）：
+
+```yaml
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:<SSH_PORT>:<容器内端口>"
+```
+
+要点：
+
+- **`SSH_PORT`（展示）≠ `SSH_LISTEN_PORT`（容器内真实监听）**：容器以非 root（`USER_UID=1000`）跑、绑不了 <1024 的口，所以 `SSH_LISTEN_PORT` 用高端口（如 2222），再把它 publish 成 host 的 `<SSH_PORT>`。
+- **`SSH_PORT != 22` ⇒ clone URL 自动是带端口的 `ssh://git@<SSH_HOST>:<SSH_PORT>/...`**（`USE_COMPAT_SSH_URI` 在非 22 下失效，见上「scp-like vs ssh://」真值表）。想要无端口 scp-like 短地址，要么走方案 B 的 22，要么你有一台**专门的 SSH 入口主机、其 22 空着**——那就把 `<SSH_PORT>` 设 22、转发该主机的 22。
+- **主机密钥**：内置 server 用 `<data>/ssh/ssh_host_*`。容器以 uid 1000 跑，这些 key 必须能被 uid 1000 读——若原来是 `root:root 600`，`docker exec -u root <容器> chown -R 1000:1000 /data/ssh` 修一下，否则 server 起不来。容器日志出现 `SSH server started on :<容器内端口>` 即成功。
+
+**入口 VPS：一个 dumb TCP 转发（systemd + socat）**，把公网 `<SSH_PORT>` 原样转到内网机同端口，全程不碰 sshd：
+
+```ini
+# /etc/systemd/system/forgejo-ssh-forward.service
+[Unit]
+Description=TCP forward :<SSH_PORT> -> Forgejo built-in SSH on <内网机>:<SSH_PORT>
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/socat -d -d TCP-LISTEN:<SSH_PORT>,fork,reuseaddr,keepalive TCP:<内网机地址>:<SSH_PORT>,keepalive
+Restart=on-failure
+RestartSec=2s
+DynamicUser=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE      # 仅当 <SSH_PORT> < 1024 才需要
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`systemctl enable --now forgejo-ssh-forward`，再放行云防火墙/安全组的 `<SSH_PORT>` 入站。**验收**：从任意公网机 `ssh -p <SSH_PORT> -T git@<SSH_HOST>` 应回 Forgejo 的 `Permission denied (publickey)`（没登记 key 时）或欢迎语（登记了 key）；`ssh -v` 里出现 `remote software version Go` 说明确实打到了 Forgejo 内置 server（OpenSSH 会显示 `OpenSSH_...`，借此区分是不是打串到运维 sshd）。公钥在 Forgejo 网页端登记即可（内置 server 直接查库，无需碰入口机）。
+
+**内网机在 WSL2（NAT）+ Windows 入口的特例**：`<内网机地址>` 要填 Windows 宿主的网卡 IP（mesh / LAN），WSL 内的容器端口得经 Windows `netsh portproxy` + wslrelay 才能从宿主 IP 进。这条链路有个 **SSH 专属坑**，详见 [`network.md`](network.md)「WSL/Docker 服务暴露（入站）」：
+
+> SSH 是「**服务端先发 banner**」的协议，会踩 wslrelay 的全双工 hang（WSL #10688）——HTTP 不中招（客户端先说话，所以 web/3000 一直正常）。实测稳定组合：docker 发布写 **`0.0.0.0:<SSH_PORT>:<容器内端口>`**（纯 v4）+ portproxy **`connectaddress=127.0.0.1`**；用 `127.0.0.1:<…>` 发布反而偶发握手超时（banner timeout）。`connectaddress=127.0.0.1` 走 wslrelay、**不漂移**——别用会随 WSL 重启变化的 eth0 IP。
+
+### 方案 B：公网 SSH relay（sshd 分流 + 中转脚本）
 
 整套的核心，三部分：`<入口VPS>` 的 sshd 分流、`<入口VPS>` 的两个中转脚本、`<内网机>` 的 authorized_keys 内联转发。
 
-### (a) `<入口VPS>` sshd：给 git 用户单独分流
+#### (a) `<入口VPS>` sshd：给 git 用户单独分流
 
 先建一个本机 `git` 用户（`useradd git`，家目录放 relay 私钥，见 (b)）。在 `<入口VPS>` 的 `sshd_config` 末尾加一段 `Match User git`——只影响登录名 `git`，全局配置和其它用户完全不动：
 
@@ -332,7 +439,7 @@ Match User git
 - `AuthorizedKeysCommandUser git`：这条查询命令以 `git` 身份跑。
 - 改 sshd 要稳：先备份 → `sshd -t` 校验通过 → `systemctl reload sshd`（reload 不断现有连接，配错也不会立刻锁死你）。SSH 服务名因发行版而异（见「关键坑 · 发行版差异」）。云厂商的 VNC / 串口控制台是改坏时的最后兜底。
 
-### (b) `<入口VPS>` 两个中转脚本
+#### (b) `<入口VPS>` 两个中转脚本
 
 这两个脚本**就是单机 Forgejo 里 `forgejo keys` / `forgejo serv` 两个功能的"跨机版"**：单机部署时 sshd 直接调 forgejo 二进制的这俩子命令；这里 VPS 上没有 forgejo，于是用两个 shell 脚本把请求经 relay 转给内网机容器里的 `forgejo keys` / `forgejo serv` 执行。脚本本身只做 ssh 转发——**VPS 不需要任何 forgejo 二进制**，公网那台越干净越安全。
 
@@ -365,7 +472,7 @@ exec ssh -i /home/git/.ssh/relay_key -p <MESH_SSH_PORT> \
 
 两脚本 `chmod 755`、root 拥有。relay 私钥 `/home/git/.ssh/relay_key`（600、git 拥有）+ 预填 `known_hosts`。git 命令必须 base64：它含空格和引号，跨两跳 SSH + shell 会被切碎，base64 成一个整块最稳。那串 `-o ControlMaster=no …` 见「关键坑 · ControlMaster」。
 
-### (c) `<内网机>`：authorized_keys 内联转发
+#### (c) `<内网机>`：authorized_keys 内联转发
 
 relay 的另一端落在 `<内网机>` 的 `<user>`（用它当 relay 端点，免 sudo）。在 `<user>` 的 `~/.ssh/authorized_keys` 里给 relay 公钥加**一行 forced command**，把 relay 请求 dispatch 成对 Forgejo 容器的 `docker exec`：
 
