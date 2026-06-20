@@ -89,15 +89,17 @@ multi_thread = true
 - `enable_quic_proxy = true`：让 EasyTier 用 QUIC 代理虚拟网内的 TCP 流。适合公网或 NAT 链路有丢包、抖动时的 Caddy 反代、code-server、zellij、WebDAV 等 TCP 服务。生效时可在 `easytier-cli proxy` 中看到 `transport_type = Quic`。
 - `multi_thread = true`：使用多线程运行时。它不是修复丢包的核心参数，但在多连接转发、加密和代理并发时可能提高吞吐稳定性。**程序默认本来就是 `true`**，所以模板写 `true` 只是显式声明、不算改动。官方还提供 `multi_thread_count`（程序默认 `2`），不默认写入；需要固定线程数时再按机器 CPU 和实际压测结果添加。
 
-> 模板里**不写** `rpc_portal`：这个键在配置文件里是失效的（被静默忽略），写了也没用，原因见「失效键说明」。
+> 模板里**不写** `rpc_portal`：2.6.x 配置文件里此键失效、被静默忽略（2.4.x 例外，conf 里有效）。完整说明见下文「管理 RPC 端口」。
 
 ### 启动服务
 
-将配置文件写入 `/opt/easytier/config/`，然后以配置文件名（不含 `.conf`）启动服务：
+把配置文件写进 `/opt/easytier/config/`，以**配置文件名（不含 `.conf`）**启动并设开机自启：
 
 ```bash
-systemctl start easytier@<配置文件名>
+systemctl enable --now easytier@<配置文件名>
 ```
+
+这是「一网一进程」的默认形态；想把多个网络合进**一个进程 / 一个服务**，见下文「服务形态：单实例 vs 单进程多实例」。
 
 ### 防火墙
 
@@ -108,6 +110,141 @@ sudo ufw status | grep -q "^Status: active" || exit 0
 sudo ufw allow 11010/tcp
 sudo ufw allow 11010/udp
 ```
+
+## 服务形态：单实例 vs 单进程多实例（多 `-c`）
+
+`easytier-core` 一个进程可以加载**一个或多个** `-c <conf>`，每个 `-c` 是一个独立的「网络实例」。由此分两种形态。
+
+### 默认：一网一进程（`easytier@<配置名>`）
+
+install.sh 装好后写了一个 systemd **模板单元** `/etc/systemd/system/easytier@.service`，核心就一行 `ExecStart`：
+
+```ini
+[Unit]
+Description=EasyTier Service
+Wants=network.target
+After=network.target network.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/easytier
+ExecStart=/opt/easytier/easytier-core -c /opt/easytier/config/%i.conf
+Restart=always
+RestartSec=1s
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`%i` 是实例名占位符——`systemctl enable --now easytier@<配置名>` 就把 `/opt/easytier/config/<配置名>.conf` 跑起来。多个网络 = 多个 `easytier@a` / `easytier@b`，**各自独立进程、各自一个 RPC 端口**。
+
+### 合并：一个进程多个 `-c`（`easytier.service`）
+
+想把多个网络合进**一个进程、一个服务**（统一管理、2.6.x 下还能共用一个 RPC 端口），从上面的模板做**最小改动**：复制成一个非模板单元 `/etc/systemd/system/easytier.service`，把 `%i.conf` 换成多个显式 `-c`：
+
+```ini
+[Unit]
+Description=EasyTier multi-instance
+Wants=network.target
+After=network.target network.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/easytier
+Environment=ET_RPC_PORTAL=127.0.0.1:15888
+ExecStart=/opt/easytier/easytier-core \
+  -c /opt/easytier/config/net-a.conf \
+  -c /opt/easytier/config/net-b.conf
+Restart=always
+RestartSec=1s
+
+[Install]
+WantedBy=multi-user.target
+```
+
+和模板的差异只有：
+
+- 文件名去掉 `@`（不再是模板，`%i` 占位失效）。
+- `ExecStart` 的 `-c .../%i.conf` 换成**多个显式 `-c`**（一个网络一个）。
+- 可选加一行 `Environment=ET_RPC_PORTAL=127.0.0.1:15888` 钉死管理 RPC 端口（**非必须**，见「管理 RPC 端口」）。
+- 其余（`[Unit]` / `Restart` / `WorkingDirectory` / `[Install]`）原样照抄。
+
+启用与切换：
+
+```bash
+systemctl daemon-reload
+systemctl enable --now easytier.service          # 不带实例名
+systemctl disable --now easytier@a easytier@b    # 关掉原来的单实例，避免两边抢同一组 listener 端口（11010 等）
+```
+
+切换前用 `easytier-core --check-config -c a.conf -c b.conf` 先验证合并配置；正式切换建议带「失败自动回滚」（停旧→起新→校验 tun/RPC，不通就退回旧实例），尤其当你是**通过这套网络本身**远程连机器时。
+
+> ⚠️ 多实例下，**管理 RPC 与显示名的行为在 2.4.x / 2.6.x 完全不同**（`ET_RPC_PORTAL` / `ET_HOSTNAME` 是否生效、conf 里 `rpc_portal` / `hostname` 怎么写）。详见下面两节。
+
+## 管理 RPC 端口（`rpc_portal`）
+
+`easytier-cli` 通过一个本地 TCP「管理 RPC 端口」连 `easytier-core`，用来查 peer / route、改配置、看 proxy 等。
+
+### 默认就是 15888，两端一致
+
+- **cli 端**：`-p / --rpc-portal` 默认 `127.0.0.1:15888`（必须写全 `IP:PORT`）。
+- **core 端（2.6.x）**：不指定时自动取 `15888..15900` 第一个空闲口（机器上只有一个 easytier 进程 → 15888），绑 `0.0.0.0`，但默认带 IP 白名单 `127.0.0.0/8 + ::1/128`——非环回来源直接拒。所以虽然 bind 在 `0.0.0.0`，实际只有本机能连，没真的"暴露公网"。
+
+也就是说，**单进程、端口没被占时，`ET_RPC_PORTAL` 不设也能用**，`easytier-cli peer` 直接连 15888。
+
+### 要不要显式设 `ET_RPC_PORTAL`
+
+非必须。显式设 `Environment=ET_RPC_PORTAL=127.0.0.1:15888`（或命令行 `--rpc-portal`）的好处：① 确定性（端口不随启动顺序 / 占用而漂移）；② 直接绑 loopback 而非 `0.0.0.0`。只写端口号会补成 `0.0.0.0:<port>`。要放开非本机访问，用 `--rpc-portal-whitelist` / `ET_RPC_PORTAL_WHITELIST` 加 CIDR。
+
+### ⚠️ 2.4.x 与 2.6.x 行为完全不同（多实例必看）
+
+| | **2.6.x（推荐）** | **2.4.x** |
+|---|---|---|
+| 架构 | `NetworkInstanceManager`：RPC 端口**进程级、全局一个**，前置所有实例 | RPC 端口**每实例一个** |
+| conf 里 `rpc_portal=` | **失效**（实例配置结构体无此字段，serde 静默忽略） | **有效**（是合法字段，从各自 conf 读） |
+| `ET_RPC_PORTAL` 环境变量 | 进程级，**不论几个 `-c` 都生效** | 仅「恰好 1 个 `-c`」时才合并生效；**多 `-c` 被忽略** |
+| 多实例查 peer | 一个端口 + `easytier-cli -n <instance_name>`；不加 `-n` 则 fan-out 把所有实例都打印 | 无 `-n`；每实例各自一个端口，用 `-p <端口>` 分别查 |
+
+`-n` 匹配的是 conf 里的 **`instance_name`**（源码 `rpc_service` 按 `get_inst_name()` 过滤），**不是** `network_name`、也不是显示用的 `hostname`。
+
+> **踩坑实录**：在 2.4.x 上用多 `-c`、却只在 unit 里写 `ET_RPC_PORTAL` 而每个 conf 没写 `rpc_portal` → 各实例 `get_rpc_portal()` 为空 → 日志 `rpc server not enabled, because rpc_portal is not set`，**管理 RPC 完全起不来**（`easytier-cli` 全部 `Connection refused`），但数据面（组网本身）正常。两种修法：
+> 1. **升级到 2.6.x**（推荐）：单端口 + `-n`，最干净，`ET_RPC_PORTAL` 写 unit 里即可。
+> 2. **留在 2.4.x**：给**每个 conf** 各写一行 `rpc_portal = "127.0.0.1:<互不相同的端口>"`（如 15888 / 15889），再用 `easytier-cli -p <端口>` 分别查。
+
+## 节点显示名称（`hostname`）
+
+EasyTier 在 peer list 里默认显示**系统主机名**。自定义显示名（别的设备看到的名字）有两种方式。
+
+### ① 配置文件里写 `hostname`（推荐，每实例独立）
+
+在 conf 顶层（任何 `[table]` 之前）加一行：
+
+```toml
+hostname = "自定义名称"
+```
+
+这是该网络实例自己的显示名。**单进程多实例时每个 conf 各写各的**——而且这是多实例下唯一可靠的办法（原因见 ②）。
+
+### ② systemd 设 `ET_HOSTNAME` 环境变量（旧办法，仅单实例够用）
+
+```bash
+sudo systemctl edit easytier@<配置名>
+```
+
+添加：
+
+```ini
+[Service]
+Environment="ET_HOSTNAME=自定义名称"
+```
+
+保存后 `systemctl daemon-reload && systemctl restart easytier@<配置名>` 生效。
+
+> ⚠️ **多 `-c` 单进程时 `ET_HOSTNAME` 不生效**：环境变量是进程级、只有一个，而且 EasyTier 仅在「恰好 1 个 `-c`」时才把它合并进网络配置；多 `-c` 时被忽略，每个实例回退到各自 conf 的 `hostname`（没写则系统主机名）。所以**多实例一律用方式 ①**给每个 conf 单独写 `hostname`。
+>
+> 区分三个名字：`hostname`（对外显示名）≠ `instance_name`（本机内部区分实例、`easytier-cli -n` 用）≠ `network_name`（组网身份，同 name+secret 才互通）。三者可以各不相同。
 
 ## 配置项详解
 
@@ -194,7 +331,7 @@ disable_udp_hole_punching = false
 | `ipv4` | 不写（靠 dhcp） | 无 | |
 | `listeners` | 见上（5 个） | 省略时按端口 `11010` 自动展开同一组 | |
 | `exit_nodes` | `[]` | `[]` | |
-| `rpc_portal` | `"0.0.0.0:0"` | **配置文件中此键不生效**（见「失效键说明」①） | |
+| `rpc_portal` | `"0.0.0.0:0"` | **配置文件中此键 2.6.x 不生效**（见「管理 RPC 端口」） | |
 | `network_name` | `"default"` | `"default"` | |
 | `network_secret` | `"default"` | `""`（空） | |
 | `default_protocol` | `"udp"` | **`"tcp"`** | 安装脚本显式改成 udp |
@@ -222,28 +359,11 @@ disable_udp_hole_punching = false
 
 `default.conf` 和一些老文档里有两个键其实不生效，写了会被静默忽略：
 
-1. **`rpc_portal` 在配置文件里不生效。** `easytier-core` 用 `NetworkInstanceManager` 架构：管理 RPC 端口由命令行 `--rpc-portal`（或环境变量 `ET_RPC_PORTAL`）决定，进程级、全局只有一个；配置文件被加载成"网络实例"，而实例配置结构体里**没有 `rpc_portal` 字段**——所以 `default.conf` 的 `rpc_portal = "0.0.0.0:0"` 会被 serde 当未知键静默忽略。systemd unit（`easytier-core -c %i.conf`）不带 `--rpc-portal`，于是 RPC 端口回退为：绑 `0.0.0.0`、端口取 `15888..15900` 第一个空闲端口（通常 15888）。但**默认带 IP 白名单 `127.0.0.0/8` + `::1/128`**，非环回来源会被直接拒绝——所以虽然 bind 在 `0.0.0.0`，默认仍只有本机能连，并未真正"暴露到公网"。要改绑定地址得用 `--rpc-portal`（可仿照下面 `ET_HOSTNAME` 的 systemd override 写法，设 `ET_RPC_PORTAL`），改不动的是配置文件那行。所以本文模板干脆不写它。
+1. **`rpc_portal` 写在配置文件里（2.6.x）不生效。** 实例配置结构体没有这个字段，会被 serde 当未知键静默忽略，所以 `default.conf` 的 `rpc_portal = "0.0.0.0:0"` 是死的——管理 RPC 端口改由进程级的 `--rpc-portal` / `ET_RPC_PORTAL` 决定。完整说明（默认 15888、是否必须、白名单、2.4.x 例外、单进程多实例怎么查）见上文「管理 RPC 端口」。
 
 2. **白名单字段真名是 `relay_network_whitelist`，不是 `foreign_network_whitelist`。** 源码里这个 flag 叫 `relay_network_whitelist`（CLI `--relay-network-whitelist`，环境变量 `ET_RELAY_NETWORK_WHITELIST`，默认 `"*"`）。安装脚本和老文档用的 `foreign_network_whitelist` 不是合法键、会被静默忽略。因为默认就是 `"*"`（全放行），写成旧名时"恰好"和默认行为一致所以没人察觉；但若想写 `foreign_network_whitelist = ""` 来禁止外部网络转发，**这写法不会生效**，必须写 `relay_network_whitelist = ""`。本文模板已改用真名。
 
 ## 可选功能
-
-### 自定义节点显示名称
-
-EasyTier 在 peer list 中默认显示系统主机名（`hostname`）。如需自定义显示名称，通过 systemd override 设置 `ET_HOSTNAME` 环境变量：
-
-```bash
-sudo systemctl edit easytier@<配置文件名>
-```
-
-添加：
-
-```ini
-[Service]
-Environment="ET_HOSTNAME=自定义名称"
-```
-
-保存后 `systemctl daemon-reload && systemctl restart easytier@<配置文件名>` 生效。
 
 ### 出口节点（Exit Node）
 
