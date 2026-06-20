@@ -295,14 +295,30 @@ curl.exe --noproxy * -v --max-time 5 "http://[::1]:<port>/"
 4. **切 `networkingMode=mirrored`**（Win11 22H2+）：彻底没 wslrelay。代价是重排所有 portproxy + 评估对 EasyTier wintun 路由优先级的影响。
 5. **WSL 内补 socat v4 relay**：`socat TCP4-LISTEN:<port>,reuseaddr,fork,bind=0.0.0.0 TCP:[::1]:<port>`，让 wslrelay 看到的是纯 v4 listener。多一跳进程，仅作 fallback。
 
-#### 服务端先说话的协议（SSH 等）额外坑
+#### 全双工大流量下 wslrelay 死锁（#10688）
 
-上面的 #14154 是 **dual-stack v6 → RST**（连上立刻断）。还有个相关但不同的 [microsoft/WSL#10688](https://github.com/microsoft/WSL/issues/10688)「wslrelay 全双工 hang」，专挑**服务端先开口**的协议下手：
+[microsoft/WSL#10688](https://github.com/microsoft/WSL/issues/10688)（open，与上面 #14154 不同）：WSL 本地转发（Linux 侧转发进程 + `wslrelay.exe`）用**单个阻塞线程同时拷贝一条连接的两个方向**（半双工逻辑）；双向同时大流量时两端缓冲填满、relay 卡在 `write()` 上不再读另一边 → 永久死锁。诊断特征（`ss -tn`，卡死的 socket 对收发队列堆住、流量永久冻结）：
 
-- **HTTP 不中招**——客户端先发请求，wslrelay 把 client→server 转过去后 server→client 也就通了，所以 web 服务经 `connectaddress=127.0.0.1` 一直稳。
-- **SSH 中招**——SSH 连上后是**服务端先吐 banner**（`SSH-2.0-…`），wslrelay 偶发不转发这段"服务端先发"的数据，client 干等到超时（OpenSSH 报 `Connection timed out during banner exchange`）。同理 SMTP / FTP 控制连接等"greet-first"协议。
+```
+State  Recv-Q   Send-Q     Local Address:Port     Peer Address:Port
+ESTAB  0        2914479    127.0.0.1:<svc>        127.0.0.1:<relay>
+ESTAB  3176712  0          127.0.0.1:<relay>      127.0.0.1:<svc>
+```
 
-实测稳妥组合（公网压测 35/35）：**docker 发布写 `0.0.0.0:<port>:<port>`（纯 v4）+ portproxy `connectaddress=127.0.0.1`**。诡异处：同样纯 v4、改成 `127.0.0.1:<port>:<port>` 发布反而偶发 banner 卡死——机制没完全坐实（两者 `ss` 都显示纯 v4 listener），但 `0.0.0.0` 发布可复现地稳。`connectaddress` 仍用 `127.0.0.1`（走 wslrelay、不漂移），别为这个去指 eth0 IP（会随 WSL 重启漂移，得不偿失）。容器内服务（如 Forgejo 内置 SSH）的完整部署见 [`git-server.md`](git-server.md) ③ 方案 A。
+本机实测（NAT 模式，Windows `127.0.0.1` → wslrelay → WSL；原生 + docker、bind `0.0.0.0` + `127.0.0.1` 共四种发布形态）：
+
+| 流量模式 | 结果 |
+|---|---|
+| 单向下行 / 单向上行（任意大小） | 不卡 |
+| 严格乒乓请求/应答（半双工，HTTP/1.1 形态） | 不卡 |
+| HTTP/1.1 下载 100MB（`curl.exe`） | 不卡 |
+| 真 SSH 全双工 ↓200MB + ↑100MB（`ssh.exe`） | 不卡 |
+| 合成程序双向并发 blast（不积极收 socket，本机 ~0.65MB 起） | **卡死** |
+
+- **只有全双工双向大流量才可能触发**；任何半双工（单向 / 乒乓 / HTTP 下载）都不触发。
+- **真实程序（SSH、HTTP）实测不中招**，无论多大；只有"不积极收 socket"的朴素 blast（如 issue 的合成 reproducer）才稳定复现。
+- **与发布地址无关**：四种发布形态阈值完全一致（本机 `route_localnet=0`，两种 docker 形态都经 docker-proxy，回环路径相同）。
+- 彻底规避：切 `networkingMode=mirrored`（无 wslrelay）。`connectaddress=127.0.0.1` 仍按上文推荐（理由是不漂移，与本坑无关）。
 
 历史背景与 issue：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) (open)、[#10688](https://github.com/microsoft/WSL/issues/10688) (open，wslrelay 全双工 hang)；类似 v4/v6 困扰在 WSL repo 里有十几个独立 issue，labels 多数 `network`。
 
