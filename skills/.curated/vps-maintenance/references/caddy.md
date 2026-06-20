@@ -889,7 +889,7 @@ git push → forgejo (gitea-self-hosted) → forgejo-runner (DinD)
 
 ### 客户端配置
 
-服务端部署完成后，把受限 CI key 交给两个位置：forgejo 仓库 secret（runner 跑 rclone sync）和操作者本机 mc alias（生成 presigned URL）。密钥体系、alias 组织、presigned 生成方式的完整说明见 `software` skill 的 [`references/docs-share.md`](../../software/references/docs-share.md)。
+服务端部署完成后，把受限 CI key 交给两个位置：forgejo 仓库 secret（runner 跑 rclone sync）和操作者本机 mc alias（生成 presigned URL）。密钥体系、alias 组织、presigned 生成方式的完整说明见 `software` skill 的「私有 docs-share 站点（Git 仓库 → S3 直链分享）」章节。
 
 ### 安装 viewer 壳子
 
