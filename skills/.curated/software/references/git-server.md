@@ -114,6 +114,8 @@ docker inspect <server> --format '{{range .Mounts}}{{.Source}} -> {{.Destination
 
 > ⇒ **想让同一份 compose 在两家都能用，env 全用 `GITEA__` 前缀即可**（它在 Forgejo 上也生效）。本文 compose 示例用 `FORGEJO__`（Forgejo 版更地道）；跑 Gitea 时把前缀换成 `GITEA__`，或干脆一开始就写 `GITEA__`。section / key 名两家逐字一致，无需改。
 
+> ⚠️ **env 是权威源，每次启动覆盖 `app.ini`**：容器入口每次启动都用这些 env 重新生成 `app.ini`，所以**手改 `app.ini` 不持久**——下次启动即被覆盖回 env 的值。改配置（如 `[server]` 的 `ROOT_URL` / `DOMAIN`）必须改 compose 的 `environment:`，再 `docker compose up -d <svc>` **重建**容器生效；`docker compose restart` 不重建容器、不重读 `environment`，对改过的 env **不生效**。
+
 **CLI 子命令对照**（容器内 `docker exec -u git <server> <cli> …`，`<cli>` = `forgejo` 或 `gitea`，子命令同名）：
 
 | 用途 | 命令（`<cli>` = forgejo / gitea） | 出处 |
