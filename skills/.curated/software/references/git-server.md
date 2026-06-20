@@ -20,6 +20,25 @@
 - **对自建的意义**：Forgejo + `forgejo-runner` 让 CI 完全跑在自己机器上，不受第三方平台掉线影响。
 - 选型结论：**Forgejo + forgejo-runner（server / runner 分离）**，本部署即此架构。
 
+### Forgejo 与 Gitea 现状差异（2026-06 实查两边源码）
+
+二者 2024-02 硬分叉（共同祖先 `6992ef98`），功能高度重叠——Actions CI、~24 种包仓库、PR/Issue/Wiki/Projects、Mermaid/asciinema、色盲主题都各有。clone 两边完整源码 `git grep` 核对后，**用户层面**值得知道的差异：
+
+| 维度 | Forgejo | Gitea |
+| --- | --- | --- |
+| License | **GPLv3+**（强 copyleft，二开须开源） | **MIT**（宽松，可闭源分发） |
+| 联邦化 ActivityPub（跨实例关注 / star） | ✅ 有，admin 带 Federation 管理页 | ❌ 仅 webfinger/actor 残桩 |
+| 存储配额 Quota（按用户/组织限额） | ✅ 有（`models/quota`） | ❌ 无 |
+| 内容举报 / 审核 Moderation | ✅ 有（v14 起） | ❌ 无 |
+| `.glb`/`.gltf` 3D 模型预览 | ✅ 有（v12 起） | ❌ 仅 mimetype |
+| Jupyter `.ipynb` 渲染 | ❌ 无 | ✅ 有（`modules/markup/jupyter`） |
+| Git LFS over SSH（`git-lfs-transfer`） | ❌ 仅残留 | ✅ 有 |
+| 包仓库独有生态 | ALT Linux | Terraform module |
+| Actions 日志 REST API（见下节） | **v16 起**（per-job 文本 + per-run zip） | **v1.24 起**（per-job 文本） |
+| 前端构建链 | Webpack + npm | Vite + pnpm |
+
+> 一句话选型：要联邦化 / 配额 / 审核 / 3D 预览选 **Forgejo**；要看 Jupyter / 用 SSH 传 LFS 选 **Gitea**；要闭源二次开发只有 **Gitea(MIT)**。其余日常功能基本对等。
+
 ## 目标与难点
 
 `<内网机>` 用 docker compose 跑 Forgejo，但它没有公网 IP；唯一的公网落点是 `<入口VPS>`。要在不破坏 `<入口VPS>` 自身运维的前提下，把三件事透到内网：
@@ -410,7 +429,7 @@ WantedBy=multi-user.target
 
 **内网机在 WSL2（NAT）+ Windows 入口的特例**：`<内网机地址>` 要填 Windows 宿主的网卡 IP（mesh / LAN），WSL 内的容器端口得经 Windows `netsh portproxy` + wslrelay 才能从宿主 IP 进。这条链路有个 **SSH 专属坑**，详见 [`network.md`](network.md)「WSL/Docker 服务暴露（入站）」：
 
-> SSH 是「**服务端先发 banner**」的协议，会踩 wslrelay 的全双工 hang（WSL #10688）——HTTP 不中招（客户端先说话，所以 web/3000 一直正常）。实测稳定组合：docker 发布写 **`0.0.0.0:<SSH_PORT>:<容器内端口>`**（纯 v4）+ portproxy **`connectaddress=127.0.0.1`**；用 `127.0.0.1:<…>` 发布反而偶发握手超时（banner timeout）。`connectaddress=127.0.0.1` 走 wslrelay、**不漂移**——别用会随 WSL 重启变化的 eth0 IP。
+> 这条链路经 Windows `netsh portproxy` + wslrelay。docker 发布 `0.0.0.0:<SSH_PORT>:<容器内端口>` 或 `127.0.0.1:<…>` 均可（实测无差别）；portproxy **`connectaddress=127.0.0.1`**（走 wslrelay、**不漂移**，别用会随 WSL 重启变化的 eth0 IP）。wslrelay 有个全双工死锁坑（WSL #10688）：仅"双向同时大流量 + 程序不积极收 socket"才触发，git-over-SSH / HTTP 实测不中招、与发布地址无关，详见 [`network.md`](network.md)「全双工大流量下 wslrelay 死锁」。
 
 ### 方案 B：公网 SSH relay（sshd 分流 + 中转脚本）
 
@@ -543,11 +562,43 @@ docker exec forgejo-db psql -U forgejo -t -c \
 
 ### 查看 / 拉取 action 运行日志
 
-REST API（`/api/v1/.../actions/tasks`、`/actions/runs`、`/actions/runs/{id}`）只返回 run 的**状态与元数据**，swagger 里**没有**下载日志正文的端点。正文只有两条路：
+**先按版本判断走哪条路**——能用 REST API 就别碰服务器文件：
 
-- **Web UI**（`/{owner}/{repo}/actions/runs/{run_index}/jobs/{job_index}`）是 **web 端点，只认登录 session cookie，不认 API token**——带 `Authorization: token` 访问 web 路径会被当成匿名，私有仓库对匿名返回 **404**（不泄露存在性，跟匿名访问私有仓库主页一致）。所以"直接 curl raw-log URL"对**公开**仓库成立，对**私有**仓库得先模拟登录拿 cookie（GET 取 `_csrf` → POST `/user/login` → 存 cookie，还要过可能的 2FA），脆。
+| 平台 / 版本 | 看 action 日志的办法 |
+| --- | --- |
+| **Gitea ≥ v1.24**（含当前 v1.26） | ✅ Token REST API，早就有 |
+| **Forgejo ≥ v16** | ✅ Token REST API（[PR #12666](https://codeberg.org/forgejo/forgejo/pulls/12666)，2026-05-30 入 main、随 v16 发布）：**运行中拉增量、结束后拉全量都行** |
+| **Forgejo ≤ v15** | ❌ 无 REST 日志端点：基本**只能网页端**交互看（带 token 的 CLI/脚本走不通），或进 docker / 读服务器文件 |
 
-- **读服务器端日志文件**（脚本化最稳）：日志按 job 落在 `<forgejo-data>/gitea/actions_log/<owner>/<repo>/<NN>/<task_id>.log.zst`，**zstd 压缩**。`<NN>` 是 `task_id` 的零填充两位前缀目录（`2 → 02/2.log.zst`、`123 → 12/123.log.zst`）；这条相对路径直接存在 `action_task.log_filename` 字段。forgejo 容器是 alpine、**不带 zstd**，在宿主或带 zstd 的环境解：
+> 旧版 git-server 笔记说"REST API 没有下载日志正文的端点"——那只对 **Forgejo ≤v15** 成立，**v16 已打破**（Gitea 更是早有）。v15 想脱离浏览器、脚本化看日志确实难（路 2 解释为什么 token 在 web 端点不管用）。
+
+#### 路 1：REST API（Forgejo ≥v16 / Gitea ≥v1.24，推荐——一个 PAT 搞定，不进服务器）
+
+带一个对该仓库有**读权限**的 PAT（`Authorization: token <PAT>`）即可，全程在任意机器上跑：
+
+```bash
+# 1) 由 run 反查 job_id
+curl -H "Authorization: token <PAT>" \
+  https://<your-forgejo>/api/v1/repos/<owner>/<repo>/actions/runs/<run_id>/jobs
+# 2) 单个 job 的纯文本日志（Forgejo & Gitea 都有这条）
+curl -H "Authorization: token <PAT>" \
+  https://<your-forgejo>/api/v1/repos/<owner>/<repo>/actions/jobs/<job_id>/logs
+# 3) 整个 run 打包 zip（Forgejo ≥v16 独有；Gitea 目前只有 per-job）
+curl -H "Authorization: token <PAT>" -L -o run-logs.zip \
+  https://<your-forgejo>/api/v1/repos/<owner>/<repo>/actions/runs/<run_id>/logs
+```
+
+实测（Forgejo `16.0-test`，本机走公网 + PAT、**未在服务器上执行任何代码**）：per-job 返回 `200 text/plain`，支持 `?step=N` 取单步、`Range: bytes=a-b` 返回 `206` 分段；per-run 返回 `200 application/zip`（`PK` 头）。Gitea 侧是 swagger operation `downloadActionsRunJobLogs`，返回日志 blob。注意实例若开 `REQUIRE_SIGNIN_VIEW`，连 `/api/v1/version` 都要带 token（匿名 403）。
+
+**运行中也能看、不必等跑完**：实测在 job `status=running` 期间反复打 per-job logs 端点，会返回**已产出的部分日志**且随执行增长（一次 34s 的 run：t=5s 已有 50 行、边跑边长到 79 行，完成瞬间补齐到 209 行）。但它是 **runner 周期性 flush 的缓冲分块、不是逐行实时**——有几秒延迟，且最冗长那一步的输出可能压到收尾才刷出来。要做"tail -f"式跟随就配 `Range: bytes=<上次偏移>-` 每次只取增量。（v15 及以前这些都没有：脱离浏览器看不了，只能进容器边 `tail` 边 `zstd -dc` 那个 `.log.zst`。）
+
+> 升级 Forgejo v15→v16 是一次性 DB 迁移、**不支持降级**：换 image 前先 `docker exec <db> pg_dump -U <user> -Fc <db> > db.dump` + 备份 `./data`（含 `gitea/conf/app.ini` 里的 `SECRET_KEY`）。正式版 `codeberg.org/forgejo/forgejo:16` 出来前要尝鲜，可用预发布 `codeberg.org/forgejo-experimental/forgejo:16.0`（main 的 nightly，已带本 API；迁移只动 DB，不碰 `./data/ssh` 与 repo）。
+
+#### 路 2：Forgejo ≤v15 兜底（没有 token API 时）
+
+- **Web UI**（`/{owner}/{repo}/actions/runs/{run_index}/jobs/{job_index}`）是 **web 端点，只认登录 session cookie，不认 API token**——带 `Authorization: token` 访问 web 路径会被当成匿名，私有仓库对匿名返回 **404**（不泄露存在性）。所以"直接 curl raw-log URL"对**公开**仓库成立，对**私有**仓库得先模拟登录拿 cookie（GET 取 `_csrf` → POST `/user/login` → 存 cookie，还要过可能的 2FA），脆。登录用户用浏览器交互看日志则一直没问题。
+
+- **读服务器端日志文件**（脚本化最稳，但需进机器/容器）：日志按 job 落在 `<forgejo-data>/gitea/actions_log/<owner>/<repo>/<NN>/<task_id>.log.zst`，**zstd 压缩**。`<NN>` 是 `task_id` 的零填充两位前缀目录（`2 → 02/2.log.zst`、`123 → 12/123.log.zst`）；这条相对路径直接存在 `action_task.log_filename` 字段。forgejo 容器是 alpine、**不带 zstd**，在宿主或带 zstd 的环境解：
 
   ```bash
   # 由 repo 反查最近一次 job 的日志相对路径
