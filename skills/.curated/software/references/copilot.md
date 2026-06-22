@@ -270,7 +270,24 @@ export COPILOT_ALLOW_ALL=true                     # .envrc，值必须是 true
 alias copilot='copilot --allow-all-paths'         # path 维度只能靠 flag
 ```
 
-也可以在工作区 `.bin/` 放个 `exec copilot --yolo "$@"` 的 wrapper，用 `.envrc` 的 `PATH_add "$PWD/.bin"` 按目录生效、离开自动撤回（注意 wrapper 里把自己所在目录从 PATH 摘掉避免递归）。
+**方案 C：PATH-shim wrapper（按目录生效，离开自动撤回）**——比 alias 干净，只在工作区内生效：
+
+```bash
+# .bin/copilot（chmod +x）
+#!/usr/bin/env bash
+# 把自己所在目录从 PATH 摘掉，避免 exec copilot 时无限递归
+self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PATH="$(printf %s "$PATH" | tr ':' '\n' | grep -vxF "$self_dir" | paste -sd:)"
+export PATH
+exec copilot --yolo "$@"
+```
+
+```bash
+# .envrc
+PATH_add "$PWD/.bin"
+```
+
+进入目录时 `which copilot` 指向 wrapper，离开时 direnv 把 `.bin` 从 PATH 撤回。
 
 > **权衡**：`--allow-all-paths` / `--yolo` 让 agent 能读到 `~/.ssh/`、`~/.config/` 之类，有风险。不想全开就接受目录弹窗、必要时 `/add-dir` 临时加白。`isFolderTrusted` 是目录信任决策的核心函数，排查"为什么有的弹有的不弹"先搜它的所有 caller，每个 caller 的短路条件都可能是个旁路。
 
@@ -377,6 +394,8 @@ Copilot CLI 的多种项目级配置/指令文件，发现策略都基于 **walk
 | **`${VAR}` env 展开** | `env` 字段支持；`headers` 字段**实测不可靠**（#1232）| 同左 | `${env:VAR}` 支持 | 同左 |
 | **`${input:...}` / `${workspaceFolder}`** | ❌ | ❌ | ✅（弹窗输入，keychain 存储）| ❌ |
 | **同名冲突** | last-wins（cwd 覆盖祖先/全局）| 同左 | VS Code 内独立 | 被 workspace 覆盖 |
+
+整体优先级（CLI 侧）：`--additional-mcp-config`（启动 flag，最高）> workspace `.mcp.json` / `.github/mcp.json` > 全局 `~/.copilot/mcp-config.json`（最低，被同名 workspace 配置覆盖）。
 
 源码：`.mcp.json` / `.github/mcp.json` 两个文件名搜得到（它俩共用 walk-up 发现函数与合并逻辑）。VS Code 那套是另一个进程、另一套变量系统，不要混用语法。
 
