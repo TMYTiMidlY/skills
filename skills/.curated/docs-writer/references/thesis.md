@@ -6,10 +6,11 @@
 
 ## 1. 文档格式转换
 
-使用 `scripts/doc_to_md.py` 将 `.doc`/`.docx` 转换为分章 Markdown：
+使用 `scripts/thesis_to_chapters.py` 将 `.doc`/`.docx` 转换为分章 Markdown：
 
 ```bash
-uv run scripts/doc_to_md.py <论文文件.doc>
+uv run scripts/thesis_to_chapters.py <论文文件.doc>             # 默认产到输入同级
+uv run scripts/thesis_to_chapters.py <论文文件.docx> -o output  # 纳入项目时产到 output/<论文名>/
 ```
 
 **输出结构**（存入同名目录，原文一同保存）：
@@ -29,6 +30,8 @@ uv run scripts/doc_to_md.py <论文文件.doc>
 - `[^N]` 脚注引用展开为正文内 `（脚注：…）` 格式
 - 尾注参考文献保留为编号列表
 - 去除 pandoc 产生的多余 `\[` `\]` 转义
+
+> 若需核对各章节在论文 PDF 中的页码（如对位查重报告页码），用 `scripts/thesis_toc_pages.py <pdf>` —— 按字号提取标题、输出「章节标题 → 正文页码」（`--json` 可选）。
 
 ## 2. 脚注与尾注规范
 
@@ -105,7 +108,7 @@ uv run scripts/doc_to_md.py <论文文件.doc>
 
 > **开工前必做**：按 §5《多版本管理》确认要处理的论文版本，存在多个候选时必须使用当前环境可用的提问能力向用户确认。
 
-围绕查重报告（推荐用 `scripts/查重_html_to_md.py` 生成的全文对照报告单 `full.md`）开展降重与补引。两条主线：**降低重复率**（改写 U/Q 标记句的句式）+ **增加正常引用**（对未标注的整段照搬补脚注）。查重报告 PDF/HTML 转 Markdown 的方案见 `references/similarity-report-parsing.md`。
+围绕查重报告（推荐用 `scripts/similarity_report_html.py` 生成的全文对照报告单 `full.md`）开展降重与补引。两条主线：**降低重复率**（改写 U/Q 标记句的句式）+ **增加正常引用**（对未标注的整段照搬补脚注）。查重报告 PDF/HTML 转 Markdown 的方案见 `references/similarity-report-parsing.md`。
 
 **色标 → 字母约定**（全文统一）：
 - **U** = Unquoted，对应报告中的【红】（未引证、计入"去除引用复制比"）
@@ -137,7 +140,7 @@ uv run scripts/doc_to_md.py <论文文件.doc>
 
 - **原始内容是唯一标准**：降重只能改句式，不能改原意，更不能改到面目全非。任何看起来"更顺、更学术"但偏离原作者论证细节的改写都要回退。
 - **只动 U/Q 标记句**：不在标记范围内的句子原则上不碰，避免无意义改动稀释原文风格。
-- **改前必读引文**：执行某处改动的 AI 必须先把对应原始引文读一遍（项目内文献原文目录，如 `mineru/`、`sources/`、`references/` 等），积累语感、记住原作者的论述方式与关键术语，确保改写后仍忠于引文含义；引文找不到时不动这一处，而是先去搜或问用户。
+- **改前必读引文**：执行某处改动的 AI 必须先把对应原始引文读一遍（项目内文献原文目录，如 `mineru/`、`sources/` 等），积累语感、记住原作者的论述方式与关键术语，确保改写后仍忠于引文含义；引文找不到时不动这一处，而是先去搜或问用户。
 - **补引优先于改写**：若发现是大段照搬别人的话却未标脚注，先按 `SKILL.md`《引用核查与优化》流程补脚注/引证（这能直接把一段 U 转为 Q 的引证段，并不再计入"去除引用复制比"），再考虑要不要改写。
 - **文献来源**：脚注文献先在仓库现有 md/参考文献列表中找；找不到再联网搜，搜不到则标"存疑文献"交用户判断。
 

@@ -15,8 +15,8 @@
 | 相似来源元数据（作者/期刊/日期/是否引证） | ⚠ | ⚠ | ⚠ | ✓ 完整 |
 
 **结论**：
-- **简洁报告单 / 全文标明引文报告单**：pdfplumber 方案足够，自动化好（脚本见 `scripts/查重_pdf_to_md.py`）。
-- **全文对照报告单**：必须用 HTML 方案。脚本 `scripts/查重_html_to_md.py` 已实现，效果验证良好（112KB md，9 章节齐全，所有相似源完整、红/绿色标保留）。
+- **简洁报告单 / 全文标明引文报告单**：pdfplumber 方案足够，自动化好（脚本见 `scripts/similarity_report_pdf.py`）。
+- **全文对照报告单**：必须用 HTML 方案。脚本 `scripts/similarity_report_html.py` 已实现，效果验证良好（112KB md，9 章节齐全，所有相似源完整、红/绿色标保留）。
 
 ## HTML 方案使用流程
 
@@ -26,7 +26,7 @@
 4. 保存到 `<报告集>/html/<报告名>.html`。
 5. 运行：
    ```bash
-   uv run scripts/查重_html_to_md.py <html_file> -o <out.md>
+   uv run scripts/similarity_report_html.py <html_file> -o <out.md>
    ```
 
 脚本含相邻同色高亮自动合并（处理 `<span class="Font_Color_Red">A</span><span class="Font_Color_Red">B</span>` → `**【红】AB**`）和空高亮过滤。
