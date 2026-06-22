@@ -45,6 +45,16 @@ web_sharing "on"
 
 如果 Web server 使用独立配置（例如 systemd service 通过 `zellij -c ~/.config/zellij/web.kdl web` 启动），而普通交互式 `zellij` 读取的是默认配置，则要分别确认两份配置。否则可能出现 Web server 已运行，但普通 `zellij` 新建的 session 没有自动共享、Web 页面看不到的情况。
 
+## 配置选项的几个反直觉点
+
+审查 zellij 配置时几个名字和行为不一致的点（均基于 `0.44.x` 源码）：
+
+- **`keybinds clear-defaults=true { ... }` 会把键位冻结在生成时的版本**。`clear-defaults=true` 表示丢弃全部内置默认键位、只用列出的；而 `zellij setup --dump-config` 导出的配置正是当时版本默认键位的全量快照。升级 zellij 后，上游新增/改动的默认键位不会自动出现，需要重新 dump 或手动合并。表现是静默的——不报错，只是用不到新键位。
+
+- **`default_cwd` 只有在同时设了 `default_shell` 时才改变新 pane 的工作目录**。新 pane 默认继承当前 pane 的 cwd；`default_cwd` 只作为"无法确定 cwd 时"的兜底，唯一强制生效的路径是经过 `default_shell`（`pty.rs` 的 `fill_cwd` 仅在 cwd 为 None 时回填）。所以 `default_shell` 注释掉时，`default_cwd` 对交互式新 pane 基本不起作用，只影响 Web 新建 session 的首个 pane。反过来：一旦取消注释 `default_shell`（例如启用某个 shell wrapper），`default_cwd` 会随之激活，把"继承父 pane 目录"的行为改成固定打开 `default_cwd`。
+
+- **`web_client { ... }` 只被 Web server 读**。普通交互式 `zellij`（读 `config.kdl`）不使用这一段，只有 `zellij web`（读 web.kdl）才生效。写在交互 `config.kdl` 里的 `web_client` 块不起作用，调浏览器端外观应改 web.kdl。
+
 ## login token 与 session token
 
 zellij web 的认证是**两层 token**：
