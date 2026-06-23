@@ -41,6 +41,20 @@ pdftoppm -jpeg -r 300 document.pdf output_prefix
 
 > `pdftoppm` 来自 poppler-utils，Debian/Ubuntu 安装：`sudo apt install poppler-utils`。
 
+> ⚠️ **poppler 会"静默"把合法的 CJK PDF 渲染成空白——`pdftoppm`/`pdffonts` 不能单独当验收**。
+> 实测本机 pixi 版 poppler **26.02.0** 对 **ctex / XeLaTeX 默认 Fandol** 这类 **Adobe-GB1 CID-keyed CFF** 字体渲染失败：`pdftoppm` 转出的图里中文**整页空白**、`pdffonts` 也**不列**该字体，但**退出码 0**，同一份 PDF 在 MuPDF / pdfium / Adobe / Chrome 里中文都正常。
+>
+> - **别拿 pdftoppm 当"渲染真相"**：转图前用独立引擎交叉验证一句话——能抽出中文＝字形都在，问题出在 poppler 这道渲染：
+>   ```bash
+>   uv run --with pymupdf python -c "import fitz;d=fitz.open('x.pdf');print(repr(d[0].get_text()[:60]))"
+>   ```
+> - **要图就换引擎**：`mutool draw -o p%d.png x.pdf`（MuPDF）或 Ghostscript；或降级 pixi 的 poppler；或从源头改 `fontset=ubuntu`（Noto，Identity ROS，poppler 认）。
+>
+> **结构与触发条件（两层并存）**：
+> - **xdvipdfmx 侧**：`fontmap.c` 给**所有 XeTeX 原生字体硬编码 `Identity-H` 编码**；而 Fandol 是 **Adobe-GB1** CID-keyed CFF（已证实 `ROS=(Adobe,GB1,5)`）。于是产出「`Identity-H` 编码 + `GB1` 的 `CIDSystemInfo`」这种不太常规的结构。旁证：ctex 的 **pdfLaTeX 路径**专门加 `cmap=UniGB-UTF16-H`（GB1 的 CMap）正因 Fandol 是 GB1，而 **XeLaTeX 路径没加**。
+> - **poppler 侧**：26.02.0 严格按 `GB1` ROS 解码 → 取错/空白；MuPDF / pdfium / Adobe 宽容处理（按 code=GID 直接出字）→ 正常。
+> - **诊断验证**：用 pikepdf 把该字体 `CIDSystemInfo /Ordering` 改 `GB1→Identity`，poppler 立刻出字（仅验证用，别真改 PDF）。绕过仍以"换引擎看图 / 源头 `fontset=ubuntu`"为准。
+
 ## 飞书 / Lark 文档 → Markdown（feishu2md）
 
 [feishu2md](https://github.com/Wsine/feishu2md) 把飞书/Lark 新版文档导出为 Markdown，支持单文档、文件夹批量和知识库批量下载，并可下载文档内图片。
