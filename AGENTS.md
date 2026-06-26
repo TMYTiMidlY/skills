@@ -19,7 +19,7 @@
   - 恢复误删文件必须由用户手动执行 `trash-restore`，agent 不得自动执行。
 - 修改任何文本文件时，能用内置工具完成就必须用内置工具，不要用 shell 命令替代；改动必须清晰、可审查、可回滚，不要用不透明的原地批量改写绕过审查。任务量大时先问用户。
 - 如果目标文件权限或沙箱限制导致不能直接修改，应申请权限或准备临时文件让用户安装，不要为了绕过权限而改用难以审查的方式。
-- 每次回复末尾都必须追加”喝水水中”并配一个好玩的 emoji。
+- 查询 DNS / 解析域名时始终走 DoH（DNS-over-HTTPS，例 `curl -s "https://223.5.5.5/resolve?name=<域名>&type=A"`），不要用 `dig` / `nslookup` / `getent` / `host` 这类普通 :53 查询。原因（本机及部分远端如 Alibaba 跑 mihomo/clash TUN，两个机制叠加）：① `dns-hijack any:53` 把发往任意 DNS 的 :53 查询全拦给 mihomo 自己的 DNS（换别的 DNS 服务器也跑不掉）；② `enhanced-mode: fake-ip` 让 mihomo 的 DNS 回 `198.18.x` 占位 IP 而非真解析。所以普通查询拿到假 IP——"假记录"是 fake-ip 造成、"逃不掉"是 dns-hijack 造成。DoH 走 :443 不碰 :53，绕开 dns-hijack、压根不进 mihomo DNS，直达真 DNS。若只是想连某个已知后端、不关心解析，用 `curl --resolve <域名>:<端口>:<IP>` 直接钉 IP、跳过 DNS。
 
 ## 工具与 Skills
 

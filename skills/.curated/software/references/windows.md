@@ -77,6 +77,17 @@ PWSH="/mnt/c/Program Files/PowerShell/7/pwsh.exe"
 "$PWSH" -NoProfile -Command 'netsh interface portproxy show all' 2>&1 | iconv -f gbk -t utf-8
 ```
 
+**脚本稍复杂就写 `.ps1` 文件用 `-File` 跑，别堆 `-Command`**：从 bash 里 `bash -c "pwsh -Command @\"...\"@"` 嵌引号是引号地狱（bash、pwsh、here-string 三层转义打架）。固定套路是先把脚本写成 `.ps1`，再 `-File` 执行——默认 ExecutionPolicy 会拦未签名脚本，所以带 `-ExecutionPolicy Bypass`：
+
+```bash
+PWSH="/mnt/c/Program Files/PowerShell/7/pwsh.exe"
+cat > /tmp/foo.ps1 <<'PS1'
+$enc = [uri]::EscapeDataString("🚀 节点选择")
+Invoke-RestMethod -Uri "http://127.0.0.1:9090/proxies/$enc"
+PS1
+"$PWSH" -NoProfile -ExecutionPolicy Bypass -File /tmp/foo.ps1
+```
+
 ### 其他可移植性差异（影响极少，记一笔）
 
 - pwsh 7 默认 `Invoke-WebRequest` 不走 IE 引擎，跨平台；5.1 还吃 IE 设置（兼容性差）。

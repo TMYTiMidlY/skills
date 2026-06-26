@@ -243,8 +243,6 @@ foreach ($n in @("vless-ws-Node","Hysteria2-Node")) {
 }
 ```
 
-> WSL 跨界调 Windows pwsh 的固定套路：写 `.ps1` 文件再 `"/mnt/c/Program Files/PowerShell/7/pwsh.exe" -NoProfile -ExecutionPolicy Bypass -File /tmp/foo.ps1`（用 pwsh 7，不是 `powershell.exe`；别在 `bash -c "pwsh -Command @"..."@"` 里嵌引号，地狱）。
->
 > **`/delay` 通 ≠ 节点能跑全速**：它只测 1KB 级 RTT。真实吞吐要用 ≥50MB 文件测（前几 MB 在 TCP 慢启动，speed 偏小）；跑大量 KB 级小文件时看 `part/s` 而不是 `MiB/s`。
 
 ## 5. TUN 路由的边界
