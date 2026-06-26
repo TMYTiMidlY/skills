@@ -1,6 +1,6 @@
 ---
 name: wechat-clawbot
-description: 用 OpeniLink Hub（微信 ClawBot / iLink 协议开源平台）收发微信消息、管理 Bot/App/权限。当用户要用程序给自己或他人发微信消息 / 通知（含"搞定后通知我"）、用 REST API 收消息（webhook / WebSocket 推送）、调微信 Bot API、给 App 设/改 scope、regenerate app_token、或排查 openilink-hub（oih）时触发。核心：分清 Bot API（程序用 app_token）与管理 API（后台登录 session）两套；收消息是 Hub 主动推（webhook / WS）不是轮询；改 scope 走管理 API 不改库；密码用 portal secret 注入、绝不进对话。自托管部署（oih + 反代）见 vps-maintenance skill。
+description: 用 OpeniLink Hub（微信 ClawBot / iLink 协议开源平台）收发微信消息、管理 Bot/App/权限。当用户要用程序给自己或他人发微信消息 / 通知（含搞定后通知我）、用 REST API 收消息（webhook / WebSocket 推送）、调微信 Bot API、给 App 设/改 scope、regenerate app_token、或排查 openilink-hub（oih）时触发。核心：分清 Bot API（程序用 app_token）与管理 API（后台登录 session）两套；收消息是 Hub 主动推（webhook / WS）不是轮询；改 scope 走管理 API 不改库；密码用 portal secret 注入、绝不进对话。自托管部署（oih + 反代）见 vps-maintenance skill。
 ---
 
 # WeChat ClawBot — OpeniLink Hub 操作
