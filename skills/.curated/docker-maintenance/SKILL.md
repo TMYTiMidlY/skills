@@ -17,7 +17,7 @@ AI 运行环境疑似在容器里、需要在容器内装工具 / 配置认证 /
 - 判据看这两个：
   - `/proc/1/cgroup` 在容器里通常是 `0::/` 或带 `docker/containerd` 字样。
   - `mount | grep ' / '` 看到 `overlay` 就是容器。
-- Hermes Docker 后端的文件系统布局：`~/.hermes/` 在容器里是**只读 overlay 挂载**，直接写入会报 `Read-only file system`。可写路径优先选 `/workspace`（若启用了 cwd 挂载）或 `/root` 下的数据盘位置。**遇到写失败先问"我是不是在只读挂载下"，别盲目重试**。
+- Hermes Docker 后端的文件系统布局：`~/.hermes/` 在容器里是**只读 overlay 挂载**，直接写入会报 `Read-only file system`。可写路径优先选 `/workspace`（若启用了 cwd 挂载）或 `/root` 下的数据盘位置。**遇到写失败先问“我是不是在只读挂载下”，别盲目重试**。
 
 ## 网络
 

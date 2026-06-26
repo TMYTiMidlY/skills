@@ -30,7 +30,7 @@ git 和运维都要用 22 端口，没法简单端口转发。核心做法是 **
 
 ## 整体架构
 
-一句话：**公网入口 `<入口VPS>` 按"用谁的身份登录"分流**——`git@` 走 git 服务（经 relay 转到内网 Forgejo），`<user>@` 走正常运维 shell，`https://…:3000` 走 web。Forgejo 本体和 CI 都在内网 `<内网机>` 的 docker 里。
+一句话：**公网入口 `<入口VPS>` 按“用谁的身份登录”分流**——`git@` 走 git 服务（经 relay 转到内网 Forgejo），`<user>@` 走正常运维 shell，`https://…:3000` 走 web。Forgejo 本体和 CI 都在内网 `<内网机>` 的 docker 里。
 
 ```mermaid
 flowchart LR
@@ -62,7 +62,7 @@ flowchart LR
 
 `git clone git@<PUBLIC_IP>:…` 实际分两步，都由 `<入口VPS>` 的脚本经 relay 转发到内网、再 `docker exec` 进 Forgejo 容器：
 
-1. **查 key**：sshd 的 `AuthorizedKeysCommand` 当场问"这把公钥是谁的"→ relay → `docker exec forgejo forgejo keys` 查 Forgejo 数据库 → 返回一行带 forced command 的 `authorized_keys`。
+1. **查 key**：sshd 的 `AuthorizedKeysCommand` 当场问“这把公钥是谁的”→ relay → `docker exec forgejo forgejo keys` 查 Forgejo 数据库 → 返回一行带 forced command 的 `authorized_keys`。
 2. **跑 git**：那行 forced command → relay → `docker exec -i forgejo forgejo serv key-N` 收发 git 数据。
 
 > **为什么在 Forgejo 网页端加一把 SSH key，公网入口机马上就认得？** 因为入口机的 `git` 用户**没有** `authorized_keys` 文件——sshd 配的是 `AuthorizedKeysCommand`，每次连接**当场**经 relay 查 Forgejo 数据库里的公钥表（网页端加的 key 正存在这里）。key 始终只在 Forgejo 数据库里，**从不拷到入口机**。
@@ -163,8 +163,8 @@ services:
 
 换机要改的值：
 
-- **`ROOT_URL` / `SSH_DOMAIN` / `DOMAIN` 三者含义不同**，都可填 IP 或**域名**（本部署用的就是域名，且 web 与 SSH 还指向不同主机）；别一股脑填同一个值。理解关键：**"网页 URL""HTTPS clone 地址""SSH clone 地址"是三件事，但只有第一件是功能性的，后两件本质是展示**——
-  - **`ROOT_URL`（功能性，最重要）** = 网页对外地址。浏览器地址栏、页面/邮件里生成的所有链接、**GitHub OAuth 回调的 base**（回调 = `<ROOT_URL>/user/oauth2/<name>/callback`）都用它；**HTTPS clone 地址不是独立配置项，而是由它派生**（`<ROOT_URL><owner>/<repo>.git`）。所以"改 HTTPS clone 显示"≡"改 `ROOT_URL`"，而改 `ROOT_URL` 会连带影响 web 访问和 OAuth。它必须和浏览器**实际**访问方式逐字一致：经边缘域名 + 443 就写 `https://<WEB_HOST>/`；边缘在非标端口上自签（如 `:3000`）就写 `https://<WEB_HOST>:3000/`。改了它，GitHub OAuth App 的回调 URL 要同步改。
+- **`ROOT_URL` / `SSH_DOMAIN` / `DOMAIN` 三者含义不同**，都可填 IP 或**域名**（本部署用的就是域名，且 web 与 SSH 还指向不同主机）；别一股脑填同一个值。理解关键：**“网页 URL”“HTTPS clone 地址”“SSH clone 地址”是三件事，但只有第一件是功能性的，后两件本质是展示**——
+  - **`ROOT_URL`（功能性，最重要）** = 网页对外地址。浏览器地址栏、页面/邮件里生成的所有链接、**GitHub OAuth 回调的 base**（回调 = `<ROOT_URL>/user/oauth2/<name>/callback`）都用它；**HTTPS clone 地址不是独立配置项，而是由它派生**（`<ROOT_URL><owner>/<repo>.git`）。所以“改 HTTPS clone 显示”≡“改 `ROOT_URL`”，而改 `ROOT_URL` 会连带影响 web 访问和 OAuth。它必须和浏览器**实际**访问方式逐字一致：经边缘域名 + 443 就写 `https://<WEB_HOST>/`；边缘在非标端口上自签（如 `:3000`）就写 `https://<WEB_HOST>:3000/`。改了它，GitHub OAuth App 的回调 URL 要同步改。
   - **`SSH_DOMAIN`（+ `SSH_PORT`，纯展示）** = 只决定仓库页「Clone」框里 SSH 地址显示成 `git@<SSH_DOMAIN>:…`（端口取 `SSH_PORT`、形式见下「scp-like vs ssh://」）。**实际 SSH 连到哪，由 `<SSH_HOST>` 的 DNS + relay 决定，Forgejo 不参与**——所以它可以指向和 web **完全不同的主机**（本部署 web 走一台边缘、SSH 直连另一台境内机，就是靠这里拆开的）。单独改它只动仓库页显示、不影响连通。`SSH_PORT=22` 是展示端口（配 22 relay），和内置 SSH server 的真实监听口 `SSH_LISTEN_PORT` 是两回事（本部署 `START_SSH_SERVER=false`，用不到后者）。
   - **`DOMAIN`（默认值种子）** = 仅在 `ROOT_URL` / `SSH_DOMAIN` 没显式设时，拿它推默认值（`ROOT_URL` 默认 `{PROTOCOL}://{DOMAIN}:{HTTP_PORT}/`，`SSH_DOMAIN` 默认取 `DOMAIN`）。两者都显式写了时，`DOMAIN` 基本不再单独起作用；填成 web host 保持整洁即可。
 - `START_SSH_SERVER=false`：**关掉 Forgejo 内置 SSH server**（容器没公网、也不监听 22），但 `DISABLE_SSH=false` 保留 SSH 克隆能力——git transport 由 relay + `forgejo serv` 承担（见 ③）。
@@ -194,8 +194,8 @@ Web 上「Clone」按钮给的 SSH 地址有两种写法，由 `[repository] USE
 
 **为什么默认是 `ssh://` 形式、这名字为什么叫「compat」**：
 
-- **Forgejo 默认 `true`**（`modules/setting/repository.go` 里 `UseCompatSSHURI: true`）——所以**开箱即 `ssh://` 形式**，即便 22 端口、即便没写这一行。注意 **Gitea 默认是 `false`**（scp-like），两个项目默认值相反，从 Gitea 迁来会"莫名其妙变形式"。
-- **「compat」=「兼容早期 Gitea 的展示行为」**：这个开关由 Gitea [PR #2356](https://github.com/go-gitea/gitea/pull/2356)（2017-08 合入）引入。早期 Gitea **一直只用 `ssh://` 显式 URI**；后来把默认改成了 scp-like 短形式（更贴近 GitHub 习惯），于是加这个开关让你能**强制切回旧的 `ssh://` 形式**——"compat" 指的就是兼容这套老的 `ssh://` URI 展示，名字和直觉相反（compat 反而是 `ssh://`，不是 scp-like）。
+- **Forgejo 默认 `true`**（`modules/setting/repository.go` 里 `UseCompatSSHURI: true`）——所以**开箱即 `ssh://` 形式**，即便 22 端口、即便没写这一行。注意 **Gitea 默认是 `false`**（scp-like），两个项目默认值相反，从 Gitea 迁来会“莫名其妙变形式”。
+- **「compat」=「兼容早期 Gitea 的展示行为」**：这个开关由 Gitea [PR #2356](https://github.com/go-gitea/gitea/pull/2356)（2017-08 合入）引入。早期 Gitea **一直只用 `ssh://` 显式 URI**；后来把默认改成了 scp-like 短形式（更贴近 GitHub 习惯），于是加这个开关让你能**强制切回旧的 `ssh://` 形式**——“compat” 指的就是兼容这套老的 `ssh://` URI 展示，名字和直觉相反（compat 反而是 `ssh://`，不是 scp-like）。
 
 > 两种写法在 22 端口下**功能完全等价**，落到同一个仓库。区别只在：scp-like 语法**无法表达端口**——所以一旦 `SSH_PORT != 22`，无论 `USE_COMPAT_SSH_URI` 设什么都只会给带端口的 `ssh://` 形式。本部署若 web 与 SSH 分流到不同入口（如 web 走域名经边缘反代、SSH 直连另一台），`SSH_DOMAIN` 单独指向 SSH 入口、`SSH_PORT=22` 保持，配 `USE_COMPAT_SSH_URI=false` 即得 `git@<ssh-host>:<owner>/<repo>.git`。
 
@@ -208,9 +208,9 @@ Forgejo 官方镜像有两种（[官方 docker.md](https://forgejo.org/docs/late
 
 **为什么用非 rootless**：本部署跑在 Docker Desktop / WSL2 + bind mount 下，rootless 镜像常因宿主目录属主/权限重映射出问题（官方文档专门提醒过这类权限坑）；而本部署只把 `./data` 一个目录挂进容器、不碰宿主敏感路径，root 容器的额外风险很小。
 
-> **别和 "rootless Docker" 混了——这是两个不同的层：**
+> **别和 “rootless Docker” 混了——这是两个不同的层：**
 > - **镜像 rootless**（本节说的 `-rootless` 后缀）：只管**容器内 app 进程**用 uid 1000 还是容器 root，**不改变**你启动容器要不要权限——两种镜像都一样 `docker compose up`。
-> - **引擎 rootless**（rootless Docker / Podman）：让 docker 守护进程以**普通用户**跑，**用它无需 root 或 `docker` 组**。这才是决定"要不要 sudo"的层，也是多租户 / 拿不到 root 的共享机给你的模式。
+> - **引擎 rootless**（rootless Docker / Podman）：让 docker 守护进程以**普通用户**跑，**用它无需 root 或 `docker` 组**。这才是决定“要不要 sudo”的层，也是多租户 / 拿不到 root 的共享机给你的模式。
 >
 > 所以 rootless **镜像**的安全收益主要在 **rootful 引擎**上才明显（本部署即此：在 `docker` 组 ≈ 有 root，容器内 root = 宿主/VM 的 root，这时换 rootless 镜像才算纵深防御）。而在 **rootless 引擎**下，连非 rootless 镜像的容器 root 也被 user namespace 重映射成普通 uid，宿主已被引擎保护，镜像选哪个更无所谓。本部署是**单租户 + rootful 引擎 + 自己人才在 docker 组**，故这层纵深防御省得起。
 
@@ -249,24 +249,24 @@ GitHub OAuth App 回调填 `<ROOT_URL>/user/oauth2/<name>/callback`（`<name>` �
 
 > ⚠️ 设 `ENABLE_INTERNAL_SIGNIN=false`（只留 OAuth）**前，所有要用 web 的账号都得先绑好 OAuth**。坑在于 `link_account`（关联已有账号）页复用登录页同一个 `signin_inner` 模板、用户名密码框被同一个 `{{if .EnableInternalSignIn}}` 包着——一旦关掉，**没绑的账号连「GitHub 登录 → 输密码关联」这条补绑路也断了**（关联页同样没有密码框），只能临时把开关改回 `true` 开个窗口补绑、或 admin 改 DB 伪造绑定。admin 自己尤其要先绑，否则直接把自己锁在 web 外。
 
-### 登录维持时间：`SESSION_LIFE_TIME` vs `LOGIN_REMEMBER_DAYS`（含"老是掉登录"根治）
+### 登录维持时间：`SESSION_LIFE_TIME` vs `LOGIN_REMEMBER_DAYS`（含“老是掉登录”根治）
 
 两个**完全独立**的机制，别混（源码 `modules/setting/{session,security}.go`、`routers/web/auth/`、`models/auth/session.go`）：
 
 | | `[session] SESSION_LIFE_TIME` | `[security] LOGIN_REMEMBER_DAYS` |
 |---|---|---|
-| 管的东西 | **当前会话**（"我现在是登录态"）的服务端寿命 | **「记住我」长效 cookie**（`persistent`，存 DB 的 LTA token） |
+| 管的东西 | **当前会话**（“我现在是登录态”）的服务端寿命 | **「记住我」长效 cookie**（`persistent`，存 DB 的 LTA token） |
 | cookie | `COOKIE_NAME`，只存 session id；**无 Max-Age = 浏览器会话 cookie** | `COOKIE_REMEMBER_NAME`，**带 Max-Age = N 天的持久 cookie** |
 | 默认 | 86400s = **1 天** | Forgejo **31 天**（Gitea 旧默认是 7） |
-| 过期方式 | **滑动**：每次请求把 `Expiry` 刷成当前时间，最后一次活动后再过 `SESSION_LIFE_TIME` 才失效（≈"闲置超时"，正是 GitHub 的"用着就不掉"） | session 没了（过期/被清/存储丢）时，`autoSignIn` 读这个 cookie → 查 DB 验证 → **静默重建一个新 session**，免密码 |
+| 过期方式 | **滑动**：每次请求把 `Expiry` 刷成当前时间，最后一次活动后再过 `SESSION_LIFE_TIME` 才失效（≈“闲置超时”，正是 GitHub 的“用着就不掉”） | session 没了（过期/被清/存储丢）时，`autoSignIn` 读这个 cookie → 查 DB 验证 → **静默重建一个新 session**，免密码 |
 | 何时设置 | 登录即建 | **仅密码登录且勾选「记住此设备」时**才写 |
 | 扛重启吗 | 看 `PROVIDER`：`memory` 重启即清空（全员掉登录）；`db`/`file` 才扛得住 | 扛：它直查 DB 用户表，与 session 存储无关 |
 
-**一句话区别**：`SESSION_LIFE_TIME` 是"当前这次登录能闲置多久"；`LOGIN_REMEMBER_DAYS` 是"掉了之后还能免密自动登回来多久"。前者是前线，后者是后备网。
+**一句话区别**：`SESSION_LIFE_TIME` 是“当前这次登录能闲置多久”；`LOGIN_REMEMBER_DAYS` 是“掉了之后还能免密自动登回来多久”。前者是前线，后者是后备网。
 
 **关键坑 —— OAuth 登录不触发 remember-me**：`handleOAuth2SignIn`（GitHub OAuth 登录路径）只 `updateSession` 设 uid，**从不调 `SetLTACookie`**——所以走 GitHub OAuth 进来的用户**根本不会有 `persistent` cookie**，`LOGIN_REMEMBER_DAYS` 对他们形同虚设（它只对密码登录 + 勾「记住我」生效，如本地 admin）。**OAuth 实例的登录维持 = 只看 `SESSION_LIFE_TIME` + session 存储是否持久。**
 
-**要达到"几天不掉、用着自动续、像 GitHub"——按下面配（compose 注入 `FORGEJO__<section>__<KEY>`）**：
+**要达到“几天不掉、用着自动续、像 GitHub”——按下面配（compose 注入 `FORGEJO__<section>__<KEY>`）**：
 
 ```yaml
 - FORGEJO__session__PROVIDER=db              # 关键!! 会话存进 Postgres,容器重启不再清登录
@@ -275,9 +275,9 @@ GitHub OAuth App 回调填 `<ROOT_URL>/user/oauth2/<name>/callback`（`<name>` �
 - FORGEJO__security__LOGIN_REMEMBER_DAYS=30   # 仅对密码登录的「记住我」有效(OAuth 用户无感)
 ```
 
-- **默认 `PROVIDER=memory` 是"老是掉登录"的头号元凶**：每次 `docker compose up`/重建容器，内存里所有会话全没，全员被登出。**改成 `db` 是治本**（用现有 Postgres，自动建 `session` 表，重启/重建都不掉）。`file`（落 `/data/gitea/sessions`，本部署 `./data` 已 bind mount）同样扛重启，但 `db` 更干净，首选。
+- **默认 `PROVIDER=memory` 是“老是掉登录”的头号元凶**：每次 `docker compose up`/重建容器，内存里所有会话全没，全员被登出。**改成 `db` 是治本**（用现有 Postgres，自动建 `session` 表，重启/重建都不掉）。`file`（落 `/data/gitea/sessions`，本部署 `./data` 已 bind mount）同样扛重启，但 `db` 更干净，首选。
 - 改这几项要 `docker compose up -d server` 重建容器生效——**切 `memory`→`db` 这一下会把现存内存会话清掉、全员需再登录一次**，之后才稳。
-- session cookie 无 Max-Age（Gitea 没暴露这个开关），**理论上彻底关掉浏览器会丢**；但现代浏览器的"恢复上次标签页"会把会话 cookie 带回来，体感上不掉。OAuth 实例没有 remember-me 这层后备，要更强的"关浏览器也不掉"只能靠浏览器自身的会话恢复。
+- session cookie 无 Max-Age（Gitea 没暴露这个开关），**理论上彻底关掉浏览器会丢**；但现代浏览器的“恢复上次标签页”会把会话 cookie 带回来，体感上不掉。OAuth 实例没有 remember-me 这层后备，要更强的“关浏览器也不掉”只能靠浏览器自身的会话恢复。
 
 ## ② web 公网入口：Caddy 反代 + 默认中文
 
@@ -314,7 +314,7 @@ Match User git
 
 ### (b) `<入口VPS>` 两个中转脚本
 
-这两个脚本**就是单机 Forgejo 里 `forgejo keys` / `forgejo serv` 两个功能的"跨机版"**：单机部署时 sshd 直接调 forgejo 二进制的这俩子命令；这里 VPS 上没有 forgejo，于是用两个 shell 脚本把请求经 relay 转给内网机容器里的 `forgejo keys` / `forgejo serv` 执行。脚本本身只做 ssh 转发——**VPS 不需要任何 forgejo 二进制**，公网那台越干净越安全。
+这两个脚本**就是单机 Forgejo 里 `forgejo keys` / `forgejo serv` 两个功能的“跨机版”**：单机部署时 sshd 直接调 forgejo 二进制的这俩子命令；这里 VPS 上没有 forgejo，于是用两个 shell 脚本把请求经 relay 转给内网机容器里的 `forgejo keys` / `forgejo serv` 执行。脚本本身只做 ssh 转发——**VPS 不需要任何 forgejo 二进制**，公网那台越干净越安全。
 
 `/usr/local/bin/forgejo-authkeys`（sshd 查 key 时调，把 `keys` 请求经 relay 转给内网，再把内网返回的 key id 拼成一行带 forced command 的 authorized_keys 回给 sshd）：
 
@@ -356,7 +356,7 @@ command="/usr/bin/bash -c 'set -- $SSH_ORIGINAL_COMMAND; a=${1:-}; if [ \"$a\" =
 - `<内网机>` 收到的请求要递进 Forgejo 容器，靠 `docker exec`（只能在容器外的宿主上跑，所以这段逻辑在宿主、不在容器里）。
 - **一把 key 承载两种操作**：`set -- $SSH_ORIGINAL_COMMAND` 拆出 action，`keys` / `serv` 两路分别 `docker exec`，其它输入一律 `relay: bad action` 拒绝。这个 dispatch 去不掉——请求是动态的、藏在 `$SSH_ORIGINAL_COMMAND` 里，没法写死成一条裸命令。
 - `serv` 那路 `docker exec` **必须带 `-i`**（保留 stdin），否则 push 会挂死（见「关键坑」）。
-- **直接内联进 `command=` 而不另放脚本**：省一个文件、改 key 时一处可见。`command=` 外层是双引号、内部只能用 `\"` 转义双引号，所以主体用单引号包 `bash -c '...'`（主体内不含单引号才成立）。`forgejo serv` / `forgejo keys` 是 Forgejo 的原生子命令（官方 SSH 直连模式内部也是调它们），这里把它们"借"出来用。
+- **直接内联进 `command=` 而不另放脚本**：省一个文件、改 key 时一处可见。`command=` 外层是双引号、内部只能用 `\"` 转义双引号，所以主体用单引号包 `bash -c '...'`（主体内不含单引号才成立）。`forgejo serv` / `forgejo keys` 是 Forgejo 的原生子命令（官方 SSH 直连模式内部也是调它们），这里把它们“借”出来用。
 
 **验收**：把客户端公钥加到某个 Forgejo 账户后，`ssh <user>@<PUBLIC_IP>` 仍是运维 shell、`git clone git@<PUBLIC_IP>:user/repo.git` 能拉到仓库即通。
 
@@ -418,7 +418,7 @@ docker exec forgejo-db psql -U forgejo -t -c \
 
 REST API（`/api/v1/.../actions/tasks`、`/actions/runs`、`/actions/runs/{id}`）只返回 run 的**状态与元数据**，swagger 里**没有**下载日志正文的端点。正文只有两条路：
 
-- **Web UI**（`/{owner}/{repo}/actions/runs/{run_index}/jobs/{job_index}`）是 **web 端点，只认登录 session cookie，不认 API token**——带 `Authorization: token` 访问 web 路径会被当成匿名，私有仓库对匿名返回 **404**（不泄露存在性，跟匿名访问私有仓库主页一致）。所以"直接 curl raw-log URL"对**公开**仓库成立，对**私有**仓库得先模拟登录拿 cookie（GET 取 `_csrf` → POST `/user/login` → 存 cookie，还要过可能的 2FA），脆。
+- **Web UI**（`/{owner}/{repo}/actions/runs/{run_index}/jobs/{job_index}`）是 **web 端点，只认登录 session cookie，不认 API token**——带 `Authorization: token` 访问 web 路径会被当成匿名，私有仓库对匿名返回 **404**（不泄露存在性，跟匿名访问私有仓库主页一致）。所以“直接 curl raw-log URL”对**公开**仓库成立，对**私有**仓库得先模拟登录拿 cookie（GET 取 `_csrf` → POST `/user/login` → 存 cookie，还要过可能的 2FA），脆。
 
 - **读服务器端日志文件**（脚本化最稳）：日志按 job 落在 `<forgejo-data>/gitea/actions_log/<owner>/<repo>/<NN>/<task_id>.log.zst`，**zstd 压缩**。`<NN>` 是 `task_id` 的零填充两位前缀目录（`2 → 02/2.log.zst`、`123 → 12/123.log.zst`）；这条相对路径直接存在 `action_task.log_filename` 字段。forgejo 容器是 alpine、**不带 zstd**，在宿主或带 zstd 的环境解：
 

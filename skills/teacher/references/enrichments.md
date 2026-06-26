@@ -115,7 +115,7 @@ def find(x):
 
 Skip when the concept has no design choices worth questioning (e.g. "tensor broadcasting" is mostly mechanics).
 
-**How:** insert a short block after the walkthrough and before the trap, titled "Design choices" or "为什么这么设计". 2–3 bullets max. Each bullet states one decision + what would break if you changed it.
+**How:** insert a short block after the walkthrough and before the trap, titled "Design choices" or “为什么这么设计”. 2–3 bullets max. Each bullet states one decision + what would break if you changed it.
 
 ### Good — attention (DL)
 

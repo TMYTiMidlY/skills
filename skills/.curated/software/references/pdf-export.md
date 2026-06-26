@@ -62,7 +62,7 @@ for d in *.deb; do dpkg-deb -x "$d" extracted/; done
 export LD_LIBRARY_PATH="$PWD/extracted/usr/lib/x86_64-linux-gnu"
 ```
 
-调 chrome 前注入这个 `LD_LIBRARY_PATH` 即可。**摸依赖的方法**：`ldd <chrome-path> | grep "not found"`，一轮一轮补，最后再 `ldd` 一次确认 "ALL RESOLVED"。
+调 chrome 前注入这个 `LD_LIBRARY_PATH` 即可。**摸依赖的方法**：`ldd <chrome-path> | grep "not found"`，一轮一轮补，最后再 `ldd` 一次确认 “ALL RESOLVED”。
 
 ## Markdown → Prince PDF 流水线
 
@@ -97,7 +97,7 @@ pixi run prince output.html -o output.pdf
 
 ## Typst 路线
 
-Typst 是非 HTML/CSS 链路里**安装最轻、中文最友好、模板生态正在快速长大**的选项。适合：自用研报、笔记、面试材料这种"挑个现成模板就出 PDF"的场景。
+Typst 是非 HTML/CSS 链路里**安装最轻、中文最友好、模板生态正在快速长大**的选项。适合：自用研报、笔记、面试材料这种“挑个现成模板就出 PDF”的场景。
 
 **无 sudo 安装**：
 
@@ -123,10 +123,10 @@ typst compile main.typ out.pdf --font-path ~/.local/share/fonts/cjk
 
 | 模板 | 路线 | 适合 |
 |---|---|---|
-| `inelegant-note` | 中文作者，照搬 LaTeX Elegant Book/Note 风 | **首选**：中文研报、教科书、笔记，"第N章 …"自动编号、目录带点引线、罗马/阿拉伯分前后页码全都开箱即用 |
+| `inelegant-note` | 中文作者，照搬 LaTeX Elegant Book/Note 风 | **首选**：中文研报、教科书、笔记，“第N章 …”自动编号、目录带点引线、罗马/阿拉伯分前后页码全都开箱即用 |
 | `ilm` | 极简非小说书 / 笔记 | 想要极简留白派、左对齐封面 + abstract |
 | `classicthesis` | 仿 LaTeX ClassicThesis | 文人书味、学位论文 |
-| `bookly` | 通用 "Book template" | 偏小说 / 故事书 |
+| `bookly` | 通用 “Book template” | 偏小说 / 故事书 |
 
 一键拉取：`typst init @preview/<name> <target-dir>`，模板源也会落到 `~/.cache/typst/packages/preview/<name>/<ver>/`，可直接翻它的 `library/template.typ` / `template/custom/parameter.typ` 看暴露的配置项（字体、章节前缀、页边距等）。
 
@@ -138,7 +138,7 @@ pandoc input.md -o body.typ --to typst --shift-heading-level-by=-1
 sed -i 's|^#horizontalrule$|#line(length: 30%, stroke: 0.6pt + luma(85%))|' body.typ
 ```
 
-`--shift-heading-level-by=-1` 把源 md 的 `## 一、…` 提升成 typst 的 `=`（一级章），让模板的"章扉页 / 第N章"机制生效。
+`--shift-heading-level-by=-1` 把源 md 的 `## 一、…` 提升成 typst 的 `=`（一级章），让模板的“章扉页 / 第N章”机制生效。
 
 **关键坑**：
 
@@ -154,7 +154,7 @@ sed -i 's|^#horizontalrule$|#line(length: 30%, stroke: 0.6pt + luma(85%))|' body
 
 **1. 剥源 md 里的手写序号**（防止跟模板自动编号重复）
 
-源 md 常用 `## 一、…` / `### 1.1 …` 这种手写序号，套到自动编号模板里会显示成"第二章 二、…" / "2.1 2.1 …"。转换前用 Python regex 剥掉：
+源 md 常用 `## 一、…` / `### 1.1 …` 这种手写序号，套到自动编号模板里会显示成“第二章 二、…” / “2.1 2.1 …”。转换前用 Python regex 剥掉：
 
 ```python
 import re
@@ -203,7 +203,7 @@ if first > 0:
 
 - **`@page` 命名页**：`@page cover { ... }` / `@page chapter-open { ... }` / `@page toc { ... }` 让封面、章扉、目录有各自版心和装饰；元素上用 `page: cover` 指定归属
 - **跑动页眉**：`@top-left { content: string(chapter-title); }` + `h1 { string-set: chapter-title content(); }` 让页眉自动跟随当前章节
-- **章节自动编号**：`body { counter-reset: chapter; }` + `h1 { counter-increment: chapter; }` + `h1::before { content: counter(chapter, decimal-leading-zero); }`，配合超大字号 / 半透明色 / 绝对定位可做出"杂志大背景数字"效果
+- **章节自动编号**：`body { counter-reset: chapter; }` + `h1 { counter-increment: chapter; }` + `h1::before { content: counter(chapter, decimal-leading-zero); }`，配合超大字号 / 半透明色 / 绝对定位可做出“杂志大背景数字”效果
 - **封面纯 CSS 装饰**：`.cover::before` / `::after` 做顶/底彩条；`::before { content: ""; position: absolute; ... }` 拼几何块
 - **行内 code → 红色药丸 chip**：`code { background: rgba(185,28,28,.07); border: .5px solid ...; padding: .1em .45em; border-radius: 3px; color: #7f1d1d; }`
 - **粗体加荧光底**：`strong { background: linear-gradient(180deg, transparent 60%, rgba(185,28,28,.18) 60%); }`
@@ -214,4 +214,4 @@ if first > 0:
 
 - **中间文件多份拷贝会改了旧版没生效**：md → typst 流水线里如果有 `body.typ` 在根目录、又有一份 `tpl/body.typ`，更新转换脚本时只动了一份很容易看不出来。**统一直接写到最终位置**（如直接 `pandoc -o tpl/body.typ`），不要中间 cp
 - **无 poppler 时验证 PDF 视觉**：`pdfinfo` / `pdf2image` 都依赖 poppler 系统包；最轻量是 `uv run --with pymupdf python -c "import fitz; doc=fitz.open('x.pdf'); print(len(doc)); doc[0].get_pixmap(dpi=120).save('/tmp/p1.png')"`，渲染单页 PNG 直接 view 看
-- **TinyTeX 用 Fandol 中文字体缺异体字**：会出现"煙/會/召開"这种繁体异体字字面缺失（fc-list 显示有但渲染缺）。预处理时把已知缺字用 sed 转简体，或者在模板里给二级字体 fallback 到 Noto CJK
+- **TinyTeX 用 Fandol 中文字体缺异体字**：会出现“煙/會/召開”这种繁体异体字字面缺失（fc-list 显示有但渲染缺）。预处理时把已知缺字用 sed 转简体，或者在模板里给二级字体 fallback 到 Noto CJK

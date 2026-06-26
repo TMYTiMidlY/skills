@@ -8,7 +8,7 @@ description: Guide for creating effective skills. Use when users want to create 
 你是一名资深 Agent Skills 架构师，擅长将复杂任务转化为高度工程化的 Agent Skill。
 
 **启动对话**：直接以这句话开始：
-> "你想做一个什么样的 Skill？简单来说，你希望只要**【输入】**什么，AI Agent 就会**【输出】**什么？我会带你一步步把它做出来。"
+> “你想做一个什么样的 Skill？简单来说，你希望只要**【输入】**什么，AI Agent 就会**【输出】**什么？我会带你一步步把它做出来。”
 
 ## 交互式创建流程 (SOP)
 
@@ -34,8 +34,8 @@ description: Guide for creating effective skills. Use when users want to create 
 **关键：从结果反推需求**
 
 如果用户给了示例（如图片、文件、描述），主动分析并拆解：
-- 用户说"大概这个样子" → 分析图片的风格、布局、配色、规格
-- 用户说"像 XX 那样" → 推测具体功能和输出格式
+- 用户说“大概这个样子” → 分析图片的风格、布局、配色、规格
+- 用户说“像 XX 那样” → 推测具体功能和输出格式
 - 用户描述模糊 → 给出你的理解，让用户确认
 
 继续追问直到明确：
@@ -106,8 +106,8 @@ description: Guide for creating effective skills. Use when users want to create 
 ```
 
 **示例**（不要用技术术语）：
-- ❌ "使用 REST API 还是 GraphQL？"
-- ✅ "方案A: 直接读取文件（简单但功能有限）/ 方案B: 连接在线服务（功能强但需要网络）"
+- ❌ “使用 REST API 还是 GraphQL？”
+- ✅ “方案A: 直接读取文件（简单但功能有限）/ 方案B: 连接在线服务（功能强但需要网络）”
 
 待用户确认方案后，**你来列出**需要准备的东西（如果有的话）。
 
@@ -150,9 +150,9 @@ description: Guide for creating effective skills. Use when users want to create 
 ```
 
 **示例判断**：
-- "这是一个简单的单步操作，一个 SKILL.md 就够了"
-- "这涉及多个步骤，我建议拆成几个部分方便管理"
-- "这需要一些参考资料，我会单独放一个文件"
+- “这是一个简单的单步操作，一个 SKILL.md 就够了”
+- “这涉及多个步骤，我建议拆成几个部分方便管理”
+- “这需要一些参考资料，我会单独放一个文件”
 
 **Phase 1 完成标志**：已明确 I/O、技术方案、作用域，并确认架构
 
@@ -160,7 +160,7 @@ description: Guide for creating effective skills. Use when users want to create 
 
 ## Phase 2: 技能架构蓝图 (Blueprint)
 
-在编写任何代码前，先输出一份"架构蓝图"供用户确认。
+在编写任何代码前，先输出一份“架构蓝图”供用户确认。
 
 ### 2.1 生成蓝图
 
@@ -265,8 +265,8 @@ description: 清晰描述 Skill 功能和触发场景。包含：(1) 做什么 (
 - 避免模糊名称: `helper`, `utils`, `tools`
 
 **Description 规范** (详见 [best-practices.md](references/best-practices.md#description-编写指南)):
-- **始终用第三人称**: "处理 Excel 文件" ✅ / "我帮你处理" ❌
-- **包含触发场景**: "当用户提到 PDF、表单时使用"
+- **始终用第三人称**: “处理 Excel 文件” ✅ / “我帮你处理” ❌
+- **包含触发场景**: “当用户提到 PDF、表单时使用”
 
 #### Body 编写原则
 
@@ -323,7 +323,7 @@ Skill 测试就是设计一个能触发它的提问。向用户询问：
 - "帮我想几个测试用例"
 ```
 
-若用户选择"帮我想"，根据 Skill 功能生成 3 个测试提问：
+若用户选择“帮我想”，根据 Skill 功能生成 3 个测试提问：
 1. **正常请求**: 最典型的使用场景
 2. **边缘情况**: 特殊输入或复杂需求
 3. **不应触发**: 相似但不相关的请求（验证不会误触发）
@@ -367,8 +367,8 @@ Skill 测试就是设计一个能触发它的提问。向用户询问：
 ### 简洁至上
 
 上下文窗口是公共资源。每个 token 都要问：
-- "AI Agent 真的需要这个解释吗？"
-- "这段内容值得占用 token 吗？"
+- “AI Agent 真的需要这个解释吗？”
+- “这段内容值得占用 token 吗？”
 
 ### 自由度匹配
 

@@ -30,9 +30,9 @@ Default: **in the conversation**, as a structured markdown response. Concept lea
 
 Two exceptions:
 
-1. **Mode B (pseudocode) sidecar file** — automatic. When the example is pseudocode, also write the code block to `/tmp/<slugified-concept>-pseudocode.<ext>` as a sidecar. Pseudocode blocks are longer than runnable snippets and benefit from editor viewing (syntax highlighting, side-by-side comparison, easy copy). Keep the inline code block in the chat — the file complements it, doesn't replace it. Mention the path in one line right after the code block: *"完整伪代码已写到 `/tmp/grpo-pseudocode.py`，方便在编辑器里看。"*
+1. **Mode B (pseudocode) sidecar file** — automatic. When the example is pseudocode, also write the code block to `/tmp/<slugified-concept>-pseudocode.<ext>` as a sidecar. Pseudocode blocks are longer than runnable snippets and benefit from editor viewing (syntax highlighting, side-by-side comparison, easy copy). Keep the inline code block in the chat — the file complements it, doesn't replace it. Mention the path in one line right after the code block: *“完整伪代码已写到 `/tmp/grpo-pseudocode.py`，方便在编辑器里看。”*
 
-2. **Full file mode** — only when the user asks. Triggers: "做成笔记" / "save as a doc" / "save this" / "I want to keep this" / "存下来" / "write it to a file". Then write the full lesson to `/tmp/<concept>.md` and the code to a sibling file. See the "Full file mode" section at the bottom of this skill for the exact behavior.
+2. **Full file mode** — only when the user asks. Triggers: “做成笔记” / "save as a doc" / "save this" / "I want to keep this" / “存下来” / "write it to a file". Then write the full lesson to `/tmp/<concept>.md` and the code to a sibling file. See the "Full file mode" section at the bottom of this skill for the exact behavior.
 
 ## Step 1 · Pick the code language
 
@@ -222,13 +222,13 @@ When the example is **pseudocode** (Mode B), always write the code block to a si
 - Path: `/tmp/<slugified-concept>-pseudocode.<ext>` (`.py` for PyTorch / Python, `.ts`, `.rs`, etc. based on the language).
 - The file starts with the same `# pseudocode — illustrative, not runnable` header as the inline block, plus a one-line concept name comment.
 - The chat output is **unchanged** — the inline code block stays. The sidecar is supplementary, for editor viewing and easy copy.
-- Announce the path in one line right after the example code block, before starting the walkthrough. Example: *"完整伪代码已写到 `/tmp/grpo-pseudocode.py`，方便在编辑器里看。"*
+- Announce the path in one line right after the example code block, before starting the walkthrough. Example: *“完整伪代码已写到 `/tmp/grpo-pseudocode.py`，方便在编辑器里看。”*
 
 For **Mode A (runnable)** lessons, do NOT write a sidecar by default. Short runnable code is more useful inline; the file would be redundant.
 
 ### Full file mode (only when user asks)
 
-Trigger phrases: "save this" / "做成笔记" / "save as a doc" / "存下来" / "I want to keep this" / "write it to a file".
+Trigger phrases: "save this" / “做成笔记” / "save as a doc" / “存下来” / "I want to keep this" / "write it to a file".
 
 When triggered:
 

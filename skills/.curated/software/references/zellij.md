@@ -51,7 +51,7 @@ web_sharing "on"
 
 - **`keybinds clear-defaults=true { ... }` 会把键位冻结在生成时的版本**。`clear-defaults=true` 表示丢弃全部内置默认键位、只用列出的；而 `zellij setup --dump-config` 导出的配置正是当时版本默认键位的全量快照。升级 zellij 后，上游新增/改动的默认键位不会自动出现，需要重新 dump 或手动合并。表现是静默的——不报错，只是用不到新键位。
 
-- **`default_cwd` 只有在同时设了 `default_shell` 时才改变新 pane 的工作目录**。新 pane 默认继承当前 pane 的 cwd；`default_cwd` 只作为"无法确定 cwd 时"的兜底，唯一强制生效的路径是经过 `default_shell`（`pty.rs` 的 `fill_cwd` 仅在 cwd 为 None 时回填）。所以 `default_shell` 注释掉时，`default_cwd` 对交互式新 pane 基本不起作用，只影响 Web 新建 session 的首个 pane。反过来：一旦取消注释 `default_shell`（例如启用某个 shell wrapper），`default_cwd` 会随之激活，把"继承父 pane 目录"的行为改成固定打开 `default_cwd`。
+- **`default_cwd` 只有在同时设了 `default_shell` 时才改变新 pane 的工作目录**。新 pane 默认继承当前 pane 的 cwd；`default_cwd` 只作为“无法确定 cwd 时”的兜底，唯一强制生效的路径是经过 `default_shell`（`pty.rs` 的 `fill_cwd` 仅在 cwd 为 None 时回填）。所以 `default_shell` 注释掉时，`default_cwd` 对交互式新 pane 基本不起作用，只影响 Web 新建 session 的首个 pane。反过来：一旦取消注释 `default_shell`（例如启用某个 shell wrapper），`default_cwd` 会随之激活，把“继承父 pane 目录”的行为改成固定打开 `default_cwd`。
 
 - **`web_client { ... }` 只被 Web server 读**。普通交互式 `zellij`（读 `config.kdl`）不使用这一段，只有 `zellij web`（读 web.kdl）才生效。写在交互 `config.kdl` 里的 `web_client` 块不起作用，调浏览器端外观应改 web.kdl。
 
@@ -115,7 +115,7 @@ curl --noproxy '*' -sk -o /dev/null -m 4 -w "fake=%{http_code}\n" \
 - `real=401` 且 `fake=401` → 你这个 token 已无效（过期 / 已 revoke / 拼错）。
 - `real=101`（WebSocket 升级成功）或 `real=405`（method/upgrade 后续校验挑剔，但**认证已过**），而 `fake=401` → token 有效。
 
-`--noproxy '*'`用于强制curl直连回环服务，避免继承的网络环境改变测试路径。`curl < 7.86` 还会把 zellij WebSocket 后续帧当 "HTTP/0.9" 报错，把测试机 curl 升一下（或换 Python `socket` 直连）就稳。
+`--noproxy '*'` 用于强制curl直连回环服务，避免继承的网络环境改变测试路径。`curl < 7.86` 还会把 zellij WebSocket 后续帧当“HTTP/0.9”报错；核对测试机curl版本，或用Python `socket`直接验证回环连接。
 
 ### 让 session_token 永不过期：直接改 DB
 
@@ -138,7 +138,7 @@ sqlite3 -header -column "$DB" "SELECT id, remember_me, created_at, expires_at FR
 
 - **不用重启 zellij**：`validate_session_token` 每个请求都现查 DB，UPDATE 立即生效。
 - `cleanup_expired_sessions()` 的 WHERE 是 `expires_at <= datetime('now')`，**未来时间的行不会被清**，所以 2099 这条永远活着。
-- **zellij schema 升级的话这个 hack 就废**——`session_tokens` 表结构改了或加严格迁移可能直接清表。语义上 zellij 设计 session_token 就该轮换，改 DB 是绕设计意图，**不要批量用、也不要对生产无人值守服务依赖**；本工作区把它用在自用 zellij web 反代 Cookie 这种"我自己一个人用 + Caddy 还有外层 OAuth 兜底"的场景。
+- **zellij schema 升级的话这个 hack 就废**——`session_tokens` 表结构改了或加严格迁移可能直接清表。语义上 zellij 设计 session_token 就该轮换，改 DB 是绕设计意图，**不要批量用、也不要对生产无人值守服务依赖**；本工作区把它用在自用 zellij web 反代 Cookie 这种“我自己一个人用 + Caddy 还有外层 OAuth 兜底”的场景。
 - 没装 `sqlite3` 的环境（干净 WSL / Windows pwsh）用 Python stdlib 等价做：
 
 ```python
@@ -240,7 +240,7 @@ WantedBy=multi-user.target
 
 ## Windows 安装与数据目录
 
-官方在 [zellij.dev/documentation/installation](https://zellij.dev/documentation/installation) 对 Windows 只说一句"从 release 页下载 binary，解压后运行 `zellij.exe`"，没规定安装路径。但每个 release 实际同时提供 4 个 Windows asset：
+官方在 [zellij.dev/documentation/installation](https://zellij.dev/documentation/installation) 对 Windows 只说一句“从 release 页下载 binary，解压后运行 `zellij.exe`”，没规定安装路径。但每个 release 实际同时提供 4 个 Windows asset：
 
 | 文件名（`<ver>` 为版本号，如 `0.44.3`） | 含 web client | 形态 |
 |---|---|---|
@@ -249,7 +249,7 @@ WantedBy=multi-user.target
 | `zellij-no-web-x86_64-pc-windows-msvc.zip` | 否 | 便携 zip |
 | `zellij-no-web-x86_64-pc-windows-msvc-installer.msi` | 否 | **MSI 安装包** |
 
-推荐用 **MSI**：装完会进"添加/删除程序"、per-user 独立、卸载干净；比 zip 便于排查、比 `cargo install --locked zellij` 省事（后者要 perl/strawberry/MSVC build tools，zellij 0.43 之前 Windows 还标 experimental）。MSI 不会写 PATH，要么用绝对路径调用，要么手动把安装目录加进用户 PATH。
+推荐用 **MSI**：装完会进“添加/删除程序”、per-user 独立、卸载干净；比 zip 便于排查、比 `cargo install --locked zellij` 省事（后者要 perl/strawberry/MSVC build tools，zellij 0.43 之前 Windows 还标 experimental）。MSI 不会写 PATH，要么用绝对路径调用，要么手动把安装目录加进用户 PATH。
 
 ### 关键路径速查
 
@@ -301,7 +301,7 @@ Windows 上没有 systemd 对等物。常见做法：
 `pencil-light` 的主色来自内置主题：
 
 - foreground `66 66 66` = `#424242`
-- background `241 241 241` = `#f1f1f1`（官方值；本模板把这一"白/底色"统一提到 `255 255 255` = `#ffffff`，对齐 Copilot CLI `github` 浅色主题，详见「模板差异」）
+- background `241 241 241` = `#f1f1f1`（官方值；本模板把这一“白/底色”统一提到 `255 255 255` = `#ffffff`，对齐 Copilot CLI `github` 浅色主题，详见「模板差异」）
 
 ### 浅色模式设置参考
 
@@ -319,7 +319,7 @@ Codex 在 Zellij 中渲染空输入占位文本时会使用 ANSI `white`，所�
 
 正确做法：复制完整 `pencil-light` 主题结构，命名为 `pencil-light-select-blue`，只在两个维度上改，其余段落原样沿用官方：
 
-1. **白/底色 → 纯白**：把官方当"白/底色"用的 `241 241 241`（`#f1f1f1`）全部替换为 `255 255 255`（`#ffffff`）。原因：Copilot CLI `github` 浅色主题的 `backgroundPrimary` = `#ffffff`（纯白），官方 pencil-light 的 `#f1f1f1` 略暗，Copilot pane 与 Zellij 画布/状态栏并排时有可见色差；统一纯白即消除接缝。注意 `web_client.theme.background` 同时是 `≥0.44.3` 回给 pane 的 OSC 11 背景种子，变纯白后明暗探测仍判浅色。
+1. **白/底色 → 纯白**：把官方当“白/底色”用的 `241 241 241`（`#f1f1f1`）全部替换为 `255 255 255`（`#ffffff`）。原因：Copilot CLI `github` 浅色主题的 `backgroundPrimary` = `#ffffff`（纯白），官方 pencil-light 的 `#f1f1f1` 略暗，Copilot pane 与 Zellij 画布/状态栏并排时有可见色差；统一纯白即消除接缝。注意 `web_client.theme.background` 同时是 `≥0.44.3` 回给 pane 的 OSC 11 背景种子，变纯白后明暗探测仍判浅色。
 2. **选中态 → 蓝底白字**：仅 `text_selected` / `table_cell_selected` / `list_selected` 三段，让鼠标拖选可见。
 
 下面只列差异。
@@ -403,7 +403,7 @@ layout {
 
 ### 终端默认背景（OSC 11）：Web 模式黑底，v0.44.3 已修复
 
-**问题**：靠 OSC 11（查询终端默认背景）判明暗的 TUI——Codex 输入框、Copilot CLI 主题——在 Zellij `≤0.44.2` 的 Web 浅色主题下会把背景误判成黑，于是用深色模式配色（浅色文字）贴在浅底上，表现为输入框黑块、正文字发淡。深色 zellij 主题时碰巧"对"，只有浅色主题才暴露。
+**问题**：靠 OSC 11（查询终端默认背景）判明暗的 TUI——Codex 输入框、Copilot CLI 主题——在 Zellij `≤0.44.2` 的 Web 浅色主题下会把背景误判成黑，于是用深色模式配色（浅色文字）贴在浅底上，表现为输入框黑块、正文字发淡。深色 zellij 主题时碰巧“对”，只有浅色主题才暴露。
 
 根因：Web 模式没有可转发的真实宿主终端，pane 发 OSC 11 查询时 Zellij 回的是 `terminal_emulator_colors.bg`，这个值停在 `Palette::default()` 的黑色。当时 `web_client.theme.background` 只改 xterm.js 的视觉背景，不影响 OSC 11 的回答；只能靠 layout `default_bg` / `set-pane-color` / 程序 wrapper 兜底，且 split 出的新 pane、复活恢复的 pane 都会漏掉。
 
@@ -413,7 +413,7 @@ layout {
 |---|---|
 | `zellij-client/src/web_client/host_query_seed.rs`（新增 ~452 行） | `build_host_query_seed_msgs()` 从 `web_client.theme.background/foreground` 生成 `BackgroundColor`/`ForegroundColor` seed 消息（未设则回退到主题 `text_unselected`） |
 | `zellij-client/src/web_client/server_listener.rs`（+34） | attach 时、以及每次配置重载（`new_config`）时都调 `build_host_query_seed_msgs` 并 `send_to_server`，把浅背景播种进服务端 host-query 缓存 |
-| `zellij-server/src/host_query.rs`（新增 ~180 行） | 新增 host-query 模块：pane 的 OSC 10/11/4 查询走"用 seeded 缓存应答，否则转发宿主"的路径 |
+| `zellij-server/src/host_query.rs`（新增 ~180 行） | 新增 host-query 模块：pane 的 OSC 10/11/4 查询走“用 seeded 缓存应答，否则转发宿主”的路径 |
 | `zellij-server/src/panes/grid.rs`（±587） | OSC 查询分支重构，新增 `pending_forwarded_queries`，OSC 11 query 命中 seeded 背景即回浅色 |
 
 效果：升级到 `≥0.44.3` 后，只要 `web_client.theme.background` 设了浅色（见上面的浅色模式配置），OSC 11 就会返回该背景，**所有 pane（含 split / 复活）统一生效**，不再必须依赖 layout `default_bg`、`set-pane-color` 或 Codex OSC wrapper 这些兜底（保留也无害）。升级后已存在的会话要重新 attach 一次，让 seed 重新下发。

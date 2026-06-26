@@ -71,7 +71,7 @@ Camoufox 和 Playwright 的关系：Camoufox 提供 Playwright 兼容的 Python 
 2. **浏览器二进制**（改过的 Firefox）—— 不在 PyPI wheel 里，靠 `camoufox fetch` 从 GitHub release 下载，缓存在 `~/.cache/camoufox/browsers/...`。
 3. **系统 GTK/X11/ALSA 共享库**（`libgtk-3.so.0`、`libasound.so.2` 等十几个 `.so`）—— OS 层的库，**不在任何 PyPI wheel 里**。有桌面的机器系统自带；纯 headless server / WSL 等缺这层，不补就挂在 `XPCOMGlueLoad`。
 
-> **"既然都用 pixi 了，为什么还要 uv？"** —— pixi（`pixi exec` 或 global env）只能装 **conda 包**，可以补第 3 层系统库，但 camoufox 那个包只在 PyPI、conda-forge 没有，pixi 装不了，第 1 层只能交给 uv。**例外**：pixi **项目**支持 `[pypi-dependencies]`，能让 pixi 连 camoufox 一起包办、彻底不用 uv（见方案 C），代价是要建一个常驻项目目录；若要"临时、不留痕迹、任意仓库可跑"，就还得 pixi（补库）+ uv（装 camoufox）分工（方案 A/B）。
+> **“既然都用 pixi 了，为什么还要 uv？”** —— pixi（`pixi exec` 或 global env）只能装 **conda 包**，可以补第 3 层系统库，但 camoufox 那个包只在 PyPI、conda-forge 没有，pixi 装不了，第 1 层只能交给 uv。**例外**：pixi **项目**支持 `[pypi-dependencies]`，能让 pixi 连 camoufox 一起包办、彻底不用 uv（见方案 C），代价是要建一个常驻项目目录；若要“临时、不留痕迹、任意仓库可跑”，就还得 pixi（补库）+ uv（装 camoufox）分工（方案 A/B）。
 
 ### 包 / 通道与二进制来源
 
@@ -84,7 +84,7 @@ Camoufox 和 Playwright 的关系：Camoufox 提供 Playwright 兼容的 Python 
 
 ### 管浏览器版本：`uvx --from`（跑 CLI 命令）
 
-CLI 只管第 2 层（浏览器二进制的同步/切换/下载）。`uvx`（即 `uv tool run`）的 `--from` 指定"提供这个命令的包"，是**跑 CLI 命令**专用——别和下面跑脚本的 `uv run --with` 混了：
+CLI 只管第 2 层（浏览器二进制的同步/切换/下载）。`uvx`（即 `uv tool run`）的 `--from` 指定“提供这个命令的包”，是**跑 CLI 命令**专用——别和下面跑脚本的 `uv run --with` 混了：
 
 ```bash
 uvx --from "cloverlabs-camoufox[geoip]" camoufox sync
@@ -153,9 +153,9 @@ uv run --with "cloverlabs-camoufox[geoip]" script.py
 
 不想预装全局 env 时用 `pixi exec`——它是 pixi 的 uvx 式临时环境：按 spec 把 conda 包装进缓存 env、跑一次性命令，**不在当前目录留任何 `.pixi`/`pixi.toml`**，可在任意仓库目录下直接跑（实测在 git 仓库里跑完 `git status` 无新增）。
 
-这个临时 env 落在 `~/.cache/rattler/cache/cached-envs-v0/<hash>/`，不在 cwd——**rattler 是 pixi 底层那套用 Rust 写的 conda 包管理库**（负责解析/下载/装包），`pixi exec` 的一次性 env 交给它建在它自己的 XDG 缓存目录里，所以既不污染当前仓库、又能按"包集合的 hash"复用同一份。清理用 `pixi clean cache --exec`。
+这个临时 env 落在 `~/.cache/rattler/cache/cached-envs-v0/<hash>/`，不在 cwd——**rattler 是 pixi 底层那套用 Rust 写的 conda 包管理库**（负责解析/下载/装包），`pixi exec` 的一次性 env 交给它建在它自己的 XDG 缓存目录里，所以既不污染当前仓库、又能按“包集合的 hash”复用同一份。清理用 `pixi clean cache --exec`。
 
-> 在"不留痕迹"这个目标下**不要**改用 `pixi run --manifest-path`/`pixi init` + toml：那要一个 manifest 目录、会在它旁边落 `.pixi/` env，等于建常驻项目目录（那是方案 C 的做法，接受常驻目录时才用）。`pixi exec` 才是 `uv run --with` 那种"任意位置临时跑"的等价物。
+> 在“不留痕迹”这个目标下**不要**改用 `pixi run --manifest-path`/`pixi init` + toml：那要一个 manifest 目录、会在它旁边落 `.pixi/` env，等于建常驻项目目录（那是方案 C 的做法，接受常驻目录时才用）。`pixi exec` 才是 `uv run --with` 那种“任意位置临时跑”的等价物。
 
 `pixi exec` 只接 conda matchspec（不接 PyPI，原因见上「三层依赖」），所以分工：第 3 层系统库走 `pixi exec -s`，第 1 层 camoufox 包仍走 `uv run --with`，两者拼在一条命令里：
 
@@ -171,7 +171,7 @@ pixi exec -s gtk3 -s alsa-lib -- bash -c '
 
 #### 方案 C：pixi 项目（建一个常驻项目目录，之后 `pixi run` 一条命令搞定）
 
-如果接受**建一个常驻项目目录**（不要求"任意仓库、不留痕迹"），这是跑起来最省事的：把三层依赖全塞进一个 pixi 项目，pixi 一手包办 camoufox 包 + 系统库 + LD path，跑脚本就一条 `pixi run`，**不用 uv、不用手动 `export`**。
+如果接受**建一个常驻项目目录**（不要求“任意仓库、不留痕迹”），这是跑起来最省事的：把三层依赖全塞进一个 pixi 项目，pixi 一手包办 camoufox 包 + 系统库 + LD path，跑脚本就一条 `pixi run`，**不用 uv、不用手动 `export`**。
 
 ```bash
 pixi init camoufox-runner    # 或手动建目录、写 pixi.toml
@@ -204,7 +204,7 @@ LD_LIBRARY_PATH = "$CONDA_PREFIX/lib:/home/<you>/.cache/camoufox/browsers/offici
 pixi run python script.py    # 无手动 export、无 uv，pixi 全包办
 ```
 
-省事的关键有两点：① 和方案 A/B 不同，pixi **项目**支持 `[pypi-dependencies]`，所以连第 1 层 camoufox 包都由 pixi 装进项目 env（实测模块落在 `.pixi/envs/default/.../site-packages/camoufox`，全程不经 uv）；② `[activation.env]` 把 LD path 钉死、`pixi run` 自动注入——注意**裸 `pixi run` 并不会自动设 LD path**（pixi/conda 默认靠 RPATH，而 camoufox 那个独立 Firefox 二进制没有指向 env 的 RPATH），所以这行 `[activation.env]` 声明正是"不用手动 export"的来源，少了它照样挂 `libgtk`。第 2 层浏览器二进制仍要先 `camoufox fetch` 下载一次（缓存全机共享）。
+省事的关键有两点：① 和方案 A/B 不同，pixi **项目**支持 `[pypi-dependencies]`，所以连第 1 层 camoufox 包都由 pixi 装进项目 env（实测模块落在 `.pixi/envs/default/.../site-packages/camoufox`，全程不经 uv）；② `[activation.env]` 把 LD path 钉死、`pixi run` 自动注入——注意**裸 `pixi run` 并不会自动设 LD path**（pixi/conda 默认靠 RPATH，而 camoufox 那个独立 Firefox 二进制没有指向 env 的 RPATH），所以这行 `[activation.env]` 声明正是“不用手动 export”的来源，少了它照样挂 `libgtk`。第 2 层浏览器二进制仍要先 `camoufox fetch` 下载一次（缓存全机共享）。
 
 #### 三个方案怎么选
 

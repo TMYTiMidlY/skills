@@ -356,7 +356,7 @@ After all SVG pages are finalized, enter Logic Construction Phase and write the 
 
 **Pure spoken narration**: notes are read aloud verbatim by `notes_to_audio.py` (TTS). Write only what should be spoken. No visible markers, no labeled meta-lines, no enumerated key-point lists, no duration annotations — anything you write outside the heading will be vocalized.
 
-**Per-page structure**: `# <number>_<page_title>` heading (the `#` heading line is the only thing stripped before TTS), pages separated by `---`. Body is 2–5 natural sentences carrying the page's core message. Page-to-page transitions live inside the opening sentence as natural prose ("接下来……" / "Having framed X, let's turn to Y") — no bracketed `[过渡]` / `[Transition]` tags.
+**Per-page structure**: `# <number>_<page_title>` heading (the `#` heading line is the only thing stripped before TTS), pages separated by `---`. Body is 2–5 natural sentences carrying the page's core message. Page-to-page transitions live inside the opening sentence as natural prose (“接下来……” / "Having framed X, let's turn to Y") — no bracketed `[过渡]` / `[Transition]` tags.
 
 **Concrete examples** — same shape applies to any language; just write naturally in that language.
 
@@ -378,11 +378,11 @@ Having framed the industry backdrop, let's look at the actual market landscape. 
 
 > 日本語 / 한국어 / 其他语言：照搬同样的结构，用对应语言自然书写即可。
 
-**Number readability**: TTS reads digits and symbols literally. Prefer fully-spelled forms in the language being spoken when literal pronunciation would be awkward (e.g. Chinese "百分之六十八" reads better than "68%"; "1-2分钟" reads as "一减二分钟"). Plain integers and percentages in English are fine as-is.
+**Number readability**: TTS reads digits and symbols literally. Prefer fully-spelled forms in the language being spoken when literal pronunciation would be awkward (e.g. Chinese “百分之六十八” reads better than "68%"; “1-2分钟” reads as “一减二分钟”). Plain integers and percentages in English are fine as-is.
 
 **Common mistakes to avoid**:
 - Leaving any bracketed stage marker (`[过渡]` / `[Transition]` / `[Pause]` / `[Data]` / `[Scan Room]` / `[Interactive]` / `[Benchmark]` etc.) in the text — they will be read aloud literally.
-- Adding `要点：① …` / `Key points: (1) …` / `时长：2分钟` / `Duration: 2 minutes` / `Flex: …` lines — TTS will speak "要点 一 …".
+- Adding `要点：① …` / `Key points: (1) …` / `时长：2分钟` / `Duration: 2 minutes` / `Flex: …` lines — TTS will speak “要点 一 …”.
 - Mixing languages within one deck's notes.
 
 ### Task 2. Split Into Per-Page Note Files

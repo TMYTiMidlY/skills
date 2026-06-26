@@ -51,7 +51,7 @@
 ### 这种 md 渲染和阅读会怎样？
 
 - **Markdown 渲染**：仍然是合法 Markdown，渲染器（VS Code、GitHub、Obsidian 等）会正常显示，不会报错；只是看起来文意不通。
-- **AI 阅读**：LLM 可以读但语义已被破坏——左右两列内容互不相关却被串成一句，语序颠倒、半句被截断，模型容易做出错误归因（"原文说 X 是因为 Y" 实则 X、Y 来自两份不同文献）。**不宜直接拿来做引用核查**。
+- **AI 阅读**：LLM 可以读但语义已被破坏——左右两列内容互不相关却被串成一句，语序颠倒、半句被截断，模型容易做出错误归因（“原文说 X 是因为 Y” 实则 X、Y 来自两份不同文献）。**不宜直接拿来做引用核查**。
 - **人眼阅读**：很难看，需要对照原 PDF 才能还原。
 
 ### 修复方向
@@ -67,7 +67,7 @@
 - `.eBox` / `.profileBox` / `.segmentedDetectionResultsBox` — 顶部三大块（复制比 / 结果分布图 / 分段检测）
 - `#detailBox30` ~ `#detailBox38` — 9 个章节的对照详情
 - 每个 `.ACertainParagraph` 内：
-  - `.ACertainParagraphLeft` — 论文原文（含 `.title` 显示"此处有 N 字相似"）
+  - `.ACertainParagraphLeft` — 论文原文（含 `.title` 显示“此处有 N 字相似”）
   - `.ACertainParagraphRight` — 相似来源列表，每条为 `.ACertainParagraphRightBox`，含 `.articleTitle` 和 `.articleContent`
 - 高亮 span：
   - `.Font_Color_Red`（class 名是 `red_font`）— 文字复制部分（未标引用）

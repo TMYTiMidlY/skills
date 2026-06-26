@@ -23,9 +23,9 @@
 | **数值标签** | `#0F172A` | Slate 900 | 柱顶数值、关键指标 |
 | **副标题** | `#64748B` | Slate 500 | 日期、单位说明 |
 | **坐标轴标签** | `#64748B` | Slate 500 | X/Y 轴刻度值 |
-| **轴标题 / 图例** | `#475569` | Slate 600 | "年薪（万元）"、图例文字 |
+| **轴标题 / 图例** | `#475569` | Slate 600 | “年薪（万元）”、图例文字 |
 | **数据来源** | `#94A3B8` | Slate 400 | 页面底部来源说明 |
-| **脚注 / 淡化提示** | `#CBD5E1` | Slate 300 | "各阶段可灵活调整" |
+| **脚注 / 淡化提示** | `#CBD5E1` | Slate 300 | “各阶段可灵活调整” |
 
 ### 1.2 主题色（数据系列）
 
@@ -82,7 +82,7 @@ font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Micr
 | 层级 | 字号 | font-weight | 用途 |
 |------|------|-------------|------|
 | H1 | `34px` | `bold` (700) | 图表主标题 |
-| H2 | `22px` | `600` | 区域标题（如"详细数据"） |
+| H2 | `22px` | `600` | 区域标题（如“详细数据”） |
 | Body L | `18-20px` | `600` | 关键数值、百分比 |
 | Body M | `15-16px` | `600` | 数据标签、分类名 |
 | Body S | `14px` | 正常 | 副标题、图例、来源 |
@@ -133,7 +133,7 @@ font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Micr
 
 ## 3. 阴影滤镜
 
-`<filter>` 本身是允许的、且是 PPT 阴影/发光的官方推荐路径（详见本节末尾的"禁用列表"说明）。本节统一阴影 primitive 写法——使用 `feFlood` 方案，**禁止** `<filter>` 内部使用 `<feComponentTransfer>`：
+`<filter>` 本身是允许的、且是 PPT 阴影/发光的官方推荐路径（详见本节末尾的“禁用列表”说明）。本节统一阴影 primitive 写法——使用 `feFlood` 方案，**禁止** `<filter>` 内部使用 `<feComponentTransfer>`：
 
 ```xml
 <filter id="chartShadow" x="-15%" y="-15%" width="130%" height="130%">
@@ -166,11 +166,11 @@ font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Micr
 >
 > 单独禁 `feComponentTransfer/feFuncA(slope)` 的原因：**它物理上只能调透明度、无法携带颜色**。转换器读到 `feFuncA slope` 时只把它当作 alpha，颜色字段保持默认 `'000000'`——SVG 端看起来阴影颜色正常（因为 SourceAlpha 本身是黑），但导出到 PPTX 后阴影颜色会被定死成纯黑 `#000000`，与同页其他用 `feFlood flood-color="#0F172A"` 的卡片产生肉眼可见的冷暖色差。
 >
-> 简言之：**用 filter 没问题，但 primitive 必须能把"颜色"显式表达出来；只能表达"透明度"的 primitive 是被禁的。**
+> 简言之：**用 filter 没问题，但 primitive 必须能把“颜色”显式表达出来；只能表达“透明度”的 primitive 是被禁的。**
 
 ### 阴影使用原则（shared-standards SS6）
 
-> **阴影是美学成分，不是默认处理。** 克制而非丰富才能产生"经过设计"的感觉。 "阴影被感知而非被看见" 是高端美学标准。
+> **阴影是美学成分，不是默认处理。** 克制而非丰富才能产生“经过设计”的感觉。 “阴影被感知而非被看见” 是高端美学标准。
 
 **应加阴影**：浮在照片/彩色面板上方的卡片、唯一的主 CTA、叠加层（tooltip、callout）
 
@@ -188,7 +188,7 @@ font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Micr
 | 静止 | 照片/面板上的卡片、次级 callout | 2-4 | 4-8 | 0.06-0.10 |
 | 抬升 | 主 CTA、焦点/推荐卡片、覆盖层 | 6-10 | 10-16 | 0.12-0.20 |
 
-**不要堆叠**：阴影 + 描边 + 圆角 + 渐变填充同时出现 = 模板感。容器的"看我"预算很小，选其一即可。
+**不要堆叠**：阴影 + 描边 + 圆角 + 渐变填充同时出现 = 模板感。容器的“看我”预算很小，选其一即可。
 
 ---
 
@@ -384,16 +384,16 @@ font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Micr
 - **`summary`** 是**选型句**，不是描述句。语法见 `meta.summaryGrammar`：先说什么时候选它，再用 `Skip if ... (use <other_key>)` 指向最容易混淆的兄弟模板
 - **`meta.total`** 同步 +1
 
-> **不需要** `label` / `categories` / `quickLookup` / `keywords` —— 这些都已经移除。Strategist 全量读取 summary 列表后语义匹配，不依赖任何预计算索引。**注意**：summary 是英文，但 source 文档常含中文/行业术语（"中台"、"架构图"、"管道"），Strategist 自己负责语义翻译再匹配。如果一个模板的命中强依赖某个中文短语，把它的英文等价物写进 summary 的 Pick 子句里。
+> **不需要** `label` / `categories` / `quickLookup` / `keywords` —— 这些都已经移除。Strategist 全量读取 summary 列表后语义匹配，不依赖任何预计算索引。**注意**：summary 是英文，但 source 文档常含中文/行业术语（“中台”、“架构图”、“管道”），Strategist 自己负责语义翻译再匹配。如果一个模板的命中强依赖某个中文短语，把它的英文等价物写进 summary 的 Pick 子句里。
 
 ### 9.2 反例
 
-❌ 只写"是什么"：`"summary": "Bidirectional comparison chart for two datasets"`
-✅ 写"何时选"：`"summary": "Pick for two mirrored datasets sharing a common axis (age pyramid, A/B). Skip for >2 sides (use grouped_bar_chart)."`
+❌ 只写“是什么”：`"summary": "Bidirectional comparison chart for two datasets"`
+✅ 写“何时选”：`"summary": "Pick for two mirrored datasets sharing a common axis (age pyramid, A/B). Skip for >2 sides (use grouped_bar_chart)."`
 
 ❌ summary 过长（>400 字符）—— 选型时反而难抓重点，目标在 150-300 字符。
 
-> **Why not stricter**：单一结构模板常需覆盖多个商业框架/场景（如 `quadrant_text_bullets` 覆盖 SWOT + Ansoff，`top_down_tree` 覆盖 org + OKR），summary 需要列出关键词锚点（"principles, key takeaways, action items" 这种）才能让 Strategist 语义命中"非数字结构页"，所以 100-180 字符的旧基线在结构-派命名后已经太紧。
+> **Why not stricter**：单一结构模板常需覆盖多个商业框架/场景（如 `quadrant_text_bullets` 覆盖 SWOT + Ansoff，`top_down_tree` 覆盖 org + OKR），summary 需要列出关键词锚点（“principles, key takeaways, action items” 这种）才能让 Strategist 语义命中“非数字结构页”，所以 100-180 字符的旧基线在结构-派命名后已经太紧。
 
 ---
 
@@ -454,20 +454,20 @@ echo "Small fonts:" && grep -c 'font-size="[0-9]"' "skills/ppt-master/templates/
 
 ## 11. 卡片容器图式 (Card Container Patterns)
 
-容器卡是 PPT Master 中复用率最高的视觉单元（KPI 卡、分区卡、信息卡）。下面三种图式是经过验证、与 PPTX 往返兼容的"参考实现"，新增模板优先沿用，不要发明等价但实现脏的替代。
+容器卡是 PPT Master 中复用率最高的视觉单元（KPI 卡、分区卡、信息卡）。下面三种图式是经过验证、与 PPTX 往返兼容的“参考实现”，新增模板优先沿用，不要发明等价但实现脏的替代。
 
 ### 11.1 半圆角分区头 (Half-Rounded Section Tab)
 
-**用途**：给卡片或区块加一个有色"标签头"，标识分类（S/W/O/T、Political/Economic、自我介绍/获奖等）。比纯文字大标题更易识别，比独立标签条更紧凑。
+**用途**：给卡片或区块加一个有色“标签头”，标识分类（S/W/O/T、Political/Economic、自我介绍/获奖等）。比纯文字大标题更易识别，比独立标签条更紧凑。
 
-**两种形态**——根据 tab 的"视觉锚点"在上还是在下选择：
+**两种形态**——根据 tab 的“视觉锚点”在上还是在下选择：
 
 | 形态 | 形状 | 视觉语义 | 典型场景 |
 |------|------|---------|---------|
-| **上圆下方** (圆顶角) | 顶部两角圆，底部两角直 | 从卡片"长出来"的标签 | 分区卡头部、quadrant 标题、信息卡分类 |
-| **上方下圆** (圆底角) | 顶部两角直，底部两角圆 | 从页头/章节条"悬挂下来"的吊牌 | 章节锚点、页头分隔条延伸、目录跳转标记 |
+| **上圆下方** (圆顶角) | 顶部两角圆，底部两角直 | 从卡片“长出来”的标签 | 分区卡头部、quadrant 标题、信息卡分类 |
+| **上方下圆** (圆底角) | 顶部两角直，底部两角圆 | 从页头/章节条“悬挂下来”的吊牌 | 章节锚点、页头分隔条延伸、目录跳转标记 |
 
-> 两种形态的共同要求：**只圆一对角**，整条 path 直接画出来。不要用"全圆角矩形 + 同色矩形盖底/盖顶"的 hack（往返到 PPTX 时会变成两个独立对象，编辑时颜色容易脱钩）。
+> 两种形态的共同要求：**只圆一对角**，整条 path 直接画出来。不要用“全圆角矩形 + 同色矩形盖底/盖顶”的 hack（往返到 PPTX 时会变成两个独立对象，编辑时颜色容易脱钩）。
 
 **实现一：上圆下方（默认）**
 
@@ -499,13 +499,13 @@ echo "Small fonts:" && grep -c 'font-size="[0-9]"' "skills/ppt-master/templates/
 <rect y="100" width="260" height="20" fill="#EFF6FF"/>
 ```
 
-底部覆盖矩形在 SVG→PPTX 往返时会变成一个独立的、跟头部颜色绑定的矩形对象，PPT 里编辑头部颜色时容易漏改、视觉会"穿帮"。
+底部覆盖矩形在 SVG→PPTX 往返时会变成一个独立的、跟头部颜色绑定的矩形对象，PPT 里编辑头部颜色时容易漏改、视觉会“穿帮”。
 
 ### 11.2 嵌套卡片描边 (Nested Card Border)
 
-**用途**：让卡片有"被描边"的层次感，但避免 stroke。stroke 在 PPTX 中常被渲染为细线分层，且与阴影叠加易产生模板感。
+**用途**：让卡片有“被描边”的层次感，但避免 stroke。stroke 在 PPTX 中常被渲染为细线分层，且与阴影叠加易产生模板感。
 
-**做法**：外层浅灰圆角 rect + 内层白色稍小圆角 rect，两层之间留出 8–20px 缝即可形成"边框"效果。
+**做法**：外层浅灰圆角 rect + 内层白色稍小圆角 rect，两层之间留出 8–20px 缝即可形成“边框”效果。
 
 ```xml
 <!-- 外层"边框"层 -->
@@ -515,7 +515,7 @@ echo "Small fonts:" && grep -c 'font-size="[0-9]"' "skills/ppt-master/templates/
 ```
 
 **适用条件**：
-- 当卡片上方还有 §11.1 的分区头时，外层框充当头部的"背板"
+- 当卡片上方还有 §11.1 的分区头时，外层框充当头部的“背板”
 - 同页只用 **一种** 描边表达：外层框 OR stroke OR 阴影，不要同时用（参见 §3 阴影使用原则）
 
 ### 11.3 卡片网格作为内容页骨架 (Card Grid as Page Skeleton)
@@ -531,13 +531,13 @@ echo "Small fonts:" && grep -c 'font-size="[0-9]"' "skills/ppt-master/templates/
 | 1×3 (横长) | 400 × 540 | 30 | (60, 130) 列距 430 |
 | 1×4 (顶) | 280 × 250 | 20 | (60, 150) 列距 300 |
 
-**判定**："4 个并列方面" → 2×2；"3 个并列方面" → 1×3；"6 个能力点" → 2×3；"4 个关键指标" → 1×4。`page_rhythm` 标 `breathing` 的页面 **不要** 用卡片网格（见 executor-base.md §2.1）。
+**判定**：“4 个并列方面” → 2×2；“3 个并列方面” → 1×3；“6 个能力点” → 2×3；“4 个关键指标” → 1×4。`page_rhythm` 标 `breathing` 的页面 **不要** 用卡片网格（见 executor-base.md §2.1）。
 
 ### 11.5 倾斜虚线连接箭头 (Diagonal Dashed Connector)
 
-**用途**：表达"跨象限/跨层级"的关系——优先级迁移、影响传导、虚线汇报、对角趋势。水平/垂直箭头表达的是"流程进度"，倾斜虚线箭头表达的是"关系或方向引导"，两者语义不一样。
+**用途**：表达“跨象限/跨层级”的关系——优先级迁移、影响传导、虚线汇报、对角趋势。水平/垂直箭头表达的是“流程进度”，倾斜虚线箭头表达的是“关系或方向引导”，两者语义不一样。
 
-**做法**：单条 `<line>` + `stroke-dasharray="6 5"` + `marker-end`。需要为这条线单独定义一个 marker（不复用主流程图的箭头颜色，建议用 Slate 600 `#475569` 表达"建议性、非强制"的色调）。
+**做法**：单条 `<line>` + `stroke-dasharray="6 5"` + `marker-end`。需要为这条线单独定义一个 marker（不复用主流程图的箭头颜色，建议用 Slate 600 `#475569` 表达“建议性、非强制”的色调）。
 
 ```xml
 <defs>
@@ -560,15 +560,15 @@ echo "Small fonts:" && grep -c 'font-size="[0-9]"' "skills/ppt-master/templates/
       font-weight="700" fill="#475569" letter-spacing="1">PRIORITY MIGRATION</text>
 ```
 
-> **配对要求**：每条倾斜虚线箭头必须配一个中段标签（小胶囊或一行文字），否则读者会困惑"这条线在说什么"。无标签的箭头只允许出现在水平/垂直流程中（如 `process_flow`）。
+> **配对要求**：每条倾斜虚线箭头必须配一个中段标签（小胶囊或一行文字），否则读者会困惑“这条线在说什么”。无标签的箭头只允许出现在水平/垂直流程中（如 `process_flow`）。
 
 ### 11.6 接地椭圆 (Ground Anchor Ellipse) — 非 filter 的深度表达
 
-**用途**：让"漂浮在卡片上的圆形/icon/人物头像/奖杯/角色徽章"获得"接触地面"的视觉锚定，**但不使用 `<filter>` 阴影**。
+**用途**：让“漂浮在卡片上的圆形/icon/人物头像/奖杯/角色徽章”获得“接触地面”的视觉锚定，**但不使用 `<filter>` 阴影**。
 
 **为什么有用**：
 1. PPTX 原生圆/椭圆对象，跨渲染器一致，不会被解析为 `<a:outerShdw>`（避免阴影颜色丢失或重排问题）
-2. 跟 §3 「克制阴影」呼应——一页阴影预算上限 2-3 个，剩下需要"深度"的元素可以走这条路
+2. 跟 §3 「克制阴影」呼应——一页阴影预算上限 2-3 个，剩下需要“深度”的元素可以走这条路
 3. 比 filter 阴影**更容易在 PPT 中二次编辑**（用户可以直接拖、改色、删除）
 
 **做法**：在浮动元素**正下方**画一个**横扁椭圆**（`ry << rx`），低透明度，颜色用主体色或 Slate 900：
@@ -588,13 +588,13 @@ echo "Small fonts:" && grep -c 'font-size="[0-9]"' "skills/ppt-master/templates/
 | 50-100 px | r × 0.85 | 5-6 | 0.10-0.12 |
 | 100+ px | r × 0.85 | 7-9 | 0.08-0.10 |
 
-颜色：默认 `#0F172A`（中性深灰），可改为主体色的深色变体（如人物头像下用 `#1E3A8A`）表达"品牌色阴影"。
+颜色：默认 `#0F172A`（中性深灰），可改为主体色的深色变体（如人物头像下用 `#1E3A8A`）表达“品牌色阴影”。
 
 **禁用**：不要把椭圆画成正圆或近正圆（`ry/rx > 0.25` 就显得失真）。也不要叠在`<filter>` 阴影上——挑一种就够。
 
 ### 11.7 双向交互箭头 (Bidirectional Interaction Arrows)
 
-**用途**：表达"请求/响应"、"推/拉"、"上行/下行"、"供给/需求"等成对关系。区别于单向流程箭头。
+**用途**：表达“请求/响应”、“推/拉”、“上行/下行”、“供给/需求”等成对关系。区别于单向流程箭头。
 
 **做法**：两条平行的 `<line>` + 不同颜色的 `marker-end`，方向相反，**每条线都必须带动作标签**：
 
@@ -626,7 +626,7 @@ echo "Small fonts:" && grep -c 'font-size="[0-9]"' "skills/ppt-master/templates/
 
 **配色约定**：请求侧（initiator）用蓝色 `#3B82F6`、响应侧（responder）用绿色 `#10B981`。如果是对等关系（如 A↔B 协同），统一用 Slate 600 `#475569` 不区分颜色。
 
-**禁用**：不允许画"裸线"——双向箭头**每条都必须带标签**说明动作；否则读者无法分辨方向语义。
+**禁用**：不允许画“裸线”——双向箭头**每条都必须带标签**说明动作；否则读者无法分辨方向语义。
 
 ### 11.8 参考实现
 
