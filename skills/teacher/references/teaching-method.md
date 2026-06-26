@@ -418,11 +418,11 @@ Use this allocation as a default:
 
 Q3 is the most valuable and the hardest to write — it must require the reader to *combine* something from the trap (a known failure mode) with something they have to reason about themselves. If Q3 can be answered by quoting one line from the lesson, it's actually a Q1.
 
-### Why this layer is not "理解检查" by another name
+### Why this layer is not “理解检查” by another name
 
 The user explicitly said earlier they didn't want a "do you understand?" check. Test questions are not that. The difference:
 
-- "理解检查" = a generic prompt aimed at the reader's confidence ("did this make sense?"). Subjective, low information.
+- “理解检查” = a generic prompt aimed at the reader's confidence ("did this make sense?"). Subjective, low information.
 - Test questions = a concrete, externally-shaped task ("here's the exact question someone could pose to check this"). Objective, high information, transferable.
 
 The reader can choose to engage or not. If they read the questions and feel "yeah, I could answer all three" — that's a useful signal. If they read Q3 and think "no idea" — also a useful signal, and the hint tells them where to go.

@@ -60,18 +60,18 @@ ln -s ../../.agents/skills <target>/.config/agents/skills
 
 ### 安装前先扫环境、冲突就问不自动改
 
-**工具目录已有用户自己的内容时**：如果 `<target>/.claude/skills/`（或其它工具目录）已存在、不是 symlink、里面有用户自己装的 skill，说明用户之前按各工具原生方式装过，**不要直接覆盖**。告诉用户"这里有 N 个条目，要不要迁进 `.agents/skills/` 统一管理再建整目录软链？"，等用户点头。
+**工具目录已有用户自己的内容时**：如果 `<target>/.claude/skills/`（或其它工具目录）已存在、不是 symlink、里面有用户自己装的 skill，说明用户之前按各工具原生方式装过，**不要直接覆盖**。告诉用户“这里有 N 个条目，要不要迁进 `.agents/skills/` 统一管理再建整目录软链？”，等用户点头。
 
 **单 skill 同名 / 同能力冲突时**：遍历目标范围下所有 `.<tool>/skills/*/SKILL.md`，读每份 frontmatter 的 `name` 和 `description`，和准备装的这份比对：
 
-- **name 相同**：告知用户"`<name>` 已在 `<某路径>` 下装过"，问要不要换成本仓库的 symlink；同意就把旧的移回收站再建 symlink。
+- **name 相同**：告知用户“`<name>` 已在 `<某路径>` 下装过”，问要不要换成本仓库的 symlink；同意就把旧的移回收站再建 symlink。
 - **name 不同但 description 在讲同一能力**：告知用户这是同一能力的另一实现，让他决定保留哪份。
 
 **只报告、不自动改**，等用户确认。
 
 ### 卸载
 
-删掉软链即可（skill 本体仍在仓库里，其他项目照常可用）。**推荐移至回收站**（`trash-put` / `rmtrash` / `gio trash` / macOS Finder 拖进废纸篓 / Windows 资源管理器右键"删除"等，按系统挑一个）而非直接 `rm`，误删后可恢复：
+删掉软链即可（skill 本体仍在仓库里，其他项目照常可用）。**推荐移至回收站**（`trash-put` / `rmtrash` / `gio trash` / macOS Finder 拖进废纸篓 / Windows 资源管理器右键“删除”等，按系统挑一个）而非直接 `rm`，误删后可恢复：
 
 ```bash
 # 下面命令视系统等价替换
@@ -92,9 +92,9 @@ done
 
 ## 引用
 
-**跨 skill 不写任何形式的文件路径**——包括相对路径（`../software/references/copilot.md`）、绝对路径、`~/...`，也不允许"迁移指引"式的链接（"详见 .../X.md"）。需要提示另一个 skill 的能力时，只写 skill 名加能力边界（例："见 `software` skill 的 GitHub Copilot CLI 章节"）。
+**跨 skill 不写任何形式的文件路径**——包括相对路径（`../software/references/copilot.md`）、绝对路径、`~/...`，也不允许“迁移指引”式的链接（“详见 .../X.md”）。需要提示另一个 skill 的能力时，只写 skill 名加能力边界（例：“见 `software` skill 的 GitHub Copilot CLI 章节”）。
 
-理由：被引 skill 内部一旦拆分 / 合并 / 重命名 reference 文件，所有跨 skill 链接都断；只写 skill 名 + 主题名，读者用 grep / SKILL.md 自己定位，永不断链。这是硬规则，没有"对用户更友好就破例"的豁免——不要被"明示目标更顺手"的直觉劝退。
+理由：被引 skill 内部一旦拆分 / 合并 / 重命名 reference 文件，所有跨 skill 链接都断；只写 skill 名 + 主题名，读者用 grep / SKILL.md 自己定位，永不断链。这是硬规则，没有“对用户更友好就破例”的豁免——不要被“明示目标更顺手”的直觉劝退。
 
 同一 skill 内部引用自己的 `references/`、`assets/`、`scripts/` 用相对路径（如 `references/foo.md`）；目标必须真实存在，重命名后同步更新。
 
@@ -108,7 +108,7 @@ done
 
 用户让“审查 / 检查所有 skill 是否合规”时，先向用户确认审查范围（如原创、已适配嫁接、实验性、全部），然后按 [references/audit-checklist.md](references/audit-checklist.md) 执行。默认**只审不改**：先列出发现交给用户，明确同意后才动手改。
 
-输出格式：按 skill 分段，每段列命中的检查项（带文件 / 行号）与建议；最后给"全部无问题的 skill 清单"，避免用户误以为全仓都有病。
+输出格式：按 skill 分段，每段列命中的检查项（带文件 / 行号）与建议；最后给“全部无问题的 skill 清单”，避免用户误以为全仓都有病。
 
 批量修复前先跟用户敲定**改动策略**：统一用哪种新写法、原位置留空壳还是删、是否同步调其他 skill 的交叉引用。
 

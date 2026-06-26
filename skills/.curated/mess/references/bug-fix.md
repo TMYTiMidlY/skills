@@ -23,7 +23,7 @@
 1. Chrome `Accept-Language` 含 `zh-CN` → 服务器注入 `https://www.vscode-unpkg.net/.../zh-cn/nls.messages.js`
 2. HTML 先加载英文 NLS（17287 条），再加载中文 NLS（17109 条）→ 中文直接覆盖 `globalThis._VSCODE_NLS_MESSAGES`
 3. 中文语言包翻译不完整，缺少 index 17109-17286 → `d(17116, null)` 抛出异常 → 页面崩溃
-4. 10.144.18.10 能用是因为该 IP 到 CDN 的请求失败，英文 NLS 保持不变 — "能用"不是因为它做对了什么，而是因为它恰好失败了
+4. 10.144.18.10 能用是因为该 IP 到 CDN 的请求失败，英文 NLS 保持不变 — “能用”不是因为它做对了什么，而是因为它恰好失败了
 
 ## 解决
 
@@ -63,7 +63,7 @@ PDF.js 升级版本后无条件调用 TC39 提案 `Uint8Array.prototype.toHex()`
 
 ## 解决（保留扩展现有代码 + 只回退 pdfjs 相关）
 
-1. **找一个 pdfjs 安全的旧版扩展**。实测 `latex-workshop 10.13.1` 自带 `pdfjs-dist 5.4.394`，有 fallback 守卫。VS Code marketplace 在 serve-web 里 "Install from VSIX" 报 `Extension not found`，**绕过办法**是直接 curl marketplace API：`https://marketplace.visualstudio.com/_apis/public/gallery/publishers/<pub>/vsextensions/<ext>/<ver>/vspackage`，返回的是 gzipped vsix（用 `curl --compressed`）。vsix 本质 zip，`unzip` 直接解开。
+1. **找一个 pdfjs 安全的旧版扩展**。实测 `latex-workshop 10.13.1` 自带 `pdfjs-dist 5.4.394`，有 fallback 守卫。VS Code marketplace 在 serve-web 里 “Install from VSIX” 报 `Extension not found`，**绕过办法**是直接 curl marketplace API：`https://marketplace.visualstudio.com/_apis/public/gallery/publishers/<pub>/vsextensions/<ext>/<ver>/vspackage`，返回的是 gzipped vsix（用 `curl --compressed`）。vsix 本质 zip，`unzip` 直接解开。
 
 2. **替换已安装扩展的 pdfjs 静态资源**（成套）：
    - `viewer/{viewer.mjs,viewer.html,viewer.css,locale,images}`
@@ -76,10 +76,10 @@ PDF.js 升级版本后无条件调用 TC39 提案 `Uint8Array.prototype.toHex()`
 
 ## 教训
 
-- **upstream merge 类 bug 不要假设"只动了 X"**。一次 merge 带几十个 commit，pdfjs viewer 静态资源、对应 element id rename、latex-workshop overlay 适配是**一体的**，回退也必须一体。
-- **`git log A..B -- path/` 比 `git diff A B -- path/` 更精准**。前者告诉你 commit 历史和动机，后者只看终态。先 log 看 commit 主题挑出"只是 rename"的纯适配 commit，能省一半判断时间。
+- **upstream merge 类 bug 不要假设“只动了 X”**。一次 merge 带几十个 commit，pdfjs viewer 静态资源、对应 element id rename、latex-workshop overlay 适配是**一体的**，回退也必须一体。
+- **`git log A..B -- path/` 比 `git diff A B -- path/` 更精准**。前者告诉你 commit 历史和动机，后者只看终态。先 log 看 commit 主题挑出“只是 rename”的纯适配 commit，能省一半判断时间。
 - **判断 JS 库版本是否受 polyfill 缺失影响，最快的办法是 grep 关键 API 看有没有 if 守卫**，比查 changelog 快。
-- **VS Code serve-web 装老版扩展报 "Extension not found"**：走 marketplace API URL 直接 curl 即可。
+- **VS Code serve-web 装老版扩展报 “Extension not found”**：走 marketplace API URL 直接 curl 即可。
 
 ## Windows 端口绑定异常但 Win/WSL 都查不到占用
 
@@ -428,7 +428,7 @@ move_if_exists() {
   > The workbench failed to connect to the server (Error: Time limit reached)
 - 浏览器每 ~10 秒开一条新 management WebSocket（每条都用全新 `reconnectionToken`），无限重试。
 - Caddy access log 全部 `status: 101`，`duration: 2–80 ms`，`Sec-WebSocket-Accept` 计算正确。
-- **跟反代无关**：本机直接 `curl -i -H 'Upgrade: websocket' http://127.0.0.1:8090/...` 同样复现 — launcher 先回 `HTTP/1.1 101 Switching Protocols` + 合法 `Sec-WebSocket-Accept`，紧接着关连接（`curl: (52) Empty reply from server`），trace 日志同步打 `(upgrade expected but low level API in use)`。这个"幻象 101"是为啥从 caddy log 看一切干净却仍卡死的根源。
+- **跟反代无关**：本机直接 `curl -i -H 'Upgrade: websocket' http://127.0.0.1:8090/...` 同样复现 — launcher 先回 `HTTP/1.1 101 Switching Protocols` + 合法 `Sec-WebSocket-Accept`，紧接着关连接（`curl: (52) Empty reply from server`），trace 日志同步打 `(upgrade expected but low level API in use)`。这个“幻象 101”是为啥从 caddy log 看一切干净却仍卡死的根源。
 
 ## 排查关键转折（走过的所有弯路）
 
@@ -444,7 +444,7 @@ move_if_exists() {
 真正的突破点：
 
 1. **改 caddy 加 `log code_8081`** 看 :8081 access log → 看到所有 ws upgrade 都是 101 OK + 立刻被关，证明 **caddy 干干净净**。
-2. **决定性的"换上游"交叉实验**：把 :8081 反代上游临时从 `10.144.18.88:8080`（本机 WSL）换成 `10.144.18.10:8080`（已知 ✅ 的 1810），其它字节完全一致 → :8081 立刻通。锅 100% 在本机/Ali 的 vscode server，**完全不在 caddy/网络/auth**。
+2. **决定性的“换上游”交叉实验**：把 :8081 反代上游临时从 `10.144.18.88:8080`（本机 WSL）换成 `10.144.18.10:8080`（已知 ✅ 的 1810），其它字节完全一致 → :8081 立刻通。锅 100% 在本机/Ali 的 vscode server，**完全不在 caddy/网络/auth**。
 3. **拉 vscode launcher 的 trace 日志**（Ali 上的 service 已启用 `--log trace`，普通用户 `journalctl -u code-serve-web` 不需要 sudo 就能读）→ 看到反复打：
    ```
    debug server (upgrade expected but low level API in use) websocket upgrade failed
@@ -489,6 +489,6 @@ https://update.code.visualstudio.com/1.115.0/cli-linux-x64/stable
 ## 教训
 
 - **caddy 的 site block 默认不会输出 access log**，要排 ws 必须先临时加 `log <name> { output stdout; format json }`。每次反代后端报怪事先就该把这条加上，别凭空猜。
-- **唯一对照组 ✅ 是宝藏**。当全网搜不到匹配症状时，找出"哪台是好的"，然后**把变量按字节列对照表**，逐个排除。本案三台 WSL 用同一条链路只有版本不同，前几轮乱猜参数全部白费，第三栏一列才直接给出答案。
+- **唯一对照组 ✅ 是宝藏**。当全网搜不到匹配症状时，找出“哪台是好的”，然后**把变量按字节列对照表**，逐个排除。本案三台 WSL 用同一条链路只有版本不同，前几轮乱猜参数全部白费，第三栏一列才直接给出答案。
 - **看 strings + cargo 编译路径**。Rust 二进制把 cargo 路径嵌死了，无源码也能拿到完整依赖图（含每个 crate 的精确版本号），用来 bisect 极快。
 - **「同 commit / 同 sha256 完全等价」是错觉**。本案 standalone tarball 和 deb 包内 binary 二进制完全一致，但跟 1.115.0 standalone tarball 的 commit 同样是 41dd792b 也可能 sha256 不同（不同时间 rebuild）—— 验证版本看 commit + `strings` 看依赖，别只看 sha。

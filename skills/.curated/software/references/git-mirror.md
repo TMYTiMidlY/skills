@@ -68,7 +68,7 @@ Key-B 在 `authorized_keys` 中限制只能执行 `git-receive-pack`：
 command="export SU2QM_PUSH_SOURCE=actions && cd /srv/git/<repo>.git && exec git-receive-pack /srv/git/<repo>.git",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA... <comment>
 ```
 
-`SU2QM_PUSH_SOURCE=actions` 环境变量是留给 hook 识别"谁在推"的标记（名字可自定义）。
+`SU2QM_PUSH_SOURCE=actions` 环境变量是留给 hook 识别“谁在推”的标记（名字可自定义）。
 
 ### 4. pre-receive hook（分支保护）
 

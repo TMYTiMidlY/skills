@@ -84,7 +84,7 @@ https://<IP>:9800 {
 
 - 域名访问 → `RP_ORIGIN=https://<hub.example.com>`、`RP_ID=<hub.example.com>`。
 - 纯 IP 访问（未备案 VPS）→ `RP_ORIGIN=https://<IP>:<port>`、`RP_ID=<IP>`。
-- 不一致就表现为"注册 Passkey 失败 / 登录通不过"——查这里，别去翻反代日志。
+- 不一致就表现为“注册 Passkey 失败 / 登录通不过”——查这里，别去翻反代日志。
 
 媒体跨域：用 `STORAGE_PUBLIC_URL` 指向能公网拉到媒体的地址（同样经反代或独立 S3 域名）。
 

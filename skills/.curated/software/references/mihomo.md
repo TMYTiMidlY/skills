@@ -142,7 +142,7 @@ Invoke-WebRequest -Uri 'http://127.0.0.1:9090/configs?force=true' -Method Put -C
 
 ## HTTPS_PROXY 只决定入口、不决定出口（rule + group 链路）
 
-新手常见误解：在 WSL 里设了 `HTTPS_PROXY=http://<gw>:7890`，curl 就一定走代理节点出去。**错**。env 只告诉 client "把流量送到 Mihomo 这个端口"，**实际出口节点由 Mihomo 自己的 `rules` + `proxy-groups` 链决定**。链路上任何一层选了 `DIRECT`，流量就回到本机直连——HTTPS_PROXY 显示设了也照样被 GFW RST。
+新手常见误解：在 WSL 里设了 `HTTPS_PROXY=http://<gw>:7890`，curl 就一定走代理节点出去。**错**。env 只告诉 client “把流量送到 Mihomo 这个端口”，**实际出口节点由 Mihomo 自己的 `rules` + `proxy-groups` 链决定**。链路上任何一层选了 `DIRECT`，流量就回到本机直连——HTTPS_PROXY 显示设了也照样被 GFW RST。
 
 典型链路（按 `config.yaml` 走）：
 
@@ -157,7 +157,7 @@ TCP from client → Mihomo mixed-port
 排障时**每一层都要看 `.now`**，而不是只看 GLOBAL 或某一个 group。常见踩坑：
 
 1. **改 GLOBAL 没效果** —— GLOBAL 只在没有 rule 命中时兜底。如果 `rules` 段有 `RULE-SET,aws,☁️ 云服务`，AWS 流量根本不到 GLOBAL，改 GLOBAL 白改。先 `cat config.yaml` 找命中目标域名的 rule，定位到具体 group。
-2. **改外层 group 报 "proxy not exist"** —— `.all` 里没有目标 proxy 就 PUT 失败。比如 `☁️ 云服务.all = [🚀 节点选择, vless-ws-Node, DIRECT, REJECT]`，想切到 `Hysteria2-Node` 必须先 PUT `🚀 节点选择` → `Hysteria2-Node`，再 PUT `☁️ 云服务` → `🚀 节点选择`。**两层都要改**。
+2. **改外层 group 报 “proxy not exist”** —— `.all` 里没有目标 proxy 就 PUT 失败。比如 `☁️ 云服务.all = [🚀 节点选择, vless-ws-Node, DIRECT, REJECT]`，想切到 `Hysteria2-Node` 必须先 PUT `🚀 节点选择` → `Hysteria2-Node`，再 PUT `☁️ 云服务` → `🚀 节点选择`。**两层都要改**。
 3. **PUT 后老连接不切** —— Mihomo 切节点只对**新建连接**生效。`curl --no-keepalive` 强制每次重连；长跑的下载/上传进程要重启才走新节点。
 
 ## WSL ssh 借道宿主 mihomo（ProxyCommand + 动态网关）
@@ -226,7 +226,7 @@ PSEXE="/mnt/c/Program Files/PowerShell/7/pwsh.exe"   # pwsh 7 路径，不是 po
 
 1. **节点 delay 通 ≠ 节点能跑全速**。`/delay` 只测 1 KB 级请求 RTT，遇到大文件可能崩。换协议（Hysteria2 / 直连 QUIC / TUIC 都比 ws over TCP 稳）。
 2. **测吞吐别用 KB 级文件**。前几 MB 在 TCP 慢启动阶段，speed 数字偏小；要测真实带宽至少 50 MB 以上。
-3. **看进度别看 "MiB/s"，看 "part/s"**。如果 mirror 跑大量 KB 级小文件，per-part RTT 主导，整体 MiB/s 显示很低但实际**带宽没饱和**——继续跑到大文件阶段会爆发。
+3. **看进度别看 “MiB/s”，看 “part/s”**。如果 mirror 跑大量 KB 级小文件，per-part RTT 主导，整体 MiB/s 显示很低但实际**带宽没饱和**——继续跑到大文件阶段会爆发。
 
 ### 健康检查 jitter & 上层调用稳定性（vless+ws → Hysteria2 切换）
 
@@ -243,8 +243,8 @@ PSEXE="/mnt/c/Program Files/PowerShell/7/pwsh.exe"   # pwsh 7 路径，不是 po
 
 操作建议：
 
-1. **不要盲信"自动选择"**。若节点群里 2~3 个候选 delay 接近，URLTest 默认 tolerance 容易让它在小幅波动时来回切，体感就是"偶尔掉线"。要么手动钉死到稳定节点，要么给 URLTest 加 `tolerance: 150`（差距小于 150ms 不切）。
-2. **节点名带 "Fast" 不一定快**。同协议同链路的两个节点常常实测差不多甚至更慢，**只能用 history / `/delay` 实测决定**。
+1. **不要盲信“自动选择”**。若节点群里 2~3 个候选 delay 接近，URLTest 默认 tolerance 容易让它在小幅波动时来回切，体感就是“偶尔掉线”。要么手动钉死到稳定节点，要么给 URLTest 加 `tolerance: 150`（差距小于 150ms 不切）。
+2. **节点名带 “Fast” 不一定快**。同协议同链路的两个节点常常实测差不多甚至更慢，**只能用 history / `/delay` 实测决定**。
 3. **挑节点的优先级**：`协议（QUIC/Hysteria2 > vless+TCP+WS）> 链路跳数（直连落地 > 经反代）> 平均 delay`，平均 delay 排最后。
 
 **预设结论（待长期验证）**：从 vless+ws URLTest 自动组切到手动钉死 Hysteria2 节点后，agent 调用（Copilot CLI / Claude Code 之类的第三方 API 长连接）不再出现偶发 `API error`。如果后续观察到反例，回来订正这一段。
@@ -258,10 +258,10 @@ PSEXE="/mnt/c/Program Files/PowerShell/7/pwsh.exe"   # pwsh 7 路径，不是 po
 可能原因（**未验证**）：
 - Hysteria2 跑 QUIC over UDP，单 IP 持续大流量 UDP 是 GFW 主动探测的明显特征之一
 - 落地 IP 注册了公开域名长期暴露，扫描器易识别
-- 也可能是机房 IP 段被整体波及，跟 Hysteria2 无关——这就是为什么标"待验证"
+- 也可能是机房 IP 段被整体波及，跟 Hysteria2 无关——这就是为什么标“待验证”
 
 下次再撞上需要确认的对照实验：
-1. 临时停掉该 VPS 上 Hysteria2 监听，等 24~72 小时看 IP 是否恢复（恢复 = 强证据支持"代理流量触发"假设）
+1. 临时停掉该 VPS 上 Hysteria2 监听，等 24~72 小时看 IP 是否恢复（恢复 = 强证据支持“代理流量触发”假设）
 2. 同时观察新换的 IP 在不跑 Hysteria2 / 跑别的协议时多久会被屏蔽，作横向对照
 
 短期可用的缓解：

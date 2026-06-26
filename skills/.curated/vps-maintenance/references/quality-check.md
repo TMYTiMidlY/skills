@@ -261,7 +261,7 @@ iperf3 -c <目标IP> -b 160M -R   # 下行压到 160 Mbit/s
 | 到期时间 | 2027-04-09 |
 
 - **不适合做跨境组网节点**：在体感上，和海外服务器拉隧道组网时链路很差，当中转或出口都不合适。
-- 定位：大陆境内直连使用。配合 [icp-filing.md](icp-filing.md) 里"IP 直连 + Caddy internal CA"方案跑自用服务比较合适。
+- 定位：大陆境内直连使用。配合 [icp-filing.md](icp-filing.md) 里“IP 直连 + Caddy internal CA”方案跑自用服务比较合适。
 - 新号 ¥68 一年非常划算，作为大陆侧玩具机 / 测试节点很值。
 
 #### ping0 检测

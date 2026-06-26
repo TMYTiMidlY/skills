@@ -1,6 +1,6 @@
 # RustFS + MinIO mc 客户端
 
-> RustFS 是 Rust 写的 S3 兼容对象存储（Apache 2.0，[github.com/rustfs/rustfs](https://github.com/rustfs/rustfs)），协议层照搬 MinIO 行为。本文是对接 RustFS 时踩过坑后的稳态结论：客户端怎么选、versioning 桶的软删/硬删/恢复语义、列举数可疑时怎么交叉验证、跨桶 copy 的 timeout 调参、以及 HDD 后端"对象数 ≫ 字节数"的性能特征。
+> RustFS 是 Rust 写的 S3 兼容对象存储（Apache 2.0，[github.com/rustfs/rustfs](https://github.com/rustfs/rustfs)），协议层照搬 MinIO 行为。本文是对接 RustFS 时踩过坑后的稳态结论：客户端怎么选、versioning 桶的软删/硬删/恢复语义、列举数可疑时怎么交叉验证、跨桶 copy 的 timeout 调参、以及 HDD 后端“对象数 ≫ 字节数”的性能特征。
 >
 > 大批量（几万~几百万对象）op 的可靠性模式（并发 list / delete / copy / 断点续传脚本骨架）单独放在 [rustfs-bulk-ops.md](rustfs-bulk-ops.md)。
 
@@ -14,8 +14,8 @@
 
 要点：
 
-- **mc 是 CLI 二进制，不是 Python 库**。Python 想"调 mc"只能 `subprocess.run(['mc', ...])`；想纯 Python 就用 boto3（或 PyPI 的 `minio`）。所以"Python 上 mc vs boto3"不是对立——**实战 pattern = boto3 干 80% + subprocess(mc) 干 mc 独有的高层命令**。
-- 其它语言用各家 AWS SDK（`@aws-sdk/client-s3` / `aws-sdk-java-v2` / `aws-sdk-go-v2` / `aws-sdk-s3`(rust)…）或对应 MinIO SDK 即可，都受 RustFS 官方背书（[docs.rustfs.com/developer/sdk](https://docs.rustfs.com/developer/sdk/)）。**没有跨语言的"mc 等价物"**：`mc cp/mirror/rb --force/undo` 这些高层批量命令是 mc 自己用 minio-go 拼的，各语言 SDK 都不直接提供，要自己拼 worker pool（见 [rustfs-bulk-ops.md](rustfs-bulk-ops.md)）。
+- **mc 是 CLI 二进制，不是 Python 库**。Python 想“调 mc”只能 `subprocess.run(['mc', ...])`；想纯 Python 就用 boto3（或 PyPI 的 `minio`）。所以“Python 上 mc vs boto3”不是对立——**实战 pattern = boto3 干 80% + subprocess(mc) 干 mc 独有的高层命令**。
+- 其它语言用各家 AWS SDK（`@aws-sdk/client-s3` / `aws-sdk-java-v2` / `aws-sdk-go-v2` / `aws-sdk-s3`(rust)…）或对应 MinIO SDK 即可，都受 RustFS 官方背书（[docs.rustfs.com/developer/sdk](https://docs.rustfs.com/developer/sdk/)）。**没有跨语言的“mc 等价物”**：`mc cp/mirror/rb --force/undo` 这些高层批量命令是 mc 自己用 minio-go 拼的，各语言 SDK 都不直接提供，要自己拼 worker pool（见 [rustfs-bulk-ops.md](rustfs-bulk-ops.md)）。
 - **mc 和 boto3 在不同 API 路径上各有坑**（尤其 §4 列举的交叉验证、§5 的 copy timeout），建议**混用 + crosscheck**，速查见 §7。
 
 RustFS 官方把 mc 当 first-class CLI（[docs.rustfs.com/developer/mc](https://docs.rustfs.com/developer/mc.html)）。
@@ -40,9 +40,9 @@ S3 层对应 `GetBucketVersioning` / `PutBucketVersioning`；boto3 `s3.get_bucke
 
 **关键**：`Suspended` 不删旧版本，只是把新写改回单版本模式。要彻底回收旧版本只能靠 lifecycle 或手动硬删（见 §3）。
 
-## 3. 三种"删"：软删 / 硬删 / 恢复 / GC
+## 3. 三种“删”：软删 / 硬删 / 恢复 / GC
 
-在 versioning=Enabled 的桶上，"删"有三种粒度，对应不同命令和可恢复性：
+在 versioning=Enabled 的桶上，“删”有三种粒度，对应不同命令和可恢复性：
 
 | 操作 | mc | boto3 | 服务端行为 | 可恢复 |
 |---|---|---|---|---|
@@ -66,7 +66,7 @@ mc undo <alias>/<bucket>/<prefix>/ --recursive  # prefix 下每个 key 各撤销
 caveat：
 
 - **只能用于 versioning=Enabled 的桶**（否则 `Undo command works only with S3 versioned-enabled buckets.` 退出）。
-- `--last 2+` 是"按倒序删 N 个版本"，不区分 marker 还是 PUT，会把 marker 下面的真数据也连带删——通常不是想要的，**默认 `--last 1` 最稳**。
+- `--last 2+` 是“按倒序删 N 个版本”，不区分 marker 还是 PUT，会把 marker 下面的真数据也连带删——通常不是想要的，**默认 `--last 1` 最稳**。
 
 boto3 手动恢复：
 
@@ -95,10 +95,10 @@ mc ilm ls <alias>/<bucket>
 
 ## 4. 列举数对不上时：boto3 + mc 交叉验证
 
-S3 列举（`ListObjectsV2`）在边界场景下，**单个客户端不一定是可靠的"真相来源"**——拿到 HTTP 200 + `IsTruncated=false` 不代表真的列完了。所以一旦"列出来的数跟预期、或跟另一个客户端对不上"，别只信一个：
+S3 列举（`ListObjectsV2`）在边界场景下，**单个客户端不一定是可靠的“真相来源”**——拿到 HTTP 200 + `IsTruncated=false` 不代表真的列完了。所以一旦“列出来的数跟预期、或跟另一个客户端对不上”，别只信一个：
 
-- **换第二个客户端交叉验证**：mc 和 boto3 是各自独立的实现，同一个桶 / prefix 两边数对不上，基本能把问题从"我 API 用错了"收敛到"服务端 / 版本的问题"。
-- **拿 `ListObjectVersions` 当兜底 oracle**：它和 `ListObjectsV2` 是两条不同的服务端代码路径，`mc ls --versions` / boto3 `list_object_versions()` 能独立确认"东西到底在不在、有多少"。
+- **换第二个客户端交叉验证**：mc 和 boto3 是各自独立的实现，同一个桶 / prefix 两边数对不上，基本能把问题从“我 API 用错了”收敛到“服务端 / 版本的问题”。
+- **拿 `ListObjectVersions` 当兜底 oracle**：它和 `ListObjectsV2` 是两条不同的服务端代码路径，`mc ls --versions` / boto3 `list_object_versions()` 能独立确认“东西到底在不在、有多少”。
 - 已知具体 key 时，`head_object` / `mc stat` 单对象探测不走列举分页，永远准。
 
 ```python
@@ -108,16 +108,16 @@ truth = sum(len(pg.get('Versions', []))
             for pg in s3.get_paginator('list_object_versions').paginate(Bucket=b, Prefix=p))
 ```
 
-> 这个"对结果存疑就用两个独立客户端互证"的习惯，曾帮我们定位并上报过一个上游已修复的服务端列举问题——重点不在那个具体问题，而在这套交叉验证方法本身，对任何 S3 兼容存储都通用。
+> 这个“对结果存疑就用两个独立客户端互证”的习惯，曾帮我们定位并上报过一个上游已修复的服务端列举问题——重点不在那个具体问题，而在这套交叉验证方法本身，对任何 S3 兼容存储都通用。
 
 ## 5. 跨桶 server-side copy 与 `Io error: timeout`（HDD 后端高并发）
 
 > 把小文件跨桶搬运时（`mc cp/mirror` 或 boto3 `copy_object`）会撞到的故障。
 
-### 先纠一个直觉：copy 是 server-side，但不是"零成本"
+### 先纠一个直觉：copy 是 server-side，但不是“零成本”
 
-- **mc `cp`/`mirror` 默认走 server-side copy**（`< 64MB` 用 CopyObject、`≥ 64MB` 用 ComposeObject 分段 server-side copy），client **不传字节**。验证：`mc --debug cp ...` 看 PUT 请求是否带 `x-amz-copy-source` header——带 = server-side。（曾误判成"client 下载再上传"，其实是当时机器上还有别的任务在占网卡。）
-- **RustFS 内部实现 CopyObject = read src + put_object 到 dst**，不是磁盘层 link。所以对 client 看是一次 PUT（不传字节），对 server 看是**一次 Get + 一次 Put 都打在自家盘上**，受 Get/Put 两端所有 timeout / 限流约束。"server-side"省的是网络往返，**不省后端 disk seek**。
+- **mc `cp`/`mirror` 默认走 server-side copy**（`< 64MB` 用 CopyObject、`≥ 64MB` 用 ComposeObject 分段 server-side copy），client **不传字节**。验证：`mc --debug cp ...` 看 PUT 请求是否带 `x-amz-copy-source` header——带 = server-side。（曾误判成“client 下载再上传”，其实是当时机器上还有别的任务在占网卡。）
+- **RustFS 内部实现 CopyObject = read src + put_object 到 dst**，不是磁盘层 link。所以对 client 看是一次 PUT（不传字节），对 server 看是**一次 Get + 一次 Put 都打在自家盘上**，受 Get/Put 两端所有 timeout / 限流约束。“server-side”省的是网络往返，**不省后端 disk seek**。
 
 ### 症状与根因
 
@@ -145,7 +145,7 @@ HTTP/1.1 500 Internal Server Error
    注意这几个 env 主要覆盖 GetObject 侧；CopyObject 内部的 PutObject 侧是否有对应 env 没验证过。
 4. **根治 = 后端硬件**：HDD → SSD/NVMe 提 IOPS；或拆多 storage pool 分散 IO；或加 RAM cache。
 
-### 快速判定"是 API 坏了还是并发太猛"
+### 快速判定“是 API 坏了还是并发太猛”
 
 ```python
 import boto3
@@ -154,7 +154,7 @@ s3.copy_object(CopySource={'Bucket':'src','Key':'path/obj'}, Bucket='dst', Key='
 # 单次几十~几百 ms 返回 200 = CopyObject API 本身没问题，500 是高并发撞 timeout
 ```
 
-> 元教训：S3 这类协议的"复杂行为"别凭网络监控的间接观察脑补 root cause——先 smoke test（单次 API 调用）+ 必要时翻官方行为，再下结论。并发任务 / 其它流量很容易误导间接观察。
+> 元教训：S3 这类协议的“复杂行为”别凭网络监控的间接观察脑补 root cause——先 smoke test（单次 API 调用）+ 必要时翻官方行为，再下结论。并发任务 / 其它流量很容易误导间接观察。
 
 ## 6. 性能特征：bucket 操作 wall-clock ∝ 对象数，不是字节数
 
@@ -169,7 +169,7 @@ RustFS 跑 HDD 后端时（典型 baremetal / NAS / edge），bucket 级 list / 
 
 字节量几乎相同（差 2%），对象数差 52×，B 比 A 快约 **8–15×**。
 
-工程含义：对"每个逻辑单位几十~几百个小文件"的工作负载，**把小文件聚合成中等大小对象（打 zip / pack）对 HDD 后端是近乎免费的 ~10× 加速**——因为 server-side copy 不省 disk seek（§5），少对象 = 少 seek。后台 scanner 跑完一轮的时间也按对象数缩比例，间接影响 `mc admin info` 用量统计的更新延迟。
+工程含义：对“每个逻辑单位几十~几百个小文件”的工作负载，**把小文件聚合成中等大小对象（打 zip / pack）对 HDD 后端是近乎免费的 ~10× 加速**——因为 server-side copy 不省 disk seek（§5），少对象 = 少 seek。后台 scanner 跑完一轮的时间也按对象数缩比例，间接影响 `mc admin info` 用量统计的更新延迟。
 
 ## 7. mc vs boto3 行为速查
 
@@ -188,12 +188,12 @@ RustFS 跑 HDD 后端时（典型 baremetal / NAS / edge），bucket 级 list / 
 
 ### `mc rb --force` 真相（最容易踩的坑）
 
-很多人以为 `mc rb --force` = "桶里对象软删 + 删桶，versions 还在能 undo"。**完全错**。它内部用 `WithOlderVersions + WithDeleteMarkers` 列出**所有版本**逐个 `DeleteObject(VersionId=X)` 物理硬删，再删空桶。MinIO 官方文档也明说：`mc rb` _permanently deletes bucket(s), **including any and all object versions** and bucket configurations_。
+很多人以为 `mc rb --force` = “桶里对象软删 + 删桶，versions 还在能 undo”。**完全错**。它内部用 `WithOlderVersions + WithDeleteMarkers` 列出**所有版本**逐个 `DeleteObject(VersionId=X)` 物理硬删，再删空桶。MinIO 官方文档也明说：`mc rb` _permanently deletes bucket(s), **including any and all object versions** and bucket configurations_。
 
-**结论**：`mc rb --force` 在 versioning 桶上 ≡ 硬删所有 version + 删桶，**100% 不可恢复**。"既软删又删桶又保留可恢复"在 versioning 桶上逻辑不可能（桶非空删不掉；要空就得硬删 versions）。
+**结论**：`mc rb --force` 在 versioning 桶上 ≡ 硬删所有 version + 删桶，**100% 不可恢复**。“既软删又删桶又保留可恢复”在 versioning 桶上逻辑不可能（桶非空删不掉；要空就得硬删 versions）。
 
-- 想"桶看着空但保留 versions" → `mc rm --recursive --force <bucket>`（不带 `--versions`，桶保留）
-- 想"彻底删桶 + 回收磁盘" → `mc rb --force <bucket>`（不可逆）
+- 想“桶看着空但保留 versions” → `mc rm --recursive --force <bucket>`（不带 `--versions`，桶保留）
+- 想“彻底删桶 + 回收磁盘” → `mc rb --force <bucket>`（不可逆）
 
 ### 大 versioning 桶清空：用 `x-minio-force-delete` header
 

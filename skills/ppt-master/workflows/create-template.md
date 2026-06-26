@@ -190,7 +190,7 @@ The user replies with corrections, additions, or "all good".
 1. Echo back the finalized brief (post-corrections) in a single message
 2. Emit the marker `[TEMPLATE_BRIEF_CONFIRMED]` on its own line
 
-Skipping this gate — including silently inferring values from the reference source, opened IDE file, or prior conversation — is a workflow violation. Even if the user said "用这个 .pptx 做模板" upfront, you MUST still surface Step 2 with provenance labels and obtain explicit confirmation here. The reference source informs the brief; it does not substitute for it.
+Skipping this gate — including silently inferring values from the reference source, opened IDE file, or prior conversation — is a workflow violation. Even if the user said “用这个 .pptx 做模板” upfront, you MUST still surface Step 2 with provenance labels and obtain explicit confirmation here. The reference source informs the brief; it does not substitute for it.
 
 **Required outcome of Step 3** (all must be true before emitting `[TEMPLATE_BRIEF_CONFIRMED]`):
 

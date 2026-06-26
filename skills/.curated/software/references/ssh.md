@@ -98,7 +98,7 @@ Host *
 
 ### 2.5 非交互 shell 里找不到 agent：发现并复用它
 
-**非交互 / 非登录 shell（CI、`bash -c`、各类 agent 远程执行）默认 `SSH_AUTH_SOCK` 为空、不读 `.bashrc`**。典型症状：`git push` / `ssh` 一直 `Permission denied (publickey)`，但人在交互终端连同一台是好的。`ssh -vv` 里会看到迷惑性的 `Server accepts key`（服务器认这把公钥）紧接着 `Permission denied`——**这不是公钥的问题**：公钥不需解密能"亮出来"过预检，但带 passphrase 的私钥在没有已解锁 agent 时**签不了名**。`ssh-add -l` 此时 exit 2（连不上 agent，见 §2.3）。
+**非交互 / 非登录 shell（CI、`bash -c`、各类 agent 远程执行）默认 `SSH_AUTH_SOCK` 为空、不读 `.bashrc`**。典型症状：`git push` / `ssh` 一直 `Permission denied (publickey)`，但人在交互终端连同一台是好的。`ssh -vv` 里会看到迷惑性的 `Server accepts key`（服务器认这把公钥）紧接着 `Permission denied`——**这不是公钥的问题**：公钥不需解密能“亮出来”过预检，但带 passphrase 的私钥在没有已解锁 agent 时**签不了名**。`ssh-add -l` 此时 exit 2（连不上 agent，见 §2.3）。
 
 解决 = 复用宿主上那个用户登录时早已解锁好的常驻 agent，**别猜 socket 路径**（UID 未必 1000、实现也不一定，见 §2.2），而是先看用户自己怎么配的、再逐个候选用 `ssh-add -l` 验：
 
@@ -123,7 +123,7 @@ ssh-add -l        # 列出 key = 成功；passphrase 全程不经过你 / 不进
 
 兜底：从运行中的进程扒 socket——`ps -u "$(id -u)" -o args= | grep '[s]sh-agent'` 看有没有 `-a <socket>`。根治：给 `~/.ssh/config` 配 `IdentityAgent`（§2.4），非交互 shell 也能命中，从此不用每次找。
 
-> 排错口诀：`Server accepts key` + `Permission denied` = 公钥没问题、私钥签名出了问题，往 passphrase / agent 方向查，别反复重加公钥。`git ls-remote <url>` 是"网络+认证+仓库存在"三合一的最快只读探针。
+> 排错口诀：`Server accepts key` + `Permission denied` = 公钥没问题、私钥签名出了问题，往 passphrase / agent 方向查，别反复重加公钥。`git ls-remote <url>` 是“网络+认证+仓库存在”三合一的最快只读探针。
 
 ## 3. Windows：Git Bash 与 PowerShell 的 ssh-agent 差异
 
@@ -170,16 +170,16 @@ export https_proxy=http://<用户名>:<密码>@127.0.0.1:10131
 
 ## 5. 主机密钥校验：known_hosts、CheckHostIP 与不同 SSH 实现的差异
 
-SSH 连接时验证的是服务器的**主机密钥**（host key），不是 IP，也不是域名。`known_hosts` 记录"某主机名 / IP → 哪把 host key"。只有服务器重装、换了密钥才算"key 变了"；**只换 IP、host key 不变，从密码学角度还是同一台机器**。
+SSH 连接时验证的是服务器的**主机密钥**（host key），不是 IP，也不是域名。`known_hosts` 记录“某主机名 / IP → 哪把 host key”。只有服务器重装、换了密钥才算“key 变了”；**只换 IP、host key 不变，从密码学角度还是同一台机器**。
 
-不同 SSH 实现对"IP"的态度不一样，这会造成同一台主机用一个客户端连得上、换一个客户端却报错：
+不同 SSH 实现对“IP”的态度不一样，这会造成同一台主机用一个客户端连得上、换一个客户端却报错：
 
 - **OpenSSH 默认 `CheckHostIP no`**（`man ssh_config`：默认不检查 IP；这是 OpenSSH 8.5 改的默认值，未逐版核证）。它**只按连接用的主机名**去 `known_hosts` 找 key 比对，完全不看 IP。后果：服务器 IP 变了（换 VPS、DNS 改解析），只要 host key 没变、主机名条目命中，OpenSSH 一声不吭就放行；副作用是它**从不写 IP→key 条目**，`known_hosts` 里往往只有主机名的明文条目。
 - **纯第三方 SSH 库**（如 [asyncssh](https://github.com/ronf/asyncssh)，纯 Python 实现，被一些 MCP / 自动化工具当底层引擎）没有 `CheckHostIP no` 这种放宽，校验时**把连接解析到的 IP 也纳入 `known_hosts` 匹配**（≈ `CheckHostIP yes` 的行为）。
 
 **典型症状**：同一台主机，`ssh <host>`（OpenSSH）正常，但走 asyncssh 之类的客户端报 `Host key is not trusted for host <host>`。**几乎总是**：主机 host key 没变、但解析 IP 变了，而 `known_hosts` 里只有主机名的明文条目、缺新 IP 的条目——不是真的 key 被篡改。
 
-诊断（确认"是 IP 变了"而非"key 变了"）：
+诊断（确认“是 IP 变了”而非“key 变了”）：
 
 ```bash
 # 存的 key 和服务器实时 key 是否一致（一致 = 不是 key 变了）
@@ -188,7 +188,7 @@ diff <(ssh-keygen -F <host> | awk '/ssh-ed25519/{print $3}') \
 ssh-keygen -F <新IP>     # 输出为空 = known_hosts 缺这个 IP 的条目
 ```
 
-修复——补上"主机名 + IP"的条目（`-H` 顺带哈希，避免明文主机名/IP 落盘）：
+修复——补上“主机名 + IP”的条目（`-H` 顺带哈希，避免明文主机名/IP 落盘）：
 
 ```bash
 ssh-keyscan -H <host> <新IP> >> ~/.ssh/known_hosts
@@ -223,7 +223,7 @@ Host *
 
 ### 交互式 sudo：让用户只敲一行 `ssh -t`
 
-`sudo` 从 TTY 读密码，普通 `ssh <host> "sudo ..."` 没分配 TTY、读不到密码（或直接报错）。把"用户负责的事"压到极小——只敲一行 `ssh -t`，其余 agent 在本地做：
+`sudo` 从 TTY 读密码，普通 `ssh <host> "sudo ..."` 没分配 TTY、读不到密码（或直接报错）。把“用户负责的事”压到极小——只敲一行 `ssh -t`，其余 agent 在本地做：
 
 1. **agent 在本地** `/tmp/` 用编辑器写脚本（不在远端 `cat <<EOF` 手敲）。脚本开头固化 `exec > >(tee /tmp/<name>.log) 2>&1`——日志路径写死在脚本里，别拼到 ssh 命令行的 `>` 重定向上（那是**本地**重定向、不是远端）。
 2. **agent 自己 `scp`** 推到远端 `/tmp/`；不要让用户 scp、也不要让用户手敲建脚本。

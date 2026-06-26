@@ -2,11 +2,11 @@
 
 ## 操作流程
 
-1. **找textarea**: 页面加载后用`find`工具搜索"textarea"，找到textbox类型的输入框（placeholder为"发表你的观点..."）
+1. **找textarea**: 页面加载后用`find`工具搜索“textarea”，找到textbox类型的输入框（placeholder为“发表你的观点...”）
 2. **点击聚焦**: 先`computer.left_click()`点击textarea区域让它获得焦点
 3. **输入文字**: 用`computer.type()`直接输入中文内容
-4. **发送**: 用JS找到innerText.trim()为"发送"的button，调用`.click()`发送
-5. **验证**: 等待3秒后检查`document.body.innerText`是否还包含"未发言"，若不包含则发送成功
+4. **发送**: 用JS找到innerText.trim()为“发送”的button，调用`.click()`发送
+5. **验证**: 等待3秒后检查`document.body.innerText`是否还包含“未发言”，若不包含则发送成功
 
 ## 常见问题
 
