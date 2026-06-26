@@ -4,6 +4,8 @@
 
 在已有 `VLESS + WS + TLS + Caddy + 3x-ui/Xray` 节点时，Hysteria2 适合作为差异化备用：它走 QUIC/UDP，和 TCP 443、Caddy 反代、WebSocket 不是同一条链路。不要为了“稳定”把 VLESS 换成 VMess；更优先考虑增加不同协议或不同服务商/地区的备用。
 
+> 这篇是**服务端落地**侧。客户端节点怎么配、怎么测吞吐、怎么验证 Brutal/拥塞控制、DNS/WebRTC 泄漏排查，在 `software` skill 的 `references/mihomo.md`；服务端 `ignoreClientBandwidth`/`bandwidth` 影响客户端 Brutal 是否生效，两篇配合看。带宽/丢包质量测试见 [quality-check.md](quality-check.md)。
+
 服务端优先按 Hysteria2 官方脚本安装，并让它独立监听 UDP 端口，避免改动现有 Caddy/3x-ui：
 
 ```bash

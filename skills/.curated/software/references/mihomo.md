@@ -161,7 +161,7 @@ proxy-groups:
 
 **经验法则**：跨国（高延迟、可能丢包）链路优先 QUIC 系（Hysteria2 / TUIC）；vless+ws+TCP 适合穿 CDN/反代，但传输层受 TCP 拥塞控制限制。
 
-实测（2026-06-27，两个节点都落地在同一台 RackNerd：Hysteria2=UDP 443 直连，vless+ws=TCP 443 经 Caddy→xray 多一跳；本机 mihomo 经 7890 拉 Cloudflare 50MB，延迟取 8 次采样）：
+实测（2026-06-27，两个节点落地在同一台海外 VPS：Hysteria2=UDP 443 直连，vless+ws=TCP 443 经 Caddy→xray 多一跳；本机 mihomo 经 7890 拉 Cloudflare 50MB，延迟取 8 次采样）：
 
 | 协议 | 实测吞吐 | 延迟抖动(min/max) |
 |---|---|---|
@@ -170,12 +170,15 @@ proxy-groups:
 
 结论：**同落地下吞吐 Hysteria2 ≈ 2× vless+ws**，主要来自 QUIC 的拥塞控制 + 少一跳反代；延迟与抖动两者无明显差距。
 
-拥塞控制要点（核对自 [Hysteria2 官方文档](https://hysteria.network/docs/advanced/Full-Server-Config/)）：
+拥塞控制（核对自 [Hysteria2 官方文档](https://hysteria.network/docs/advanced/Full-Server-Config/)）：
 
-- **系统级 BBR（`net.ipv4.tcp_congestion_control=bbr`）只对 TCP 生效，Hysteria2 走 UDP/QUIC 完全不碰它**。这是个高频误区：在 VPS 上开了 BBR（属于内核 TCP 栈），加速的只是走 TCP 的协议（vless+ws、trojan、ss-over-tcp 等）；Hysteria2 是 QUIC over UDP、绕过整个内核 TCP 栈，它的拥塞控制由 Hysteria 程序在**用户态**自己实现，与 sysctl 那个 BBR 同名也无关。
-- **Hysteria2 的拥塞控制按“客户端是否配带宽”协商**：客户端节点配了 `up`/`down`（且服务端没开 `ignoreClientBandwidth`）→ 用招牌的 **`Brutal`**（按设定带宽定速发包、基本无视丢包，高丢包跨国链路上能压过 TCP）；**没配 `up`/`down` → 回退到 Hysteria 内置的用户态 BBR v1**（仍是用户态实现，不是内核那个）。想吃满 Brutal 的抗丢包优势，要在客户端节点按真实带宽填 `up`/`down`。
-- **vless+ws 的吞吐取决于服务端 TCP 拥塞控制**（落地机开系统 BBR 会好很多）+ 多一层反代开销（这里 Caddy→xray）；跨国高 BDP（带宽延迟积大）下 TCP cubic 慢启动/退避更吃亏。
-- QUIC 单连接多 stream 消除了 TCP 那种跨流队头阻塞，但对“单条大文件下载”这不是主因，主因是上面的拥塞控制差异。
+- **系统级 BBR（`net.ipv4.tcp_congestion_control=bbr`）只对 TCP**：它加速的是 vless+ws / trojan 这类走 TCP 的协议；Hysteria2 是 QUIC over UDP、绕过内核 TCP 栈，拥塞控制在**用户态**自己实现，和 sysctl 那个 BBR 同名也无关。
+- **Hysteria2 两种控制器**：BBR（默认，自适应）vs **Brutal**（按设定带宽定速发包、基本无视丢包，高丢包跨国链路上能压过 TCP）。选哪个在握手时协商，规则就两条：
+  - 客户端节点填了 `up`/`down` **且**服务端没开 `ignoreClientBandwidth` → **两个方向都 Brutal**（下载用 `down`、上传用 `up`；服务端没配 `bandwidth` 就直接用客户端的值）。
+  - 客户端没填、或服务端 `ignoreClientBandwidth: true` → 回退 BBR。
+  - 源码：客户端 `metacubex/sing-quic` 的 `hysteria2/client.go` 判 `if !RxAuto && actualTx>0 → Brutal`；服务端 `apernet/hysteria` 的 `core/server/server.go` 里 **`RxAuto = ignoreClientBandwidth`**（就这一个开关，跟服务端有没有设带宽无关）。回退的 BBR 是 mihomo 用户态 `congestion_v2.NewBbrSender`（其内部记作 v2），不是内核 BBR。
+  - 想吃满 Brutal 抗丢包：按真实带宽填 `up`/`down`（**别填超真实容量**，过冲只会多发→无谓重传），服务端别开 `ignoreClientBandwidth`——个人自用，服务端 `bandwidth`/`ignoreClientBandwidth` 都别配。
+- **vless+ws 的吞吐**取决于服务端 TCP 拥塞控制（落地机开系统 BBR 会好很多）+ 反代多一跳；跨国高 BDP（带宽延迟积大）下 TCP cubic 慢启动/退避更吃亏。QUIC 单连接多 stream 还消除了 TCP 的跨流队头阻塞（但单条大文件下载里这不是主因，主因是上面的拥塞控制差异）。
 
 > 稳定性：节点抖动大会触发 URLTest 反复横跳、打断长连接，挑节点别只看平均延迟，自己 `/delay` 多采样看。vless+ws 若落在海外反代后面多一跳，日志里可能偶发 `dial ... :443 connect error: i/o timeout`（前置反代瞬时抖动）。
 
@@ -199,6 +202,27 @@ proxies:
 ```
 
 **MTU 默认就好**，别为“求稳”显式写死。只有出现大包症状（大文件下载中断、网页加载一半卡住、TLS 握手偶发超时、小请求通但大响应卡）才去测，从 `1400`/`1380` 起试。
+
+### 3.6 实测吞吐与验证（客户端排障）
+
+节点 `/delay` 只测 1KB 级 RTT（见第 4 节），拥塞控制有没有真生效得自己测吞吐。经 `mixed-port` 用 curl 的 `-w` 直接拿 speed、不落盘：
+
+```bash
+P=http://127.0.0.1:7890
+# 下载
+curl -s -o /dev/null --max-time 45 --proxy $P \
+  -w 'dl=%{speed_download}B/s code=%{http_code}\n' "https://ash-speed.hetzner.com/100MB.bin"
+# 上传
+head -c 31457280 /dev/urandom > /tmp/up.bin
+curl -s -o /dev/null --max-time 45 --proxy $P \
+  -w 'ul=%{speed_upload}B/s\n' --data-binary @/tmp/up.bin "https://speed.cloudflare.com/__up"
+```
+
+测速源踩坑：`speed.cloudflare.com/__down` 经某些落地 IP 回 **403**（节点 IP 命中 Cloudflare 风控），但同站 `__up` 上传能用；Hetzner `ash-speed.hetzner.com/100MB.bin` 稳，OVH `proof.ovh.net` 能用但跨洲偏慢。多换源交叉看、文件 ≥50–100MB（前几 MB 慢启动偏小）。换算：1 MB/s ≈ 8 Mbps。
+
+> **验证 Brutal 有没有接管**：mihomo 不暴露 `brutal-debug`，客户端日志看不到 Brutal 速率，唯一办法是 sudo 读服务端 `/etc/hysteria/config.yaml` 看 `ignoreClientBandwidth`/`bandwidth`（机制见 §3.4）。服务端那套（安装、证书、带宽、iperf3 丢包测试）在 `vps-maintenance` skill 的 `references/proxy.md` / `quality-check.md`，两篇配合：一边客户端、一边服务端落地。
+
+海外 VPS 上实测：给 Hysteria2 节点加 `up: "80 Mbps"`/`down: "120 Mbps"`（格式正则 `^(\d+)\s*[KMGT]?[Bb]ps$`，小写 `b`=bit）后，下载上传两向都进 Brutal——但当时链路 ~16 MB/s 下载、~9 MB/s 上传、**几乎无丢包**，加 `up`/`down` 前后吞吐无差异，印证「Brutal 收益要丢包才显现」。
 
 ## 4. 运行态管理：REST API
 
@@ -463,10 +487,25 @@ curl -s --max-time 3 "http://127.0.0.1:9090/logs?format=structured&level=info"
 
 ---
 
-# 附录：已知风险记录（待长期验证）
+# 附录：实测封锁记录（field observations，归因多未坐实）
 
-**长期跑 Hysteria2，落地 IP 疑似被大陆精准屏蔽**（2026-06-08 单次事件，根因未坐实，记录供下次对照）：某海外 VPS 的 Hysteria2 主节点跑一段时间后，某天起从**大陆任何出口**对这台 IP 的任何端口（22/443/ICMP）全 timeout，而**同 /24 邻居 IP 正常**、境外多地探测全通、VPS 本机服务健康——形态像“大陆精准屏蔽这一个 IP”。
+> 真实跑出来的封锁现象集中放这里，和前面的配置/原理分开。涉及的两台 VPS 的机器规格 / IP / 延迟测试等明细，在 `vps-maintenance` skill 的 `references/quality-check.md`「历史服务器信息」里（A=RackNerd、B=LisaHost）。样本都很小，归因一律标“未坐实”，只作下次对照。
+
+## A. 落地 IP 被大陆精准屏蔽（RackNerd，长期跑 Hysteria2，2026-06-08）
+
+RackNerd（海外 VPS）的 Hysteria2 主节点跑一段时间后，某天起从**大陆任何出口**对这台 IP 的任何端口（22/443/ICMP）全 timeout，而**同 /24 邻居 IP 正常**、境外多地探测全通、VPS 本机服务健康——形态像“大陆精准屏蔽这一个 IP”。
 
 可能原因（未验证）：QUIC over UDP 单 IP 持续大流量是 GFW 主动探测的特征之一；落地 IP 注册了公开域名长期暴露；也可能是机房 IP 段整体波及、与协议无关。
 
-对照实验：停掉 Hysteria2 监听等 24~72h 看 IP 是否恢复（恢复=支持“代理流量触发”假设）。缓解：从大陆侧 ssh 改 `ProxyJump` 经境外不受影响的跳板；彻底解决换 IP + 把协议迁离这台（或换 Reality / 强 fingerprint masking 的 vless）。
+**后续（2026-06-27 更新）**：没迁协议、没换机器，只**付费给这台 VPS 换了一个 IP**（换 IP、Hysteria2 照跑）。换 IP 后短期内（截至更新日）未再复现被墙，至今仍在日常使用该 Hysteria2 节点。→ 单 IP 换干净就恢复、协议没动也没事，**更像“那个具体 IP 被点名”而非“Hysteria2/QUIC 协议特征触发”**；但样本只一次、观察窗口短，归因仍未坐实。（这台机器的规格 / IP / 延迟明细见 `vps-maintenance` skill 的 `references/quality-check.md`。）
+
+## B. 长期稳定的 vless 节点被墙（LisaHost，2026-06-25）
+
+LisaHost（海外住宅 IP VPS）上**长期稳定使用**的 vless(+ws+TLS) 节点，于 2026-06-25 起被墙。值得注意：这是 **TCP 系 vless、不是 QUIC/Hysteria2**，且已长期暴露使用——说明封锁不限于 QUIC/UDP 那一类特征，长期暴露的 TCP+TLS 节点同样会中招。
+
+归因未坐实：长期固定的域名 / 落地 IP / vless+ws-over-TLS 的流量指纹长期暴露都可能是诱因。
+
+## 通用对照实验与缓解
+
+- **对照实验**：停掉对应监听等 24~72h 看 IP 是否恢复（恢复=支持“代理流量触发”假设）。
+- **缓解**：从大陆侧 ssh 改 `ProxyJump` 经境外不受影响的跳板；彻底解决换 IP（A 已验证有效）+ 换域名，或把协议迁到 Reality 这类更强 fingerprint masking 的方案。
