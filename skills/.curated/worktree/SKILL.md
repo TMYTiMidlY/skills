@@ -1,6 +1,6 @@
 ---
 name: worktree
-description: 用户要做实验性改动 / 对比实现 / 可能失败的大改动，或明确要求"在 worktree 里做 / 开个实验分支"时使用。自动为隔离分支创建 git worktree（含 submodule 同步），避免污染主工作区。本 skill 只覆盖通用的 worktree 骨架，项目特定的构建 / 依赖同步由上层 AGENTS.md 或项目自身的 skill 接管。
+description: 用户要做实验性改动 / 对比实现 / 可能失败的大改动，或明确要求在 worktree 里做、开实验分支时使用。自动为隔离分支创建 git worktree（含 submodule 同步），避免污染主工作区。本 skill 只覆盖通用的 worktree 骨架，项目特定的构建 / 依赖同步由上层 AGENTS.md 或项目自身的 skill 接管。
 ---
 
 # Worktree
