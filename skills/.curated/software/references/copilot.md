@@ -271,6 +271,8 @@ This action may read the following path outside your allowed directory list.
 | **命令 / 写入审批** | `~/.copilot/permissions-config.json` 的 `locations.<launch-cwd>.tool_approvals` | 按 "启动 cwd" 分组的 `kind: commands` / `kind: write` 审批，控制 `shell(...)` / 文件写入的"曾经批过的"放行列表 | ✅ 写盘 |
 | **会话级 allowed-dir** | **仅内存**（`events.jsonl` / `permissions-config.json` / `session-state` 都无持久化字段） | 控制每次 file read/write 的目录边界。初始化为启动 cwd 树。`/list-dirs` 查、`/add-dir` 加；弹窗里选 "Yes, and add..." 等价于本次 session 的 `/add-dir` | ❌ 重启即丢 |
 
+持久化文件位置参考官方文档[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)：`~/.copilot/config.json`（应用状态）、`settings.json`（用户设置，`trustedFolders` 有镜像）、`permissions-config.json`（工具/目录授权，按启动 cwd 分组）。`~/.copilot` 是默认 configDir，可被 `COPILOT_HOME` 整体改写；`permissions-config.json` 解析优先级 `--config-dir` > `COPILOT_HOME` > 默认。
+
 #### 根因
 
 弹窗 "outside your allowed directory list" 指的是**第三套**——会话级 allowed-dir 列表。它的初始值就是启动 cwd 树，**完全不读 `trustedFolders`**。
@@ -289,9 +291,15 @@ This action may read the following path outside your allowed directory list.
 
 #### 教训
 
-- 官方文档说 "Trusted directories control where Copilot CLI can read, modify, and execute files" 听起来涵盖所有文件访问，实际只管启动信任。运行时目录边界是另一套。
+- 官方文档[about-copilot-cli#trusted-directories](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli#trusted-directories) 说 "Trusted directories control where Copilot CLI can read, modify, and execute files" 听起来涵盖所有文件访问，实际只管启动信任。运行时目录边界是另一套。
 - 三套同主题机制位置和作用都不一样（`config.json` / `permissions-config.json` / 内存）；看到字段名带 "trust" 或 "allow" 不能想当然认为是同一回事。
 - 从子目录启动 copilot 是隐性陷阱：直觉以为 `trustedFolders` 包含父目录就够了，实际还得让启动 cwd 本身覆盖你想访问的范围。
+
+#### 相关 issue / 文档
+
+- 参考官方文档[about-copilot-cli#trusted-directories](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli#trusted-directories)：启动信任目录的概念与作用域
+- 参考官方文档[use-copilot-cli](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-copilot-cli)：会话中授权访问目录外文件、`/add-dir`
+- 参考官方文档[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)：`config.json` / `settings.json` / `permissions-config.json` 的存放与解析优先级
 
 ---
 
@@ -568,10 +576,10 @@ async function bBt(t, e, r, n) {
 
 | 子系统 | Walk-up | Boundary | 不在 git repo 时 | 用户级路径 | Env 覆盖 |
 |--------|---------|----------|------------------|-----------|----------|
-| **Custom Instructions**<br>(AGENTS.md 等) | `vfi`：cwd→git root **中间层**<br>（两端分别单独查） | git root | 只读 cwd | `~/.copilot/config/copilot-instructions.md`<br>`~/.copilot/config/instructions/` | `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` |
+| **Custom Instructions**<br>(AGENTS.md 等) | `vfi`：cwd→git root **中间层**<br>（两端分别单独查） | git root | 只读 cwd | `~/.copilot/copilot-instructions.md`<br>`~/.copilot/instructions/` | `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` |
 | **MCP** (`.mcp.json`) | `bBt`：cwd→git root 沿途合并 | git root | 只读 cwd 一份，不上溯 | `~/.copilot/mcp-config.json` | — |
-| **Skills** (`.agents/skills`) | `bBt`→`yQe`：cwd→git root 沿途收录 | git root；无 git 时回退 `$HOME` | 一路扫到 `$HOME` | `~/.copilot/config/skills`<br>`~/.agents/skills` | `COPILOT_SKILLS_DIRS` |
-| **Hooks** (`.github/hooks`) | ❌ 不上溯，只看 git root 一层 | git root | cwd | `~/.copilot/config/hooks/` | — |
+| **Skills** (`.agents/skills`) | `bBt`→`yQe`：cwd→git root 沿途收录 | git root；无 git 时回退 `$HOME` | 一路扫到 `$HOME` | `~/.copilot/skills`<br>`~/.agents/skills` | `COPILOT_SKILLS_DIRS` |
+| **Hooks** (`.github/hooks`) | ❌ 不上溯，只看 git root 一层 | git root | cwd | `~/.copilot/hooks/` | — |
 
 **共同特征**：
 
@@ -608,7 +616,7 @@ link_into_subdirs "$PWD/.agents/skills"                '.agents/skills'
 link_into_subdirs "$PWD/AGENTS.md"                     'AGENTS.md'
 ```
 
-或者把配置搬到 user-level 路径（`~/.copilot/config/` 或 `~/.agents/skills/`），绕过 walk-up boundary 限制。
+或者把配置搬到 user-level 路径（`~/.copilot/`（各子目录如 `~/.copilot/hooks/`、`~/.copilot/skills/`）或 `~/.agents/skills/`），绕过 walk-up boundary 限制。
 
 后面 MCP / Skills / Hooks 章节的"多 repo 工作区漏装"排障节都复用这个 helper，不再重复定义。
 
@@ -641,6 +649,8 @@ cKr = [
 | `AGENTS.md` | `.`（当前目录根） | `agents` / `model` |
 | `CLAUDE.md` | `.` 和 `.claude/` | `claude` / `model` |
 | `GEMINI.md` | `.`（当前目录根） | `gemini` / `model` |
+
+这份单文件清单（源码 `cKr` 数组）与 CLI 启动时打印的 "Copilot respects instructions from these locations" 同源；后者还并列了 `.github/instructions/**/*.instructions.md` glob、用户级 `$HOME/.copilot/copilot-instructions.md` / `$HOME/.copilot/instructions/**/*.instructions.md` 和 env `COPILOT_CUSTOM_INSTRUCTIONS_DIRS`（各自见下文小节）。项目级指令文件的写法参考官方文档[add-repository-instructions](https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions)。
 
 **多种文件全部合并注入，不互斥**：Copilot CLI 主动兼容其他 AI 编码工具的指令文件格式。如果仓库里同时存在 AGENTS.md、CLAUDE.md、GEMINI.md、copilot-instructions.md，**四种全部读取**，各自包裹在 `<custom_instruction>` 标签里按顺序拼接注入 system prompt。不做选择、不做冲突检测，只在 realPath 或 content 完全相同时去重（`rKr`）。
 
@@ -845,17 +855,17 @@ function bKr(t) {
 
 ### 用户级指令
 
-两个固定路径，不做 walk-up：
+两个固定路径，不做 walk-up（参考官方文档[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) 的 `copilot-instructions.md`、`instructions/` 条目；`~/.copilot` 是默认 configDir，可被 `COPILOT_HOME` 整体改写）：
 
 | 路径 | 函数 | 注入 id | location |
 |------|------|---------|----------|
-| `~/.copilot/config/copilot-instructions.md` | `Nfi(n)` | `home-copilot` | `user` |
-| `~/.copilot/config/instructions/**/*.instructions.md` | `kfi(n)` | `user-copilot-instructions` | `user` |
+| `~/.copilot/copilot-instructions.md` | `Nfi(n)` | `home-copilot` | `user` |
+| `~/.copilot/instructions/**/*.instructions.md` | `kfi(n)` | `user-copilot-instructions` | `user` |
 
 ```js
 // app.js — Nfi
 function Nfi(t) {
-  let e = ma(t, "config"),                       // ~/.copilot/config
+  let e = ma(t, "config"),                       // = ~/.copilot（configDir 本身，无 config 子目录）
       r = Yq(e, "copilot-instructions.md");
   return r ? {exists: true, path: r} : $M;
 }
@@ -887,8 +897,8 @@ let s = process.env.COPILOT_CUSTOM_INSTRUCTIONS_DIRS
 主函数 `Efi` 将所有指令源 push 到 `oe` 数组中，**顺序决定在 prompt 中的出现位置**：
 
 ```
-1. home-copilot          — ~/.copilot/config/copilot-instructions.md
-2. user-copilot-instructions — ~/.copilot/config/instructions/**/*.instructions.md
+1. home-copilot          — ~/.copilot/copilot-instructions.md
+2. user-copilot-instructions — ~/.copilot/instructions/**/*.instructions.md
 3. repo-copilot          — <git-root>/.github/copilot-instructions.md
 4. cwd-copilot           — <cwd>/.github/copilot-instructions.md（仅 cwd ≠ git root）
 5. model-agents-md       — <git-root>/AGENTS.md
@@ -922,16 +932,21 @@ let z = l ? Promise.resolve(void 0) : eB(t, true, r, u, {...});
 // l = skipCustomInstructions（来自 --no-custom-instructions）
 ```
 
+#### 相关 issue / 文档
+
+- 参考官方文档[add-repository-instructions](https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions)：`.github/copilot-instructions.md`、`.github/instructions/**/*.instructions.md` 的写法与作用域
+- 参考官方文档[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)：用户级 `~/.copilot/copilot-instructions.md`、`~/.copilot/instructions/`
+
 ---
 
 ## Hooks（preToolUse / Safety Net）
 
 ### Hooks 发现机制（不做 walk-up）
 
-与 MCP / Skills 不同，Hooks **完全不做 walk-up**，只看两个固定位置：
+与 MCP / Skills 不同，Hooks **完全不做 walk-up**，只看两个固定位置（参考官方文档[use-hooks](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-hooks)、[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)）：
 
 1. **项目级**：`<git-root>/.github/hooks/`（在 git repo 内用当前 git root，不在 git repo 则用 cwd）
-2. **用户级**：`~/.copilot/config/hooks/`
+2. **用户级**：`~/.copilot/hooks/`
 
 不向上遍历父目录。这直接导致下文「项目级 hook 路径解析停在 git root」与「`cc-safety-net` 自定义规则 scope」两个排障场景。需要跨子项目共用 hook 时，只能用 user-level 或 symlink。
 
@@ -1012,7 +1027,7 @@ let z = l ? Promise.resolve(void 0) : eB(t, true, r, u, {...});
 
 实测 `--allow-all-tools`（含 `COPILOT_ALLOW_ALL=1`）下 Safety Net 仍然能拦 `git reset --hard`。Copilot 的 `preToolUse` hook 在 permission system 之前跑，不会被 allow-all 跳过。
 
-也可以走全局：把同一段 `hooks` 对象写到 `~/.copilot/config.json` 顶层（Copilot CLI v0.0.422+ 支持 user-level hooks）。
+也可以走全局：把同一段 `hooks` 对象写到 `~/.copilot/settings.json` 的 `hooks` 键（参考官方文档[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) 明确："define hooks inline in your user configuration file (`~/.copilot/settings.json`) using the `hooks` key"；旧版曾放 `config.json` 顶层，启动时自动迁移到 `settings.json`。Copilot CLI v0.0.422+ 支持 user-level hooks）。
 
 #### 教训
 
@@ -1027,9 +1042,11 @@ let z = l ? Promise.resolve(void 0) : eB(t, true, r, u, {...});
 
 #### 相关 issue / 文档
 
-- safety-net 主仓库 issue 24：https://github.com/kenryu42/claude-code-safety-net/issues/24
-- Copilot CLI plugin hook 不加载：https://github.com/github/copilot-cli/issues/2540
-- Copilot CLI hook 配置规范：https://docs.github.com/en/copilot/concepts/agents/coding-agent/about-hooks
+- 参考官方文档[use-hooks](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-hooks)：Copilot CLI 的 hooks（仓库级 `.github/hooks/`、用户级 `~/.copilot/hooks/`、`settings.json` 的 `hooks` 键）
+- 参考官方文档[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)：用户级 `~/.copilot/hooks/` 与内联 `hooks` 键
+- [coding agent hooks 规范](https://docs.github.com/en/copilot/concepts/agents/coding-agent/about-hooks)：hook 配置 schema（cloud agent 侧）
+- safety-net 主仓库 issue：[#24](https://github.com/kenryu42/claude-code-safety-net/issues/24)
+- Copilot CLI plugin hook 不加载：[#2540](https://github.com/github/copilot-cli/issues/2540)
 
 ---
 
@@ -1054,11 +1071,11 @@ cd 进父目录时，让 direnv 把父目录 hook 软链到所有子目录的 `.
 link_into_subdirs "$PWD/.github/hooks/safety-net.json" '.github/hooks/safety-net.json'
 ```
 
-direnv 本身不能改 copilot 找 hook 的路径（copilot 是独立进程读文件系统），它只是帮你**自动维护 symlink 实体**。如果不想限定子项目而是想全局生效，把 hook 搬到 `~/.copilot/config/hooks/safety-net.json` 即可。
+direnv 本身不能改 copilot 找 hook 的路径（copilot 是独立进程读文件系统），它只是帮你**自动维护 symlink 实体**。如果不想限定子项目而是想全局生效，把 hook 搬到 `~/.copilot/hooks/safety-net.json` 即可。
 
 #### 教训
 
-- "项目级 hook" = **当前 git root 级**，不是当前工作区根级。多 repo 工作区要么走 user-level hook（`~/.copilot/config/hooks/`），要么自己分发文件。
+- "项目级 hook" = **当前 git root 级**，不是当前工作区根级。多 repo 工作区要么走 user-level hook（`~/.copilot/hooks/`），要么自己分发文件。
 - 改 hook 文件 / 加新 symlink 后，**当前 copilot session 不会受影响**（hook 启动时一次性加载），下次启动 copilot 才生效。
 - `direnv allow` **基于 `.envrc` 内容 hash 授权**：改一次 `.envrc` 就要重新 allow 一次，hash 不变之后 cd 进出都自动加载，不需要每次 allow。
 
@@ -1157,7 +1174,7 @@ function bBt(t, e, r, n) {
 1. **`.mcp.json`**：Claude Code / Cursor / Copilot CLI 共用的"项目级 MCP 配置"事实标准。Copilot CLI 后来跟进支持这个格式（[#2938](https://github.com/github/copilot-cli/issues/2938)），以兼容 Claude Code 生态。
 2. **`.github/mcp.json`**：Copilot CLI 专有的项目级 MCP 配置（Claude Code / VS Code 不读）。遵循 GitHub 的 `.github/` 约定（类似 `.github/copilot-instructions.md`、`.github/workflows/`），跟 `.mcp.json` 同格式同行为。选哪个看团队偏好——跨编辑器通用用 `.mcp.json`，符合 GitHub 目录惯例用 `.github/mcp.json`。
 3. **`.vscode/mcp.json`**：VS Code 原生的 MCP 配置，遵循 VS Code 的 `settings.json` / `tasks.json` 等惯例。有完整的变量系统（`inputs` / `${env:}` / `${workspaceFolder}`）。Copilot CLI 曾短暂支持读取这个文件，后改为推荐迁移到 `.mcp.json`，社区有抱怨（[#3019](https://github.com/github/copilot-cli/issues/3019)、[#3059](https://github.com/github/copilot-cli/issues/3059)）。
-4. **`~/.copilot/mcp-config.json`**：Copilot CLI 的用户级全局配置。适合放全局性的 MCP server（如 GitHub MCP），不跟随项目走。优先级最低，会被同名 workspace 配置覆盖。
+4. **`~/.copilot/mcp-config.json`**：Copilot CLI 的用户级全局配置。适合放全局性的 MCP server（如 GitHub MCP），不跟随项目走。优先级最低，会被同名 workspace 配置覆盖（参考官方文档[add-mcp-servers](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)、[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)：项目级 `.mcp.json` / `.github/mcp.json` 优先于用户级 `~/.copilot/mcp-config.json`）。
 
 #### 实际使用建议
 
@@ -1167,11 +1184,12 @@ function bBt(t, e, r, n) {
 
 #### 相关 issue / 文档
 
-- VS Code MCP 配置参考：https://code.visualstudio.com/docs/copilot/reference/mcp-configuration
-- VS Code MCP 文档：https://code.visualstudio.com/docs/copilot/chat/mcp-servers
-- Copilot CLI plugin 参考（含加载优先级图）：https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference
-- Copilot CLI 添加 `.mcp.json` 支持：https://github.com/github/copilot-cli/issues/2938
-- 社区抱怨需要两份配置：https://github.com/github/copilot-cli/issues/3019
+- 参考官方文档[add-mcp-servers](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)：Copilot CLI 加 MCP server、用户级 vs 项目级优先级
+- 参考官方文档[cli-plugin-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference)：含加载优先级图
+- [VS Code MCP 配置参考](https://code.visualstudio.com/docs/copilot/reference/mcp-configuration)
+- [VS Code MCP 文档](https://code.visualstudio.com/docs/copilot/chat/mcp-servers)
+- Copilot CLI 添加 `.mcp.json` 支持：[#2938](https://github.com/github/copilot-cli/issues/2938)
+- 社区抱怨需要两份配置：[#3019](https://github.com/github/copilot-cli/issues/3019)
 - VS Code 源码 `mcpWorkbenchService.ts`：workspace folder 直接拼 `.vscode/mcp.json`
 - VS Code 源码 `mcpRegistry.ts`：`_replaceVariablesInLaunch()` → `configurationResolverService`
 - VS Code 源码 `pluginParsers.ts`：`resolveMcpServersMap()` 兼容 `mcpServers` 和 `servers` 两种 key
@@ -1313,6 +1331,35 @@ headers 里硬编码 PAT。文件 `chmod 600` + 不入版本控制。
 
 ## Skills 发现
 
+Copilot CLI 的 skill 来自三类位置，CLI 内置 `/skills` 帮助与官方文档一致（参考官方文档[add-skills](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills)、[about-agent-skills](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills)、[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)）：
+
+- **项目级**（随 cwd→git root walk-up 收录，boundary = git root，无 git 回退 `$HOME`；source `project` / `inherited`）：`.github/skills/`、`.agents/skills/`、`.claude/skills/`
+- **个人级**（固定路径；source `personal-copilot` / `personal-agents`）：`~/.copilot/skills/`、`~/.agents/skills/`
+- **自定义 / 内置**：`/skills add <dir>` 或 env `COPILOT_SKILLS_DIRS`（逗号分隔绝对路径，source `custom`）；CLI 安装目录的 `builtin-skills/`（source `builtin`）
+
+CLI 内置 `/skills` 帮助原文（`app.js` 字面量）就是这份清单：
+
+```text
+Skills are loaded from:
+• Project: .github/skills/, .agents/skills/, or .claude/skills/
+• Personal: ~/.copilot/skills/ or ~/.agents/skills/
+• Custom: Directories added via /skills add
+```
+
+个人级 `~/.copilot/skills` 的解析见源码（`COPILOT_HOME` 可整体改写 configDir，因而**无 `config/` 段**）：
+
+```js
+// app.js — mtt：个人级 skill 根 = configDir/skills
+function mtt(t) {
+  let e = t?.configDir ?? process.env.COPILOT_HOME ?? join(homedir(), ".copilot");
+  return join(e, "skills");        // = ~/.copilot/skills
+}
+```
+
+**同名时项目级覆盖个人级**（参考官方文档[add-skills](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills)、[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)）。Custom agents 同理：个人级 `~/.copilot/agents/`、项目级 `.github/agents/`，同名项目级优先（参考官方文档[create-custom-agents-for-cli](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli)）。
+
+⚠️ **`<project>/.copilot/skills` 不是任何一种约定，Copilot CLI 不读它。** 项目级只有 `.github/skills`、`.agents/skills`、`.claude/skills` 三种；`.copilot/skills` 仅在 home（`~/`）下作为**个人级**（`~/.copilot/skills`）才有效。别把个人级路径照搬成项目里的 `<project>/.copilot/skills` 软链——那条不会被发现。
+
 ### 项目级 `.agents/skills` 上溯停在 git root（与 hooks/mcp 同款）
 
 #### 症状
@@ -1323,18 +1370,7 @@ headers 里硬编码 PAT。文件 `chmod 600` + 不入版本控制。
 
 Skill 发现走的是和 `.mcp.json`、`.github/hooks/` 完全相同的 `bBt` walk-up 函数，**boundary 同样是 git root**（即 `projectRoot`），所以子项目自己是 git repo 时上溯立刻停在子项目根，看不到父目录的 `.agents/skills`。
 
-具体扫的 3 个 convention（每个独立调一次 `bBt`）：
-
-- `.github/skills`
-- `.agents/skills`
-- `.claude/skills`
-
-外加两个 user 级固定路径：
-
-- `~/.copilot/config/skills` → `source: "personal-copilot"`
-- `~/.agents/skills`         → `source: "personal-agents"`
-
-以及 `builtin-skills/`（CLI 安装目录里）和 env `COPILOT_SKILLS_DIRS`（逗号分隔的额外路径，最高优先）。
+扫的就是本节开头那三类项目级 convention（`.github/skills` / `.agents/skills` / `.claude/skills`，每个独立调一次 `bBt`）；个人级 `~/.copilot/skills`（`personal-copilot`）、`~/.agents/skills`（`personal-agents`）、`builtin-skills/` 与 env `COPILOT_SKILLS_DIRS`（最高优先）走固定路径、不受 walk-up boundary 限制。
 
 #### 代码支撑（`app.js:~676` 附近）
 
@@ -1357,7 +1393,7 @@ async function LIi(t, e=[], r, n=[], o, s={}) {
     ...await j7e(".claude",  "skills", t, o),
   ] : [];
   let c = a ? [
-    { path: GR.join(ma(r,"config"), "skills"),       source: "personal-copilot" },
+    { path: GR.join(ma(r,"config"), "skills"),       source: "personal-copilot" },  // 1.0.66 实为 mtt(): join(configDir, "skills") = ~/.copilot/skills（无 config/ 段）
     { path: GR.join(homedir(), ".agents", "skills"), source: "personal-agents"  },
   ] : [];
   let d = [
@@ -1388,11 +1424,11 @@ for (;;) {
 | ----------------- | -------------------------------- | -------------------------------- | ------------------------------------------------------ |
 | Walk-up           | 否（只看 git root 一层）         | 是（cwd→git root，沿途合并）     | 是（cwd→git root，沿途收录）                           |
 | Boundary          | git root                         | git root                         | git root；**没 git repo 时回退 `$HOME`**               |
-| User scope 路径   | `~/.copilot/config/hooks/`       | `~/.copilot/mcp-config.json`     | `~/.copilot/config/skills` + **`~/.agents/skills`**    |
+| User scope 路径   | `~/.copilot/hooks/`              | `~/.copilot/mcp-config.json`     | `~/.copilot/skills` + **`~/.agents/skills`**           |
 | Source 标签       | -                                | `Project` / `Inherited`          | `project` / `inherited` / `personal-agents` / `builtin`|
 | Env 覆盖          | -                                | -                                | `COPILOT_SKILLS_DIRS`（逗号分隔，绝对路径）            |
 
-注意 skills 多了一条 user-level 路径 **`~/.agents/skills`**——这是大多数人能看到 `lark-*` 之类 skill 的实际来源（不是 `~/.copilot/config/skills`，那条多数人没建过）。
+注意 skills 多了一条 user-level 路径 **`~/.agents/skills`**——这是大多数人能看到 `lark-*` 之类 skill 的实际来源（`~/.copilot/skills` 那条多数人没建过）。
 
 另一个重要细节：**boundary 的 fallback 是 `$HOME` 而不是 `/`**。所以在"父目录不是 git repo、子项目也不是 git repo"（即 cwd 完全不在任何 git repo 内）时，会一路扫到家目录，反而能拿到祖先 `.agents/skills`。一旦 cwd 进入任何 git repo，boundary 就钉到那个 git root 上了。
 
@@ -1440,6 +1476,13 @@ COPILOT_SKILLS_DIRS=/abs/path/to/.agents/skills copilot
 - **`.agents/skills` 和 `~/.agents/skills` 是两条独立路径**：前者走 walk-up + git root boundary，后者走固定 user-level。这也是为什么 `~/.agents/skills/lark-*` 永远在但项目里 `.agents/skills/<x>` 时有时无。
 - 想验证是路径问题还是 SKILL.md 解析问题：先把目标 skill 临时软链到 `~/.agents/skills/`，能出现就是路径问题；仍然不出现就检查 `SKILL.md` frontmatter（`name` 必须匹配 `^[a-zA-Z0-9][a-zA-Z0-9._\- ]*$` 且 ≤64 字符；`description` ≤1024 字符；`user-invocable: false` 会从用户列表里隐藏；`disable-model-invocation: true` 会从模型列表里隐藏）。
 - skill 改了之后**当前 session 不会重载**，下次启动 copilot 才生效（`Y3` 内部还有按 `JSON.stringify(args)` 的缓存 `rbe`）。
+
+#### 相关 issue / 文档
+
+- 参考官方文档[add-skills](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills)：项目级/个人级 skill 目录、`SKILL.md` frontmatter、`allowed-tools` 预批
+- 参考官方文档[about-agent-skills](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills)：skill 概念与跨产品（CLI / IDE / cloud agent）支持
+- 参考官方文档[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)：`~/.copilot/` 目录布局（含 `skills/`、`agents/`）
+- 参考官方文档[create-custom-agents-for-cli](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/create-custom-agents-for-cli)：custom agents 的个人级/项目级目录与优先级
 
 ---
 

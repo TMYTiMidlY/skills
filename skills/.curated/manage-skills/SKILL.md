@@ -45,6 +45,10 @@ ln -s ../../.agents/skills <target>/.config/agents/skills
 # 其他工具按目标目录层级调整相对路径，完整表见仓库 README
 ```
 
+**原生扫 `.agents/skills/` 的 CLI 不需要第 2 层**：GitHub Copilot CLI、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等直接读 `.agents/skills/`（项目级，沿 cwd→git root 收录）和 `~/.agents/skills/`（个人级），软链 hub 即被发现，无需再建工具专属目录。
+
+⚠️ 易踩坑：**项目级**的 skill 约定目录只有 `.github/skills`、`.agents/skills`、`.claude/skills` 三种，**没有** `.copilot/skills`。`~/.copilot/skills` 只在 home（个人级）下有效；别照着"个人级 `~/.copilot/skills`"在项目里建 `<project>/.copilot/skills` 软链——没有 CLI 会把它当项目级 skill 读。
+
 注意：symlink 的目标相对路径是按**链接所在目录**解析的；不确定层级时用绝对路径更稳。
 
 好处：
