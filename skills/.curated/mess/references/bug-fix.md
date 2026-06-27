@@ -528,11 +528,11 @@ https://update.code.visualstudio.com/1.115.0/cli-linux-x64/stable
 - 经 9090 把 TUN 切一次：`curl.exe -X PATCH http://127.0.0.1:9090/configs -d '{"tun":{"enable":false}}'` 再 `-d '{"tun":{"enable":true}}'`（或在 Mihomo GUI 切 TUN 开关）。之后 1810 WSL 经 fake-ip 访问该自建服务恢复。
 - TUN 无关的稳定备选（本次未采用）：把该 remote 指向 mesh `10.144.18.10:222`（被 `route-exclude` 覆盖，开不开 TUN 都 0.6s 稳）。
 
-## 「总是断网」疑案：ping 网关高丢包 ≠ 断网（CoPP 假象），分源 IP 绑定分链路——根因未确证
+## 「总是断网」：很可能是 WSL 内 EasyTier 节律性搞坏整网（挪宿主机后解决）——附 ping 网关 ≠ 断网（CoPP）、分源 IP 绑定分链路排查
 
 > 2026-06-22 | WSL2 mirrored networking（eth0 直接是宿主机 LAN 段）+ 宿主机 Mihomo（系统代理，非 TUN）+ EasyTier mesh | 校园网：有线接入（认证网关是「身份认证系统」门户）+ WiFi 接入（另一网段）
 >
-> ⚠️ **未结案**记录：排查步骤与客观事实都列出，但**最终没能确证根因**。体感最后把它归到「WSL 内跑 EasyTier」，可证据并不完全自洽，留作存疑。
+> **较可能的根因：WSL 内跑 EasyTier**——疑似把整机网络**节律性**搞坏（断窗恒定 ~5min、标准差极小，像软件定时器而非随机弱网），且 **EasyTier 挪到 Windows 宿主机后就好了**。下面排查当时被 CoPP / 分链路假象带过弯路；机制没逐拍对死，姑且把账先记在 EasyTier 头上。
 
 ### 症状（客观）
 
@@ -547,14 +547,15 @@ https://update.code.visualstudio.com/1.115.0/cli-linux-x64/stable
 3. 排除硬件：Windows 事件日志全天有线网卡（I225-V / `e2fnexpress`）**无对应 link down/up（事件 27/32）**、网卡统计丢包/错误=0 → 物理 link 一直 UP。排除 IP 冲突（无 `Tcpip` 4198/4199）、DHCP（租约数天，非 5 分钟）。
 4. **关键反转**：在 ping 网关 100% 丢包的**同一刻**，直连公网 TCP、直连校内 TCP、走代理出网**全部 OK**。→ ping 网关丢包是**网关对「发给自己的」ICMP 做控制平面限速（CoPP, Control Plane Policing）**的假象，转发平面一直正常。**`ping 网关` 根本不是可靠的断网指标**。
 5. 但历史上某些断窗（WiFi 断开期）TCP 也真全断（含网关 `:80` 门户）→ 确有真实断网，只是被 ICMP 假象混淆了。
-6. **决定性实测——分源 IP 绑定**：宿主机用 .NET `TcpClient` 分别 `Client.Bind(有线源IP)` 与 `Bind(WiFi源IP)`，连同一公网目标做 TCP，连续 87 次：`wired=FAIL ×87 / wifi=OK ×87`。→ **有线链路本身断了，WiFi 一直好**。（Windows strong host model 下绑源 IP 会强制走对应接口，所以这能区分两条物理链路；Linux 等价物是 `ping -I` / `curl --interface`。）
-7. 时间线吻合：WiFi 断开的 7 小时里只剩有线 → 有线被迫承载、暴露为周期断（25 次）；**WiFi 一连上的那一秒 EasyTier 立即稳定**（出网 failover 到 WiFi，掩盖有线故障）；之后有线持续 FAIL（闲置后认证会话不保活、彻底下线）。
+6. **决定性实测——分源 IP 绑定**：宿主机用 .NET `TcpClient` 分别 `Client.Bind(有线源IP)` 与 `Bind(WiFi源IP)`，连同一公网目标做 TCP，连续 87 次：`wired=FAIL ×87 / wifi=OK ×87`。当时据此以为**有线链路本身坏**——但这跟「WSL 内 EasyTier」并不矛盾（见下研判）。（Windows strong host model 下绑源 IP 会强制走对应接口，所以这能区分两条物理链路；Linux 等价物是 `ping -I` / `curl --interface`。）
+7. 时间线：只剩有线时周期断（25 次）、**WiFi 一连上 EasyTier 立即稳**——当时读成「有线坏、WiFi 兜底」；但结合「断窗恒定 ~5min」「挪 EasyTier 出 WSL 后好」，现在更倾向是 WSL 内 EasyTier 在周期性作祟（见下研判）。
 
-### 客观事实 vs 没说清的地方
+### 根因研判与残留疑点
 
-- **客观**：CoPP 假象、断窗恒定 ~5min、分源 bind 出 `wired FAIL / wifi OK`、WiFi 一上 EasyTier 就稳——都实测。
-- **没确证**：分源 bind 在**宿主机裸 TCP** 层就测出有线全 FAIL，指向「有线接入本身」；但最后**把 EasyTier 从 WSL 挪到宿主机后体感好转**，又指向「WSL 内 EasyTier」。两者不完全自洽（宿主机裸 TCP 失败按理跟 WSL 内 EasyTier 无关）。**这次没试过降 EasyTier MTU**，无法验证是否同类坑。
-- **相关旧坑（另一次、独立事件）**：之前在 WSL 内部署 EasyTier 踩过 **MTU 不匹配**、要手动降 MTU 才好；后改为不在 WSL 内组网、EasyTier 跑宿主机。详见 `network` skill 的 EasyTier 客户端「不在 WSL 内跑 EasyTier」记录。
+- **较可能的元凶：WSL 内跑 EasyTier**。断窗恒定 ~5min（标准差极小）像某个周期动作/重连定时器，不像随机弱网；而且**把 EasyTier 从 WSL 挪到 Windows 宿主机后就不犯了**——这两点让它嫌疑最大。
+- **那个「有线 FAIL」不构成反证**：分源 bind 在宿主机裸 TCP 测出 `wired FAIL / wifi OK`，一度让人以为「有线接入本身坏」。但 WSL2 mirrored 模式下 WSL 与宿主机共享网络栈，WSL 内 EasyTier 动路由/虚拟网卡是可能波及宿主机有线那一跳的——所以这结果跟「WSL 内 EasyTier」并不冲突，只是当时没往这想。
+- **没对死的部分**：没把「EasyTier 周期动作」与「断窗」做时间对齐，这次也没试过降 EasyTier MTU——所以是倾向性判断，不是铁证。
+- **相关旧坑（另一次、独立事件）**：之前在 WSL 内部署 EasyTier 还踩过 **MTU 不匹配**、要手动降 MTU 才好；后来干脆不在 WSL 内组网、EasyTier 跑宿主机。详见 `network` skill 的 EasyTier 客户端「不在 WSL 内跑 EasyTier」记录。
 
 ### 教训（与根因无关、可独立复用）
 
@@ -563,4 +564,4 @@ https://update.code.visualstudio.com/1.115.0/cli-linux-x64/stable
 3. **WSL2 mirrored 模式**：WSL 网络 == 宿主机网络，WSL 内的 ICMP 假象同样会误导；要在宿主机原生侧、并用 TCP/分源去验证，别用 WSL 的 ping 下结论。
 4. **断窗时长恒定（标准差小）= 定时器/超时机制**的强信号，区别于随机弱网（时长乱分布）。用 EasyTier 这类长连接服务的 peer removed/added 日志反推链路通断窗口很省事。
 
-关键词：`总是断网疑案`、`未确证根因`、`ping 网关 100% 丢包但能上网`、`CoPP 控制平面限速`、`ICMP rate limit`、`ping 网关不是断网指标`、`WSL2 mirrored networking`、`有线 WiFi 双链路兜底`、`failover 掩盖单链路故障`、`分源 IP 绑定测试`、`TcpClient Bind 源地址`、`strong host model`、`ping -I / curl --interface 分链路`、`校园网有线准入`、`断窗时长恒定 ~5 分钟`、`EasyTier peer removed 反推通断`、`WSL 内 EasyTier 存疑`
+关键词：`总是断网`、`WSL 内 EasyTier 节律性搞坏整网`、`挪宿主机解决`、`ping 网关 100% 丢包但能上网`、`CoPP 控制平面限速`、`ICMP rate limit`、`ping 网关不是断网指标`、`WSL2 mirrored networking`、`分源 IP 绑定测试`、`TcpClient Bind 源地址`、`strong host model`、`ping -I / curl --interface 分链路`、`断窗时长恒定 ~5 分钟`、`EasyTier peer removed 反推通断`
