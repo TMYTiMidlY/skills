@@ -9,14 +9,14 @@ description: 本地软件、CLI 工具与自托管服务的客户端配置与排
 
 reference 文件的目标：让**任意** agent 或用户照着就能在**自己的**设备上搭起来。改某类问题的 reference 时遵循：
 
-1. **概念优先、说人话**：先讲清"是什么、为什么这么做、解决什么问题"，再给细节；代码黑话/术语只在影响理解时才解释，不重要的略过。
-2. **可复现、不绑定本机**：隐去具体主机名 / IP / 用户名 / 私有路径，用占位符（如 `<入口VPS>`、`<user>`）。路径、目录名这类"换台机器就不同"的东西讲清作用即可，别当硬性要求。
+1. **概念优先、说人话**：先讲清“是什么、为什么这么做、解决什么问题”，再给细节；代码黑话/术语只在影响理解时才解释，不重要的略过。
+2. **可复现、不绑定本机**：隐去具体主机名 / IP / 用户名 / 私有路径，用占位符（如 `<入口VPS>`、`<user>`）。路径、目录名这类“换台机器就不同”的东西讲清作用即可，别当硬性要求。
 3. **命令 / 示例文件优先**：能贴一段可直接套用的 compose / 配置 / 脚本 / 命令就贴出来（敏感值留占位符），胜过大段散文。
-4. **每条说法要有据**：自己实测的直接陈述（不用写"实测"二字）；来自官方/外部的**挂可点开的官方文档链接**；拿不准的标注不确定，别凭记忆编。多给客观证据（版本号、命令输出、API 返回等）。
+4. **每条说法要有据**：自己实测的直接陈述（不用写“实测”二字）；来自官方/外部的**挂可点开的官方文档链接**；拿不准的标注不确定，别凭记忆编。多给客观证据（版本号、命令输出、API 返回等）。
 5. **踩坑 / 排障紧贴主题**：记录真实踩过的坑和诊断/恢复办法，但只留与本主题强相关、对复现有用的；琐碎、一次性、跑题的不写。
-6. **少写"给 agent 自动执行的操作流程"**：用什么 CLI 工具、要不要 sudo、怎么备份回滚、删文件用什么——这些是操作者临场决定的事，不进 reference，reference 只描述**目标产物长什么样**。
+6. **少写“给 agent 自动执行的操作流程”**：用什么 CLI 工具、要不要 sudo、怎么备份回滚、删文件用什么——这些是操作者临场决定的事，不进 reference，reference 只描述**目标产物长什么样**。
    - **例外：面向人的操作可以写详细。** GUI 点选路径、必须物理接触设备 / 进某台机器桌面才能做的步骤，是**只能由人来做、agent 读了也不会自动执行**的部署说明——这类写具体反而有用（人照着点）。判断标准：这段是给 agent 读了去跑命令的，还是给人读了自己动手的？后者放开写。
-7. **不过度限制、少堆告诫**：陈述事实与权衡（必要时给出被否决的备选及代价），让读者自己判断，少用"绝不能 / 务必"这类防御句；复杂链路优先用 GitHub 能渲染的图（mermaid / 表格 / blockquote）。
+7. **不过度限制、少堆告诫**：陈述事实与权衡（必要时给出被否决的备选及代价），让读者自己判断，少用“绝不能 / 务必”这类防御句；复杂链路优先用 GitHub 能渲染的图（mermaid / 表格 / blockquote）。
 
 ## SSH
 
@@ -54,6 +54,10 @@ ChatGPT 网页端 Pro / Extended 自动化、`steipete/oracle` browser engine、
 
 WSL 挂载 Windows 盘、UNC/SMB 共享、`drvfs/9p` 小文件性能、CIFS 凭据与 `mount.cifs` 排障见 [references/mount.md](references/mount.md)。
 
+## Linux 回收站（trash-cli / gio trash）
+
+`trash-cli` 与 GLib `gio trash` 是两套实现但遵循同一 FreeDesktop Trash 规范（同一 `~/.local/share/Trash/`、`files/`+`info/*.trashinfo` 配对、`.Trash-$uid` 卷内逻辑），互通可混用。覆盖：回收站“两半”结构与**单个损坏/空 `.trashinfo` 会让 `trash-rm`/`trash-empty` 对整库罢工**（`unable to parse 'Path'`、删掉坏 info 即恢复，list 不受影响故“list 正常但 rm 不动”即疑此）、**`trash-rm` 匹配规则**（pattern 以 `/` 开头→整路径 fnmatch，否则→只匹配 basename；故 `*/x` 永不命中，附 `filter.py` 源码与正确写法）、**gio 无选择性永久删单项**（只有 `--empty` 全清/`--list`/`--restore`/`-f`，定点永久删只能用 `trash-rm`，附 `gio-tool-trash.c` 源码）、**删挂载盘文件两者同规范**落到卷顶层 `.Trash/$uid` 或 `.Trash-$uid`（gio 优先合法全局 `.Trash`；mount.md / windows.md 仅留指针与 NTFS/WSL 专属角度）、uv 装的 trash-cli 在非登录 shell PATH 缺失需 `bash -lc`。见 [references/trash.md](references/trash.md)。
+
 ## EasyTier 客户端（Windows）
 
 EasyTier 组网的 Windows 客户端：安装、TOML 配置模板、Peer 配置、与 VPS 服务端的差异、NSSM 服务排障、Windows 防火墙见 [references/easytier.md](references/easytier.md)。**VPS 服务端完整安装与配置（全 listener、出口节点、中继策略等）由 `vps-maintenance` skill 覆盖。**
@@ -86,7 +90,7 @@ FunASR、Fun-ASR-Nano、Paraformer + VAD + Punc + CAM++、SenseVoiceSmall、Whis
 
 ## 自托管 Markdown 文件分享（doc-share）
 
-把本地 Markdown / 文件推到自托管 WebDAV、拿 capability URL 分享链接、以及给 Markdeep viewer 写作的惯例（`[#key]` 引用 vs `[^name]` 脚注可选、GFM 兼容场景反而要避开 `[#key]`、研报长文模板）见 [references/doc-share.md](references/doc-share.md)。上传凭据约定从 `~/.env` 读 `WEBDAV_URL / WEBDAV_USER / WEBDAV_PASS`。同 reference 末尾还覆盖 **copyparty**（Python sfx zipapp，带浏览器 UI + 账号系统 + `POST /?share` 动态分享 API；适用"登录后创建临时分享链接"场景）的完整部署方案（按官方 contrib 模板）、官方 argon2 hash 流程、权限边界自检、10 条踩坑（含 `python3-argon2` 缺失引发的 restart 死循环、明文 diff 泄密、`xff-src:` 误覆盖等）。
+把本地 Markdown / 文件推到自托管 WebDAV、拿 capability URL 分享链接、以及给 Markdeep viewer 写作的惯例（`[#key]` 引用 vs `[^name]` 脚注可选、GFM 兼容场景反而要避开 `[#key]`、研报长文模板）见 [references/doc-share.md](references/doc-share.md)。上传凭据约定从 `~/.env` 读 `WEBDAV_URL / WEBDAV_USER / WEBDAV_PASS`。同 reference 末尾还覆盖 **copyparty**（Python sfx zipapp，带浏览器 UI + 账号系统 + `POST /?share` 动态分享 API；适用“登录后创建临时分享链接”场景）的完整部署方案（按官方 contrib 模板）、官方 argon2 hash 流程、权限边界自检、10 条踩坑（含 `python3-argon2` 缺失引发的 restart 死循环、明文 diff 泄密、`xff-src:` 误覆盖等）。
 
 服务端（Caddy site block、WebDAV handler、viewer 实现、目录权限）由 `vps-maintenance` skill 覆盖。如果源文件需要先做格式转换，看 [references/format-conversion.md](references/format-conversion.md)。
 

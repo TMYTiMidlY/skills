@@ -1,6 +1,6 @@
 # Windows / WSL 主机侧速记
 
-> 跑在 Windows 上的命令行、终端、PowerShell 版本选择、UAC 弹出方式等"宿主 OS 层面"的小经验。
+> 跑在 Windows 上的命令行、终端、PowerShell 版本选择、UAC 弹出方式等“宿主 OS 层面”的小经验。
 > WSL 内 Linux 服务的网络坑（wslrelay、portproxy、Mihomo TUN、Docker IPv6 dual-stack）见 [`network.md`](network.md)，不在这里重复。
 
 ## PowerShell 5.1 vs PowerShell 7（pwsh）
@@ -30,7 +30,7 @@ WSL 端跑了对照实验：
 | `netsh interface portproxy show all` (native exe) | GBK | **GBK**（一样） | 两版都 → 炸 |
 | `[Console]::OutputEncoding` 自报 | `gb2312/936` | `gb2312/936` | 自报没区别 |
 
-结论：**pwsh 7 只在调用 .NET cmdlet 时输出 UTF-8；一旦穿过 pwsh 调系统的 native exe (`netsh.exe`/`reg.exe`/`ipconfig.exe` 等)，stdout 仍按系统 codepage**（中文 Windows 是 GBK），pwsh 不做转码。所以 "用 pwsh 7 就能避开 GBK 坑" 这种笼统说法是错的——只对 cmdlet 成立。
+结论：**pwsh 7 只在调用 .NET cmdlet 时输出 UTF-8；一旦穿过 pwsh 调系统的 native exe (`netsh.exe`/`reg.exe`/`ipconfig.exe` 等)，stdout 仍按系统 codepage**（中文 Windows 是 GBK），pwsh 不做转码。所以 “用 pwsh 7 就能避开 GBK 坑” 这种笼统说法是错的——只对 cmdlet 成立。
 
 ### 受害场景与修复（按调用类型）
 
@@ -109,6 +109,8 @@ WSL 里直接调 `powershell.exe` 起的是**当前用户态非 admin** PowerShe
 
 ## 资源管理器回收站 vs `trash-put`
 
-Windows 的"回收站"只对 `Shell:RecycleBinFolder` 协议（资源管理器右键删 / `Recycle.Bin` API）有效，对 PowerShell `Remove-Item`、WSL `rm`、WSL `trash-put` 都不生效。
+Windows 的“回收站”只对 `Shell:RecycleBinFolder` 协议（资源管理器右键删 / `Recycle.Bin` API）有效，对 PowerShell `Remove-Item`、WSL `rm`、WSL `trash-put` 都不生效。
 
-WSL 端要恢复 `/mnt/c/...` 误删，应在 WSL 里用 `trash-put`：trash-cli 会在该 NTFS 卷的挂载点根目录建 `.Trash-<UID>/`，删错可在 WSL 里 `trash-restore` 恢复。Windows 端虽然看不到资源管理器回收站条目，但 WSL 视角下文件是可恢复的，比 `rm` 安全得多。
+WSL 端要恢复 `/mnt/c/...` 误删，应在 WSL 里用 `trash-put` 而不是 `rm`，事后 `trash-restore` 恢复；Windows 资源管理器看不到这些条目，但从 WSL 视角文件可恢复，比 `rm` 安全得多。
+
+> `trash-put` 在 NTFS 卷根建卷内回收站的通用机制、trash-cli 与 `gio trash` 同规范互通、`trash-rm` 匹配规则、坏 `.trashinfo` 让 trash-rm 整体失效等见 [trash.md](trash.md)。
