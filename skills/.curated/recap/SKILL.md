@@ -13,9 +13,9 @@ description: 会话收尾盘点——回顾本 session 做过的事，并揪出"
 
 你当前的上下文是**有损**的：长会话早期对话被压缩，用户某句"顺便把 X 也改了"可能已经不在你视野里。所以单一信源都不够，必须**多源交叉**：
 
-1. **本 session 的原始 turns**（最重要）——回读本机 `~/.copilot/session-store.db`，逐条看用户**实际说过的每一句话**，而不是你记得的版本。这是唯一能抓出"压栈遗忘"项的办法。
-   - 用 `scripts/dump_session.py <session-id>` dump 出全部 turn（脚本只读打开 DB）。
-   - session-id 来自 system context 里的 session 文件夹名（`~/.copilot/session-state/<id>/`）。
+1. **本 session 的原始 turns / 事件流**（最重要）——回读本机 session 状态目录里的存档，逐条看用户**实际说过的每一句话**，而不是你记得的版本。这是唯一能抓出"压栈遗忘"项的办法。
+   - 用 `scripts/` 里的 dump 脚本（按需 `--format text` 通读、`--format html` 留档）拉出全部条目。
+   - **session id 永远用 system prompt 给的 session 文件夹名**（即 `~/.copilot/session-state/<id>/` 里的 `<id>`），**不要追着对话里出现的别的 id 跑**——对话里经常会出现历史会话 id、文件名里的 id 等，那些不是当前会话。这是高频踩坑点。
    - ⚠️ live store 滞后最近一两个 turn，最新一轮可能还没落库——这部分用你自己的上下文补。
 2. **plan.md 与 todos**——session 文件夹下的 plan.md、SQL `todos` 表里没标 done 的项。
 3. **真实世界状态**，别凭印象：
@@ -25,7 +25,7 @@ description: 会话收尾盘点——回顾本 session 做过的事，并揪出"
 
 ## 工作流程
 
-1. **先 dump 原始对话**：跑 `scripts/dump_session.py <session-id>`，通读用户的每一条消息。逐条问自己："这件事最后做了吗？做完整了吗？还是被后面的任务压下去忘了？"
+1. **先 dump 原始对话**：跑 `scripts/` 里的 dump 脚本通读用户的每一条消息。逐条问自己："这件事最后做了吗？做完整了吗？还是被后面的任务压下去忘了？"
 2. **交叉核对状态**：对照 plan.md / todos / `git status` / 文件系统 / 远端，确认每件"自以为做完"的事**真的**落地了。
 3. **grep 验证关键承诺**：凡是"实现了某功能"的结论，回去 `grep` 确认代码/配置真的存在、真的生效，不要只凭你说过"我改好了"。
 4. **按下面的范式输出盘点报告**。
