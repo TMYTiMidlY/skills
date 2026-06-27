@@ -10,6 +10,7 @@
 - 未经用户明确指令，严禁自动执行 `git add` 或 `git commit`。
 - 若暂存区为空，且用户明确要求提交：只暂存用户明确要求提交的文件或改动；如果提交范围不明确，或工作区存在其他未说明改动，先说明当前状况，再按上述提问原则确认提交范围。
 - 若暂存区非空，且用户明确要求提交：先说明当前状况，再按上述提问原则确认提交范围。
+- 需要修正刚提交的内容时，优先用 `git commit --fixup=<commit>`（叠加一条 fixup 提交）而不是 `git commit --amend` 改写原提交，以保留清晰、可追踪、可审计的历史；要不要折叠（`git rebase -i --autosquash`）交由用户决定。
 - 未经用户**对发布动作本身**显式同意，严禁自动执行任何"对外发布 / 版本化"动作：`cz bump` / `git tag` / `git push --tags` / `git push --follow-tags` / `twine upload` / `npm publish` / `cargo publish` / `uv publish` / GitHub release 创建 / pypi 等任何注册仓库上传等。`--dry-run` / `--check` 之类只读探查可以做。**即使用户已经同意本轮的代码 commit，也要单独再确认一次发布动作**，不要把"commit + bump + push --follow-tags"打包成一步执行。
 - 删除文件时**强制使用 `trash-put` 代替 `rm`，无任何例外**。即使跨 filesystem（NTFS / drvfs / CIFS / FUSE / overlay 等）也用 `trash-put`：
   - 跨 filesystem 时 trash-cli 会在挂载点根目录建 `.Trash-<UID>/`，文件留在源 filesystem 内可恢复；不会自动跨 filesystem 拷回本地，不影响"可恢复"这一核心保证。
