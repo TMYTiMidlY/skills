@@ -163,6 +163,15 @@ enable_quic_proxy = false
 
 然后重启两端 EasyTier。只改一端可能仍走 QUIC。
 
+## 不在 WSL 内跑 EasyTier（用 Windows 宿主机）
+
+EasyTier 直接装在 **Windows 宿主机**上，别在 WSL 内部署组网：
+
+- WSL 内跑 EasyTier 踩过 **MTU 不匹配**——得手动把 EasyTier 的 MTU 降到匹配 WSL 网卡，否则丢包/不通。
+- 放宿主机跑就绕开了，也省得 WSL 网络栈（mirrored/NAT）再叠一层不确定性。
+
+> 另有一次「总是断网」最后**体感**归到 WSL 内 EasyTier（挪到宿主机后好转），但证据未完全自洽、根因未确证；排查细节（含 `ping 网关 ≠ 断网`、分源 IP 绑定分链路等可独立复用的方法论）见 `mess` skill 的「总是断网」疑案记录。
+
 ## Windows 防火墙
 
 EasyTier 首次运行时 Windows 会弹窗询问是否允许网络访问，点击允许后自动创建程序级规则（全端口放行），无需手动添加端口规则。

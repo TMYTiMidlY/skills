@@ -299,9 +299,5 @@ curl -k -I --connect-timeout 5 --max-time 8 https://<target>:<port>/
 
 ## EasyTier / WSL 组网杂项
 
-### MTU 问题（WSL 内组网，已弃用）
-
-曾在 WSL 内部署 EasyTier 时遇到过 MTU 不匹配问题——必须手动降低 EasyTier 的 MTU 以匹配 WSL 网卡的 MTU。
-
-**当前方案**：不再在 WSL 内配置组网，EasyTier 运行在 Windows 宿主机上，避免了此问题。
+**不推荐在 WSL 内跑 EasyTier**：会撞 MTU 不匹配等坑，改在 Windows 宿主机上跑。部署位置选择与 MTU 细节见 [easytier.md](easytier.md) 的「不在 WSL 内跑 EasyTier」。
 
