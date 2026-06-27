@@ -865,7 +865,7 @@ function bKr(t) {
 ```js
 // app.js — Nfi
 function Nfi(t) {
-  let e = ma(t, "config"),                       // = ~/.copilot（configDir 本身，无 config 子目录）
+  let e = ma(t, "config"),                       // = ~/.copilot（configDir）
       r = Yq(e, "copilot-instructions.md");
   return r ? {exists: true, path: r} : $M;
 }
@@ -1346,7 +1346,7 @@ Skills are loaded from:
 • Custom: Directories added via /skills add
 ```
 
-个人级 `~/.copilot/skills` 的解析见源码（`COPILOT_HOME` 可整体改写 configDir，因而**无 `config/` 段**）：
+个人级 `~/.copilot/skills` 的解析见源码（`COPILOT_HOME` 可整体改写 configDir）：
 
 ```js
 // app.js — mtt：个人级 skill 根 = configDir/skills
@@ -1364,7 +1364,7 @@ function mtt(t) {
 
 #### 症状
 
-工作区是"父目录套子项目"结构，父目录 `.agents/skills/<skill-name>/SKILL.md` 写好了。在父目录起 copilot 能看到 skill；`cd <subdir>` 启动 copilot，`/skills` 里看不到那些 skill，agent 提示词里 `<available_skills>` 也没有。`~/.agents/skills/` 下的 user-level skill（例如 `lark-*`）始终能看到，因此现象是"项目级 skill 漏掉、user 级 skill 正常"。
+工作区是"父目录套子项目"结构，父目录 `.agents/skills/<skill-name>/SKILL.md` 写好了。在父目录起 copilot 能看到 skill；`cd <subdir>` 启动 copilot，`/skills` 里看不到那些 skill，agent 提示词里 `<available_skills>` 也没有。`~/.agents/skills/` 下的 user-level skill 始终能看到，因此现象是"项目级 skill 漏掉、user 级 skill 正常"。
 
 #### 根因
 
@@ -1393,7 +1393,7 @@ async function LIi(t, e=[], r, n=[], o, s={}) {
     ...await j7e(".claude",  "skills", t, o),
   ] : [];
   let c = a ? [
-    { path: GR.join(ma(r,"config"), "skills"),       source: "personal-copilot" },  // 1.0.66 实为 mtt(): join(configDir, "skills") = ~/.copilot/skills（无 config/ 段）
+    { path: GR.join(ma(r,"config"), "skills"),       source: "personal-copilot" },  // 1.0.66 实为 mtt(): join(configDir, "skills") = ~/.copilot/skills
     { path: GR.join(homedir(), ".agents", "skills"), source: "personal-agents"  },
   ] : [];
   let d = [
@@ -1428,7 +1428,7 @@ for (;;) {
 | Source 标签       | -                                | `Project` / `Inherited`          | `project` / `inherited` / `personal-agents` / `builtin`|
 | Env 覆盖          | -                                | -                                | `COPILOT_SKILLS_DIRS`（逗号分隔，绝对路径）            |
 
-注意 skills 多了一条 user-level 路径 **`~/.agents/skills`**——这是大多数人能看到 `lark-*` 之类 skill 的实际来源（`~/.copilot/skills` 那条多数人没建过）。
+注意 skills 比 hooks/mcp 多了一条 user-level 路径 **`~/.agents/skills`**：它是跨工具共享个人 skill 的中立目录，独立于项目级 `.agents/skills`（后者才走 walk-up、boundary=git root）。
 
 另一个重要细节：**boundary 的 fallback 是 `$HOME` 而不是 `/`**。所以在"父目录不是 git repo、子项目也不是 git repo"（即 cwd 完全不在任何 git repo 内）时，会一路扫到家目录，反而能拿到祖先 `.agents/skills`。一旦 cwd 进入任何 git repo，boundary 就钉到那个 git root 上了。
 
@@ -1473,7 +1473,7 @@ COPILOT_SKILLS_DIRS=/abs/path/to/.agents/skills copilot
 #### 教训
 
 - "项目级 skill" 跟 hook/mcp 一样 = **当前 git root 级**，不是用户主观的工作区根。多 repo 套娃要么 symlink 进每个子 repo，要么挪到 `~/.agents/skills/`。
-- **`.agents/skills` 和 `~/.agents/skills` 是两条独立路径**：前者走 walk-up + git root boundary，后者走固定 user-level。这也是为什么 `~/.agents/skills/lark-*` 永远在但项目里 `.agents/skills/<x>` 时有时无。
+- **`.agents/skills` 和 `~/.agents/skills` 是两条独立路径**：前者走 walk-up + git root boundary，后者走固定 user-level。这也是为什么 `~/.agents/skills/<x>` 永远在、但项目里 `.agents/skills/<x>` 时有时无。
 - 想验证是路径问题还是 SKILL.md 解析问题：先把目标 skill 临时软链到 `~/.agents/skills/`，能出现就是路径问题；仍然不出现就检查 `SKILL.md` frontmatter（`name` 必须匹配 `^[a-zA-Z0-9][a-zA-Z0-9._\- ]*$` 且 ≤64 字符；`description` ≤1024 字符；`user-invocable: false` 会从用户列表里隐藏；`disable-model-invocation: true` 会从模型列表里隐藏）。
 - skill 改了之后**当前 session 不会重载**，下次启动 copilot 才生效（`Y3` 内部还有按 `JSON.stringify(args)` 的缓存 `rbe`）。
 
