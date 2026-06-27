@@ -1,7 +1,7 @@
 # Windows / WSL 主机侧速记
 
 > 跑在 Windows 上的命令行、终端、PowerShell 版本选择、UAC 弹出方式等"宿主 OS 层面"的小经验。
-> WSL 内 Linux 服务的网络坑（wslrelay、portproxy、Mihomo TUN、Docker IPv6 dual-stack）见 `network` skill 的 [`network.md`](../../network/references/network.md)，不在这里重复。
+> WSL 内 Linux 服务的网络坑（wslrelay、portproxy、Mihomo TUN、Docker IPv6 dual-stack）见 `network` skill，不在这里重复。
 
 ## PowerShell 5.1 vs PowerShell 7（pwsh）
 

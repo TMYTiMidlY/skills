@@ -220,7 +220,7 @@ curl -s -o /dev/null --max-time 45 --proxy $P \
 
 测速源踩坑：`speed.cloudflare.com/__down` 经某些落地 IP 回 **403**（节点 IP 命中 Cloudflare 风控），但同站 `__up` 上传能用；Hetzner `ash-speed.hetzner.com/100MB.bin` 稳，OVH `proof.ovh.net` 能用但跨洲偏慢。多换源交叉看、文件 ≥50–100MB（前几 MB 慢启动偏小）。换算：1 MB/s ≈ 8 Mbps。
 
-> **验证 Brutal 有没有接管**：mihomo 不暴露 `brutal-debug`，客户端日志看不到 Brutal 速率，唯一办法是 sudo 读服务端 `/etc/hysteria/config.yaml` 看 `ignoreClientBandwidth`/`bandwidth`（机制见 §3.4）。服务端那套（安装、证书、带宽、iperf3 丢包测试）在 `vps-maintenance` skill 的 `references/proxy.md` / `quality-check.md`，两篇配合：一边客户端、一边服务端落地。
+> **验证 Brutal 有没有接管**：mihomo 不暴露 `brutal-debug`，客户端日志看不到 Brutal 速率，唯一办法是 sudo 读服务端 `/etc/hysteria/config.yaml` 看 `ignoreClientBandwidth`/`bandwidth`（机制见 §3.4）。服务端那套：独立 Hysteria2 搭建见本 skill 的 [network.md](network.md)「Hysteria2 服务端搭建」，3x-ui 面板配置与带宽/iperf3 丢包质量测试见 `vps-maintenance` skill，客户端、服务端两边配合看。
 
 海外 VPS 上实测：给 Hysteria2 节点加 `up: "80 Mbps"`/`down: "120 Mbps"`（格式正则 `^(\d+)\s*[KMGT]?[Bb]ps$`，小写 `b`=bit）后，下载上传两向都进 Brutal——但当时链路 ~16 MB/s 下载、~9 MB/s 上传、**几乎无丢包**，加 `up`/`down` 前后吞吐无差异，印证「Brutal 收益要丢包才显现」。
 
@@ -520,7 +520,7 @@ await pc.setLocalDescription(await pc.createOffer())   // 等几秒收集完
 
 # 附录：实测封锁记录（field observations，归因多未坐实）
 
-> 真实跑出来的封锁现象集中放这里，和前面的配置/原理分开。涉及的两台 VPS 的机器规格 / IP / 延迟测试等明细，在 `vps-maintenance` skill 的 `references/quality-check.md`「历史服务器信息」里（A=RackNerd、B=LisaHost）。样本都很小，归因一律标“未坐实”，只作下次对照。
+> 真实跑出来的封锁现象集中放这里，和前面的配置/原理分开。涉及的两台 VPS 的机器规格 / IP / 延迟测试等明细，在 `vps-maintenance` skill 的「历史服务器信息」里（A=RackNerd、B=LisaHost）。样本都很小，归因一律标“未坐实”，只作下次对照。
 
 ## A. 落地 IP 被大陆精准屏蔽（RackNerd，长期跑 Hysteria2，2026-06-08）
 
@@ -528,7 +528,7 @@ RackNerd（海外 VPS）的 Hysteria2 主节点跑一段时间后，某天起从
 
 可能原因（未验证）：QUIC over UDP 单 IP 持续大流量是 GFW 主动探测的特征之一；落地 IP 注册了公开域名长期暴露；也可能是机房 IP 段整体波及、与协议无关。
 
-**后续（2026-06-27 更新）**：没迁协议、没换机器，只**付费给这台 VPS 换了一个 IP**（换 IP、Hysteria2 照跑）。换 IP 后短期内（截至更新日）未再复现被墙，至今仍在日常使用该 Hysteria2 节点。→ 单 IP 换干净就恢复、协议没动也没事，**更像“那个具体 IP 被点名”而非“Hysteria2/QUIC 协议特征触发”**；但样本只一次、观察窗口短，归因仍未坐实。（这台机器的规格 / IP / 延迟明细见 `vps-maintenance` skill 的 `references/quality-check.md`。）
+**后续（2026-06-27 更新）**：没迁协议、没换机器，只**付费给这台 VPS 换了一个 IP**（换 IP、Hysteria2 照跑）。换 IP 后短期内（截至更新日）未再复现被墙，至今仍在日常使用该 Hysteria2 节点。→ 单 IP 换干净就恢复、协议没动也没事，**更像“那个具体 IP 被点名”而非“Hysteria2/QUIC 协议特征触发”**；但样本只一次、观察窗口短，归因仍未坐实。（这台机器的规格 / IP / 延迟明细见 `vps-maintenance` skill 的「历史服务器信息」。）
 
 ## B. 长期稳定的 vless 节点被墙（LisaHost，2026-06-25）
 

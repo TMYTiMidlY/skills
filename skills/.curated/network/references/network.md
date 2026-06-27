@@ -354,7 +354,7 @@ curl -k -I --connect-timeout 5 --max-time 8 https://<target>:<port>/
 
 ## Hysteria2 服务端搭建（落地侧，独立 systemd 服务）
 
-> 这块是**服务端落地**：在一台 VPS 上把 Hysteria2 作为**独立服务**跑起来（不经 3x-ui 面板）。客户端怎么配、怎么测吞吐 / 验证 Brutal、DNS/WebRTC 泄漏排查见 [mihomo.md](mihomo.md)；服务端 `ignoreClientBandwidth`/`bandwidth` 如何影响客户端 Brutal 也在 mihomo.md。想在 **3x-ui 面板里加 Hysteria2 inbound**（而非独立服务）见 `vps-maintenance` skill 的 `references/proxy.md`；带宽 / 丢包质量测试见 `vps-maintenance` 的 `references/quality-check.md`。
+> 这块是**服务端落地**：在一台 VPS 上把 Hysteria2 作为**独立服务**跑起来（不经 3x-ui 面板）。客户端怎么配、怎么测吞吐 / 验证 Brutal、DNS/WebRTC 泄漏排查见 [mihomo.md](mihomo.md)；服务端 `ignoreClientBandwidth`/`bandwidth` 如何影响客户端 Brutal 也在 mihomo.md。想在 **3x-ui 面板里加 Hysteria2 inbound**（而非独立服务），以及带宽 / 丢包质量测试，见 `vps-maintenance` skill。
 
 在已有 `VLESS + WS + TLS + Caddy + 3x-ui/Xray` 节点时，Hysteria2 适合作为差异化备用：它走 QUIC/UDP，和 TCP 443、Caddy 反代、WebSocket 不是同一条链路。不要为了“稳定”把 VLESS 换成 VMess；更优先考虑增加不同协议或不同服务商/地区的备用。
 
