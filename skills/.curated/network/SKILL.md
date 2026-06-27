@@ -13,8 +13,8 @@ description: 处理本机与远端的网络互通、WSL网络、远程接入与�
 
 ## WSL ↔ Windows 网络管道
 
-WSL2 与 Windows 宿主、远端之间的互通与排障：WSL Mirror / NAT、Docker Desktop 与 wsl --shutdown、portproxy / wslrelay 入站服务、IPv6 dual-stack #14154、全双工 wslrelay #10688、EasyTier 组网，见 [references/wsl.md](references/wsl.md)。
+WSL2 与 Windows 宿主、远端之间的互通与排障：WSL Mirror / NAT、Docker Desktop 与 wsl --shutdown、portproxy / wslrelay 入站服务、IPv6 dual-stack #14154、全双工 wslrelay #10688，见 [references/wsl.md](references/wsl.md)。
 
 ## EasyTier 客户端（Windows）
 
-EasyTier 组网的 Windows 客户端：安装、TOML 配置模板、Peer 配置、与 VPS 服务端的差异、原生 Windows 服务安装（`easytier-cli service`，非 NSSM）、QUIC proxy 坑、Windows 防火墙见 [references/easytier.md](references/easytier.md)。VPS 服务端完整安装与配置（全 listener、出口节点、中继策略等）由 `vps-maintenance` skill 覆盖。
+EasyTier 组网的 Windows 客户端：安装、TOML 配置模板、Peer 配置、与 VPS 服务端的差异、原生 Windows 服务安装（`easytier-cli service`，非 NSSM）、QUIC proxy 坑、不在 WSL 内跑 EasyTier（用宿主机、MTU 坑）、Windows 防火墙见 [references/easytier.md](references/easytier.md)。VPS 服务端完整安装与配置（全 listener、出口节点、中继策略等）由 `vps-maintenance` skill 覆盖。
