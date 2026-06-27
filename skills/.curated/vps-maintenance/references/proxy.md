@@ -1,48 +1,20 @@
-# Proxy Services
+# Proxy Services（3x-ui 服务端侧）
 
-## Hysteria2 备用节点
+3x-ui 是管理 Xray inbound 的面板（VLESS / VMess / Trojan / Shadowsocks，以及 Hysteria2 等）。本篇只覆盖**服务端经 3x-ui 面板做的配置**。其余分工：
 
-在已有 `VLESS + WS + TLS + Caddy + 3x-ui/Xray` 节点时，Hysteria2 适合作为差异化备用：它走 QUIC/UDP，和 TCP 443、Caddy 反代、WebSocket 不是同一条链路。不要为了“稳定”把 VLESS 换成 VMess；更优先考虑增加不同协议或不同服务商/地区的备用。
+- 客户端节点配置、协议选型 / 性能、Brutal / 拥塞控制、DNS / WebRTC 泄漏排查 → `network` skill 的 `references/mihomo.md`。
+- WSL / 宿主网络管道，以及**独立 systemd 版 Hysteria2 服务端搭建**（官方脚本、不经面板）→ `network` skill 的 `references/network.md`。
+- 带宽 / 丢包质量测试 → [quality-check.md](quality-check.md)。
 
-> 这篇是**服务端落地**侧。客户端节点怎么配、怎么测吞吐、怎么验证 Brutal/拥塞控制、DNS/WebRTC 泄漏排查，在 `software` skill 的 `references/mihomo.md`；服务端 `ignoreClientBandwidth`/`bandwidth` 影响客户端 Brutal 是否生效，两篇配合看。带宽/丢包质量测试见 [quality-check.md](quality-check.md)。
+## 主节点：VLESS + WS + TLS（3x-ui/Xray + Caddy）
 
-服务端优先按 Hysteria2 官方脚本安装，并让它独立监听 UDP 端口，避免改动现有 Caddy/3x-ui：
+> 骨架占位。要点是：3x-ui 面板建 VLESS inbound → 套 WS + TLS → 由 Caddy 反代复用已有 443 站点（隐藏 + 证书自动续）。具体面板点选步骤随版本变化，按概念照做即可，不在此固化。
 
-```bash
-HYSTERIA_USER=root bash <(curl -fsSL https://get.hy2.sh/)
-```
+## 在 3x-ui 面板里加 Hysteria2 inbound
 
-如果服务器已由 Caddy 管理证书，不要直接让 systemd 服务读取 Caddy 私有证书目录；`NoNewPrivileges` / capability 限制可能导致 root 服务也报 `tls.cert: permission denied`。更稳的做法是复制当前证书到 `/etc/hysteria/`，配置 Hysteria2 读取 root-owned 副本：
+3x-ui 也能直接管理 Hysteria2 inbound，**和独立 systemd 版二选一**：
 
-```yaml
-listen: :<udp-port>
+- **走 3x-ui**：在面板「入站」里新增一个 Hysteria2 类型 inbound，要处理的就三件事——① 监听 **UDP** 端口；② 证书来源（可复用 Caddy 证书的 root-owned 副本，理由同独立版的 cert 权限坑）；③ 密码 + obfs(salamander)。好处是和现有 VLESS 节点统一在一个面板管、共享客户端 / 流量统计。**端口仍要在防火墙 + 云安全组放行 UDP**。
+- **走独立 systemd**（隔离、独立升级、不碰面板）：搭法见 `network` skill 的 `references/network.md`「Hysteria2 服务端搭建」。
 
-tls:
-  cert: /etc/hysteria/<domain>.crt
-  key: /etc/hysteria/<domain>.key
-
-auth:
-  type: password
-  password: <random-password>
-
-obfs:
-  type: salamander
-  salamander:
-    password: <random-obfs-password>
-```
-
-同时放行 UDP 端口，并提醒用户云厂商安全组也要放行：
-
-```bash
-sudo ufw allow <udp-port>/udp
-sudo systemctl enable --now hysteria-server.service
-sudo systemctl status hysteria-server.service
-```
-
-验证时看三处：
-
-- `systemctl status hysteria-server.service`
-- `ss -lunp | grep <udp-port>`
-- 客户端/Mihomo 的节点 delay
-
-若复制 Caddy 证书，后续要补证书同步和重启机制，避免 Caddy 续期后 Hysteria2 继续使用旧副本。
+> 概念为主：3x-ui 面板版面随版本变，具体点选步骤不在此固化；记住「同一面板加 Hysteria2 inbound + UDP 端口放行 + 证书来源」这三点即可。

@@ -474,6 +474,8 @@ rules:
 
 这些端口只是**常见**探测端口、不是“所有 WebRTC 端口”。先精准拒这几个；若 `/connections` 里还看到新的 UDP STUN/TURN 出口，再按日志补规则。若你需要 WebRTC 能用（如开会），则改成把这些 UDP 指向代理 group 而不是 REJECT。
 
+> **关键前提：REJECT 只在流量进了 mihomo 时才拦得住。** 开了 TUN，浏览器的 STUN UDP 被透明接管进 mihomo，上面的 REJECT 才生效；**只用 mixed-port（HTTP/SOCKS 代理）、没开 TUN 时，浏览器默认直接发 STUN 的 UDP、根本不经过 mihomo**，这些 REJECT 形同虚设、WebRTC 照样泄漏真实 IP（实测见 §8.4）。no-TUN 场景只能靠浏览器侧堵：Chromium 加 `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`，Firefox 设 `media.peerconnection.ice.proxy_only=true`（或干脆 `media.peerconnection.enabled=false` 关掉 WebRTC）。
+
 ### 8.3 用运行态连接验证
 
 排查时别只看网页上的数字，对照 mihomo 运行态：
@@ -484,6 +486,35 @@ curl -s --max-time 3 "http://127.0.0.1:9090/logs?format=structured&level=info"
 ```
 
 重点字段：`host`（访问的域名/STUN 域名）、`network`（tcp/udp）、`destinationPort`（STUN 常见 19302、3478-3481）、`chains`（最终是代理节点 / `DIRECT` / `REJECT`）、`rule`/`rulePayload`（是否被 `cn`/`GEOIP,CN`/`MATCH` 误命中）。看到 STUN 的 UDP 命中 `DIRECT` 就是泄漏源。
+
+### 8.4 用无头浏览器实测 WebRTC 泄漏
+
+`browserleaks.com/webrtc` 要手点；想可复现 / 给 agent 跑，用无头浏览器（Playwright/camoufox 之类）起一个、经 mixed-port 代理、收 ICE candidate，看 `srflx`（server-reflexive=STUN 看到的公网 IP）是不是你的代理出口。核心就一段页面内 JS：
+
+```js
+// 浏览器经 proxy 起（launch proxy=http://127.0.0.1:7890），页面里：
+pc = new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]})
+pc.createDataChannel('x')
+pc.onicecandidate = e => collect(e.candidate && e.candidate.candidate)
+await pc.setLocalDescription(await pc.createOffer())   // 等几秒收集完
+// 候选串里 "typ srflx" 那条的 IP = STUN 看到的出口
+```
+
+判读：`host` 候选如今多是 mDNS `.local`（浏览器已混淆本地 IP、不漏内网）；**关键看 `srflx`**——等于代理出口=没漏，等于另一个真实公网 IP=漏了。
+
+> **实测对照（同一段 STUN 探测，`srflx`=STUN 看到的出口）**：
+>
+> | 浏览器 | 机器 / 模式 | `srflx` | 漏？ |
+> |---|---|---|---|
+> | Chromium 默认 | mixed-port、TUN 关 | **真实公网 IP** | 漏 |
+> | Chromium `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` | mixed-port、TUN 关 | 空 | 不漏 |
+> | Chromium | TUN 开 | 空 | 不漏 |
+> | Camoufox（反检测）+ proxy | mixed-port、TUN 关 | **代理出口 IP（spoof）** | 不漏 |
+> | Camoufox | TUN 开 | 空 | 不漏 |
+>
+> 坐实 §8.2：no-TUN 下 mihomo 的 UDP-REJECT 拦不到浏览器 STUN（那条 UDP 压根不进 mihomo）。防泄漏三条路任选其一：① **TUN** 网络层兜底；② **浏览器策略**（Chromium flag / Firefox `media.peerconnection.ice.proxy_only`）；③ **反检测浏览器**（camoufox 默认把 WebRTC 出口 spoof 成代理 IP，连 flag 都不用——这正是 browser-use 之类用 camoufox 做 stealth 的原因）。OS 防火墙禁非代理 UDP 也算。**TUN 不是唯一解。**
+
+**顺带分清 DNS 与 WebRTC（常被一起问"是不是都得开 TUN"）**：DNS 漏不漏，看「app 有没有把解析交给代理」——HTTP CONNECT / SOCKS5h 把**域名**发给代理、远端解析，乖乖走代理的 app（如浏览器）**没 TUN 也不漏**（§7 那次 mixed-port 实测就是零 ISP 解析器）；`dns-hijack`（TUN 功能）只是为了兜住**不走代理、自己硬解 DNS** 的程序。WebRTC 正相反：它为 STUN 自开**独立 UDP**、与代理那条连接无关，HTTP/SOCKS 代理搬不动，所以才必须 TUN 或浏览器策略。一句话——**域名解析是建连的一部分、代理协议自带；WebRTC 的 UDP 是另起炉灶、代理管不着**。
 
 ---
 
