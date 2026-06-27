@@ -25,7 +25,7 @@ description: 记录排查过的疑难杂症和踩坑经历。当用户遇到类�
   - 关键词：`UDP 转发`、`端口段转发`、`DNAT`、`masquerade`、`nftables.service`、`nft flush ruleset`、`Caddy HTTPS 断了`、`gost udp://`、`11000-11009`
 - **Synology DSM Container Manager：短时间多次 recreate 触发 `failed to initialize logging driver: database is blocked`（DSM 魔改 docker 的 sqlite WAL lock）** → [references/nas.md](references/nas.md)
   - 关键词：`failed to initialize logging driver`、`database is blocked`、`DSM Container Manager`、`Synology docker`、`json-file driver`、`SQLite WAL lock`、`短时间多次 recreate`、`/var/packages/ContainerManager`、`/volume1/@docker`、`logging driver` (docker daemon 概念,不是应用日志)、`停用启用 Container Manager`、`卸载 named volume 风险`
-- **ping 网关高丢包 ≠ 断网：校园网「有线坏掉、被 WiFi 兜底掩盖」，分源 IP 绑定测试才暴露** → [references/bug-fix.md](references/bug-fix.md)
-  - 关键词：`ping 网关 100% 丢包但能上网`、`CoPP`、`控制平面限速`、`ICMP rate limit`、`断网假象`、`ping 网关不是断网指标`、`WSL2 mirrored networking`、`有线 WiFi 双链路兜底`、`双默认路由 failover 掩盖故障`、`分源 IP 绑定测试`、`TcpClient Bind 源地址`、`strong host model`、`ping -I / curl --interface 分链路`、`USTC 校园网`、`有线准入认证掉线`、`身份认证系统门户`、`断窗时长恒定 ~5 分钟`、`EasyTier peer removed 反推通断`、`I225-V 无 link flap`、`总是断网排查`
+- **「总是断网」疑案：ping 网关高丢包 ≠ 断网（CoPP 假象），分源 IP 绑定分链路；疑似 WSL 内 EasyTier 但未确证根因** → [references/bug-fix.md](references/bug-fix.md)
+  - 关键词：`总是断网疑案`、`未确证根因`、`ping 网关 100% 丢包但能上网`、`CoPP 控制平面限速`、`ICMP rate limit`、`ping 网关不是断网指标`、`WSL2 mirrored networking`、`有线 WiFi 双链路兜底`、`failover 掩盖单链路故障`、`分源 IP 绑定测试`、`TcpClient Bind 源地址`、`strong host model`、`ping -I / curl --interface 分链路`、`校园网有线准入`、`断窗时长恒定 ~5 分钟`、`EasyTier peer removed 反推通断`、`WSL 内 EasyTier 存疑`
 
 > Copilot CLI 相关的调研笔记已迁移到 `software` skill 的 GitHub Copilot CLI 章节（包括 bash 工具 env 黑名单、`COPILOT_ALLOW_ALL` vs `--yolo`、`/rewind` 非 git 拒绝、Walk-Up（向上查找）机制总览、Custom Instructions（AGENTS.md / `.github/instructions` 嵌套查找）、Safety Net 双 bug、项目级 hook 不向上查、`.mcp.json` 上溯停在 git root、`.mcp.json` headers `${VAR}` 不展开、Skills 发现、`GIT_CONFIG_COUNT` 注入 credential helper、`gh repo fork` SSH 身份错配等）。
