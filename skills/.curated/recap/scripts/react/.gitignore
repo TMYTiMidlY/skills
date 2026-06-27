@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+# generated per-run by export_session_json.py
+src/session.json
+
+# logs / editor cruft
+*.log
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
