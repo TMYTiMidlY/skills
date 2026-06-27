@@ -106,7 +106,7 @@ https://<主 IP>:<对外端口> {
    Caddy 默认会为**每个** HTTPS 站点（**含 IP 站点**）在 `80` 端口起 HTTP→HTTPS `308` 跳转。多端口共享同一个 IP 时，`:80` 只会按"监听地址字典序最小"挑**一个**端口去跳，对其余服务全是错的目标；而 `tls internal` 也不需要 `80` 做 ACME 验证，所以直接关掉。机制与关闭方式详见下文「自动 HTTP→HTTPS 跳转」。
 
 - **`default_sni <主 IP>`**  
-   客户端通过 IP 直连时，SNI 往往为空；按 RFC 6066，SNI 只能是 hostname，不能是 IP。Caddy 匹配不到 connection policy 时会回 TLS alert 80，`default_sni` 是兜底。参考：[caddyserver/caddy#6344](https://github.com/caddyserver/caddy/issues/6344)
+   客户端通过 IP 直连时，SNI 往往为空；按 RFC 6066，SNI 只能是 hostname，不能是 IP。Caddy 匹配不到 connection policy 时会回 TLS alert 80，`default_sni` 是兜底。注意它**只影响证书选择**（写进 `ConnectionPolicy.DefaultSNI` → certmagic `DefaultServerName`），**不路由 handler、也不是 fallback cert**（那是 `FallbackSNI`）。源码 `caddy/caddyconfig/httpcaddyfile/httptype.go:610-636` + `modules/caddytls/connpolicy.go:281-316`。参考：[caddyserver/caddy#6344](https://github.com/caddyserver/caddy/issues/6344)
 
 - **非标端口建议显式写 `https://` 前缀**  
    技术上 `host:port` 也会自动启 HTTPS，但显式写出来更直观，不容易误读。
@@ -131,7 +131,7 @@ https://<主 IP>:<对外端口> {
 
 > 机制：IP 拿不到 ACME 公网证书，但 Caddy 把它归到 **internal issuer** 自签（即 `tls internal` 的效果）；有证书可发，跳转照加。跳转的生成只看"有没有这个 host"，**与证书是不是 ACME 签的无关**。
 
-**三种关闭方式：**
+**三种关闭方式**（源码 `caddy/modules/caddyhttp/autohttps.go`：`disable_redirects` 只在 `:199-237` 处 `continue` 掉 redirect 注册、**不碰证书管理**；`auto_https off` 则 `:116-123` 整个 `Disabled`）**：**
 
 | 手段（作用范围） | 跳转 | 自动证书 | `:443` listener |
 |---|---|---|---|
@@ -222,6 +222,27 @@ openssl x509 -in caddy-root.crt -noout -subject -issuer
 ```
 
 **`Subject == Issuer`** 就是自签 root。
+
+### `on_demand_tls`：陌生 SNI 的按需签证
+
+global options 里见到的：
+
+```caddyfile
+{
+    on_demand_tls {
+        ask http://127.0.0.1:9119
+    }
+}
+```
+
+作用：当一个**没在 Caddyfile 里显式声明**的 host 来握手时，Caddy 不立刻签证书，而是先 GET `ask` 端点问"这个域名允许签吗"，**HTTP 2xx 才放行**去签：
+
+- 请求形如 `GET http://127.0.0.1:9119/?domain=<握手的SNI>`（`caddy/modules/caddytls/ondemand.go:131` `qs.Set("domain", name)`）。
+- **状态码 200–299 = 放行**，其它一律拒（`ondemand.go:164-165`：`if resp.StatusCode < 200 || > 299 { return ErrPermissionDenied }`）。
+- 站点真正启用 on-demand 还需站点里写 `tls { on_demand }`；`ask` 只是全局的"准入裁决器"。
+- 跟 `default_sni` **不冲突也不互斥**：`default_sni` 管"没带 SNI 时拿哪个名字选证书"，`on_demand_tls ask` 管"某个陌生名字能不能现签"。
+
+⚠️ **on-demand 必须配 permission（`ask` 或 internal）**：否则任意 SNI 都能让你签 = 被打爆 ACME 限额 / 占内存，官方强制要求。
 
 ### 可复用的错误页 snippet
 
@@ -371,6 +392,89 @@ caddy-security 的 GitHub OAuth 由三种东西拼起来，先理清它们的关
 
 数据流：浏览器 →（业务站点 `authorize` 发现没 token）→ 跳 portal `authenticate` → GitHub OAuth → portal 签 cookie/JWT → 跳回业务站点 → `authorize` 验通过放行。portal（签）和 policy（验）共用同一个 `JWT_SHARED_KEY`。
 
+### 指令与默认行为速查（v1.1.61 源码核对）
+
+> 本节默认值/行为全部按以下版本读源码核对：**caddy-security v1.1.61 + go-authcrunch v1.1.38 + caddy v2.11.2**（各仓库 checkout 到对应 tag 后读源码）。
+>
+> **caddy-security 只是 Caddyfile→Go config 的翻译层，真正的认证/授权逻辑全在 go-authcrunch**（caddy-security `go.mod` 依赖 `go-authcrunch v1.1.38`；前者 6千多行全是 `caddyfile_*.go` 把文本语法翻成后者的 config 结构体 + 注册 Caddy module）。所以：**指令叫什么名 / 怎么嵌套** → 看 caddy-security 的 `caddyfile_*.go`；**默认值 / 实际行为** → 看 go-authcrunch 的 `pkg/`。下面行号随版本漂移，升级后要重核。
+
+**authentication portal 指令（签发侧）**
+
+| 指令 | 不写时的默认 | 源码（未注明即 go-authcrunch） |
+|---|---|---|
+| `crypto default token lifetime <秒>` | **900s（15min）** | `pkg/kms/crypto_key_config.go:32`（`defaultTokenLifetime=900`），`TokenLifetime==0` 时回退 `:439-443` |
+| `cookie lifetime <秒>` | **不输出 Max-Age → session cookie（关浏览器即失效）**；**不**继承 token lifetime | `pkg/authn/cookie/cookie_get.go:41-46`（仅 `Lifetime!=0` 才写 `Max-Age`） |
+| `cookie domain <域>` | 不设 → host-only（子域拿不到）；**域名模式必写、IP 模式必不写**（见「cookie 作用域」） | — |
+| `set access_token cookie name <名>` | **`AUTHP_ACCESS_TOKEN`**（前缀 `AUTHP` + `_` + `ACCESS_TOKEN`） | 常量 `pkg/authn/cookie/cookie_config.go:20,35`；拼接 `:67`/`:89-91` |
+| `crypto key sign-verify {env.K}` | 必配（否则每次启动随机新 key，重启=全员重登）；详见下「sign-verify vs verify」 | `pkg/kms/crypto_key_config.go:39-41` |
+
+**authorization policy 指令（验签侧）**
+
+| 指令 | 不写时的默认 | 源码 |
+|---|---|---|
+| `set token sources <...>` | **cookie + header + query 三者全开**；优先级 cookie→header→query，**命中即停** | 默认集合 `pkg/authz/validator/sources.go:39-53`；迭代+短路 `sources.go:155-168` |
+| `validate bearer header` | **不写 = 根本不解析 `Authorization: Bearer <jwt>`**（这是"开启 Bearer 来源"的开关，不是"放宽校验"） | `pkg/authz/validator/sources.go:105-118`（`v.opts.ValidateBearerHeader && HasPrefix("Bearer")`） |
+| `set user identity <field>` | **email；没 email 才回退 subject**。只影响 `ar.Response.User["id"]` →（caddy-security）Caddy `user.id`（access log / `{http.auth.user.id}`），**不影响注入头、不影响 whoami** | `switch` 逻辑 `pkg/user/user.go:180-191`；唯一消费点 `pkg/authz/authenticate.go:80` |
+| `inject headers with claims` | **不写 = 不注入任何 `X-Token-*` 头**（下游拿不到身份）；详见下「inject headers 注入了什么」 | `pkg/authz/authenticate.go:270-306` |
+| `set auth url <U>` | 未登录跳这里；默认 `/auth` | `pkg/authz/authenticate.go:192-228`；默认 `pkg/authz/config.go:170-178` |
+| `set forbidden url <U>` | **已识别用户但被 ACL 拒绝**才跳这里（≠ auth url）；支持 `{uri}`/`{url}` 占位符 | 触发 `pkg/authz/authenticate.go:114`（`ErrAccessNotAllowed*`）→ `:166-186` |
+| `allow roles A B` | **OR**（任一命中即放行；要 AND 用 `match all`） | `pkg/user/user.go:257`（`HasRole`=any-of）；ACL 规则 `pkg/acl/rule.go` |
+| `crypto key verify {env.K}` | 只验签不签发；详见下「sign-verify vs verify」 | `pkg/kms/crypto_key_config.go:39-41` |
+
+**⚠️ 安全提醒：`set token sources` 不写时，query 来源默认是开的。** 即 `https://站点/path?access_token=<JWT>` 这种把 JWT 塞进 URL query 的访问默认能过鉴权（默认集合含 `query`：`sources.go:39-53`；`parseQueryParams` 把 query 里长度 >32 的参数当 token：`sources.go:78-93`）。
+
+- 这里塞的是 **JWT 本身**（已签好的明文凭证，base64 可解出 `sub/roles/exp`），不是签名密钥；泄露 = token 有效期内（取决于配置的 lifetime，可能数天）被冒充。
+- query 比 cookie/header 危险：URL 会进**浏览器历史/书签**、**`Referer` 头**、**access log / 日志归档**（工业界 JWT 最常见的泄露途径）。cookie 有 `HttpOnly`/`SameSite` 保护、header 是程序自己塞的，都不会"无意飞出去"。
+- **纯浏览器站点想关掉 query**：`set token sources cookie`（或 `cookie header`）。若现状是三源全开（不写 `set token sources`），属可接受的放宽——只要后端不读这些 token、也没人故意把 JWT 贴进 query，攻击面就只是"理论"级，可不强制收紧。
+
+#### `crypto key sign-verify` vs `verify`（签发侧 vs 验签侧）
+
+- portal 用 `sign-verify`：该 key 既能签 JWT 也能验签（portal 要签发）。
+- policy 用 `verify`：只验签（业务站点只需验、不签发）。
+- 二者不是反义；`sign-verify`/`sign`/`verify` 是 key 的 `Usage` 字段（`pkg/kms/crypto_key_config.go:39-41,66-68`）。
+- **对称 HMAC**（你的 `JWT_SHARED_KEY` 这种 hex 字符串）下同一 secret 天然可签可验，写哪个只是限定"这个 key 在这里允许干什么"。**非对称 RSA/ECDSA** 下私钥才能签、公钥只能验，写错 usage 会能力不匹配（`pkg/kms/crypto_key.go:148-203`）。
+
+#### `inject headers with claims` 注入了什么
+
+开启后（且 `PassClaimsWithHeaders=true`），把 JWT claims 转成 HTTP 头注入给下游反代（`pkg/authz/authenticate.go:270-299`）。默认 4 个，对应 claim 非空才注入：
+
+| 注入头 | 来源 claim |
+|---|---|
+| `X-Token-User-Name` | `Claims.Name` |
+| `X-Token-User-Email` | `Claims.Email` |
+| `X-Token-User-Roles` | `strings.Join(Claims.Roles, " ")` |
+| `X-Token-Subject` | `Claims.Subject` |
+
+另可用 `inject header <H> from <field>` 加自定义头（解析 `caddy-security/caddyfile_authz_inject.go:24-49`、执行 `go-authcrunch/pkg/authz/authenticate.go:301-306`，取值 `pkg/user/user.go:323-345` 支持任意 claim path）。
+
+**删掉这条 = 下游收不到任何 `X-Token-*` 头**。只有"后端靠反代注入的头识别用户"时才需要；后端自带账号系统（OpenList/Coolify）或根本不读这些头时可省。
+
+### 登录态有效期与续期（无 sliding refresh）
+
+**结论：caddy-security 没有 sliding refresh（"持续访问就自动续期"）。** token 只在**登录成功 / grantAccess** 时签发，lifetime 从签发那刻硬倒计时，访问期间不延长。
+
+- `/api/refresh_token` **不是续期接口**——它只返回一个时间戳，不重发 JWT/cookie（`go-authcrunch/pkg/authn/handle_api_refresh_token.go:27-36`，整个 handler 就 `resp["timestamp"]=now` 然后 `Write`）。
+- 真正签发/重签只在登录流程（`pkg/authn/handle_http_login.go:302-379`：`SetExpiresAtClaim` → `SignToken` → `Set-Cookie`）。
+- 所以 `crypto default token lifetime` / `cookie lifetime` 配多少，就是"登一次能用多久"的硬上限。
+
+**那为什么平时感觉"永不掉线"？** token 过期后这条链路通常无感重签：业务站 302 → portal 发现自己 cookie 也过期 → 跳 GitHub OAuth → **GitHub 自己的登录 session 一般还在**（GitHub cookie 以月计）→ 不要求重输密码，直接 302 回 callback → portal 重签一份新 JWT。整个过程只闪几次重定向。只有 GitHub session 也死了才会真卡在 GitHub 登录页。
+
+**想要更长的免登期**：把两个 lifetime 一起调长（如 30 天 `2592000` / 90 天 `7776000`，两者设一样）。代价：JWT 无状态，调长 = 撤销窗口变长（过期前无法 server-side 失效，强行作废只能换 `JWT_SHARED_KEY`，但那会让**所有人**一起掉线）。
+
+### portal 页面：`/portal` / `/whoami` / 登录后落点
+
+portal（`authenticate with <portal>` 那个站点）按 path 分发（`go-authcrunch/pkg/authn/respond_http.go:36-73`）：
+
+| 相对路径 | 内容 | 源码 |
+|---|---|---|
+| `/portal` | 应用入口列表（`PrivateLinks`）+ 登出 | `pkg/authn/handle_http_portal.go:94-107` |
+| `/whoami` | 当前 token 的 JSON（claims + `expires_at_utc`/`issued_at_utc` 等时间字段） | `pkg/authn/handle_http_whoami.go:37-66` |
+| `/login` | GitHub 登录入口 | `pkg/authn/handle_http_login.go` |
+| `/profile/` | 用户资料 SPA（须带尾斜杠） | `respond_http.go:36-73` |
+
+- **登录成功默认落 `/portal`**（除非带了可信 `redirect_url` cookie）：`pkg/authn/handle_http_login.go:347-379`（`redirectLocation==""` 时 → `BaseURL + /portal`）。
+- **`/whoami` 显示的是 `usr.AsMap()`（直接读 JWT claims / 内部 user map）**：`pkg/authn/handle_http_whoami.go:42-43` + `pkg/user/user.go:136-139`。它**不经过** authorization policy、**不读** `set user identity` / `inject headers`——所以删那些 policy 指令**不影响 whoami 显示**（whoami 上的 `sub/email/name` 直接来自 JWT claims）。
+
 ### ⚠️ 跨版本 cookie 名陷阱（多机共用 portal 必看）
 
 `caddy-security` 在版本演进中**改过 access token 的默认 cookie 名**：旧版（实测 `v1.1.49`）默认 `access_token`；新版（`v1.1.61`+）默认 `AUTHP_ACCESS_TOKEN`（= 前缀 `AUTHP` + `ACCESS_TOKEN`，源码 `go-authcrunch/pkg/authn/cookie/cookie_config.go`：`DefaultCookieNamePrefix="AUTHP"` + `DefaultAccessTokenCookieName="ACCESS_TOKEN"`）。
@@ -420,7 +524,7 @@ caddy-security 的 GitHub OAuth 由三种东西拼起来，先理清它们的关
 ### 常用配置项
 
 - **`order <指令A> before <指令B>`**  
-  显式指定 HTTP handler 的执行顺序。最常见的是：
+  显式指定 HTTP handler 的执行顺序（caddy-security 注册时已声明默认相对位置：`caddy-security/plugin_authn.go:34` `authenticate` before `respond`、`plugin_authz.go:42` `authorize` before `basicauth`；写在 global `order` 里是覆盖/保险）。最常见的是：
 
   ```caddyfile
   order authenticate before respond
@@ -428,7 +532,7 @@ caddy-security 的 GitHub OAuth 由三种东西拼起来，先理清它们的关
   ```
 
 - **`crypto default token lifetime` / `cookie lifetime`**  
-  分别是 JWT 的 `exp` 和浏览器 cookie 的 `Max-Age`。**两者要设成一样**。默认 token 只有 900 秒（15 分钟），通常太短。
+  分别是 JWT 的 `exp` 和浏览器 cookie 的 `Max-Age`。**两者要设成一样**。默认 token 只有 900 秒（15 分钟，`go-authcrunch/pkg/kms/crypto_key_config.go:32`），通常太短；cookie 不写则**无 Max-Age**（session cookie）。续期机制见上「登录态有效期与续期」。
 
 - **`crypto key sign-verify <key>`**  
   JWT 签名密钥。**不显式配置时，插件每次启动都会生成临时新密钥**，重启等于全员强制重登。  
@@ -436,13 +540,13 @@ caddy-security 的 GitHub OAuth 由三种东西拼起来，先理清它们的关
   参考：[AuthCrunch auth-cookie 文档](https://docs.authcrunch.com/docs/authenticate/auth-cookie)
 
 - **`transform user` + `allow roles`**  
-  `transform user` 给登录用户打角色；`allow roles A B` 是 **OR**，任一角色匹配就放行。  
+  `transform user` 给登录用户打角色；`allow roles A B` 是 **OR**，任一角色匹配就放行（`go-authcrunch/pkg/user/user.go:257` `HasRole`=any-of；要 AND 用 `match all`）。  
   `authp/admin` 这类名字只是约定，不是保留字，字符串本身可以自定。
 
 - **`trust login redirect uri`**  
   白名单“哪些 `redirect_url` 允许写入回跳 cookie”。  
-  不配置会被**静默丢弃**。  
-  **IP 模式尤其要注意端口**：Go 的 `url.Host` 会把端口也算进去，匹配非标端口时正则必须显式吃掉端口。  
+  不配置会被**静默丢弃**（`go-authcrunch/pkg/authn/inject_redirect_url.go:32`：`len(TrustedLoginRedirectURIConfigs)<1` 直接 return，只记 debug 日志）。  
+  **IP 模式尤其要注意端口**：Go 的 `url.Host` 会把端口也算进去（匹配逻辑 `go-authcrunch/pkg/redirects/redirect_match.go`），匹配非标端口时正则必须显式吃掉端口 `(:[0-9]+)?`。  
   参考：[caddy-security#455](https://github.com/greenpau/caddy-security/issues/455)
 
 ### caddy-security 路径隔离经验
@@ -566,7 +670,7 @@ https://<主 IP>/auth/oauth2/github/authorization-code-callback
 
 > 把"callback URL 怎么拼出来、各段受哪个 Caddyfile 字段控制"讲透，避免填错被 GitHub 拒。结论按 caddy-security **v1.1.61** / go-authcrunch **v1.1.38** 读源码核对（`caddyfile_identity_provider.go`、`pkg/idp/oauth/authenticate.go`、`pkg/authn/handle_external_login.go`、`pkg/authn/portal.go`）。
 
-**组装公式**（go-authcrunch `authenticate.go`：`BaseURL + path.Join(BasePath, Method, Realm) + "/authorization-code-callback"`）：
+**组装公式**（go-authcrunch `pkg/idp/oauth/authenticate.go:104`：`reqRedirectURI := reqPath + "/authorization-code-callback"`，其中 `reqPath = BaseURL + path.Join(BasePath, Method, Realm)`）：
 
 ```text
 https://<portal 挂载 host>/<handle 前缀>/oauth2/<provider 的 realm>/authorization-code-callback
@@ -1026,6 +1130,10 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
   - GitHub callback URL = `https://<portal host>/<handle 前缀>/oauth2/<provider realm>/authorization-code-callback`；第 ④ 段是 **realm 不是 name**
   - 改 provider `realm` 三处同步：provider 块 / GitHub callback URL / 该 portal 的 `transform user match realm`
   - IP 与域名各一套独立 provider+portal+OAuth App（cookie 互不可达、callback host 写死）
+  - token source 默认含 **query**：`?access_token=<JWT>` 默认能过鉴权（`sources.go:39-53`）；纯浏览器站点用 `set token sources cookie` 关掉
+  - **无 sliding refresh**：token 到期靠 GitHub session 无感重签；要长免登期就把 `crypto default token lifetime` + `cookie lifetime` 一起调长（撤销窗口随之变长）
+  - 默认值（v1.1.61 源码核对）：token lifetime **900s**、cookie **无 Max-Age（session）**、access-token cookie 名 **`AUTHP_ACCESS_TOKEN`**、`allow roles` 是 **OR**
+  - 删 `inject headers with claims` → 下游收不到 `X-Token-*`；删 `set token sources`/`set user identity`/`validate bearer header` 是回到默认（不影响 whoami，whoami 直接读 JWT claims）
 - docs-share（S3 + viewer rewrite）：
   - 后端 RustFS S3，鉴权 SigV4 presigned，**自带过期 ≤ 7d**
   - viewer 壳子是 Caddy 本地 file_server（`/srv/viewer/_viewer.html`），**不在桶里**
