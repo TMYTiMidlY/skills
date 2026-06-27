@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 互操作及网络（VS Code serve-web/portproxy/RDP/EasyTier 组网）、挂载与 SMB/CIFS 文件共享、Git 镜像与自建 Forgejo、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（WebDAV/copyparty/S3 直链）、本地中文 ASR、OpenList 网盘聚合、Hermes agent、GitHub Copilot CLI 行为排障、Windows/Office 激活与 macOS 杂项等。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 镜像与自建 Forgejo、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（WebDAV/copyparty/S3 直链）、本地中文 ASR、OpenList 网盘聚合、Hermes agent、GitHub Copilot CLI 行为排障、Windows/Office 激活与 macOS 杂项等。
 ---
 
 # Software
@@ -42,19 +42,13 @@ Zellij Web client、HTTPS 证书要求、login token/session token、反代注�
 
 逆向工程 + 排障笔记，覆盖进程模型、bash 工具 env 处理、权限与目录信任、Walk-Up（向上查找）机制总览、Custom Instructions（指令文件，含 AGENTS.md / `.github/instructions` 嵌套查找）、Hooks（preToolUse / Safety Net）、MCP 配置、Skills 发现、git 认证 / credential helper、`gh repo fork` 跨账号 SSH 身份错配。所有结论都附 `app.js` 源码摘录或字节偏移。见 [references/copilot.md](references/copilot.md)。
 
-## 网络与远程连接
-
-WSL与Windows之间的网络管道、RDP、服务入站和私网组网由独立的 `network` skill 维护。
+## ChatGPT 网页端自动化
 
 ChatGPT 网页端 Pro / Extended 自动化、`steipete/oracle` browser engine、Windows Chrome DevTools、WSL Mirror / NAT 差异、以及必须用 network payload 验证真实模型与 thinking effort 的经验见 [references/oracle-pro.md](references/oracle-pro.md)。
 
 ## 挂载与文件共享
 
 WSL 挂载 Windows 盘、UNC/SMB 共享、`drvfs/9p` 小文件性能、CIFS 凭据与 `mount.cifs` 排障见 [references/mount.md](references/mount.md)。
-
-## EasyTier 客户端（Windows）
-
-EasyTier 组网的 Windows 客户端：安装、TOML 配置模板、Peer 配置、与 VPS 服务端的差异、NSSM 服务排障、Windows 防火墙见 [references/easytier.md](references/easytier.md)。**VPS 服务端完整安装与配置（全 listener、出口节点、中继策略等）由 `vps-maintenance` skill 覆盖。**
 
 ## RustFS + MinIO mc 客户端
 
@@ -65,8 +59,6 @@ RustFS（Rust 实现的 S3 兼容对象存储，github.com/rustfs/rustfs）+ Min
 ## Windows / WSL 宿主侧速记
 
 跑在 Windows 宿主上的小经验：PowerShell 5.1 vs 7（pwsh）的运行时与默认 encoding 差异、为什么从 WSL/agent shell 调 PowerShell 优先用 pwsh 7 避开中文 GBK decode 炸 channel、从 WSL 弹 UAC 拿管理员权限（`Start-Process -Verb RunAs` + 文件标记跨上下文传结果）、cmd.exe 不接 UNC 当 CWD、Windows 回收站与 `trash-put` 的关系见 [references/windows.md](references/windows.md)。
-
-> WSL 内 Linux 服务的网络坑（wslrelay、portproxy、Docker IPv6 dual-stack）在 `network` skill 的 `references/network.md`，不在 windows.md 重复。
 
 ## Windows / Office 激活
 
