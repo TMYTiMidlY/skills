@@ -297,7 +297,4 @@ netsh interface portproxy show all
 curl -k -I --connect-timeout 5 --max-time 8 https://<target>:<port>/
 ```
 
-## EasyTier / WSL 组网杂项
-
-**不推荐在 WSL 内跑 EasyTier**：会撞 MTU 不匹配等坑，改在 Windows 宿主机上跑。部署位置选择与 MTU 细节见 [easytier.md](easytier.md) 的「不在 WSL 内跑 EasyTier」。
 
