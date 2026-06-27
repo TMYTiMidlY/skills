@@ -1,6 +1,6 @@
 # WSL ↔ Windows 网络管道
 
-WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT 网络、WSL 出站怎么进宿主 Mihomo、WSL/Docker 服务入站（portproxy + wslrelay）、组网杂项。Mihomo/Clash 内核本身的配置与泄漏控制见 [mihomo.md](mihomo.md)；远程桌面 / VS Code serve-web 等远程接入见 [remote.md](remote.md)；独立 systemd 版 Hysteria2 服务端见 [hysteria2.md](hysteria2.md)。
+WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT 网络、WSL 出站怎么进宿主 Mihomo、WSL/Docker 服务入站（portproxy + wslrelay）。Mihomo/Clash 内核本身的配置与泄漏控制见 [mihomo.md](mihomo.md)；远程桌面 / VS Code serve-web 等远程接入见 [remote.md](remote.md)；独立 systemd 版 Hysteria2 服务端见 [hysteria2.md](hysteria2.md)。
 
 ## WSL Mirror 模式网络
 
