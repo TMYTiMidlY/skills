@@ -14,30 +14,31 @@ description: 浏览器自动化操作 —— 用 Playwright（CLI / MCP / Python
 - 需要反指纹 / 反爬 / 按代理伪造 GeoIP 的隐身浏览器
 - 询问 Playwright 用 uv 还是 npm 安装、用 MCP 还是 CLI
 
-## 方案总览与选择
+## 方案选择：默认 Node + Playwright CLI
 
-先建一张"入口 × 运行时"的地图，再按需求选：
+**默认直接用 Node + Playwright CLI（`@playwright/cli`），不要再问用户用哪个方案。** 这是官方对 coding agent 的首选（token 最省）。装好后用 `playwright-cli open/snapshot/click/...` 驱动浏览器：
 
-| 入口 | 适用 | 运行时 | 详细 |
-|---|---|---|---|
-| **接管现有 Chrome**（open-claude-in-chrome MCP）| 已有登录态、要接管当前页 | 浏览器扩展 | 下文本页 |
-| **Playwright CLI**（`@playwright/cli`）| coding agent 驱动浏览器（**默认推荐**）| Node / npm | [references/playwright.md](references/playwright.md) |
-| **Playwright MCP**（`@playwright/mcp`）| 需要持久浏览器状态的长程探索 / 自愈 | Node / npm | 同上 |
-| **Playwright 脚本（库）** | 可复现脚本、批量截图、CI | Node 或 Python(uv) | 同上 |
-| **Camoufox**（+ 其 agent CLI）| 反指纹 Firefox、隐身、自定义 GeoIP | Python(uv) | [references/camoufox.md](references/camoufox.md) |
-
-除非用户已明确指定，或当前环境只有一种可用方案，否则先让用户选（问题保持简短）：
-
-```text
-浏览器方案选哪种：1.接管当前 Chrome 登录态 2.Playwright CLI（agent 默认）3.Playwright MCP 4.Playwright 脚本 5.Camoufox 反指纹？
+```bash
+# 全局装；或免装直接用 npx（两者都行）
+npm install -g @playwright/cli@latest        # 或：npx @playwright/cli@latest --help
+playwright-cli install --skills              # 落地官方 skill，拿到完整命令面
+playwright-cli open https://example.com
+playwright-cli snapshot                      # 拿 eN refs
+playwright-cli click e15
 ```
 
-选择依据：
-- **接管现有 Chrome** → 已登录、要在用户当前会话里直接操作页面。
-- **Playwright CLI** → 你（coding agent）要驱动浏览器做事：装官方 skill，用 `playwright-cli open/snapshot/click/...`。token 最省，是官方对 coding agent 的首选。
-- **Playwright MCP** → 需要跨多轮维持同一个浏览器上下文做探索式 / 自愈式自动化。
-- **Playwright 脚本** → 要交付可复现脚本 / 批量任务 / 接 CI。
-- **Camoufox** → 目标站有反爬 / 指纹检测，需要隐身 Firefox、指纹注入、按代理 IP 伪造 GeoIP/时区/locale。
+> `npx @playwright/cli@latest <cmd>`（免全局安装）和 `npm i -g` 后直接 `playwright-cli <cmd>` 等价，按手感选。完整命令、会话、attach 现有 Chrome 等见 [references/playwright.md](references/playwright.md)。
+
+**只有以下情况才偏离这个默认**（用户明示，或场景明确需要）：
+
+| 改用 | 触发条件 |
+|---|---|
+| **接管现有 Chrome**（open-claude-in-chrome MCP）| 用户要在**已登录的当前浏览器会话**里直接操作（复用登录态） |
+| **Playwright MCP**（`@playwright/mcp`）| 用户明确要 MCP，或要跨多轮维持同一浏览器上下文做探索式 / 自愈式长程自动化 |
+| **Playwright 脚本（库）** | 用户要交付**可复现的 Python/Node 脚本**、批量任务或接 CI |
+| **Camoufox**（Python，+ 其 agent CLI）| 目标站有反爬 / 指纹检测，需要隐身 Firefox、指纹注入、按代理 IP 伪造 GeoIP/时区/locale。详见 [references/camoufox.md](references/camoufox.md) |
+
+其余一律走默认（Node + Playwright CLI）。用户若直接点名某方案，按用户来，不用再确认。
 
 ## Playwright：uv/npm 与 MCP/CLI 怎么选（核心结论）
 
