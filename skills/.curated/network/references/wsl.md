@@ -1,20 +1,6 @@
-# 网络与远程连接
+# WSL ↔ Windows 网络管道
 
-## 远程连接方式
-
-- **RDP**：通过异地组网（EasyTier / Tailscale / ZeroTier / 蒲公英等）连接远程桌面。Windows 用 `mstsc`，Linux 用 `xfreerdp` 或 Remmina
-- **向日葵**：不需要组网，默认自动判断传输模式——网络条件允许时自动 P2P 直连，否则走服务器中转
-
-### 会话管理
-
-```powershell
-tsdiscon        # 断开 RDP 连接，程序继续运行（服务器场景常用）
-logoff          # 完全退出登录，关闭所有程序
-```
-
-### RDP 缩放不生效
-
-在 PowerShell 中执行 `logoff`，然后重新连接即可。
+WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT 网络、WSL 出站怎么进宿主 Mihomo、WSL/Docker 服务入站（portproxy + wslrelay）、组网杂项。Mihomo/Clash 内核本身的配置与泄漏控制见 [mihomo.md](mihomo.md)；远程桌面 / VS Code serve-web 等远程接入见 [remote.md](remote.md)；独立 systemd 版 Hysteria2 服务端见 [hysteria2.md](hysteria2.md)。
 
 ## WSL Mirror 模式网络
 
@@ -80,39 +66,6 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 - Microsoft WSL basic commands: `wsl --shutdown` terminates all running distributions and the WSL2 VM.
 - Docker Desktop WSL2 backend: Docker Desktop uses a `docker-desktop` WSL distribution for the Docker engine.
 - Docker Resource Saver on WSL: Resource Saver does not stop the whole WSL VM because it is shared by all WSL distributions.
-
-## VS Code serve-web
-
-在当前机器启动一个 VS Code Web 服务，适合临时从浏览器访问这台机器上的开发环境。需要终端一直挂着这个命令；重启或终端关闭后要手动重新执行。
-
-Windows 侧临时服务示例（端口可换，下例用 `18080`）：
-
-```powershell
-code serve-web --host 0.0.0.0 --port 18080 --without-connection-token
-```
-
-`--without-connection-token` 表示不要求访问 token；**只适合已经有内网、VPN、反代认证等外层保护的场景**——服务直接暴露到公网时务必去掉这个开关或额外加层。
-
-WSL 默认是 NAT 网络，常见的远程访问链路是：
-
-```text
-远端 Caddy/Nginx -> Windows EasyTier IP:<port>
-Windows portproxy -> 127.0.0.1:<port>
-WSL localhost forwarding -> WSL 内服务
-```
-
-`portproxy` 配置细节见下文「WSL / Docker 服务暴露（入站：portproxy + wslrelay）」一节；`portproxy` 不会自动唤醒 WSL，建议留一个 WSL 窗口 / 会话挂着，避免发行版被停掉后远端反代直接 502。
-
-排障常用查询：
-
-```powershell
-wsl -l -v
-wsl -- ip route show
-wsl -- ss -ltnp
-netsh interface portproxy show all
-netstat -ano | Select-String -Pattern ':<port>'
-curl.exe -k -I https://127.0.0.1:<port>/
-```
 
 ## WSL NAT 下出站走 Mihomo / fake-ip
 
@@ -351,51 +304,4 @@ curl -k -I --connect-timeout 5 --max-time 8 https://<target>:<port>/
 曾在 WSL 内部署 EasyTier 时遇到过 MTU 不匹配问题——必须手动降低 EasyTier 的 MTU 以匹配 WSL 网卡的 MTU。
 
 **当前方案**：不再在 WSL 内配置组网，EasyTier 运行在 Windows 宿主机上，避免了此问题。
-
-## Hysteria2 服务端搭建（落地侧，独立 systemd 服务）
-
-> 这块是**服务端落地**：在一台 VPS 上把 Hysteria2 作为**独立服务**跑起来（不经 3x-ui 面板）。客户端怎么配、怎么测吞吐 / 验证 Brutal、DNS/WebRTC 泄漏排查见 [mihomo.md](mihomo.md)；服务端 `ignoreClientBandwidth`/`bandwidth` 如何影响客户端 Brutal 也在 mihomo.md。想在 **3x-ui 面板里加 Hysteria2 inbound**（而非独立服务），以及带宽 / 丢包质量测试，见 `vps-maintenance` skill。
-
-在已有 `VLESS + WS + TLS + Caddy + 3x-ui/Xray` 节点时，Hysteria2 适合作为差异化备用：它走 QUIC/UDP，和 TCP 443、Caddy 反代、WebSocket 不是同一条链路。不要为了“稳定”把 VLESS 换成 VMess；更优先考虑增加不同协议或不同服务商/地区的备用。
-
-服务端优先按 Hysteria2 官方脚本安装，并让它独立监听 UDP 端口，避免改动现有 Caddy/3x-ui：
-
-```bash
-HYSTERIA_USER=root bash <(curl -fsSL https://get.hy2.sh/)
-```
-
-如果服务器已由 Caddy 管理证书，不要直接让 systemd 服务读取 Caddy 私有证书目录；`NoNewPrivileges` / capability 限制可能导致 root 服务也报 `tls.cert: permission denied`。更稳的做法是复制当前证书到 `/etc/hysteria/`，配置 Hysteria2 读取 root-owned 副本：
-
-```yaml
-listen: :<udp-port>
-
-tls:
-  cert: /etc/hysteria/<domain>.crt
-  key: /etc/hysteria/<domain>.key
-
-auth:
-  type: password
-  password: <random-password>
-
-obfs:
-  type: salamander
-  salamander:
-    password: <random-obfs-password>
-```
-
-同时放行 UDP 端口，并提醒用户云厂商安全组也要放行：
-
-```bash
-sudo ufw allow <udp-port>/udp
-sudo systemctl enable --now hysteria-server.service
-sudo systemctl status hysteria-server.service
-```
-
-验证时看三处：
-
-- `systemctl status hysteria-server.service`
-- `ss -lunp | grep <udp-port>`
-- 客户端/Mihomo 的节点 delay
-
-若复制 Caddy 证书，后续要补证书同步和重启机制，避免 Caddy 续期后 Hysteria2 继续使用旧副本。
 
