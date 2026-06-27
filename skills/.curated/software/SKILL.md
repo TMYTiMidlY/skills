@@ -44,8 +44,7 @@ Zellij Web client、HTTPS 证书要求、login token/session token、反代注�
 
 ## 网络与远程连接
 
-RDP / 向日葵、WSL Mirror 模式网络、VS Code serve-web（浏览器访问本机开发环境 + WSL portproxy 链路）、WSL/Docker 服务入站（`netsh portproxy` + wslrelay 的 IPv6 dual-stack #14154 坑：纯 v4 监听才不 RST）、EasyTier/WSL 组网杂项、会话管理（tsdiscon / logoff）见 [references/network.md](references/network.md)。
-
+WSL与Windows之间的网络管道、RDP、服务入站和私网组网由独立的 `network` skill 维护。
 
 ChatGPT 网页端 Pro / Extended 自动化、`steipete/oracle` browser engine、Windows Chrome DevTools、WSL Mirror / NAT 差异、以及必须用 network payload 验证真实模型与 thinking effort 的经验见 [references/oracle-pro.md](references/oracle-pro.md)。
 
@@ -67,7 +66,7 @@ RustFS（Rust 实现的 S3 兼容对象存储，github.com/rustfs/rustfs）+ Min
 
 跑在 Windows 宿主上的小经验：PowerShell 5.1 vs 7（pwsh）的运行时与默认 encoding 差异、为什么从 WSL/agent shell 调 PowerShell 优先用 pwsh 7 避开中文 GBK decode 炸 channel、从 WSL 弹 UAC 拿管理员权限（`Start-Process -Verb RunAs` + 文件标记跨上下文传结果）、cmd.exe 不接 UNC 当 CWD、Windows 回收站与 `trash-put` 的关系见 [references/windows.md](references/windows.md)。
 
-> WSL 内 Linux 服务的网络坑（wslrelay、portproxy、Docker IPv6 dual-stack）在 [references/network.md](references/network.md)，不在 windows.md 重复。
+> WSL 内 Linux 服务的网络坑（wslrelay、portproxy、Docker IPv6 dual-stack）在 `network` skill 的 `references/network.md`，不在 windows.md 重复。
 
 ## Windows / Office 激活
 

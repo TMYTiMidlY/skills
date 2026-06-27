@@ -368,7 +368,7 @@ Web 上「Clone」按钮给的 SSH 地址有两种写法，由 `[repository] USE
 
 ## ② web 公网入口：Caddy 反代 + 默认中文
 
-web UI + git-over-HTTPS 经 `<入口VPS>` 的边缘 Caddy 反代到 `<内网机>:3000`。`<server>` 容器只把 3000 发布到 `127.0.0.1:3000`（compose 里的 `ports: "127.0.0.1:3000:3000"`），不直接对外，对外只经 Caddy。Caddy → `<内网机>` 的具体链路（mesh / Windows portproxy / wslrelay / WSL→容器端口形态）是通用 WSL/Docker 网络问题，见 [`network.md`](network.md) 的「WSL / Docker 服务暴露（入站）」。
+web UI + git-over-HTTPS 经 `<入口VPS>` 的边缘 Caddy 反代到 `<内网机>:3000`。`<server>` 容器只把 3000 发布到 `127.0.0.1:3000`（compose 里的 `ports: "127.0.0.1:3000:3000"`），不直接对外，对外只经 Caddy。Caddy → `<内网机>` 的具体链路（mesh / Windows portproxy / wslrelay / WSL→容器端口形态）是通用 WSL/Docker 网络问题，见 `network` skill 的 [`network.md`](../../network/references/network.md) 的「WSL / Docker 服务暴露（入站）」。
 
 把整站默认语言设成简体中文：在 Caddy 里 `<server>` 的 `reverse_proxy` 子块加 `header_up Accept-Language "zh-CN"`，压过浏览器的 `Accept-Language`。未登录/未设语言的用户即默认中文；用户在右下角切过语言后会写 cookie，cookie 优先级更高、记住其选择。（中文 i18n、`Accept-Language` 优先级逻辑两家一致。）
 
@@ -507,9 +507,9 @@ WantedBy=multi-user.target
 
 `systemctl enable --now forgejo-ssh-forward`，再放行云防火墙/安全组的 `<SSH_PORT>` 入站。**验收**：从任意公网机 `ssh -p <SSH_PORT> -T git@<SSH_HOST>` 应回 `<server>` 的 `Permission denied (publickey)`（没登记 key 时）或欢迎语（登记了 key）；`ssh -v` 里出现 `remote software version Go` 说明确实打到了内置 server（OpenSSH 会显示 `OpenSSH_...`，借此区分是不是打串到运维 sshd）。公钥在网页端登记即可（内置 server 直接查库，无需碰入口机）。
 
-**内网机在 WSL2（NAT）+ Windows 入口的特例**：`<内网机地址>` 要填 Windows 宿主的网卡 IP（mesh / LAN），WSL 内的容器端口得经 Windows `netsh portproxy` + wslrelay 才能从宿主 IP 进。这条链路有个 **SSH 专属坑**，详见 [`network.md`](network.md)「WSL/Docker 服务暴露（入站）」：
+**内网机在 WSL2（NAT）+ Windows 入口的特例**：`<内网机地址>` 要填 Windows 宿主的网卡 IP（mesh / LAN），WSL 内的容器端口得经 Windows `netsh portproxy` + wslrelay 才能从宿主 IP 进。这条链路有个 **SSH 专属坑**，详见 `network` skill 的 [`network.md`](../../network/references/network.md)「WSL/Docker 服务暴露（入站）」：
 
-> 这条链路经 Windows `netsh portproxy` + wslrelay。docker 发布 `0.0.0.0:<SSH_PORT>:<容器内端口>` 或 `127.0.0.1:<…>` 均可（实测无差别）；portproxy **`connectaddress=127.0.0.1`**（走 wslrelay、**不漂移**，别用会随 WSL 重启变化的 eth0 IP）。wslrelay 有个全双工死锁坑（WSL #10688）：仅"双向同时大流量 + 程序不积极收 socket"才触发，git-over-SSH / HTTP 实测不中招、与发布地址无关，详见 [`network.md`](network.md)「全双工大流量下 wslrelay 死锁」。
+> 这条链路经 Windows `netsh portproxy` + wslrelay。docker 发布 `0.0.0.0:<SSH_PORT>:<容器内端口>` 或 `127.0.0.1:<…>` 均可（实测无差别）；portproxy **`connectaddress=127.0.0.1`**（走 wslrelay、**不漂移**，别用会随 WSL 重启变化的 eth0 IP）。wslrelay 有个全双工死锁坑（WSL #10688）：仅"双向同时大流量 + 程序不积极收 socket"才触发，git-over-SSH / HTTP 实测不中招、与发布地址无关，详见 `network` skill 的 [`network.md`](../../network/references/network.md)「全双工大流量下 wslrelay 死锁」。
 
 ### 方案 B：公网 SSH relay（sshd 分流 + 中转脚本）
 
