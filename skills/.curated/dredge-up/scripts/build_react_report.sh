@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a single-file React HTML recap report for one Copilot CLI session.
+# Build a single-file React HTML dredge-up report for one Copilot CLI session.
 #
 # Usage:
 #   build_react_report.sh <session-id> [output.html] [--summary <fragment.html>]
@@ -10,7 +10,7 @@
 #   2. (optional) --summary <frag.html>: baked in at build time via
 #      RECAP_SUMMARY_PATH and rendered raw (trusted local HTML) at the top.
 #   3. pnpm install (first run only) + pnpm build  -> dist/index.html
-#   4. move dist/index.html -> <output.html> (default: ./session-recap-react-<sid8>-<ts>.html)
+#   4. move dist/index.html -> <output.html> (default: ./session-dredge-up-react-<sid8>-<ts>.html)
 #
 # Requires: uv, pnpm, node. The vanilla path (dump_session.py) needs none of
 # these — use it when you want zero-build. Use this for the richer visual.
@@ -31,7 +31,7 @@ done
 [ -n "$sid" ] || { echo "usage: build_react_report.sh <session-id> [out.html] [--summary frag.html]" >&2; exit 2; }
 
 ts="$(date +%Y%m%d-%H%M%S)"
-[ -n "$out" ] || out="$PWD/session-recap-react-${sid:0:8}-${ts}.html"
+[ -n "$out" ] || out="$PWD/session-dredge-up-react-${sid:0:8}-${ts}.html"
 # absolutise (we cd into $REACT before building)
 case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
 [ -n "$summary" ] && case "$summary" in /*) ;; *) summary="$PWD/$summary" ;; esac

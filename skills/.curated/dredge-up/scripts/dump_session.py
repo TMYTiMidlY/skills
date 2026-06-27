@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["markdown>=3.5"]
 # ///
-"""Recap dump — reconstruct one Copilot CLI session's full timeline offline,
+"""dredge-up dump — reconstruct one Copilot CLI session's full timeline offline,
 reproducing the exact DOM that the bundle's `/share html` (alias `/export
 html`) writes for the same session. CSS/JS are reused verbatim from the
 bundle (see assets/share-export.{css,js}); this script's job is to produce a
@@ -432,7 +432,7 @@ def entry_time(ts, session_start):
 def elapsed_str(start_dt):
     """Mirrors the bundle's elapsed string (header position 3): 'Ys' if
     <60s else 'Xm Ys'. Computed at generation time (not view time), since
-    the recap report is pre-baked HTML."""
+    the dredge-up report is pre-baked HTML."""
     if not start_dt:
         return ""
     if start_dt.tzinfo is None:
@@ -711,7 +711,7 @@ def render_entry(item, idx, start):
 # ──────────────────────────────────────────────────── document shell ─────────
 # Pill order mirrors bundle `y` (user/copilot/tool/reasoning/info/warning/
 # error/group/notification/handoff/compaction/task_complete) plus our
-# additional `summary` (agent-authored recap verdict) pinned first.
+# additional `summary` (agent-authored dredge-up verdict) pinned first.
 PILL_ORDER = [
     ("summary", "总结"),
     ("user", "用户"),

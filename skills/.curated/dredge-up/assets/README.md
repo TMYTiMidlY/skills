@@ -1,7 +1,7 @@
-# recap export assets
+# dredge-up export assets
 
 `share-export.css` and `share-export.js` are extracted **verbatim** from the
-installed `@github/copilot` CLI bundle (`app.js`), so the recap HTML export
+installed `@github/copilot` CLI bundle (`app.js`), so the dredge-up HTML export
 matches Copilot CLI's own `/share html` (a.k.a. `/export`) interactive
 conversation export — dark GitHub (Primer) theme, sticky header, type-filter
 pills, search, collapsible entries, sidebar map, jump-nav.

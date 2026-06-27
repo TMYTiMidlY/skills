@@ -617,7 +617,7 @@ export default function App() {
                     onToggle={(v) => setOpenMap((m) => ({ ...m, [idx]: v }))} />
             ))}
           <footer className="pt-4 text-center text-xs text-[var(--mut)]">
-            recap React 原型 · Vite + React 19 + Tailwind v4 + Radix + Shiki · 单文件自包含
+            dredge-up · Vite + React 19 + Tailwind v4 + Radix + Shiki · 单文件自包含
           </footer>
         </main>
       </div>
