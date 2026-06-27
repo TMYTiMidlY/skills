@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Export one session's merged timeline to JSON for the React prototype.
+"""Export one session's merged timeline to JSON for the React report
+renderer (scripts/react/).
 
 Reuses dump_session.py's data layer (events.jsonl preferred, db.turns
-fallback). Output shape matches what src/App.tsx expects:
+fallback). Output shape matches what react/src/App.tsx expects:
 
     { sessionId, name, cwd, repo, branch, sessionStart, sourceLabel,
       entries: [
@@ -10,7 +11,8 @@ fallback). Output shape matches what src/App.tsx expects:
         { kind: 'passthrough', entry: {...} }
       ] }
 
-Run from anywhere; writes to ../recap-react-prototype/src/session.json.
+Run from anywhere; default output is react/src/session.json (override with
+the second CLI arg).
 """
 import json
 import os
@@ -47,9 +49,7 @@ def main():
         sys.exit("usage: export_session_json.py <session-id> [out.json]")
     sid = sys.argv[1]
     out = (sys.argv[2] if len(sys.argv) > 2
-           else os.path.normpath(os.path.join(
-               HERE, "..", "..", "..", "..", "..",
-               "recap-react-prototype", "src", "session.json")))
+           else os.path.join(HERE, "react", "src", "session.json"))
 
     meta = fetch_db_meta(DEFAULT_DB, sid)
     if not meta:

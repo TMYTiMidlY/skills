@@ -61,13 +61,17 @@ description: 会话收尾盘点——回顾本 session 做过的事，并揪出"
   - 数据源是 `~/.copilot/session-state/<id>/events.jsonl`（缺失时回退到 `session-store.db` 的 `turns` 表，header 显示警告）——这就是 Copilot CLI 自带 `/share html`（别名 `/export`）消费的同一份事实。所以能还原**完整时间线**：用户消息 / 助手回答 / 推理（reasoning） / 工具调用（按 `callId` 合并 start+complete） / 通知 / 信息 / 错误等全部 entry 类型。
   - 视觉**照搬 `/share html`**：暗色 GitHub(Primer) 主题、sticky header、按类型筛选 pill、搜索（`/` 聚焦）、折叠/展开、侧栏目录、上一条/下一条用户消息跳转。CSS/JS 来自从 `@github/copilot` 包里抽出的资产；标签汉化但 `data-type` 保持英文（JS 过滤靠它）。助手消息按 markdown 渲染、用户消息转义。
   - **想在报告顶部钉 agent 总结**：把"做过的事 / 承诺未做"等盘点写成 HTML 片段文件（`<h3>`/`<ul>` 等简单标签即可，精炼别太详），用 `--summary <片段.html>` 注入。总结条目**钉在编号之外**（`data-index="summary"`），真实 #1 仍是真实第一条事件；同时多一个 `总结` 筛选 pill。
-  - **存在两条渲染路径**（视觉风格不同、并存）：vanilla 单文件路线 = 直接 Python 拼字符串、~1MB、零构建；React 单文件路线 = Vite 打包成单 HTML、shadcn 风格卡片 + lucide 图标 + Shiki 代码高亮、~2MB、需 `pnpm build`。选哪个看场景。
+  - **两条渲染路径并存**（视觉不同，按场景选）：
+    - **vanilla**（`scripts/dump_session.py <sid> [--summary 片段.html] [out.html]`）：纯 Python 拼字符串、复刻 `/share html` 视觉、~1MB、**零构建**（只需 `uv`）。要快、要轻、要和 share 一致时用。
+    - **React**（`scripts/build_react_report.sh <sid> [out.html] [--summary 片段.html]`）：Vite 打包成单文件、shadcn 风卡片 + lucide 图标 + Shiki 高亮，外加 vanilla 没有的三样：**紧凑密度切换**（header 按钮，状态存 localStorage）、**LaTeX**（KaTeX，行内 `$x$` + 块级 `$$…$$`，仅作用于助手 markdown 消息）、**summary 按 HTML 原样渲染**。代价：需 `pnpm build`（首次自动 `pnpm install`），产物 ~3MB / gzip ~1.4MB（KaTeX 字体 base64 内联占大头）。要精致视觉 / 会话里有数学公式时用。
+    - 两条**共用同一数据层**：React 端只消费 `export_session_json.py` 出的 agent-neutral JSON，**绝不**自己解析 events.jsonl（解析只在 `dump_session.py` 里做一次）。`--summary` 注入的总结条目两边都**钉在编号之外**（`data-index="summary"`），真实 #1 仍是真实事件。
   - **离线注定补不到的几类**：mascot 启动 banner（`Tip: /cwd` 这类）、`/share` 命令自产回执（`Session shared successfully to: ...`）、ephemeral retry 提示——它们**只活在 live session 内存**里、从不写盘。share 在 live 时能有，离线 dump 没有，这是事实差。
+  - **维护责任**：`assets/share-export.{css,js}` 是从 `@github/copilot` 包里抽出来的资产，会随 Copilot CLI 升级**过期**（GitHub 团队加新 entry 类型 / 改 Primer 主题色 / 调按钮 ID 之类）。每次 Copilot CLI 出明显的视觉或 `/share html` 行为升级，要跑一次 `scripts/` 内的资产抽取脚本重抽，diff `assets/` 看变化——具体怎么用见 `assets/README.md`。
 - **正式交接文档**：若用户明确要"交接给下一个 agent / 写 handoff"，结合 `plan` skill（写给实施者的自包含正式文档）或仓库自带的 handoff 流程，不要在本 skill 里重造。
 
 ## 待办（后续扩展）
 
-- **支持 Claude Code 和 Codex 的会话导出**：当前数据层硬绑 Copilot CLI（`~/.copilot/session-state/<id>/events.jsonl` 的 schema）。Claude Code 存档在 `~/.claude/projects/*.jsonl`、Codex 在 `~/.codex/sessions/` 各有各的格式。下一步是把 events.jsonl 解析抽象成"数据源接口"，再补两个 adapter（claude-code / codex），让 recap 三家通吃。视觉/交互层（CSS/JS、entry DOM、筛选 pill）已经是 agent-agnostic 的，复用即可。
+- **支持 Claude Code 和 Codex 的会话导出**：当前数据层硬绑 Copilot CLI（`~/.copilot/session-state/<id>/events.jsonl` 的 schema）。Claude Code 存档在 `~/.claude/projects/*.jsonl`、Codex 在 `~/.codex/sessions/` 各有各的格式。下一步是把 events.jsonl 解析抽象成"数据源接口"，再补两个 adapter（claude-code / codex），让 recap 三家通吃。**渲染层两条路都已 agent-neutral**：vanilla 的 CSS/JS + entry DOM + 筛选 pill、React 的组件层都只消费中间形态（events.jsonl 解析结果 / `export_session_json.py` 出的 JSON），所以做完数据源抽象后**两条渲染路径都不用动**。
 
 ## 边界
 
