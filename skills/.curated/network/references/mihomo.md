@@ -108,10 +108,10 @@ CLI 跑起来要**终端一直挂着**，关了就停；要常驻就做成 servi
 - **`mixed-port`（显式代理）**：应用主动把流量发到这个端口（HTTP/SOCKS 混合）。适合“只想让特定程序走代理”。
   ```yaml
   mixed-port: 7890
-  allow-lan: true        # 要给局域网/虚拟网/别的设备用时开
-  bind-address: '*'      # 只给本机用就别写，默认回环即可
+  allow-lan: true        # 总开关：关(默认)→ 只听 127.0.0.1，外面进不来；开 → 才允许超出回环
+  bind-address: '*'      # 仅 allow-lan 开时才读：* = 所有网卡(0.0.0.0)，填具体 IP = 只听那张网卡
   ```
-  绑定优先回环或 `*`，**别绑某个具体虚拟网卡地址**——网卡重连/地址变化/启动顺序变了，就会间歇连不上代理端口。
+  两者是「开关 + 过滤器」不是两种等效写法：**开不开 LAN 看 `allow-lan`，开了之后听哪儿才看 `bind-address`**。源码 `listener/listener.go` 的 `genAddr(host, port, allowLan)`：`allow-lan` 关时直接返回 `127.0.0.1:port`（无视 `bind-address`），开时 `bind-address=*` → `:port`（全听）、否则 `host:port`。所以单写 `bind-address` 而不开 `allow-lan` 没用，照样只听回环。要对外时**别绑某个具体虚拟网卡地址**——网卡重连/地址变化/启动顺序变了，就会间歇连不上代理端口。
 
 - **TUN（透明接管）**：创建一张虚拟网卡，把**整机路由**劫进 mihomo，应用无感。适合“全局接管 + 想按域名分流 + 防 DNS 泄漏”。TUN 怎么配见第二部分（它和 DNS 强相关）。
 
@@ -224,7 +224,7 @@ curl -s -o /dev/null --max-time 45 --proxy $P \
 
 海外 VPS 上实测：给 Hysteria2 节点加 `up: "80 Mbps"`/`down: "120 Mbps"`（格式正则 `^(\d+)\s*[KMGT]?[Bb]ps$`，小写 `b`=bit）后，下载上传两向都进 Brutal——但当时链路 ~16 MB/s 下载、~9 MB/s 上传、**几乎无丢包**，加 `up`/`down` 前后吞吐无差异，印证「Brutal 收益要丢包才显现」。
 
-## 4. 运行态管理：REST API
+## 4. 运行态控制：REST API 与 Web 面板
 
 ```yaml
 external-controller: 127.0.0.1:9090
@@ -268,6 +268,29 @@ foreach ($n in @("vless-ws-Node","Hysteria2-Node")) {
 ```
 
 > **`/delay` 通 ≠ 节点能跑全速**：它只测 1KB 级 RTT。真实吞吐要用 ≥50MB 文件测（前几 MB 在 TCP 慢启动，speed 偏小）；跑大量 KB 级小文件时看 `part/s` 而不是 `MiB/s`。
+
+### 4.1 Web 面板（external-ui / `/ui` 路径）
+
+控制面除了裸 REST API，还能让 mihomo **自己托管一个 Web Dashboard**，不用另起 web 服务——配 `external-ui` 即可，浏览器开 `http://<controller>/ui/`：
+
+```yaml
+external-controller: 0.0.0.0:9090   # 要被别的机器 / mesh 访问就绑 0.0.0.0；仅本机用 127.0.0.1
+secret: '<random-secret>'           # 控制面出回环必须设 token（同 §3.1 的逻辑，控制面也一样）
+external-ui: ui                     # dashboard 静态文件目录：绝对路径，或相对 mihomo home(~/.config/mihomo/ui)
+external-ui-url: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip"  # 目录为空时自动拉这个 zip
+```
+
+- **服务路径**：mihomo 把 `external-ui` 目录挂在控制面的 `/ui` 下（源码 `hub/route/server.go`：`/ui` → `FileServer(external-ui 目录)`，裸 `/ui` 自动 302 到 `/ui/`）。所以 `http://127.0.0.1:9090/ui/` 就是面板，和 REST API 同端口。
+- **自动下载**：启动时若 `external-ui` 目录为空，mihomo 按 `external-ui-url` 下载并解压 dashboard（源码 `hub/executor/executor.go` 的 `AutoDownloadUI()`）；想手动更新打 `POST /upgrade/ui`（`hub/route/upgrade.go`）。上面这个 URL 是 **MetaCubeXD**（常见 mihomo 面板，另有 yacd / zashboard 等，换 URL 即可）。
+- **暴露到网络要 secret**：`external-controller` 绑 `0.0.0.0`（让 mesh / LAN 上别的机器也能开面板）时**必须设 `secret`**——它是 REST API 的 Bearer token，面板首屏要填"后端地址 + 这个 secret"才连得上；绑回环自用可留空。**真实 secret 不入库，占位即可。**
+- **面板默认连哪个后端**：dashboard 是纯静态 SPA，得知道连哪个控制面 API。MetaCubeXD 默认让你首屏手填后端 URL + secret；在 `external-ui` 目录里放一个 `config.js` 把它钉成同源就免手填：
+
+  ```js
+  // <external-ui>/config.js
+  window.__METACUBEXD_CONFIG__ = { defaultBackendURL: window.location.origin }
+  ```
+
+  这样从 `http://<host>:9090/ui/` 打开就自动连同源的 `http://<host>:9090` 控制面，不必每次手填 backend（secret 仍需在面板里填一次）。
 
 ## 5. TUN 路由的边界
 

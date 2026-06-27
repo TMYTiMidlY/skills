@@ -9,7 +9,7 @@ description: 本机/客户端的网络与代理配置、泄漏控制，以及 WS
 
 ## Mihomo / Clash 客户端与泄漏控制
 
-Mihomo / Clash 内核本身的客户端运维：默认配置位置与热重载、REST API 运行态排障、`HTTPS_PROXY` 只决定入口不决定出口（rule+group 链路 `.now` 排障）、REST API 改节点 + 测延迟（emoji group 名 EscapeDataString）、协议选型与性能（vless+ws vs Hysteria2、jitter、落地 IP 疑似被屏蔽）、Hysteria2 的 Brutal/BBR 拥塞控制（`up`/`down` + 服务端 `ignoreClientBandwidth` 协商、源码出处）、实测吞吐方法、TUN 路由规则（IP-CIDR/route-exclude 不等于 bypass）、VLESS+ws+TLS 客户端配置、从源码构建 mihomo（Windows）；第二部分是泄漏控制：DNS 泄漏原理与 `dns-hijack`/`enhanced-mode`、WebRTC 泄漏原理与处理、用 bash.ws / browserleaks / 自写 STUN 探针**直接实测** DNS 与 WebRTC 泄漏（含 TUN vs no-TUN、浏览器策略、反检测浏览器对照）见 [references/mihomo.md](references/mihomo.md)。
+Mihomo / Clash 内核本身的客户端运维：默认配置位置与热重载、REST API 运行态排障 + 自托管 Web 面板（external-ui / `/ui` 路径、同源 config.js、暴露到网络要 secret）、`HTTPS_PROXY` 只决定入口不决定出口（rule+group 链路 `.now` 排障）、REST API 改节点 + 测延迟（emoji group 名 EscapeDataString）、协议选型与性能（vless+ws vs Hysteria2、jitter、落地 IP 疑似被屏蔽）、Hysteria2 的 Brutal/BBR 拥塞控制（`up`/`down` + 服务端 `ignoreClientBandwidth` 协商、源码出处）、实测吞吐方法、TUN 路由规则（IP-CIDR/route-exclude 不等于 bypass）、VLESS+ws+TLS 客户端配置、从源码构建 mihomo（Windows）；第二部分是泄漏控制：DNS 泄漏原理与 `dns-hijack`/`enhanced-mode`、WebRTC 泄漏原理与处理、用 bash.ws / browserleaks / 自写 STUN 探针**直接实测** DNS 与 WebRTC 泄漏（含 TUN vs no-TUN、浏览器策略、反检测浏览器对照）见 [references/mihomo.md](references/mihomo.md)。
 
 ## 远程接入（RDP / 向日葵 / serve-web）
 
