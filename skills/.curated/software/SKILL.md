@@ -55,7 +55,7 @@ WSL 挂载 Windows 盘、UNC/SMB 共享、`drvfs/9p` 小文件性能、CIFS 凭�
 
 ## Linux 回收站（trash-cli / gio trash）
 
-`trash-cli` 与 GLib `gio trash` 是两套实现但遵循同一 FreeDesktop Trash 规范（同一 `~/.local/share/Trash/`、`files/`+`info/*.trashinfo` 配对、`.Trash-$uid` 卷内逻辑），互通可混用。覆盖：回收站“两半”结构与**单个损坏/空 `.trashinfo` 会让 `trash-rm`/`trash-empty` 对整库罢工**（`unable to parse 'Path'`、删掉坏 info 即恢复，list 不受影响故“list 正常但 rm 不动”即疑此）、**`trash-rm` 匹配规则**（pattern 以 `/` 开头→整路径 fnmatch，否则→只匹配 basename；故 `*/x` 永不命中，附 `filter.py` 源码与正确写法）、**gio 无选择性永久删单项**（只有 `--empty` 全清/`--list`/`--restore`/`-f`，定点永久删只能用 `trash-rm`，附 `gio-tool-trash.c` 源码）、**删挂载盘文件两者同规范**落到卷顶层 `.Trash/$uid` 或 `.Trash-$uid`（gio 优先合法全局 `.Trash`；mount.md / windows.md 仅留指针与 NTFS/WSL 专属角度）、uv 装的 trash-cli 在非登录 shell PATH 缺失需 `bash -lc`。见 [references/trash.md](references/trash.md)。
+`trash-cli` 与 GLib `gio trash` 是两套实现但遵循同一 FreeDesktop Trash 规范（同一 `~/.local/share/Trash/`、`files/`+`info/*.trashinfo` 配对、`.Trash-$uid` 卷内逻辑），互通可混用。覆盖回收站两半结构、坏 `.trashinfo` 的真实影响与正确处置（不会让 `trash-rm`/`trash-empty` 整库罢工，但坏项删不掉、需手动补回 `Path=`）、`trash-rm` 匹配规则（`/` 开头按整路径否则按 basename，附 `filter.py` 源码与正确写法）、gio 无选择性永久删单项（附 `gio-tool-trash.c` 源码）、删挂载盘文件两者同规范的卷内落点见 [references/trash.md](references/trash.md)。
 
 ## EasyTier 客户端（Windows）
 

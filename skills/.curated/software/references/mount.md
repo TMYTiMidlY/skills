@@ -286,7 +286,9 @@ ripgrep 默认遵守 `.gitignore` / `.rgignore`——当挂载子目录已经在
 
 仓库级保险：在仓库根 `.gitignore` / `.rgignore` / `.fdignore` / IDE 的 file-watch 排除里把 mount 子目录加进去（即使 mount 目录是仓库内的子目录，git 不会自己识别 FUSE）。
 
-### 挂载点的删除：trash-put 而不是 rm
+### 挂载点的删除：trash-put 而不是 rm -rf
 
-挂载目录里删文件用 `trash-put` 而不是 `rm`：回收站建在挂载卷顶层（`.Trash-<UID>/`），文件留在同一 filesystem 可恢复、不触发跨盘完整拷贝，占的是远端 share 配额（按需 `trash-empty`）。完整语义（trash-cli/gio 同规范的卷内落点、`trash-rm` 匹配规则、坏 `.trashinfo` 让 trash-rm 整体失效、PATH 坑）见 [trash.md](trash.md)。
+挂载目录里删文件（尤其 `rm -rf` 删目录）改用 `trash-put`：trash-cli 在该挂载卷顶层建 `.Trash-<UID>/`，文件留在同一 filesystem、可 `trash-restore` 恢复，而不是被搬到 `~/.local/share/Trash`、跨 filesystem 触发完整数据拷贝。这条对 FUSE 和内核挂载（CIFS / NFS / NTFS 等）都成立；卷内 `.Trash-<UID>/` 占该挂载卷自身的空间、不占本地盘。
+
+为什么落到卷内 `.Trash-<UID>/`（候选目录顺序、同卷强制、sticky 检查的源码依据），以及 trash-cli 与 `gio trash` 的通用语义（两者互通、`trash-rm` 匹配规则、坏 `.trashinfo` 的正确处置）——这些挂载相关的 trash-cli 细节都在 [trash.md](trash.md)。
 
