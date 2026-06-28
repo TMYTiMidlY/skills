@@ -6,7 +6,7 @@
 
 ## (a) 大桶 list 慢 → per-shard 并发 list
 
-`get_paginator('list_objects_v2').paginate(Bucket=X, Prefix=Y/)` 单进程串行扫百万级对象的桶要数小时（HDD seek 限速）。把"按桶级 prefix 列"改成"按 sub-prefix 并发列"，8 worker 同样数据 ~10× 加速：
+`get_paginator('list_objects_v2').paginate(Bucket=X, Prefix=Y/)` 单进程串行扫百万级对象的桶要数小时（HDD seek 限速）。把“按桶级 prefix 列”改成“按 sub-prefix 并发列”，8 worker 同样数据 ~10× 加速：
 
 ```python
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -81,7 +81,7 @@ for fut in as_completed(futs):
 
 ## (e) 要可校验的批量复制：用 boto3 显式 copy，别盲信 `mc mirror`
 
-`mc mirror` 在大批量 / versioning 桶上复制，结果不容易核对（曾遇到它判定"已一致"而实际没传）。要可校验的批量复制，改用 boto3 单对象 server-side copy + 限并发 worker，事后再 key set 比对：
+`mc mirror` 在大批量 / versioning 桶上复制，结果不容易核对（曾遇到它判定“已一致”而实际没传）。要可校验的批量复制，改用 boto3 单对象 server-side copy + 限并发 worker，事后再 key set 比对：
 
 ```python
 def copy_one(src_key):

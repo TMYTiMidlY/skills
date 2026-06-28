@@ -41,6 +41,20 @@ pdftoppm -jpeg -r 300 document.pdf output_prefix
 
 > `pdftoppm` 来自 poppler-utils，Debian/Ubuntu 安装：`sudo apt install poppler-utils`。
 
+> ⚠️ **poppler 会“静默”把合法的 CJK PDF 渲染成空白——`pdftoppm`/`pdffonts` 不能单独当验收**。
+> 实测本机 pixi 版 poppler **26.02.0** 对 **ctex / XeLaTeX 默认 Fandol** 这类 **Adobe-GB1 CID-keyed CFF** 字体渲染失败：`pdftoppm` 转出的图里中文**整页空白**、`pdffonts` 也**不列**该字体，但**退出码 0**，同一份 PDF 在 MuPDF / pdfium / Adobe / Chrome 里中文都正常。
+>
+> - **别拿 pdftoppm 当“渲染真相”**：转图前用独立引擎交叉验证一句话——能抽出中文＝字形都在，问题出在 poppler 这道渲染：
+>   ```bash
+>   uv run --with pymupdf python -c "import fitz;d=fitz.open('x.pdf');print(repr(d[0].get_text()[:60]))"
+>   ```
+> - **要图就换引擎**：`mutool draw -o p%d.png x.pdf`（MuPDF）或 Ghostscript；或降级 pixi 的 poppler；或从源头改 `fontset=ubuntu`（Noto，Identity ROS，poppler 认）。
+>
+> **结构与触发条件（两层并存）**：
+> - **xdvipdfmx 侧**：`fontmap.c` 给**所有 XeTeX 原生字体硬编码 `Identity-H` 编码**；而 Fandol 是 **Adobe-GB1** CID-keyed CFF（已证实 `ROS=(Adobe,GB1,5)`）。于是产出「`Identity-H` 编码 + `GB1` 的 `CIDSystemInfo`」这种不太常规的结构。旁证：ctex 的 **pdfLaTeX 路径**专门加 `cmap=UniGB-UTF16-H`（GB1 的 CMap）正因 Fandol 是 GB1，而 **XeLaTeX 路径没加**。
+> - **poppler 侧**：26.02.0 严格按 `GB1` ROS 解码 → 取错/空白；MuPDF / pdfium / Adobe 宽容处理（按 code=GID 直接出字）→ 正常。
+> - **诊断验证**：用 pikepdf 把该字体 `CIDSystemInfo /Ordering` 改 `GB1→Identity`，poppler 立刻出字（仅验证用，别真改 PDF）。绕过仍以“换引擎看图 / 源头 `fontset=ubuntu`”为准。
+
 ## 飞书 / Lark 文档 → Markdown（feishu2md）
 
 [feishu2md](https://github.com/Wsine/feishu2md) 把飞书/Lark 新版文档导出为 Markdown，支持单文档、文件夹批量和知识库批量下载，并可下载文档内图片。
@@ -58,10 +72,10 @@ pdftoppm -jpeg -r 300 document.pdf output_prefix
 
 企业自建应用有两种形态，发布流程不一样：
 
-- **企业版**：权限范围、应用功能等变更后需要"创建新版本 → 企业管理员审核"，审核通过后才真正生效。
+- **企业版**：权限范围、应用功能等变更后需要“创建新版本 → 企业管理员审核”，审核通过后才真正生效。
 - **个人版**（feishu2md README 明确推荐的类型）：开发者即使用者，权限勾选后立即生效，免版本审核。
 
-所以跟着 README 走个人版路线，不会遇到"权限加了但没发版所以 API 报权限不足"的问题；企业版则必须走审批。
+所以跟着 README 走个人版路线，不会遇到“权限加了但没发版所以 API 报权限不足”的问题；企业版则必须走审批。
 
 #### 应用身份 vs 用户身份（决定能看到哪些文档）
 
@@ -74,9 +88,9 @@ pdftoppm -jpeg -r 300 document.pdf output_prefix
 
 feishu2md 走**应用身份**路线（配置里只有 `app_id`/`app_secret`，没有 OAuth 回调）。由此可以推出文档共享的硬性前提：应用本身不是任何文档的成员，`docx:document:readonly` 授予的只是**调用 API 的能力**，并不等于自动能读到你的某一篇文档。
 
-所以 README 给出的办法是：**"分享 → 开启链接分享 → 互联网上获得链接的人可阅读 → 复制链接"**——开了这档分享后，链接本身就是访问凭据，`tenant_access_token` 带上就能读。单文档/文件夹下载都按这个流程取 URL。知识库批量下载用知识库设置页 URL，同样要求该知识库对链接可见。
+所以 README 给出的办法是：**“分享 → 开启链接分享 → 互联网上获得链接的人可阅读 → 复制链接”**——开了这档分享后，链接本身就是访问凭据，`tenant_access_token` 带上就能读。单文档/文件夹下载都按这个流程取 URL。知识库批量下载用知识库设置页 URL，同样要求该知识库对链接可见。
 
-如果以后要读"只对自己可见、不想开公开链接"的文档，就得切到 `user_access_token` 路线——feishu2md 不支持这条。
+如果以后要读“只对自己可见、不想开公开链接”的文档，就得切到 `user_access_token` 路线——feishu2md 不支持这条。
 
 ### 配置
 

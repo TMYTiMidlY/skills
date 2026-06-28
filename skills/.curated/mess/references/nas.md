@@ -17,7 +17,7 @@ failed to initialize logging driver: database is blocked
 ### 误导路径
 
 容易误判：
-1. ❌ 以为是**自家应用**（如 RustFS / Postgres）的内部数据库 lock —— 去翻应用源码搜 "database is blocked"，0 匹配
+1. ❌ 以为是**自家应用**（如 RustFS / Postgres）的内部数据库 lock —— 去翻应用源码搜 “database is blocked”，0 匹配
 2. ❌ 以为是**应用 RocksDB / SQLite metadata** stale lock —— 去找 LOCK 文件清理
 3. ❌ 以为是**最近改的 compose 文件**（init container / volume mount / chown）有副作用 —— 回滚 compose 也修不好
 
@@ -35,7 +35,7 @@ failed to initialize logging driver: database is blocked
 2. **DSM 控制面板 → 套件中心 → Container Manager → 停用 → 启用** —— 重启 docker daemon，强制释放所有 lock（~30s）
 3. **DSM 重启**（不推荐，影响一切）
 
-> ⚠️ **绝对不要 "卸载 Container Manager"**：bind mount (在 `/volume1/docker/` 下) 安全，但 **named volume**（在 `/volume1/@docker/volumes/`，属套件管辖）**有丢的风险**。停用 → 启用 跟卸载不一样，前者绝对安全。
+> ⚠️ **绝对不要 “卸载 Container Manager”**：bind mount (在 `/volume1/docker/` 下) 安全，但 **named volume**（在 `/volume1/@docker/volumes/`，属套件管辖）**有丢的风险**。停用 → 启用 跟卸载不一样，前者绝对安全。
 
 ### 预防
 
@@ -45,7 +45,7 @@ failed to initialize logging driver: database is blocked
 2. 一次性选定方向
 3. 一次 recreate 验证
 
-避免"改 → recreate → 看结果 → 改回 → recreate → 再改 → recreate"这种密集循环触发。
+避免“改 → recreate → 看结果 → 改回 → recreate → 再改 → recreate”这种密集循环触发。
 
 ### 关键词
 

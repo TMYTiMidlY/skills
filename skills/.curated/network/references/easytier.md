@@ -135,8 +135,8 @@ cd "C:\Program Files\EasyTier"
 
 EasyTier 不借助 NSSM，而是用两个 Rust crate 自己完成服务化：
 
-- **`windows-service`**（Windows 服务控制管理器 SCM 的 Rust 绑定）让 `easytier-core.exe` 本身 **service-aware**：`define_windows_service!` 宏生成服务入口，进程启动时先用 `service_dispatcher::start()` 试连 SCM——被 SCM 拉起就连上、进入服务模式（线程 park 住并响应 SCM 的 start/stop/查询）；在命令行直接敲则连不上 SCM，fallback 当普通 CLI 跑。**同一个 exe「两副面孔」，由"谁启动它"决定**，不需要 `--service` 这类显式开关（所以 `--help` 里也看不到）。
-- **`service-manager`**（跨平台服务管理抽象）负责"安装"侧：Windows 上 easytier 用自定义的 `WinServiceManager` 直接调 SCM 的 `create_service`，把 core 注册为 `OWN_PROCESS` + `AutoStart`、依赖 `rpcss`+`dnscache`、账户 `LocalSystem`；同一套抽象在 Linux 生成 systemd unit、macOS 生成 launchd plist。
+- **`windows-service`**（Windows 服务控制管理器 SCM 的 Rust 绑定）让 `easytier-core.exe` 本身 **service-aware**：`define_windows_service!` 宏生成服务入口，进程启动时先用 `service_dispatcher::start()` 试连 SCM——被 SCM 拉起就连上、进入服务模式（线程 park 住并响应 SCM 的 start/stop/查询）；在命令行直接敲则连不上 SCM，fallback 当普通 CLI 跑。**同一个 exe「两副面孔」，由“谁启动它”决定**，不需要 `--service` 这类显式开关（所以 `--help` 里也看不到）。
+- **`service-manager`**（跨平台服务管理抽象）负责“安装”侧：Windows 上 easytier 用自定义的 `WinServiceManager` 直接调 SCM 的 `create_service`，把 core 注册为 `OWN_PROCESS` + `AutoStart`、依赖 `rpcss`+`dnscache`、账户 `LocalSystem`；同一套抽象在 Linux 生成 systemd unit、macOS 生成 launchd plist。
 
 源码位置：`easytier/src/core.rs`（service_dispatcher 那段）、`easytier/src/service_manager/mod.rs`（`WinServiceManager`）。
 

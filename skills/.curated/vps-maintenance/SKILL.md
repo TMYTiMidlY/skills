@@ -204,7 +204,7 @@ Caddy 本身（安装、域名/IP 模式、caddy-security 扩展、error-pages�
 
 ## 大陆备案与端口策略
 
-国内备案规则在不同场景下的豁免边界（家宽公网 IP / 非标端口 / 国内云 ECS / 海外 VPS）、阿里云 ECS 未备案 SNI 封锁实测与绕过方案，以及由这些约束衍生出的"小国内 VPS 做组网中转"部署模式，统一见 [references/icp-filing.md](references/icp-filing.md)。
+国内备案规则在不同场景下的豁免边界（家宽公网 IP / 非标端口 / 国内云 ECS / 海外 VPS）、阿里云 ECS 未备案 SNI 封锁实测与绕过方案，以及由这些约束衍生出的“小国内 VPS 做组网中转”部署模式，统一见 [references/icp-filing.md](references/icp-filing.md)。
 
 ## 基础网络测试
 

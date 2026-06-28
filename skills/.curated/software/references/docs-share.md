@@ -78,7 +78,7 @@ mc alias rm rfsadmin
 
 ## markdeep 写作惯例：依据引用 vs 说明脚注（可选）
 
-下面这套只在**同时满足**两个条件时启用：① 用户明确要求"有依据 / 挂来源 / 每条都要出处"；且 ② 这份 md **只通过 markdeep 渲染查看**（不发到 GitHub / VS Code / CommonMark 环境）。
+下面这套只在**同时满足**两个条件时启用：① 用户明确要求“有依据 / 挂来源 / 每条都要出处”；且 ② 这份 md **只通过 markdeep 渲染查看**（不发到 GitHub / VS Code / CommonMark 环境）。
 
 **如果目标是 GFM 兼容**（要发到 GitHub issue、wiki、VS Code 原生预览、或不确定读者用什么渲染器），**不要用 `[#key]`**——CommonMark 不识别，读者只会看到字面的 `[#key]`；给来源直接用普通内联链接 `[说明文字](url)`，也不要做 `**Bibliography**:` 段。
 
@@ -87,7 +87,7 @@ mc alias rm rfsadmin
 - **外部依据（URL 可核的断言 / 数字 / 官方原话）** → `[#key]`，文末 `**Bibliography**:` 统一列条目。断言后直接跟 `[#key]`，多源并列用逗号 `[#a, #b]`。条目格式：`[#key]: 作者/机构, "标题", 年. URL`。
 - **补充说明（展开解释 / 计算口径 / 风险提示，非引用）** → 脚注 `[^1]` / `[^name]`，正文插标识、文末或段末写 `[^name]: 说明`。**脚注在 GFM 2021-09 后也支持，GFM 模式可保留脚注**，只需丢掉 `[#key]`。
 
-语义区别：`[#key]` 回答"这条我从哪看到的"（markdeep 自动汇总到 Bibliography）；`[^name]` 回答"这条要额外解释一下"（**定义行放哪、就在哪渲染**）。
+语义区别：`[#key]` 回答“这条我从哪看到的”（markdeep 自动汇总到 Bibliography）；`[^name]` 回答“这条要额外解释一下”（**定义行放哪、就在哪渲染**）。
 
 ### markdeep 引用 vs GitHub/CommonMark 不兼容点
 
@@ -107,17 +107,17 @@ mc alias rm rfsadmin
 
 - **文件头 metadata 行**（三项 `·` 分隔一行）：`**最后更新日期**：YYYY-MM-DD　·　**作者**：<name>　·　**话题**：<简述>`，接一行 `---`。
 - 首节固定「零、TL;DR」：每条结论一整句（粗体关键词前置、带数字），启用引用体系时末尾必挂 `[#key]`。
-- 子节 `### 1.1`；段间 `---` 分隔；表格最后一列统一叫"来源"。
+- 子节 `### 1.1`；段间 `---` 分隔；表格最后一列统一叫“来源”。
 - 行内：原文直引用 `> 原文：**"..."**[#key]`；小结段用粗体标签开头（`**推论**：`/`**策略**：`）；来源分级标记 `【官方】`/`【第三方】`/`【推算】`。
 - 结尾：`---` + `**Bibliography**:`（条目一行一条、条间空行）+ 再一个 `---` + `**变更说明**`。
 
 ### markdeep 不能用什么（viewer 渲染下）
 
-- **`<script>`** —— viewer 客户端只加载 `markdeep.min.js`；md 内嵌脚本不执行（也不该执行，否则 docs-share 的"md 原样存储"约定被破坏）。
+- **`<script>`** —— viewer 客户端只加载 `markdeep.min.js`；md 内嵌脚本不执行（也不该执行，否则 docs-share 的“md 原样存储”约定被破坏）。
 - **mermaid** —— viewer 没加载 mermaid runtime；要画流程图用 markdeep 原生 [ASCII diagram](https://casual-effects.com/markdeep/features.md.html#diagrams)。
 - **GFM 表格里的复杂内联 HTML** —— markdeep 表格语法跟 GFM 兼容但严格度更高。
 
-需要这些功能就走"直接传 HTML 文件"（桶照样存，mc 自动按扩展名设 `Content-Type: text/html`），或者用旧的 `viewer.html?doc=` 模式（是 stock markdeep 渲染）。
+需要这些功能就走“直接传 HTML 文件”（桶照样存，mc 自动按扩展名设 `Content-Type: text/html`），或者用旧的 `viewer.html?doc=` 模式（是 stock markdeep 渲染）。
 
 ## 排障速查
 
@@ -128,7 +128,7 @@ mc alias rm rfsadmin
 | md 渲染了但**图片全裂**（403） | 用了相对图但没走 bundle；给文档第一行加 `<!-- docs-share:bundle -->`，push 后分享 `<名>.bundle.md` |
 | `viewer.html?doc=` 打开空白 / 报错 | `?doc=` 必须是**可 fetch** 的 URL（私有桶用 presigned）；presigned 与 viewer **同源**才无 CORS；浏览器需能访问 markdeep CDN |
 | presigned 链接 403 / 过期 | `X-Amz-Expires` 到期重新生成；或 host 不匹配（SigV4 签名含 host，跨入口 alias 签出的链接互不能用）；或受限 key 被删 / 改 policy |
-| 同一个对象 mc cp 上传后下次 sync 又消失 | `rclone sync --remove` 是"以 git 仓库为权威 mirror"，桶里多余对象会被删；**永远以 git push 为唯一写入路径**，除非在做 hot-fix 对齐 |
+| 同一个对象 mc cp 上传后下次 sync 又消失 | `rclone sync --remove` 是“以 git 仓库为权威 mirror”，桶里多余对象会被删；**永远以 git push 为唯一写入路径**，除非在做 hot-fix 对齐 |
 | 桶里看到很多 `0B` 目录条目 | `mc ls` 不带 `--recursive` 把 S3 prefix 列为 0B（视觉占位）；用 `mc ls --recursive` 看真实内容 |
 
 > 把 Markdown 导出为 PDF 见 **software** skill 的 `references/pdf-export.md`；源文件格式转换见 **software** skill 的 `references/format-conversion.md`；操作 RustFS 桶的客户端坑（mc / boto3 / versioning / 删桶）见 **software** skill 的 `references/rustfs.md`（同目录 `rustfs-bulk-ops.md` 写批量 ops）。
