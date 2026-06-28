@@ -24,8 +24,8 @@ Data sources, in priority order:
 The events → timeline-entry mapping, the per-type DOM (`nJn`), the merging
 of `tool.execution_start/complete` into one tool entry (`iFs`), and the
 filter-pill / sticky-header / sidebar shell (`hFs`) are all reverse-
-engineered from the @github/copilot bundle; see software/references/
-copilot.md §"`/share html` 对话导出（逆向）" for the full notes.
+engineered from the @github/copilot bundle; see the `harness` skill's Copilot
+sessions/export reference for the full notes.
 
 Usage:
     uv run dump_session.py <session-id> [--format text|html] [--out PATH]
@@ -83,7 +83,7 @@ def fetch_db_turns(db, sid):
 
 
 # ─────────────────────────────────────── events.jsonl → timeline entries ─────
-# Mirrors the bundle's event→entry mapping (see copilot.md §share-html):
+# Mirrors the bundle's event→entry mapping (see `harness` Copilot sessions notes):
 #   user.message              -> {type:user, text}
 #   assistant.message         -> {type:reasoning, text} + {type:copilot, text}
 #                                (toolRequests handled via tool.* events)
