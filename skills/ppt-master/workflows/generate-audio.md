@@ -4,7 +4,7 @@ description: Generate per-slide narration audio with AI-recommended voice select
 
 # Generate Audio Workflow
 
-> Standalone post-export step. Run when the user asks for "生成音频" / "录制旁白" / "narrated PPT" / "video export with voice", or proactively offer it after a deck is exported. Produces one audio file per slide via `edge-tts` by default, or a cloud TTS provider (`elevenlabs` / `minimax` / `qwen` / `cosyvoice`) when the user chooses high-quality narration or a cloned voice, then optionally re-exports a video-ready PPTX with audio embedded and per-slide auto-advance timings.
+> Standalone post-export step. Run when the user asks for “生成音频” / “录制旁白” / "narrated PPT" / "video export with voice", or proactively offer it after a deck is exported. Produces one audio file per slide via `edge-tts` by default, or a cloud TTS provider (`elevenlabs` / `minimax` / `qwen` / `cosyvoice`) when the user chooses high-quality narration or a cloned voice, then optionally re-exports a video-ready PPTX with audio embedded and per-slide auto-advance timings.
 
 This workflow is **independent**: it reads `notes/*.md` and queries the selected TTS voice catalog — no upstream conversation context required. Safe to invoke in a fresh session.
 
@@ -88,7 +88,7 @@ Send a single message to the user that asks all three questions at once and prov
 
 > 检测到 notes 主语言为 **<语言>**（locale: `<locale>`）。基于 deck 调性（<风格>），我推荐以下配置：
 >
-> **生成模式**：⭐ 推荐 `<edge|elevenlabs|minimax|qwen|cosyvoice>`（理由：<一句话，如"无需配置，稳定生成"或"用户要求高质量云端音色">）。
+> **生成模式**：⭐ 推荐 `<edge|elevenlabs|minimax|qwen|cosyvoice>`（理由：<一句话，如“无需配置，稳定生成”或“用户要求高质量云端音色”>）。
 >
 > **音色**：
 > - **[1] <ShortName>** — <性别·调性·适用场景> ⭐ **推荐**
@@ -98,17 +98,17 @@ Send a single message to the user that asks all three questions at once and prov
 > - [5] <ShortName> — <性别·调性·适用场景>
 > - 也可直接输入清单中的其他 ShortName。
 >
-> **语速/风格参数**：⭐ 推荐 `<rate or provider defaults>`（理由：<一句话，如"页均 2–3 句，正常语速听感最稳"或"ElevenLabs 默认 voice settings 保留音色原始表现最稳">）。
+> **语速/风格参数**：⭐ 推荐 `<rate or provider defaults>`（理由：<一句话，如“页均 2–3 句，正常语速听感最稳”或“ElevenLabs 默认 voice settings 保留音色原始表现最稳”>）。
 >
 > **生成完是否重新导出嵌入音频的 PPTX**：⭐ 推荐 **是**（一次到位，自动按音频时长设页面停留）。
 >
-> 直接回"好"用全部推荐值，或告诉我想改的部分（如"音色 2，语速 -5%"或"用 MiniMax 的 voice_id xxx"）。
+> 直接回“好”用全部推荐值，或告诉我想改的部分（如“音色 2，语速 -5%”或“用 MiniMax 的 voice_id xxx”）。
 
 **Recommended-value rules**:
 - 生成模式：默认 `edge`；当用户明确追求高质量云端音色或提供 cloud voice ID 时，按用户指定选 `elevenlabs` / `minimax` / `qwen` / `cosyvoice`。
 - 音色：从 Step 2 候选里挑最贴合 deck 调性的那一个。
 - 语速：edge 默认 `+0%`；notes 字数密集（页均 >4 句长句）建议 `-5%`；notes 简短紧凑建议 `+5%`；超出此范围需说明理由。Cloud providers 默认用 provider defaults，除非用户明确要调速或改风格。
-- 嵌入：默认推荐"是"；除非用户已有定制 PPTX 不希望覆盖。
+- 嵌入：默认推荐“是”；除非用户已有定制 PPTX 不希望覆盖。
 
 ---
 

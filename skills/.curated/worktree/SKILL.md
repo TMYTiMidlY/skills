@@ -1,13 +1,13 @@
 ---
 name: worktree
-description: 用户要做实验性改动 / 对比实现 / 可能失败的大改动，或明确要求"在 worktree 里做 / 开个实验分支"时使用。自动为隔离分支创建 git worktree（含 submodule 同步），避免污染主工作区。本 skill 只覆盖通用的 worktree 骨架，项目特定的构建 / 依赖同步由上层 AGENTS.md 或项目自身的 skill 接管。
+description: 用户要做实验性改动 / 对比实现 / 可能失败的大改动，或明确要求在 worktree 里做、开实验分支时使用。自动为隔离分支创建 git worktree（含 submodule 同步），避免污染主工作区。本 skill 只覆盖通用的 worktree 骨架，项目特定的构建 / 依赖同步由上层 AGENTS.md 或项目自身的 skill 接管。
 ---
 
 # Worktree
 
 ## 定位
 
-**worktree = 共享 `.git` + 独立工作区 + 独立分支**。拿来隔离可能出错或需要并行的改动，避免 stash / reset 频繁切换。典型用途：尝试有失败风险的大改动、并行跑多个实验分支、用户明确说"在 worktree 里做"。
+**worktree = 共享 `.git` + 独立工作区 + 独立分支**。拿来隔离可能出错或需要并行的改动，避免 stash / reset 频繁切换。典型用途：尝试有失败风险的大改动、并行跑多个实验分支、用户明确说“在 worktree 里做”。
 
 ## 流程
 
@@ -101,7 +101,7 @@ cd "$NEW" && git submodule update --recursive
 - 构建：`poe setup && poe build` / `cmake` / `make`
 - 环境：`source .venv/bin/activate` / `conda activate`
 
-如果项目需要"一次性 worktree + 构建"的工作流，写一个薄壳 skill 先调本 `worktree` skill、再跑项目自己的构建命令即可。
+如果项目需要“一次性 worktree + 构建”的工作流，写一个薄壳 skill 先调本 `worktree` skill、再跑项目自己的构建命令即可。
 
 ## 恢复脚本（git 异常 / worktree 元数据污染时）
 

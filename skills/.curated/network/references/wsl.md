@@ -158,9 +158,9 @@ netsh interface portproxy show all
 
 **症状**：portproxy 表正确建立，从 Windows 或 EasyTier 远端 TCP 能 connect，但请求一发出立刻 `Connection reset by peer` / `Recv failure: Connection was reset`（TCP **RST**，下文同——对方在 TCP 层主动拆掉连接），或直接 `Failed to connect`。
 
-**根因（坐实）**：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) — "Dual-mode IPv6 sockets do not accept IPv4 connections via localhost"，**open** 状态、`network` label、2026-02 提交、2026-05 仍在更新（数月未修）。issue 里 distro 内部 `curl -4 http://localhost:N` 就已经 refused，跨 wslrelay 到 Windows 必然继承同样症状。
+**根因（坐实）**：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) — “Dual-mode IPv6 sockets do not accept IPv4 connections via localhost”，**open** 状态、`network` label、2026-02 提交、2026-05 仍在更新（数月未修）。issue 里 distro 内部 `curl -4 http://localhost:N` 就已经 refused，跨 wslrelay 到 Windows 必然继承同样症状。
 
-**和 Docker Desktop 无关、native dockerd 一样踩**：实测一台 WSL 内 systemd 起的 native dockerd（非 Docker Desktop），bare `ports: 9000:9000` 时 docker-proxy 默认开 dual-stack v6 socket，照样 RST。原文档把这段写成"Docker Desktop 容器端口的 wslrelay/IPv6 坑"是窄了。
+**和 Docker Desktop 无关、native dockerd 一样踩**：实测一台 WSL 内 systemd 起的 native dockerd（非 Docker Desktop），bare `ports: 9000:9000` 时 docker-proxy 默认开 dual-stack v6 socket，照样 RST。原文档把这段写成“Docker Desktop 容器端口的 wslrelay/IPv6 坑”是窄了。
 
 #### WSL 里的 socket 形态 → wslrelay 实际行为
 
@@ -193,7 +193,7 @@ netsh interface portproxy show all
 
 - `netsh portproxy` 由 Windows `iphlpsvc` 承载，只是个通用 TCP 转发表，**不知道 WSL 存在**；它需要 connectaddress 那端有人接，正好 `127.0.0.1` 那端是 wslrelay 在 listen。
 - `wslrelay.exe` 是 WSL2 NAT 模式的 localhost forwarding 实现，**只在 Windows host 的 `127.0.0.1` / `[::1]` 上 listen**，不会 listen 任意 host IP（如 EasyTier 的 `<Windows机 mesh IP>`）。
-- `.wslconfig` 里 `hostAddressLoopback=true` 容易让人误以为是"让 host IP 也能 forward 进 WSL"——**不是**。它的方向是反的：让 WSL 进程能通过 host IP 访问 host loopback service。见下面实测。
+- `.wslconfig` 里 `hostAddressLoopback=true` 容易让人误以为是“让 host IP 也能 forward 进 WSL”——**不是**。它的方向是反的：让 WSL 进程能通过 host IP 访问 host loopback service。见下面实测。
 
 #### 实测：删掉 portproxy、靠 wslrelay 单独扛行不行（结论：不行）
 

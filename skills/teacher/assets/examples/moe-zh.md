@@ -1,19 +1,19 @@
 # Worked example: Mixture of Experts (MoE)
 
-> **Prompt:** "试试 MoE"
+> **Prompt:** “试试 MoE”
 > **Mode:** B (pseudocode)
 > **Language:** Chinese
 > **Sidecar code:** `/tmp/moe-pseudocode.py` (also frozen below as `moe-pseudocode.py`)
 
-This is the full skill output for the MoE eval, captured as a regression reference. Note how the test questions are labeled simply "测试题" (not "interview"), and how the pseudocode block traces the shape transitions `[B, T, D] → [B, T, E] → [B, T, K] → [N, D] → [B, T, D]` — the load-bearing part of any MoE explanation.
+This is the full skill output for the MoE eval, captured as a regression reference. Note how the test questions are labeled simply “测试题” (not "interview"), and how the pseudocode block traces the shape transitions `[B, T, D] → [B, T, E] → [B, T, K] → [N, D] → [B, T, D]` — the load-bearing part of any MoE explanation.
 
 ---
 
 ## 直觉
 
-想要一个**容量更大**的 FFN 层（更多参数 → 学到更多东西），但又不想每次推理都摸到所有参数。MoE 的解法：开 E 个独立的小 FFN（"experts"），加一个路由器（gate），**每个 token 只跑其中 K 个 expert**。
+想要一个**容量更大**的 FFN 层（更多参数 → 学到更多东西），但又不想每次推理都摸到所有参数。MoE 的解法：开 E 个独立的小 FFN（“experts”），加一个路由器（gate），**每个 token 只跑其中 K 个 expert**。
 
-一句话：**MoE 把"一个胖 FFN"换成"很多瘦 FFN + 一个路由器"，参数总量上去了（容量大），但每个 token 只激活 K/E 的算力 —— 拿大模型的容量，不付大模型的 FLOPs。**
+一句话：**MoE 把“一个胖 FFN”换成“很多瘦 FFN + 一个路由器”，参数总量上去了（容量大），但每个 token 只激活 K/E 的算力 —— 拿大模型的容量，不付大模型的 FLOPs。**
 
 ## 例子 · 结构化伪代码
 
@@ -58,7 +58,7 @@ def moe_forward(x, experts, gate, k=2):
 gate_logits = gate(x)                                  # [B, T, D] → [B, T, E]
 ```
 
-`gate` 就是一个 `Linear(D, E)` —— 比任何一个 expert 都小得多（expert 内部有 `D × D_hidden` 矩阵，gate 只有 `D × E`）。它的任务是给每个 token 出 E 个分数，表示"你应该被哪个 expert 处理"。**整个 MoE 里"决定路由"的部分总成本几乎为零**，这是 MoE 能省 FLOPs 的前提。
+`gate` 就是一个 `Linear(D, E)` —— 比任何一个 expert 都小得多（expert 内部有 `D × D_hidden` 矩阵，gate 只有 `D × E`）。它的任务是给每个 token 出 E 个分数，表示“你应该被哪个 expert 处理”。**整个 MoE 里“决定路由”的部分总成本几乎为零**，这是 MoE 能省 FLOPs 的前提。
 
 **(2) Top-K routing —— 稀疏性的来源**
 
@@ -67,7 +67,7 @@ top_w, top_i = gate_logits.topk(k, dim=-1)             # [B, T, E] → [B, T, K]
 top_w = top_w.softmax(dim=-1)
 ```
 
-对每个 token 取 K 个分数最高的 expert（典型 K=2，Switch Transformer 用 K=1）。`top_i` 是它们的索引，`top_w` 是它们的权重（softmax 后归一化）。**这一行就是 MoE 的"稀疏激活"**：本来 gate 输出了 E 个分数，但我们只用其中 K 个 —— 剩下 E−K 个 expert 这个 token 不会跑。
+对每个 token 取 K 个分数最高的 expert（典型 K=2，Switch Transformer 用 K=1）。`top_i` 是它们的索引，`top_w` 是它们的权重（softmax 后归一化）。**这一行就是 MoE 的“稀疏激活”**：本来 gate 输出了 E 个分数，但我们只用其中 K 个 —— 剩下 E−K 个 expert 这个 token 不会跑。
 
 **(3) Dispatch → 计算 → Combine**
 
@@ -79,13 +79,13 @@ for expert_id, expert in enumerate(experts):
     out[mask] += weights.unsqueeze(-1) * expert(tokens)
 ```
 
-外循环是**对 expert** 的，不是对 token 的（这一点非常重要 —— 如果你写成对 token 的循环，那就成了顺序处理，丢掉了向量化）。对每个 expert，`mask` 挑出"被路由到它的 token"，把它们扁平化成 `[N, D]` 一次过 expert，再按 gating 权重加回到 `out` 的对应位置。
+外循环是**对 expert** 的，不是对 token 的（这一点非常重要 —— 如果你写成对 token 的循环，那就成了顺序处理，丢掉了向量化）。对每个 expert，`mask` 挑出“被路由到它的 token”，把它们扁平化成 `[N, D]` 一次过 expert，再按 gating 权重加回到 `out` 的对应位置。
 
 **关键 shape 转换**：`[B, T, D] → [N, D]`（dispatch）→ expert 计算 → `[N, D]` → 加权 → `[B, T, D]`（combine）。整个 MoE 层进来是 `[B, T, D]`，出去还是 `[B, T, D]` —— 它是一个可插拔的层，对外接口跟 dense FFN 没区别。
 
 ## 陷阱
 
-**错的印象**：MoE 是"多个 expert 输出做加权平均的 ensemble"。
+**错的印象**：MoE 是“多个 expert 输出做加权平均的 ensemble”。
 
 ```python
 # 错的理解：
@@ -99,7 +99,7 @@ out = sum(gate_weight[e] * experts[e](x) for e in range(E))
 
 ## 延伸 · 往下走
 
-— **Auxiliary load-balancing loss**：训练时 gate 可能"塌缩"到永远选同几个 expert（详见测试题 Q3）。Switch / GShard 论文里加了一个辅助 loss 推 gate 输出更均匀。
+— **Auxiliary load-balancing loss**：训练时 gate 可能“塌缩”到永远选同几个 expert（详见测试题 Q3）。Switch / GShard 论文里加了一个辅助 loss 推 gate 输出更均匀。
 — **Expert capacity / token dropping**：每个 expert 有最大 token 容量；超过就丢掉（或重路由到次优 expert）。容量太小信号丢；太大显存浪费。
 — **Switch Transformer (K=1) vs Mixtral / GShard (K=2)**：K=1 算力更省、训练更不稳；K=2 是当前主流权衡点。
 

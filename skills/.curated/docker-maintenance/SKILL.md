@@ -1,6 +1,6 @@
 ---
 name: docker-maintenance
-description: 在 Hermes Docker 后端或类似受限 Docker 容器内做环境探测、写入路径判断、安装受限工具（如 gh CLI）、生成 SSH key 等维护操作时使用。重点是识别"宿主 vs 容器 vs WSL"、绕过只读 overlay、在没有浏览器时完成外部认证。
+description: 在 Hermes Docker 后端或类似受限 Docker 容器内做环境探测、写入路径判断、安装受限工具（如 gh CLI）、生成 SSH key 等维护操作时使用。重点是识别宿主 vs 容器 vs WSL、绕过只读 overlay、在没有浏览器时完成外部认证。
 ---
 
 # Docker 维护
@@ -17,7 +17,7 @@ AI 运行环境疑似在容器里、需要在容器内装工具 / 配置认证 /
 - 判据看这两个：
   - `/proc/1/cgroup` 在容器里通常是 `0::/` 或带 `docker/containerd` 字样。
   - `mount | grep ' / '` 看到 `overlay` 就是容器。
-- Hermes Docker 后端的文件系统布局：`~/.hermes/` 在容器里是**只读 overlay 挂载**，直接写入会报 `Read-only file system`。可写路径优先选 `/workspace`（若启用了 cwd 挂载）或 `/root` 下的数据盘位置。**遇到写失败先问"我是不是在只读挂载下"，别盲目重试**。
+- Hermes Docker 后端的文件系统布局：`~/.hermes/` 在容器里是**只读 overlay 挂载**，直接写入会报 `Read-only file system`。可写路径优先选 `/workspace`（若启用了 cwd 挂载）或 `/root` 下的数据盘位置。**遇到写失败先问“我是不是在只读挂载下”，别盲目重试**。
 
 ## 网络
 
