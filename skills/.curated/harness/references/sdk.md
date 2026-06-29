@@ -10,9 +10,7 @@
 qatlas 这类 daemon 要的是 **agent SDK**；下面也列 API SDK 是为了讲清两者别混。矩阵 + 文档实测于
 2026-06-29，版本只佐证"有/无"，会动，写死前重核。
 
-## harness 形态先选
-
-harness（运行壳）= 拥有 agent runtime 的那一层：它启动或接管 agent、注入上下文 / 工具、订阅事件、处理取消、持久化状态。选哪种形态看控制需求，不要按"哪种传输时髦"来选。
+## 接入 / 驱动形态先选
 
 ### CLI 子进程一次性（CLI subprocess one-shot）
 
@@ -29,8 +27,6 @@ harness（运行壳）= 拥有 agent runtime 的那一层：它启动或接管 a
 
 - 优点：orchestrator 拥有 runtime 生命周期，能创建 / 恢复会话、订阅事件、切换模型、取消当前回合（turn）。
 - 失效模式：与 SDK 协议版本耦合更紧；auth、能力隔离、进程清理都要自己负责。
-
-当 harness 是产品的一个组件、而不是一个 shell 包装时用它。
 
 ### Extension-host（扩展宿主）形态
 
