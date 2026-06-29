@@ -565,3 +565,85 @@ https://update.code.visualstudio.com/1.115.0/cli-linux-x64/stable
 4. **断窗时长恒定（标准差小）= 定时器/超时机制**的强信号，区别于随机弱网（时长乱分布）。用 EasyTier 这类长连接服务的 peer removed/added 日志反推链路通断窗口很省事。
 
 关键词：`总是断网`、`WSL 内 EasyTier 节律性搞坏整网`、`挪宿主机解决`、`ping 网关 100% 丢包但能上网`、`CoPP 控制平面限速`、`ICMP rate limit`、`ping 网关不是断网指标`、`WSL2 mirrored networking`、`分源 IP 绑定测试`、`TcpClient Bind 源地址`、`strong host model`、`ping -I / curl --interface 分链路`、`断窗时长恒定 ~5 分钟`、`EasyTier peer removed 反推通断`
+
+## WSL user systemd 的 session bus 突然消失，`systemctl --user` 连不上；临时 bus + manager reexec 可恢复，但会中断 running user services
+
+> 2026-06-30 | WSL2 + `systemd --user` | 用户无 sudo | 影响 user service 管理
+>
+> 这条记录的重点：**恢复 bus 的方法有效，但不是无损热修**。`systemd --user` manager reexec 后，已经运行的 user services 可能会断开或重启，交互式 Web 终端一类服务需要重新打开。
+
+### 症状
+
+- `systemctl --user ...` 报：
+
+```text
+Failed to connect to bus: No such file or directory
+```
+
+- `XDG_RUNTIME_DIR=/run/user/1000` 正常，但 `/run/user/1000/bus` 不存在。
+- `DBUS_SESSION_BUS_ADDRESS` 为空。
+- `/run/user/1000/systemd/{private,notify}` 仍存在，`systemd --user` manager 仍在跑（本次为 pid `305`）。
+- user services 本身还可能继续运行；因此不要只看业务端口正常就误判 user bus 正常。
+
+### 失败路径
+
+直接补一个 bus：
+
+```bash
+dbus-daemon --session --address=unix:path=/run/user/1000/bus --fork --print-pid
+DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus systemctl --user is-system-running
+```
+
+现象：
+
+```text
+Failed to query system state: Process org.freedesktop.systemd1 exited with status 1
+unknown
+```
+
+原因：新起的 bus 上没有正在运行的 `org.freedesktop.systemd1`。`systemctl` 通过 D-Bus 请求时，bus 会尝试激活一个新的 user systemd；但旧的 `systemd --user` manager 已经存在，所以新进程退出。**单独补 bus 不会让已经运行的 manager 自动接入这个 bus**。
+
+### 恢复动作
+
+用户在自己的终端执行以下命令（不需要 sudo）后，`systemctl --user` 恢复：
+
+```bash
+dbus-daemon --session --address=unix:path=/run/user/1000/bus --fork --print-pid
+kill -RTMIN+25 305
+DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus systemctl --user is-system-running
+pgrep -af '<critical-user-service>'
+ss -ltnp | grep -E ':<critical-port>'
+```
+
+含义：
+
+- 第一行在 canonical path 补回 session bus socket。
+- `kill -RTMIN+25 305` 对 user systemd manager 发 reexec 信号，让 manager 重执行并接入新的 bus。
+- 后两行是业务服务复查示例；按现场替换成需要保护的 user services。
+
+### 代价与恢复后观察
+
+- `systemctl --user` 恢复成功。
+- 但运行中的 user services 可能被重启 / 消失，交互式会话需要重新打开。
+- 所以这不是“只补 bus、所有服务无感”的修复；它更接近一次 user manager reexec，可能影响所有 running user services。
+
+### 操作前建议
+
+先记录关键服务状态：
+
+```bash
+pgrep -af '<critical-user-service>'
+ss -ltnp | grep -E ':<critical-port>'
+ps -o pid,etimes,cmd -p 305
+ls -l /run/user/1000/bus
+```
+
+如果有不能断的 Web terminal / 长连接会话，先保存现场；恢复 bus 后准备重新打开。
+
+### 教训
+
+- `systemctl --user` 依赖 session bus；`systemd --user` manager 还活着不代表 CLI 一定可连。
+- fresh bus + `systemctl --user daemon-reexec` 不一定能修，因为它可能激活一个新的 `systemd1` 而不是让旧 manager 接入。
+- 真正让旧 manager 接入 bus 的关键是 manager reexec（本次用 `SIGRTMIN+25`），但它可能让 running user services 中断。
+
+关键词：`systemctl --user`、`Failed to connect to bus`、`/run/user/1000/bus`、`DBUS_SESSION_BUS_ADDRESS`、`dbus-daemon --session`、`kill -RTMIN+25`、`daemon-reexec`、`systemd --user`、`running user services 断开`
