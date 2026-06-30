@@ -214,7 +214,7 @@ sudo systemctl enable --now error-pages
 - 延迟测试：mtr。
 - IP 风险评估、多节点延迟。
 - 大陆云服务器公网带宽限速丢包。
-- DigitalOcean、RackNerd、LisaHost、EdgeNAT、Alibaba Cloud 历史记录。
+- DigitalOcean、RackNerd、LisaHost、EdgeNAT、Alibaba Cloud 历史记录（含被墙 / 换 IP 经历与费用）。
 
 ## 用户名规则
 

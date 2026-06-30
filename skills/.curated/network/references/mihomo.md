@@ -551,7 +551,7 @@ await pc.setLocalDescription(await pc.createOffer())   // 等几秒收集完
 
 # 附录：实测封锁记录（field observations，归因多未坐实）
 
-> 真实跑出来的封锁现象集中放这里，和前面的配置/原理分开。涉及的两台 VPS 的机器规格 / IP / 延迟测试等明细，在 `vps-maintenance` skill 的「历史服务器信息」里（A=RackNerd、B=LisaHost）。样本都很小，归因一律标“未坐实”，只作下次对照。
+> 真实跑出来的封锁现象集中放这里，和前面的配置/原理分开。涉及的两台 VPS 的机器规格 / IP / 延迟测试，以及**各自的被墙时间线与换 IP 操作和费用**，都在 `vps-maintenance` skill 的「历史服务器信息」里（A=RackNerd、B=LisaHost）。样本都很小，归因一律标“未坐实”，只作下次对照。
 
 ## A. 落地 IP 被大陆精准屏蔽（RackNerd，长期跑 Hysteria2，2026-06-08）
 
