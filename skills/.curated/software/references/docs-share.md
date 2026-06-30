@@ -131,7 +131,7 @@ mc alias rm rfsadmin
 | 同一个对象 mc cp 上传后下次 sync 又消失 | `rclone sync --remove` 是“以 git 仓库为权威 mirror”，桶里多余对象会被删；**永远以 git push 为唯一写入路径**，除非在做 hot-fix 对齐 |
 | 桶里看到很多 `0B` 目录条目 | `mc ls` 不带 `--recursive` 把 S3 prefix 列为 0B（视觉占位）；用 `mc ls --recursive` 看真实内容 |
 
-> 把 Markdown 导出为 PDF 见 **software** skill 的 `references/pdf-export.md`；源文件格式转换见 **software** skill 的 `references/format-conversion.md`；操作 RustFS 桶的客户端坑（mc / boto3 / versioning / 删桶）见 **software** skill 的 `references/rustfs.md`（同目录 `rustfs-bulk-ops.md` 写批量 ops）。
+> Markdown 导出为 PDF / 源文件格式转换见 **software** skill 的 `references/format-conversion.md`；操作 RustFS 桶的客户端坑（mc / boto3 / versioning / 删桶）见 **software** skill 的 `references/rustfs.md`（同目录 `rustfs-bulk-ops.md` 写批量 ops）。
 
 ## 部署后
 

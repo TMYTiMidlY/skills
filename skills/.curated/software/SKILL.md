@@ -74,7 +74,7 @@ RustFS（Rust 实现的 S3 兼容对象存储，github.com/rustfs/rustfs）+ Min
 
 ## 格式转换
 
-pandoc 文档转换、Markdown→PDF、PDF→图片、feishu2md 飞书/Lark→Markdown 等见 [references/format-conversion.md](references/format-conversion.md)。
+pandoc 文档转换（LaTeX→Word）、PDF→图片、feishu2md 飞书/Lark→Markdown，以及 Markdown→PDF 的三档路线——最轻量的 Calibre `ebook-convert`、印刷级 CSS Paged Media 引擎（Prince / Vivliostyle / Paged.js / WeasyPrint 选型、Prince XML 无 sudo pixi 安装与 CJK 字体大坑、引用标签预处理 → pandoc → Prince 一键流水线、Vivliostyle 自定义 CSS）、中文友好的 Typst 路线——全部见 [references/format-conversion.md](references/format-conversion.md)。
 
 ## 本地中文 ASR
 
@@ -83,10 +83,6 @@ FunASR、Fun-ASR-Nano、Paraformer + VAD + Punc + CAM++、SenseVoiceSmall、Whis
 ## 私有 docs-share 站点（Git 仓库 → S3 直链分享）
 
 把要公网呈现的 md/html 放进一个私有 Git 仓库，每次 `git push` 或网页端上传/编辑即触发 CI（`rclone sync --checksum`）**增量同步**到一个 S3 兼容桶（桶结构 = 仓库树）；对外走 S3 **presigned 直链**（URL 自带签名 + 有效期）分享；`public/` 前缀通过 bucket policy 开放匿名读、无需签名——知道 URL 即可访问。`.md` 原样存（下载=raw），由 Caddy Accept rewrite + markdeep viewer 客户端渲染。完整内容见 [references/docs-share.md](references/docs-share.md)：密钥体系（root key 派生受限 CI key、凭据存储位置）、public 路径 vs 私有路径的 bucket policy 机制、presigned URL 生成（直贴/viewer 包装/脚本批量）、更新与撤销、markdeep 写作惯例（`[#key]` 引用 vs `[^name]` 脚注、GFM 不兼容点、研报模板）。服务端部署（Caddy 配置 / viewer 壳子 / CI key 创建 / bucket policy 设置命令）由 `vps-maintenance` skill 的 caddy.md 覆盖。S3 兼容存储底层行为见 [references/rustfs.md](references/rustfs.md)。
-
-## Markdown → PDF 导出
-
-CSS Paged Media 路线的工具生态定位（Prince / Vivliostyle / Paged.js / WeasyPrint / Typst 选型）、Prince XML 无 sudo pixi 安装与 CJK 字体大坑（Variable Font 静默失败、fontconfig 隔离）、Paged.js Chromium 依赖的 pixi 补齐、以及引用标签预处理 → pandoc → Prince 的一键 PDF 流水线见 [references/pdf-export.md](references/pdf-export.md)。
 
 ## OpenList 网盘聚合面板
 
