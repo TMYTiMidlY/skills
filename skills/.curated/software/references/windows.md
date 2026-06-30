@@ -1,7 +1,7 @@
 # Windows / WSL 主机侧速记
 
 > 跑在 Windows 上的命令行、终端、PowerShell 版本选择、UAC 弹出方式等“宿主 OS 层面”的小经验。
-> WSL 内 Linux 服务的网络坑（wslrelay、portproxy、Mihomo TUN、Docker IPv6 dual-stack）见 [`network.md`](network.md)，不在这里重复。
+> WSL 内 Linux 服务的网络坑（wslrelay、portproxy、Mihomo TUN、Docker IPv6 dual-stack）见 `network` skill，不在这里重复。
 
 ## PowerShell 5.1 vs PowerShell 7（pwsh）
 
@@ -75,6 +75,17 @@ PWSH="/mnt/c/Program Files/PowerShell/7/pwsh.exe"
 
 # native exe 调用：必须管 iconv
 "$PWSH" -NoProfile -Command 'netsh interface portproxy show all' 2>&1 | iconv -f gbk -t utf-8
+```
+
+**脚本稍复杂就写 `.ps1` 文件用 `-File` 跑，别堆 `-Command`**：从 bash 里 `bash -c "pwsh -Command @\"...\"@"` 嵌引号是引号地狱（bash、pwsh、here-string 三层转义打架）。固定套路是先把脚本写成 `.ps1`，再 `-File` 执行——默认 ExecutionPolicy 会拦未签名脚本，所以带 `-ExecutionPolicy Bypass`：
+
+```bash
+PWSH="/mnt/c/Program Files/PowerShell/7/pwsh.exe"
+cat > /tmp/foo.ps1 <<'PS1'
+$enc = [uri]::EscapeDataString("🚀 节点选择")
+Invoke-RestMethod -Uri "http://127.0.0.1:9090/proxies/$enc"
+PS1
+"$PWSH" -NoProfile -ExecutionPolicy Bypass -File /tmp/foo.ps1
 ```
 
 ### 其他可移植性差异（影响极少，记一笔）

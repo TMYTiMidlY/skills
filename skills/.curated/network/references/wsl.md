@@ -1,20 +1,6 @@
-# 网络与远程连接
+# WSL ↔ Windows 网络管道
 
-## 远程连接方式
-
-- **RDP**：通过异地组网（EasyTier / Tailscale / ZeroTier / 蒲公英等）连接远程桌面。Windows 用 `mstsc`，Linux 用 `xfreerdp` 或 Remmina
-- **向日葵**：不需要组网，默认自动判断传输模式——网络条件允许时自动 P2P 直连，否则走服务器中转
-
-### 会话管理
-
-```powershell
-tsdiscon        # 断开 RDP 连接，程序继续运行（服务器场景常用）
-logoff          # 完全退出登录，关闭所有程序
-```
-
-### RDP 缩放不生效
-
-在 PowerShell 中执行 `logoff`，然后重新连接即可。
+WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT 网络、WSL 出站怎么进宿主 Mihomo、WSL/Docker 服务入站（portproxy + wslrelay）。Mihomo/Clash 内核本身的配置与泄漏控制见 [mihomo.md](mihomo.md)；远程桌面 / VS Code serve-web 等远程接入见 [remote.md](remote.md)；独立 systemd 版 Hysteria2 服务端见 [hysteria2.md](hysteria2.md)。
 
 ## WSL Mirror 模式网络
 
@@ -80,39 +66,6 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 - Microsoft WSL basic commands: `wsl --shutdown` terminates all running distributions and the WSL2 VM.
 - Docker Desktop WSL2 backend: Docker Desktop uses a `docker-desktop` WSL distribution for the Docker engine.
 - Docker Resource Saver on WSL: Resource Saver does not stop the whole WSL VM because it is shared by all WSL distributions.
-
-## VS Code serve-web
-
-在当前机器启动一个 VS Code Web 服务，适合临时从浏览器访问这台机器上的开发环境。需要终端一直挂着这个命令；重启或终端关闭后要手动重新执行。
-
-Windows 侧临时服务示例（端口可换，下例用 `18080`）：
-
-```powershell
-code serve-web --host 0.0.0.0 --port 18080 --without-connection-token
-```
-
-`--without-connection-token` 表示不要求访问 token；**只适合已经有内网、VPN、反代认证等外层保护的场景**——服务直接暴露到公网时务必去掉这个开关或额外加层。
-
-WSL 默认是 NAT 网络，常见的远程访问链路是：
-
-```text
-远端 Caddy/Nginx -> Windows EasyTier IP:<port>
-Windows portproxy -> 127.0.0.1:<port>
-WSL localhost forwarding -> WSL 内服务
-```
-
-`portproxy` 配置细节见下文「WSL / Docker 服务暴露（入站：portproxy + wslrelay）」一节；`portproxy` 不会自动唤醒 WSL，建议留一个 WSL 窗口 / 会话挂着，避免发行版被停掉后远端反代直接 502。
-
-排障常用查询：
-
-```powershell
-wsl -l -v
-wsl -- ip route show
-wsl -- ss -ltnp
-netsh interface portproxy show all
-netstat -ano | Select-String -Pattern ':<port>'
-curl.exe -k -I https://127.0.0.1:<port>/
-```
 
 ## WSL NAT 下出站走 Mihomo / fake-ip
 
@@ -295,6 +248,31 @@ curl.exe --noproxy * -v --max-time 5 "http://[::1]:<port>/"
 4. **切 `networkingMode=mirrored`**（Win11 22H2+）：彻底没 wslrelay。代价是重排所有 portproxy + 评估对 EasyTier wintun 路由优先级的影响。
 5. **WSL 内补 socat v4 relay**：`socat TCP4-LISTEN:<port>,reuseaddr,fork,bind=0.0.0.0 TCP:[::1]:<port>`，让 wslrelay 看到的是纯 v4 listener。多一跳进程，仅作 fallback。
 
+#### 全双工大流量下 wslrelay 死锁（#10688）
+
+[microsoft/WSL#10688](https://github.com/microsoft/WSL/issues/10688)（open，与上面 #14154 不同）：WSL 本地转发（Linux 侧转发进程 + `wslrelay.exe`）用**单个阻塞线程同时拷贝一条连接的两个方向**（半双工逻辑）；双向同时大流量时两端缓冲填满、relay 卡在 `write()` 上不再读另一边 → 永久死锁。诊断特征（`ss -tn`，卡死的 socket 对收发队列堆住、流量永久冻结）：
+
+```
+State  Recv-Q   Send-Q     Local Address:Port     Peer Address:Port
+ESTAB  0        2914479    127.0.0.1:<svc>        127.0.0.1:<relay>
+ESTAB  3176712  0          127.0.0.1:<relay>      127.0.0.1:<svc>
+```
+
+本机实测（NAT 模式，Windows `127.0.0.1` → wslrelay → WSL；原生 + docker、bind `0.0.0.0` + `127.0.0.1` 共四种发布形态）：
+
+| 流量模式 | 结果 |
+|---|---|
+| 单向下行 / 单向上行（任意大小） | 不卡 |
+| 严格乒乓请求/应答（半双工，HTTP/1.1 形态） | 不卡 |
+| HTTP/1.1 下载 100MB（`curl.exe`） | 不卡 |
+| 真 SSH 全双工 ↓200MB + ↑100MB（`ssh.exe`） | 不卡 |
+| 合成程序双向并发 blast（不积极收 socket，本机 ~0.65MB 起） | **卡死** |
+
+- **只有全双工双向大流量才可能触发**；任何半双工（单向 / 乒乓 / HTTP 下载）都不触发。
+- **真实程序（SSH、HTTP）实测不中招**，无论多大；只有"不积极收 socket"的朴素 blast（如 issue 的合成 reproducer）才稳定复现。
+- **与发布地址无关**：四种发布形态阈值完全一致（本机 `route_localnet=0`，两种 docker 形态都经 docker-proxy，回环路径相同）。
+- 彻底规避：切 `networkingMode=mirrored`（无 wslrelay）。`connectaddress=127.0.0.1` 仍按上文推荐（理由是不漂移，与本坑无关）。
+
 历史背景与 issue：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) (open)、[#10688](https://github.com/microsoft/WSL/issues/10688) (open，wslrelay 全双工 hang)；类似 v4/v6 困扰在 WSL repo 里有十几个独立 issue，labels 多数 `network`。
 
 #### EasyTier + 远端 Caddy 的入站稳定方案
@@ -319,11 +297,4 @@ netsh interface portproxy show all
 curl -k -I --connect-timeout 5 --max-time 8 https://<target>:<port>/
 ```
 
-## EasyTier / WSL 组网杂项
-
-### MTU 问题（WSL 内组网，已弃用）
-
-曾在 WSL 内部署 EasyTier 时遇到过 MTU 不匹配问题——必须手动降低 EasyTier 的 MTU 以匹配 WSL 网卡的 MTU。
-
-**当前方案**：不再在 WSL 内配置组网，EasyTier 运行在 Windows 宿主机上，避免了此问题。
 
