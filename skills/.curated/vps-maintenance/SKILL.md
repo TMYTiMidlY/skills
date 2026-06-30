@@ -200,12 +200,6 @@ sudo systemctl enable --now error-pages
 
 多用户共享服务、systemd 模板单元与按 UID 分配端口见 `software` skill。
 
-## WebDAV + Markdeep viewer 服务端
-
-**本节只覆盖服务端配置**。客户端上传命令、分享链接用法、Markdeep 写作惯例（引用 vs 脚注、GFM 兼容性、研报模板）见 `software` skill 的 `doc-share` reference。
-
-Caddy 本身（安装、域名/IP 模式、caddy-security 扩展、error-pages）以及无额外认证的 capability URL 文档私链分享（caddy-webdav 扩展安装 + site block + viewer 挂载 + 凭据 + 撤销）全部见 [references/caddy.md](references/caddy.md)；私链分享那节在文件末尾的「无额外认证的文档分享私链（WebDAV + Markdeep viewer）」。viewer 模板在 [assets/md-viewer.html](assets/md-viewer.html)。
-
 ## 大陆备案与端口策略
 
 国内备案规则在不同场景下的豁免边界（家宽公网 IP / 非标端口 / 国内云 ECS / 海外 VPS）、阿里云 ECS 未备案 SNI 封锁实测与绕过方案，以及由这些约束衍生出的“小国内 VPS 做组网中转”部署模式，统一见 [references/icp-filing.md](references/icp-filing.md)。
