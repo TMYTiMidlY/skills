@@ -206,7 +206,7 @@ sudo systemctl enable --now error-pages
 
 ## 质量检测
 
-网络与 IP 质量评估、历史服务器配置价格对比见 [references/quality-check.md](references/quality-check.md)。
+网络与 IP 质量评估、历史服务器配置价格对比见 [references/vps-quality.md](references/vps-quality.md)。
 
 覆盖范围：
 

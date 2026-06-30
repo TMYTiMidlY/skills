@@ -4,7 +4,7 @@
 
 - 客户端节点配置、协议选型 / 性能、Brutal / 拥塞控制、DNS / WebRTC 泄漏排查 → `network` skill（Mihomo 客户端与泄漏控制）。
 - WSL / 宿主网络管道，以及**独立 systemd 版 Hysteria2 服务端搭建**（官方脚本、不经面板）→ `network` skill。
-- 带宽 / 丢包质量测试 → [quality-check.md](quality-check.md)。
+- 带宽 / 丢包质量测试 → [vps-quality.md](vps-quality.md)。
 
 ## 主节点：VLESS + WS + TLS（3x-ui/Xray + Caddy）
 
