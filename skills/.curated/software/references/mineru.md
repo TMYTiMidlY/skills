@@ -174,6 +174,29 @@ uv run scripts/mineru_large_pdf.py \
 
 若出现 `failed to read file`，先本地验证 PDF 完整（`pdfinfo` / pypdf 能读），再间隔重试即可恢复。
 
+## 结果 zip 的输出结构与分卷合并
+
+`full_zip_url` 解压后的主要产物（vlm + OCR 实测）：
+
+| 文件 | 结构 | 页的标识 |
+|---|---|---|
+| `full.md` | 全文 Markdown（公式→LaTeX，图/表/公式图抽到 `images/`） | 无显式分页标记 |
+| `images/` | 抽出的图片，**文件名为内容哈希** | — |
+| `*_content_list.json` | **扁平**块列表，块为 `{type,text,text_level,bbox,page_idx}` | **块内显式 `page_idx`** |
+| `*_content_list_v2.json` | **按页分组**：外层每元素 = 该页块列表 | **位置**（外层下标 = 页） |
+| `*_model.json` | 按页分组：每元素 = 该页检测框列表 | **位置** |
+| `layout.json` | dict `{pdf_info:[每页一项], _backend, _ocr_enable, …}`，每页项含 `page_idx` | **每页项显式 `page_idx`** |
+| `*_origin.pdf` | 原始输入副本（归档时通常可剔除） | — |
+
+一个 PDF 因 >200MB / >600 页**物理拆成多卷分别 OCR**后，把各卷输出拼回一份，按**结构**（而非文件名）处理：
+
+- **整页边界拆分**（别拆在页中）→ 各卷页互不重叠，合并即无缝、无重复无丢失。
+- **`full.md`**：顺序拼接（卷间可插一条 HTML 注释标记接缝，渲染不可见）。
+- **`images/`**：取并集；文件名是内容哈希，跨卷天然唯一、不冲突。
+- **带显式 `page_idx` 的**（`content_list.json`、`layout.json` 的 `pdf_info` 项）：后一卷的 `page_idx` 统一加上**之前各卷页数之和**再拼接，否则出现重复页号。
+- **靠位置、无 `page_idx` 的**（`content_list_v2.json`、`model.json`）：列表**首尾直接相接**即可（第 i 项即第 i 页），不要也不能改。
+- `layout.json` 顶层元数据（`_backend`/`_ocr_enable` 等）各卷一致时取任一卷。
+
 ## 本地上传方式（备用）
 
 当没有可用直链时，用 batch 上传：
