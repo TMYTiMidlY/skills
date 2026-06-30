@@ -1,8 +1,8 @@
 # Markdown → PDF 导出（CSS Paged Media 路线）
 
-把自托管 doc-share / 任何本地 Markdown 研报导出为可打印 PDF。核心链路：`Markdown → pandoc → HTML → CSS Paged Media 引擎 → PDF`。
+把自托管 docs-share / 任何本地 Markdown 研报导出为可打印 PDF。核心链路：`Markdown → pandoc → HTML → CSS Paged Media 引擎 → PDF`。
 
-> 服务端 / WebDAV / Markdeep 写作惯例见 [doc-share.md](doc-share.md)；如果源文件需要先做格式转换（例如先从飞书 / Word 转 Markdown），见 [format-conversion.md](format-conversion.md)。
+> 服务端 / Markdeep 写作惯例见 [docs-share.md](docs-share.md)；如果源文件需要先做格式转换（例如先从飞书 / Word 转 Markdown），见 [format-conversion.md](format-conversion.md)。
 
 ## 工具生态定位
 
