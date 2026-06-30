@@ -212,7 +212,6 @@ sudo systemctl enable --now error-pages
 
 - 带宽测试：iperf3。
 - 延迟测试：mtr。
-- IP/DNS/WebRTC 泄漏检测。
 - IP 风险评估、多节点延迟。
 - 大陆云服务器公网带宽限速丢包。
 - DigitalOcean、RackNerd、LisaHost、EdgeNAT、Alibaba Cloud 历史记录。
