@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+/* dark mode driven by a .dark class on <html> */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", "Noto Sans CJK SC", Roboto, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+
+:root {
+  --bg: #ffffff; --panel: #f6f8fa; --panel2: #eef1f4; --line: #d8dee4;
+  --txt: #1f2328; --mut: #59636e; --acc: #0969da; --acc2: #1a7f37;
+  --user: #0969da; --code-bg: #f6f8fa;
+}
+.dark {
+  --bg: #0d1117; --panel: #161b22; --panel2: #1c2230; --line: #2a2f3e;
+  --txt: #e6edf3; --mut: #9aa3b2; --acc: #58a6ff; --acc2: #3fb950;
+  --user: #58a6ff; --code-bg: #0b0f17;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--txt);
+  font-family: var(--font-sans); font-size: 15px; line-height: 1.65;
+}
+* { box-sizing: border-box; }
+
+/* markdown-body styling (assistant messages) */
+.md { color: var(--txt); }
+.md > *:first-child { margin-top: 0; }
+.md > *:last-child { margin-bottom: 0; }
+.md h1, .md h2, .md h3 { font-weight: 650; line-height: 1.3; margin: 1.1em 0 .4em; }
+.md h1 { font-size: 1.5em; } .md h2 { font-size: 1.3em; } .md h3 { font-size: 1.1em; }
+.md p { margin: .6em 0; }
+.md ul, .md ol { margin: .6em 0; padding-left: 1.5em; }
+.md li { margin: .25em 0; }
+.md a { color: var(--acc); text-decoration: none; }
+.md a:hover { text-decoration: underline; }
+.md blockquote { margin: .6em 0; padding: 0 1em; border-left: 3px solid var(--line); color: var(--mut); }
+.md table { border-collapse: collapse; margin: .8em 0; font-size: .92em; display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--line); padding: 6px 11px; text-align: left; }
+.md th { background: var(--panel2); }
+.md :not(pre) > code {
+  font-family: var(--font-mono); font-size: .85em;
+  background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 5px; padding: .1em .4em;
+}
+.md pre { margin: .7em 0; border-radius: 10px; border: 1px solid var(--line); overflow: hidden; }
+.md pre > code { display: block; padding: 0; }
+/* shiki output (dual-theme via CSS vars) */
+.shiki { margin: 0; padding: 12px 14px; overflow-x: auto; font-family: var(--font-mono);
+  font-size: 12.8px; line-height: 1.6; }
+.shiki code { background: none; border: 0; padding: 0; }
+.shiki, .shiki span { color: var(--shiki-light); }
+.shiki { background-color: var(--shiki-light-bg); }
+.dark .shiki, .dark .shiki span { color: var(--shiki-dark); }
+.dark .shiki { background-color: var(--shiki-dark-bg); }
+
+/* ── KaTeX: let wide display equations scroll instead of overflowing ──── */
+.md .katex-display { overflow-x: auto; overflow-y: hidden; padding: .2em 0; }
+.md .katex { font-size: 1.05em; }
+
+/* ── compact (density) mode: toggled via `.compact` on the page root ────
+   Tightens card spacing/padding and shrinks code so long sessions scan
+   faster. Diverges from vanilla's "紧凑" (which filters to user+copilot);
+   React already offers that via the per-type filter pills, so here the
+   button adds genuine density instead. */
+.compact { font-size: 14px; }
+.compact main > * + * { margin-top: .375rem; }
+.compact .recap-trigger { padding-top: .375rem; padding-bottom: .375rem; }
+.compact .recap-body { padding-top: .5rem; padding-bottom: .5rem; }
+.compact .recap-body > * + * { margin-top: .5rem; }
+.compact .shiki { font-size: 11.5px; padding: 8px 11px; line-height: 1.5; }
+.compact .md pre { margin: .45em 0; }
+.compact .md p, .compact .md ul, .compact .md ol { margin: .4em 0; }

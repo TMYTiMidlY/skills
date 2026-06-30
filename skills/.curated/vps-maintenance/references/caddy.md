@@ -46,10 +46,26 @@ sudo systemctl reload caddy
 
 - **改 Caddyfile 用 `reload`**；**换二进制或改 systemd 环境变量用 `restart`**。
 - **失败的 `reload` 可能让 systemd 卡在 `reloading`**，下一次 `reload` 也会跟着失败；遇到这种情况直接 `sudo systemctl restart caddy`。
+- **`systemctl reload caddy` 退出非零 ≠ reload 失败**：caddy 关旧 admin endpoint 时常有 10s timeout 让 systemctl 退出 1，但配置其实已加载。脚本里用 exit code 触发回滚会误把好配置覆盖回旧的；要判断真失败请看 `curl` 实测或 `journalctl -u caddy` 有无 `loading new config` 之类成功标志。
 - **`caddy validate` 读不到 systemd 注入的环境变量**。无论是 `sudo` shell 下的 env placeholder，还是 `systemctl edit caddy` 里的 `Environment=...`，`validate` 都是命令行直接启动的，不会经过 systemd。  
   如果 Caddyfile 里用了 `{env.XYZ}`，先在当前 shell 里手动 `export` 一遍即可；值随便填，`validate` 只检查占位符能否解析。
 
 ## 基础反代：先选站点模式
+
+两种模式的差异不止"有没有域名"——从证书、端口形态到认证体系都成对地相反。先看总览，细节在后面各小节展开：
+
+| 维度 | 域名模式（推荐） | IP 模式（无域名 / 未备案） |
+|---|---|---|
+| 适用前提 | 有域名，`80/443` 公网直达 | 没域名 / 不走备案 |
+| 证书 | ACME 自动签 Let's Encrypt，客户端零配置 | `tls internal` 自签，客户端要导 root CA |
+| SNI | 浏览器带 SNI=域名，正常匹配 | IP 直连 SNI 常为空，需全局 `default_sni <IP>` 兜底 |
+| 端口形态 | 多域名**共享** `80/443`，靠 SNI/Host 分流 | 每个服务**独占**一个端口（`:443`、`:8082`…） |
+| HTTP→HTTPS | Caddy 默认自动跳 | **默认也会自动跳**（IP 不例外），但要关掉（多端口会乱跳）；手写跳转受同口约束 |
+| `bind` 限定网卡 | 共享端口上**别写**（会劫持整段端口 → 白屏，见下） | 独占端口，`bind` 安全可用 |
+| caddy-security cookie | **必须**写 `cookie domain example.com` | **必须不**写（RFC 6265 禁 `Domain=IP`） |
+| GitHub OAuth App | 用域名 callback 那一套 | 另用 IP callback 一套，两套独立不复用 |
+
+> 表里每一行后文都有展开：证书 / SNI / HTTP 跳转见本节下面几个小节，cookie / OAuth App 见 `caddy-security` 章节，`bind` 见本节末「`bind` 与 listener 分组」。
 
 ### 域名模式（推荐）
 
@@ -66,6 +82,7 @@ example.com {
 - Caddy 会自动通过 ACME 申请 Let's Encrypt 证书。
 - **`80` 端口必须能从公网直达**，否则默认的 HTTP-01 challenge 过不了。
 - 多域名直接平铺写多个 site block；每个站点独立配置，最省心。
+- **多个域名 / 子域名共享同一对 `80/443`**：它们默认都监听通配 `:443`，Caddy 把 listen 地址相同的站点合并进**同一个内部 server**，再靠 TLS 的 SNI（和 HTTP 的 Host 头）把每个请求分流到对应站点。平时无感，但一旦给某个站点单独加 `bind` 就会破坏这套合并——详见本节末「`bind` 与 listener 分组」。
 
 ### IP 模式（无域名 / 未备案）
 
@@ -86,10 +103,10 @@ https://<主 IP>:<对外端口> {
 为什么这样配：
 
 - **`auto_https disable_redirects`**  
-   Caddy 默认会为每个 HTTPS 站点在 `80` 端口起 HTTP→HTTPS 重定向。多端口配置下，HTTP 请求不一定知道该跳去哪个 HTTPS 端口；而 `tls internal` 也不需要 `80` 端口做 ACME 验证，所以直接关掉更省事。
+   Caddy 默认会为**每个** HTTPS 站点（**含 IP 站点**）在 `80` 端口起 HTTP→HTTPS `308` 跳转。多端口共享同一个 IP 时，`:80` 只会按"监听地址字典序最小"挑**一个**端口去跳，对其余服务全是错的目标；而 `tls internal` 也不需要 `80` 做 ACME 验证，所以直接关掉。机制与关闭方式详见下文「自动 HTTP→HTTPS 跳转」。
 
 - **`default_sni <主 IP>`**  
-   客户端通过 IP 直连时，SNI 往往为空；按 RFC 6066，SNI 只能是 hostname，不能是 IP。Caddy 匹配不到 connection policy 时会回 TLS alert 80，`default_sni` 是兜底。参考：[caddyserver/caddy#6344](https://github.com/caddyserver/caddy/issues/6344)
+   客户端通过 IP 直连时，SNI 往往为空；按 RFC 6066，SNI 只能是 hostname，不能是 IP。Caddy 匹配不到 connection policy 时会回 TLS alert 80，`default_sni` 是兜底。注意它**只影响证书选择**（写进 `ConnectionPolicy.DefaultSNI` → certmagic `DefaultServerName`），**不路由 handler、也不是 fallback cert**（那是 `FallbackSNI`）。源码 `caddy/caddyconfig/httpcaddyfile/httptype.go:610-636` + `modules/caddytls/connpolicy.go:281-316`。参考：[caddyserver/caddy#6344](https://github.com/caddyserver/caddy/issues/6344)
 
 - **非标端口建议显式写 `https://` 前缀**  
    技术上 `host:port` 也会自动启 HTTPS，但显式写出来更直观，不容易误读。
@@ -98,8 +115,40 @@ https://<主 IP>:<对外端口> {
    客户端仍然需要导入 Caddy 的 local root CA，见下一节。
 
 > 如果你刻意让 **Caddy 只绑定主 IP**、后端只绑定 `127.0.0.1`，那么“外部端口”和“后端端口”写成同一个数字也可以共存；文档里分开写只是更不容易看错。
+>
+> IP 模式天然是"每服务独占一个端口"，所以用 `bind` 把监听限定到指定网卡在这里是安全的；这跟域名模式下多站点共享 `:443` 的情形正好相反（见本节末「`bind` 与 listener 分组」）。
 
-### HTTP→HTTPS 跳转（IP 模式的边界）
+### 自动 HTTP→HTTPS 跳转：默认行为、关闭、多端口选择
+
+**默认行为**：只要 Caddy 知道站点的 host——**域名、IP、hostname 都算**——就会给它自动管 HTTPS，并在 HTTP 口（默认 `80`）起 `308` 跳转。**IP 站点一样自动跳**；"IP 不自动跳"的说法对当前版本（v2.11.2 实测 + 源码核对）是错的。域名和 IP 的差别只在**证书来源**，不在跳不跳：
+
+| 站点形态 | 默认自动跳 | 证书来源 |
+|---|---|---|
+| `https://example.com`（域名） | ✅ `:80→:443` | ACME 公网证书，系统信任 |
+| `https://<IP>`（标准 443） | ✅ `:80→:443` | internal issuer 自签（Caddy Local CA），client 要导 root CA / `-k` |
+| `https://<IP>:8082`（非标口） | ✅ `:80→:8082`（"跳哪个"见下） | 同上，自签 |
+| `http://example.com`（显式 `http://`） | ❌ 不跳 | 无证书，纯明文 |
+
+> 机制：IP 拿不到 ACME 公网证书，但 Caddy 把它归到 **internal issuer** 自签（即 `tls internal` 的效果）；有证书可发，跳转照加。跳转的生成只看"有没有这个 host"，**与证书是不是 ACME 签的无关**。
+
+**三种关闭方式**（源码 `caddy/modules/caddyhttp/autohttps.go`：`disable_redirects` 只在 `:199-237` 处 `continue` 掉 redirect 注册、**不碰证书管理**；`auto_https off` 则 `:116-123` 整个 `Disabled`）**：**
+
+| 手段（作用范围） | 跳转 | 自动证书 | `:443` listener |
+|---|---|---|---|
+| 全局 `auto_https disable_redirects` | ❌ 关 | ✅ 照签 | ✅ 照起 |
+| 全局 `auto_https off` | ❌ 关 | ❌ 不自动管 | 仅显式 `https://` 站点的 listener 仍 bind（无托管证书） |
+| 单站写成 `http://host { }` | ❌ 该 host 退出自动跳 | 该 host 无自动证书 | — |
+
+**多端口共享同一个 host 时，`:80` 跳哪个端口？**
+
+典型场景：`https://<IP>:8082`、`https://<IP>:8080`… 都用同一个 IP。`:80` 的跳转目标由 **Caddyfile 适配阶段对"监听地址字符串"的字典序排序**决定（源码 `caddyconfig/httpcaddyfile/addresses.go` 的 `consolidateAddrMappings` → `sort.Strings` 定 server 顺序，运行时 `modules/caddyhttp/autohttps.go` 按排好的 server 名顺序处理），取**字典序最小**的那个站点的 https 口；只有正好等于标准 `443` 口的站点能再额外登记一条竞争跳转。两个坑：
+
+- **是字典序，不是数字大小。** `sort.Strings` 按文本逐字节比：端口位数不齐会乱序（`:10000` 文本上排在 `:8080` 前面）；用了 `bind <IP>` 后监听地址是 `<IP>:<port>`，**IP 字符串成了主排序键**，端口反而次要。别理解成"最小端口赢"。
+- **确定但无文档。** 固定配置下结果是确定的（非随机），但这套排序是**未公开的内部实现**，auto-HTTPS 文档只承诺"HTTP 跳 HTTPS"、不规定选哪个端口——**不要依赖**。
+
+**实践结论**：IP 模式 / 任何"一个 host 多端口"的配置，**务必保留 `auto_https disable_redirects`**。否则 `http://<IP>/`（:80）会把所有明文请求 `308` 到字典序最小的那个端口，对其余每个服务都是错的目标——这才是关掉它的硬理由（不是"跳得不好看"）。
+
+### 手写 HTTP→HTTPS 跳转的同口约束
 
 开了 `auto_https disable_redirects` 后，Caddy 不再自动做任何 HTTP→HTTPS 跳转，需要的话自己写。有一条硬约束决定了能做到什么程度：**同一个端口要么是 TLS 监听、要么是明文 HTTP 监听，不能两者兼有。**
 
@@ -174,6 +223,27 @@ openssl x509 -in caddy-root.crt -noout -subject -issuer
 
 **`Subject == Issuer`** 就是自签 root。
 
+### `on_demand_tls`：陌生 SNI 的按需签证
+
+global options 里见到的：
+
+```caddyfile
+{
+    on_demand_tls {
+        ask http://127.0.0.1:9119
+    }
+}
+```
+
+作用：当一个**没在 Caddyfile 里显式声明**的 host 来握手时，Caddy 不立刻签证书，而是先 GET `ask` 端点问"这个域名允许签吗"，**HTTP 2xx 才放行**去签：
+
+- 请求形如 `GET http://127.0.0.1:9119/?domain=<握手的SNI>`（`caddy/modules/caddytls/ondemand.go:131` `qs.Set("domain", name)`）。
+- **状态码 200–299 = 放行**，其它一律拒（`ondemand.go:164-165`：`if resp.StatusCode < 200 || > 299 { return ErrPermissionDenied }`）。
+- 站点真正启用 on-demand 还需站点里写 `tls { on_demand }`；`ask` 只是全局的"准入裁决器"。
+- 跟 `default_sni` **不冲突也不互斥**：`default_sni` 管"没带 SNI 时拿哪个名字选证书"，`on_demand_tls ask` 管"某个陌生名字能不能现签"。
+
+⚠️ **on-demand 必须配 permission（`ask` 或 internal）**：否则任意 SNI 都能让你签 = 被打爆 ACME 限额 / 占内存，官方强制要求。
+
 ### 可复用的错误页 snippet
 
 如果你有一个单独的 `error-pages` 服务跑在 `localhost:4040`，可以用 snippet 集中定义，再按站点 `import`：
@@ -213,8 +283,34 @@ example.com {
   }
   ```
 
+  ⚠️ 这招**只对"独占端口"的站点安全**。在被多个域名共享的端口（典型 `:443`）上给单个站点加 `bind`，会把整段端口的流量劫持过去、其它域名集体白屏——机制与诊断见下一节。
+
 - **公网端口别忘了放行安全组/防火墙**。  
   中国大陆 Aliyun ECS 的未备案 SNI 封锁与“IP 直连 + `tls internal`”绕过方案另见 [icp-filing.md](icp-filing.md)。
+
+### `bind` 与 listener 分组：独占端口 vs 共享端口
+
+`bind` 表面是"决定监听哪个网卡地址"，但它真正的杀伤力是会**改变 Caddy 的 server 分组**，进而决定整段端口的流量归属。一次把 `:443` 上一堆域名全打白屏的事故就出在这里，所以单独拎出来讲。
+
+**机制三连**：
+
+1. **不写 `bind` = 监听通配 `:PORT`**（`0.0.0.0` + `::`，所有网卡）；**写 `bind 1.2.3.4` = 只监听 `1.2.3.4:PORT`** 这个具体地址。
+2. **Caddy 按 listen 地址给站点分组**：listen 地址完全相同的站点合并进**同一个内部 server**（在 server 内部再靠 SNI/Host 路由到具体站点）；listen 地址不同就拆成不同 server。所以**给某站点加 `bind` = 把它从默认 `:PORT` 那组里拆出来、独占 `IP:PORT`**。
+3. **OS 内核：具体 IP 的 socket 优先于通配 `*`**（more-specific 优先，且两者能并存不冲突）。进 `1.2.3.4:PORT` 的连接会被那个 bind 出来的独立 server 抢走，而不是落到通配 server。
+
+**于是分两种端口场景，结果完全相反**：
+
+- **独占端口（一个端口只挂一个站点）→ `bind` 安全、有用。**
+  典型是每个后端各占一个非标端口（`:8082`、`:9000`…）。这个端口本来就它一个站点，拆成独立 server 也没人跟它抢。`bind` 在这里是正面用途：限定只在公网 NIC + mesh NIC 上监听（不监听不该听的地址），或避开 Docker 已占的 `127.0.0.1:port`（见上节 `address already in use`）。**IP 模式天然是"每服务一个独占端口"，所以这种 bind 在 IP 模式下随便用。**
+
+- **共享端口（一个端口靠 SNI/Host 给多个站点分流，典型 `:443`）→ `bind` 会劫持整段端口。** ⚠️
+  `:443` 上挂着一堆域名（`a.example.com`、`b.example.com`、auth portal…），默认都 listen `:443`，合并进同一个 server 靠 SNI 分流——这是对的。**此时只要给其中一个站点加 `bind 1.2.3.4`**，它就独占 `1.2.3.4:443`，按"具体 IP 优先"截走**所有**经 `1.2.3.4` 进来的 `:443` 流量；可它的路由表里只有自己一个域名，对别的域名一律不匹配 → Caddy 兜底回 **200 + 空 body** → 浏览器**白屏**。
+
+**规矩**：
+
+- **共享端口（尤其 `:443`）上的域名站点一律不写 `bind`**——公网域名本来就该在所有网卡监听，让它们全部合并进通配 `:443` server 靠 SNI 分流。
+- 若确实要给所有站点统一限定网卡，用**全局** `default_bind <IP>...`（写在 global options 里、对所有站点生效）——这样所有站点 listen 地址仍然一致、照样合并、不拆 server；**别**在单个 `:443` 站点上局部 bind（局部 `bind` 会**覆盖** `default_bind`，那个站点又被拆出去——所以这是硬性前提，不是风格建议）。
+  - *源码核对（v2.11.2）*：`default_bind` 是全局选项，注册于 `caddyconfig/httpcaddyfile/options.go`（`RegisterGlobalOption("default_bind", …)`）；应用逻辑在 `caddyconfig/httpcaddyfile/addresses.go` 的 `listenersForServerBlockAddress`，优先级为「站点自带 `bind` > 全局 `default_bind` > 通配 `:PORT`」。监听地址拼成 `<bindHost>:<port>` 后，由同文件 `consolidateAddrMappings` 按地址字符串分组决定合并/拆分（上面「机制三连」第 2 条即出自这里）。
 
 ## 安装带插件的 Caddy 二进制
 
@@ -286,6 +382,99 @@ caddy list-modules --versions | grep -i security
 
 官方完整示例可参考：[authcrunch GitHub OAuth Caddyfile](https://github.com/authcrunch/authcrunch.github.io/blob/main/assets/conf/oauth/github/Caddyfile)
 
+### 三件套：provider / portal / policy
+
+caddy-security 的 GitHub OAuth 由三种东西拼起来，先理清它们的关系，后面所有配置都好懂：
+
+- **identity provider**（`oauth identity provider …`）：身份来源，对接 GitHub OAuth。决定"用谁家账号登录、回调地址长什么样"。
+- **authentication portal**（`authentication portal …` + 站点里 `authenticate with`）：登录门户，跑完整 OAuth flow、签发 JWT/cookie、按 `transform user` 给登录者打角色。一个 portal 用 `enable identity provider` 启用一个或多个 provider。
+- **authorization policy**（`authorization policy …` + 站点里 `authorize with`）：业务站点的门禁，验 portal 签的 JWT、按 `allow roles` 放行，未登录就按 `set auth url` 跳去 portal。
+
+数据流：浏览器 →（业务站点 `authorize` 发现没 token）→ 跳 portal `authenticate` → GitHub OAuth → portal 签 cookie/JWT → 跳回业务站点 → `authorize` 验通过放行。portal（签）和 policy（验）共用同一个 `JWT_SHARED_KEY`。
+
+### 指令与默认行为速查（v1.1.61 源码核对）
+
+> 本节默认值/行为全部按以下版本读源码核对：**caddy-security v1.1.61 + go-authcrunch v1.1.38 + caddy v2.11.2**（各仓库 checkout 到对应 tag 后读源码）。
+>
+> **caddy-security 只是 Caddyfile→Go config 的翻译层，真正的认证/授权逻辑全在 go-authcrunch**（caddy-security `go.mod` 依赖 `go-authcrunch v1.1.38`；前者 6千多行全是 `caddyfile_*.go` 把文本语法翻成后者的 config 结构体 + 注册 Caddy module）。所以：**指令叫什么名 / 怎么嵌套** → 看 caddy-security 的 `caddyfile_*.go`；**默认值 / 实际行为** → 看 go-authcrunch 的 `pkg/`。下面行号随版本漂移，升级后要重核。
+
+**authentication portal 指令（签发侧）**
+
+| 指令 | 不写时的默认 | 源码（未注明即 go-authcrunch） |
+|---|---|---|
+| `crypto default token lifetime <秒>` | **900s（15min）** | `pkg/kms/crypto_key_config.go:32`（`defaultTokenLifetime=900`），`TokenLifetime==0` 时回退 `:439-443` |
+| `cookie lifetime <秒>` | **不输出 Max-Age → session cookie（关浏览器即失效）**；**不**继承 token lifetime | `pkg/authn/cookie/cookie_get.go:41-46`（仅 `Lifetime!=0` 才写 `Max-Age`） |
+| `cookie domain <域>` | 不设 → host-only（子域拿不到）；**域名模式必写、IP 模式必不写**（见「cookie 作用域」） | — |
+| `set access_token cookie name <名>` | **`AUTHP_ACCESS_TOKEN`**（前缀 `AUTHP` + `_` + `ACCESS_TOKEN`） | 常量 `pkg/authn/cookie/cookie_config.go:20,35`；拼接 `:67`/`:89-91` |
+| `crypto key sign-verify {env.K}` | 必配（否则每次启动随机新 key，重启=全员重登）；详见下「sign-verify vs verify」 | `pkg/kms/crypto_key_config.go:39-41` |
+
+**authorization policy 指令（验签侧）**
+
+| 指令 | 不写时的默认 | 源码 |
+|---|---|---|
+| `set token sources <...>` | **cookie + header + query 三者全开**；优先级 cookie→header→query，**命中即停** | 默认集合 `pkg/authz/validator/sources.go:39-53`；迭代+短路 `sources.go:155-168` |
+| `validate bearer header` | **不写 = 根本不解析 `Authorization: Bearer <jwt>`**（这是"开启 Bearer 来源"的开关，不是"放宽校验"） | `pkg/authz/validator/sources.go:105-118`（`v.opts.ValidateBearerHeader && HasPrefix("Bearer")`） |
+| `set user identity <field>` | **email；没 email 才回退 subject**。只影响 `ar.Response.User["id"]` →（caddy-security）Caddy `user.id`（access log / `{http.auth.user.id}`），**不影响注入头、不影响 whoami** | `switch` 逻辑 `pkg/user/user.go:180-191`；唯一消费点 `pkg/authz/authenticate.go:80` |
+| `inject headers with claims` | **不写 = 不注入任何 `X-Token-*` 头**（下游拿不到身份）；详见下「inject headers 注入了什么」 | `pkg/authz/authenticate.go:270-306` |
+| `set auth url <U>` | 未登录跳这里；默认 `/auth` | `pkg/authz/authenticate.go:192-228`；默认 `pkg/authz/config.go:170-178` |
+| `set forbidden url <U>` | **已识别用户但被 ACL 拒绝**才跳这里（≠ auth url）；支持 `{uri}`/`{url}` 占位符 | 触发 `pkg/authz/authenticate.go:114`（`ErrAccessNotAllowed*`）→ `:166-186` |
+| `allow roles A B` | **OR**（任一命中即放行；要 AND 用 `match all`） | `pkg/user/user.go:257`（`HasRole`=any-of）；ACL 规则 `pkg/acl/rule.go` |
+| `crypto key verify {env.K}` | 只验签不签发；详见下「sign-verify vs verify」 | `pkg/kms/crypto_key_config.go:39-41` |
+
+**⚠️ 安全提醒：`set token sources` 不写时，query 来源默认是开的。** 即 `https://站点/path?access_token=<JWT>` 这种把 JWT 塞进 URL query 的访问默认能过鉴权（默认集合含 `query`：`sources.go:39-53`；`parseQueryParams` 把 query 里长度 >32 的参数当 token：`sources.go:78-93`）。
+
+- 这里塞的是 **JWT 本身**（已签好的明文凭证，base64 可解出 `sub/roles/exp`），不是签名密钥；泄露 = token 有效期内（取决于配置的 lifetime，可能数天）被冒充。
+- query 比 cookie/header 危险：URL 会进**浏览器历史/书签**、**`Referer` 头**、**access log / 日志归档**（工业界 JWT 最常见的泄露途径）。cookie 有 `HttpOnly`/`SameSite` 保护、header 是程序自己塞的，都不会"无意飞出去"。
+- **纯浏览器站点想关掉 query**：`set token sources cookie`（或 `cookie header`）。若现状是三源全开（不写 `set token sources`），属可接受的放宽——只要后端不读这些 token、也没人故意把 JWT 贴进 query，攻击面就只是"理论"级，可不强制收紧。
+
+#### `crypto key sign-verify` vs `verify`（签发侧 vs 验签侧）
+
+- portal 用 `sign-verify`：该 key 既能签 JWT 也能验签（portal 要签发）。
+- policy 用 `verify`：只验签（业务站点只需验、不签发）。
+- 二者不是反义；`sign-verify`/`sign`/`verify` 是 key 的 `Usage` 字段（`pkg/kms/crypto_key_config.go:39-41,66-68`）。
+- **对称 HMAC**（你的 `JWT_SHARED_KEY` 这种 hex 字符串）下同一 secret 天然可签可验，写哪个只是限定"这个 key 在这里允许干什么"。**非对称 RSA/ECDSA** 下私钥才能签、公钥只能验，写错 usage 会能力不匹配（`pkg/kms/crypto_key.go:148-203`）。
+
+#### `inject headers with claims` 注入了什么
+
+开启后（且 `PassClaimsWithHeaders=true`），把 JWT claims 转成 HTTP 头注入给下游反代（`pkg/authz/authenticate.go:270-299`）。默认 4 个，对应 claim 非空才注入：
+
+| 注入头 | 来源 claim |
+|---|---|
+| `X-Token-User-Name` | `Claims.Name` |
+| `X-Token-User-Email` | `Claims.Email` |
+| `X-Token-User-Roles` | `strings.Join(Claims.Roles, " ")` |
+| `X-Token-Subject` | `Claims.Subject` |
+
+另可用 `inject header <H> from <field>` 加自定义头（解析 `caddy-security/caddyfile_authz_inject.go:24-49`、执行 `go-authcrunch/pkg/authz/authenticate.go:301-306`，取值 `pkg/user/user.go:323-345` 支持任意 claim path）。
+
+**删掉这条 = 下游收不到任何 `X-Token-*` 头**。只有"后端靠反代注入的头识别用户"时才需要；后端自带账号系统（OpenList/Coolify）或根本不读这些头时可省。
+
+### 登录态有效期与续期（无 sliding refresh）
+
+**结论：caddy-security 没有 sliding refresh（"持续访问就自动续期"）。** token 只在**登录成功 / grantAccess** 时签发，lifetime 从签发那刻硬倒计时，访问期间不延长。
+
+- `/api/refresh_token` **不是续期接口**——它只返回一个时间戳，不重发 JWT/cookie（`go-authcrunch/pkg/authn/handle_api_refresh_token.go:27-36`，整个 handler 就 `resp["timestamp"]=now` 然后 `Write`）。
+- 真正签发/重签只在登录流程（`pkg/authn/handle_http_login.go:302-379`：`SetExpiresAtClaim` → `SignToken` → `Set-Cookie`）。
+- 所以 `crypto default token lifetime` / `cookie lifetime` 配多少，就是"登一次能用多久"的硬上限。
+
+**那为什么平时感觉"永不掉线"？** token 过期后这条链路通常无感重签：业务站 302 → portal 发现自己 cookie 也过期 → 跳 GitHub OAuth → **GitHub 自己的登录 session 一般还在**（GitHub cookie 以月计）→ 不要求重输密码，直接 302 回 callback → portal 重签一份新 JWT。整个过程只闪几次重定向。只有 GitHub session 也死了才会真卡在 GitHub 登录页。
+
+**想要更长的免登期**：把两个 lifetime 一起调长（如 30 天 `2592000` / 90 天 `7776000`，两者设一样）。代价：JWT 无状态，调长 = 撤销窗口变长（过期前无法 server-side 失效，强行作废只能换 `JWT_SHARED_KEY`，但那会让**所有人**一起掉线）。
+
+### portal 页面：`/portal` / `/whoami` / 登录后落点
+
+portal（`authenticate with <portal>` 那个站点）按 path 分发（`go-authcrunch/pkg/authn/respond_http.go:36-73`）：
+
+| 相对路径 | 内容 | 源码 |
+|---|---|---|
+| `/portal` | 应用入口列表（`PrivateLinks`）+ 登出 | `pkg/authn/handle_http_portal.go:94-107` |
+| `/whoami` | 当前 token 的 JSON（claims + `expires_at_utc`/`issued_at_utc` 等时间字段） | `pkg/authn/handle_http_whoami.go:37-66` |
+| `/login` | GitHub 登录入口 | `pkg/authn/handle_http_login.go` |
+| `/profile/` | 用户资料 SPA（须带尾斜杠） | `respond_http.go:36-73` |
+
+- **登录成功默认落 `/portal`**（除非带了可信 `redirect_url` cookie）：`pkg/authn/handle_http_login.go:347-379`（`redirectLocation==""` 时 → `BaseURL + /portal`）。
+- **`/whoami` 显示的是 `usr.AsMap()`（直接读 JWT claims / 内部 user map）**：`pkg/authn/handle_http_whoami.go:42-43` + `pkg/user/user.go:136-139`。它**不经过** authorization policy、**不读** `set user identity` / `inject headers`——所以删那些 policy 指令**不影响 whoami 显示**（whoami 上的 `sub/email/name` 直接来自 JWT claims）。
+
 ### ⚠️ 跨版本 cookie 名陷阱（多机共用 portal 必看）
 
 `caddy-security` 在版本演进中**改过 access token 的默认 cookie 名**：旧版（实测 `v1.1.49`）默认 `access_token`；新版（`v1.1.61`+）默认 `AUTHP_ACCESS_TOKEN`（= 前缀 `AUTHP` + `ACCESS_TOKEN`，源码 `go-authcrunch/pkg/authn/cookie/cookie_config.go`：`DefaultCookieNamePrefix="AUTHP"` + `DefaultAccessTokenCookieName="ACCESS_TOKEN"`）。
@@ -335,7 +524,7 @@ caddy list-modules --versions | grep -i security
 ### 常用配置项
 
 - **`order <指令A> before <指令B>`**  
-  显式指定 HTTP handler 的执行顺序。最常见的是：
+  显式指定 HTTP handler 的执行顺序（caddy-security 注册时已声明默认相对位置：`caddy-security/plugin_authn.go:34` `authenticate` before `respond`、`plugin_authz.go:42` `authorize` before `basicauth`；写在 global `order` 里是覆盖/保险）。最常见的是：
 
   ```caddyfile
   order authenticate before respond
@@ -343,7 +532,7 @@ caddy list-modules --versions | grep -i security
   ```
 
 - **`crypto default token lifetime` / `cookie lifetime`**  
-  分别是 JWT 的 `exp` 和浏览器 cookie 的 `Max-Age`。**两者要设成一样**。默认 token 只有 900 秒（15 分钟），通常太短。
+  分别是 JWT 的 `exp` 和浏览器 cookie 的 `Max-Age`。**两者要设成一样**。默认 token 只有 900 秒（15 分钟，`go-authcrunch/pkg/kms/crypto_key_config.go:32`），通常太短；cookie 不写则**无 Max-Age**（session cookie）。续期机制见上「登录态有效期与续期」。
 
 - **`crypto key sign-verify <key>`**  
   JWT 签名密钥。**不显式配置时，插件每次启动都会生成临时新密钥**，重启等于全员强制重登。  
@@ -351,13 +540,13 @@ caddy list-modules --versions | grep -i security
   参考：[AuthCrunch auth-cookie 文档](https://docs.authcrunch.com/docs/authenticate/auth-cookie)
 
 - **`transform user` + `allow roles`**  
-  `transform user` 给登录用户打角色；`allow roles A B` 是 **OR**，任一角色匹配就放行。  
+  `transform user` 给登录用户打角色；`allow roles A B` 是 **OR**，任一角色匹配就放行（`go-authcrunch/pkg/user/user.go:257` `HasRole`=any-of；要 AND 用 `match all`）。  
   `authp/admin` 这类名字只是约定，不是保留字，字符串本身可以自定。
 
 - **`trust login redirect uri`**  
   白名单“哪些 `redirect_url` 允许写入回跳 cookie”。  
-  不配置会被**静默丢弃**。  
-  **IP 模式尤其要注意端口**：Go 的 `url.Host` 会把端口也算进去，匹配非标端口时正则必须显式吃掉端口。  
+  不配置会被**静默丢弃**（`go-authcrunch/pkg/authn/inject_redirect_url.go:32`：`len(TrustedLoginRedirectURIConfigs)<1` 直接 return，只记 debug 日志）。  
+  **IP 模式尤其要注意端口**：Go 的 `url.Host` 会把端口也算进去（匹配逻辑 `go-authcrunch/pkg/redirects/redirect_match.go`），匹配非标端口时正则必须显式吃掉端口 `(:[0-9]+)?`。  
   参考：[caddy-security#455](https://github.com/greenpau/caddy-security/issues/455)
 
 ### caddy-security 路径隔离经验
@@ -454,14 +643,14 @@ GitHub OAuth App 的 callback URL 用来约束 Caddy 发给 GitHub 的 `redirect
 例如 OAuth App callback URL 是：
 
 ```text
-https://47.102.36.175/auth/oauth2/github
+https://<主 IP>/auth/oauth2/github
 ```
 
 则 GitHub 可接受同 host/port 下的：
 
 ```text
-https://47.102.36.175/auth/oauth2/github
-https://47.102.36.175/auth/oauth2/github/authorization-code-callback
+https://<主 IP>/auth/oauth2/github
+https://<主 IP>/auth/oauth2/github/authorization-code-callback
 ```
 
 但不会把不同 host 或不同 port 视为同一个 callback。
@@ -476,6 +665,55 @@ https://47.102.36.175/auth/oauth2/github/authorization-code-callback
 ```text
 /auth/oauth2/github/authorization-code-callback
 ```
+
+### callback URL 与字段映射（哪个字段决定哪一段）
+
+> 把"callback URL 怎么拼出来、各段受哪个 Caddyfile 字段控制"讲透，避免填错被 GitHub 拒。结论按 caddy-security **v1.1.61** / go-authcrunch **v1.1.38** 读源码核对（`caddyfile_identity_provider.go`、`pkg/idp/oauth/authenticate.go`、`pkg/authn/handle_external_login.go`、`pkg/authn/portal.go`）。
+
+**组装公式**（go-authcrunch `pkg/idp/oauth/authenticate.go:104`：`reqRedirectURI := reqPath + "/authorization-code-callback"`，其中 `reqPath = BaseURL + path.Join(BasePath, Method, Realm)`）：
+
+```text
+https://<portal 挂载 host>/<handle 前缀>/oauth2/<provider 的 realm>/authorization-code-callback
+```
+
+- ① `<portal 挂载 host>` — 跑 `authenticate with <portal>` 的那个站点的 host
+- ② `<handle 前缀>` — `handle /auth/*` 里的前缀（独占子域、portal 挂根时这段为空）
+- ③ `oauth2` — 固定字面（go-authcrunch 写死的 authMethod）
+- ④ `<provider 的 realm>` — provider 的 **`realm`** 字段，**不是 name！**
+- 末段 `authorization-code-callback` — 固定后缀（开了 `enable js callback` 才是 `-js-callback`）
+
+**最易错的一点**：第 ④ 段是 provider 的 **`realm`**，不是 name。go-authcrunch 拿 `/oauth2/` 后第一段去 `getIdentityProviderByRealm()`（`provider.GetRealm() == 段`，`handle_http_login.go:77`），不是按 name。只有**单行简写**时 realm 恰好 = name = driver，才显得像 name。
+
+**各字段管什么**（`caddyfile_identity_provider.go` / `portal.go`），别混：
+
+| 字段 | 管什么 |
+|---|---|
+| **name**（`oauth identity provider <name>` 第一个 token） | provider 内部 key，被 portal 的 `enable identity provider <name>` 按 name 引用（`portal.go:124` `GetName()==`）。**不进 callback URL** |
+| **realm**（块内 `realm`；单行简写时隐式=name，**必填**） | **callback URL 第 ④ 段** + `transform user match realm` 的键 |
+| **driver**（块内 `driver`；单行简写时隐式=name） | 用哪家 OAuth 端点（github/google/…）。**不进 callback URL** |
+| `client_id` / `client_secret` | 绑**哪个** GitHub OAuth App；换 App 必换 callback host |
+| portal 内 `cookie domain` | cookie 作用域：**域名模式必写、IP 模式必不写**（见「先理解 cookie 作用域」） |
+| portal 内 `transform user { match realm <X> }` | 按 realm 给登录用户赋角色，`<X>` **必须 = 该 provider 的 realm** |
+| `authorization policy { set auth url <U> }` | 受保护站点未登录时跳哪个 portal 的登录入口 |
+
+**单行简写 vs 块形式**（`caddyfile_identity_provider.go`）：
+
+- 单行 `oauth identity provider github {id} {secret}`：name 只能是 `github` / `google` / `facebook`（其它报 `unsupported "<x>" shortcut`），此时 `realm = driver = name`。
+- 要让 realm / driver 与 name 不一致（自定义 realm、但 driver 仍走 github），**必须**块形式，且 `realm` 必填（空 realm 报 `ErrIdentityProviderConfigureRealmEmpty`，`config.go:128`）：
+
+  ```caddyfile
+  oauth identity provider <name> {
+      realm <realm>          # ← 决定 callback URL 第 ④ 段
+      driver github          # ← 仍走 GitHub OAuth 端点
+      client_id {env.XXX_CLIENT_ID}
+      client_secret {env.XXX_CLIENT_SECRET}
+      scopes read:user
+  }
+  ```
+
+**改 realm 的连带（最易漏）**：realm 同时是 callback 第 ④ 段**和** `transform user match realm` 的键。改它必须三处同步：① provider 块的 `realm` ② GitHub OAuth App 的 callback URL 那一段 ③ 对应 portal 里所有 `transform user { match realm … }`。漏掉 ③ 的症状：能跳 GitHub、能跳回来，但**一个角色都没拿到** → `authorization policy` 全 deny → 403 / 登录后无限跳。
+
+> 一台机要**同时**支持 IP 直连和域名访问，上面这些字段要成对各来两套——完整骨架见下面「同机同时支持 IP + 域名（双体系并存）」。
 
 ### 域名模式模板
 
@@ -615,6 +853,106 @@ IP 模式里最容易错的两点：
 - **不要写** `cookie domain`
 - `trust login redirect uri domain regex` 里要把端口吃掉：`(:[0-9]+)?`
 
+### 同机同时支持 IP + 域名（双体系并存）
+
+一台机要**既能 IP 直连（未备案）、又能走域名**访问时，不能只配一套。「先理解 cookie 作用域」已说明：IP host 与域名 host 的 cookie 互不可达，且每个 GitHub OAuth App 的 callback host 写死——所以 **IP 和域名必须各一套独立的 provider + portal + OAuth App**，并存在同一个 `security {}` 里。
+
+成对出现的字段（一套 IP、一套域名）：
+
+- **两个 provider**：IP 套用单行简写（realm 隐式 = `github`）；域名套用块形式、自定义 realm（如 `github_dom`）+ `driver github`，且 `client_id` / `client_secret` 指向**另一个** GitHub OAuth App。
+- **两个 portal**：IP 套**不写** `cookie domain`，域名套**必写** `cookie domain example.com`；各自 `enable identity provider` 指自己的 provider；各自 `transform user match realm` 跟自己 provider 的 realm 一致。
+- **两组 policy**：role 名可以复用（两套都用 `authp/admin` 等），但 policy 拆两组，`set auth url` 各指自己那套 portal。
+- **两个 GitHub OAuth App**，callback URL 各填（注意 realm 段不同）：
+  - IP：`https://<主 IP>/auth/oauth2/github/authorization-code-callback`
+  - 域名：`https://auth.example.com/auth/oauth2/github_dom/authorization-code-callback`
+
+骨架（占位符 `<主 IP>` / `example.com`，两套用不同的 env client）：
+
+```caddyfile
+{
+    auto_https disable_redirects        # IP 站点需要
+    default_sni <主 IP>
+    order authenticate before respond
+    order authorize before basicauth
+
+    security {
+        # IP 套 provider：单行简写 → realm = name = driver = github
+        oauth identity provider github {env.GITHUB_CLIENT_ID} {env.GITHUB_CLIENT_SECRET}
+        # 域名套 provider：块形式 → name/realm 自定义、driver=github、另一个 OAuth App
+        oauth identity provider github_dom {
+            realm github_dom
+            driver github
+            client_id {env.GITHUB_DOM_CLIENT_ID}
+            client_secret {env.GITHUB_DOM_CLIENT_SECRET}
+            scopes read:user
+        }
+
+        authentication portal portal_ip {
+            crypto default token lifetime 604800
+            cookie lifetime 604800
+            crypto key sign-verify {env.JWT_SHARED_KEY}
+            enable identity provider github            # 按 name
+            # 不写 cookie domain（IP 模式）
+            trust login redirect uri domain regex ^<主 IP>(:[0-9]+)?$ path prefix /
+            transform user {
+                match realm github                    # = IP 套 provider 的 realm
+                regex match sub "github.com/(yourname)"
+                action add role authp/admin
+            }
+        }
+        authentication portal portal_dom {
+            crypto default token lifetime 604800
+            cookie lifetime 604800
+            cookie domain example.com                 # 域名模式必写
+            crypto key sign-verify {env.JWT_SHARED_KEY}
+            enable identity provider github_dom        # 按 name
+            trust login redirect uri domain suffix example.com path prefix /
+            transform user {
+                match realm github_dom                # = 域名套 provider 的 realm
+                regex match sub "github.com/(yourname)"
+                action add role authp/admin
+            }
+        }
+
+        # role 名复用，但按体系拆两组，set auth url 各指自己的 portal
+        authorization policy admin_ip {
+            set auth url https://<主 IP>/auth/
+            crypto key verify {env.JWT_SHARED_KEY}
+            allow roles authp/admin
+        }
+        authorization policy admin_dom {
+            set auth url https://auth.example.com/auth/
+            crypto key verify {env.JWT_SHARED_KEY}
+            allow roles authp/admin
+        }
+    }
+}
+
+# IP 入口：没有子域可用，portal 挂在子路径 /auth/*
+https://<主 IP> {
+    tls internal
+    handle /auth/* { authenticate with portal_ip }
+    handle /forbidden { error "Unauthorized" 401 }
+}
+https://<主 IP>:8080 {          # IP 受保护业务
+    tls internal
+    authorize with admin_ip
+    reverse_proxy localhost:8000
+}
+
+# 域名入口：portal 独占一个子域，也挂 /auth/*（与 IP 对称）
+auth.example.com {
+    handle /auth/* { authenticate with portal_dom }
+    handle /forbidden { error "Unauthorized" 401 }
+}
+app.example.com {               # 域名受保护业务
+    authorize with admin_dom
+    reverse_proxy localhost:8000
+}
+```
+
+两套共享同一个 `JWT_SHARED_KEY`（同机签 / 验方便），但 cookie、OAuth App、realm 全独立。要再加第三套（另一个域名），照此再加一组 provider + portal + policy 即可。
+
 ## 文档私链分享站（docs-share：Git → RustFS S3 + Markdeep viewer）
 
 > 这一套的定位是：**用 S3 presigned URL 做带过期、可撤销的只读文档分享**。后端是 RustFS（S3-compatible）；上传走 Git push（forgejo runner `rclone sync`）；浏览器渲染靠 Caddy 按 `Accept` 分流到本地 `_viewer.html`。
@@ -655,7 +993,7 @@ git push → forgejo (gitea-self-hosted) → forgejo-runner (DinD)
 
 ### 客户端配置
 
-服务端部署完成后，把受限 CI key 交给两个位置：forgejo 仓库 secret（runner 跑 rclone sync）和操作者本机 mc alias（生成 presigned URL）。密钥体系、alias 组织、presigned 生成方式的完整说明见 `software` skill 的 [`references/docs-share.md`](../../software/references/docs-share.md)。
+服务端部署完成后，把受限 CI key 交给两个位置：forgejo 仓库 secret（runner 跑 rclone sync）和操作者本机 mc alias（生成 presigned URL）。密钥体系、alias 组织、presigned 生成方式的完整说明见 `software` skill 的「私有 docs-share 站点（Git 仓库 → S3 直链分享）」章节。
 
 ### 安装 viewer 壳子
 
@@ -784,10 +1122,18 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 - 功能叠加顺序：**先反代，再错误页，再认证 / WebDAV**
 - `reload` 只适合改 Caddyfile；**换二进制或改环境变量用 `restart`**
 - `tls internal` 场景下，**客户端只导 root CA**
+- **共享端口（`:443`）上的域名站点别写 `bind`**：会独占该 `IP:443`、劫持整段端口流量 → 其它域名 200 空 body 白屏；偏偏本机回环自查正常，极隐蔽。只有独占端口的站点才可以 bind。
 - `caddy-security`：
   - 域名模式：**必须写** `cookie domain`
   - IP 模式：**必须不写** `cookie domain`
   - `JWT_SHARED_KEY`：**必须固定**
+  - GitHub callback URL = `https://<portal host>/<handle 前缀>/oauth2/<provider realm>/authorization-code-callback`；第 ④ 段是 **realm 不是 name**
+  - 改 provider `realm` 三处同步：provider 块 / GitHub callback URL / 该 portal 的 `transform user match realm`
+  - IP 与域名各一套独立 provider+portal+OAuth App（cookie 互不可达、callback host 写死）
+  - token source 默认含 **query**：`?access_token=<JWT>` 默认能过鉴权（`sources.go:39-53`）；纯浏览器站点用 `set token sources cookie` 关掉
+  - **无 sliding refresh**：token 到期靠 GitHub session 无感重签；要长免登期就把 `crypto default token lifetime` + `cookie lifetime` 一起调长（撤销窗口随之变长）
+  - 默认值（v1.1.61 源码核对）：token lifetime **900s**、cookie **无 Max-Age（session）**、access-token cookie 名 **`AUTHP_ACCESS_TOKEN`**、`allow roles` 是 **OR**
+  - 删 `inject headers with claims` → 下游收不到 `X-Token-*`；删 `set token sources`/`set user identity`/`validate bearer header` 是回到默认（不影响 whoami，whoami 直接读 JWT claims）
 - docs-share（S3 + viewer rewrite）：
   - 后端 RustFS S3，鉴权 SigV4 presigned，**自带过期 ≤ 7d**
   - viewer 壳子是 Caddy 本地 file_server（`/srv/viewer/_viewer.html`），**不在桶里**

@@ -7,7 +7,7 @@ description: 用 OpeniLink Hub（微信 ClawBot / iLink 协议开源平台）收
 
 操作微信 Bot 平台 **OpeniLink Hub**（`github.com/openilink/openilink-hub`，开源 MIT）。它是微信 2026.3 官方 **ClawBot** 插件 / **iLink（智联）协议**的自托管封装：单一 `oih` 二进制（或 docker）+ SQLite，默认监听 `:9800`。
 
-> 本 skill 只写**使用侧**通用操作（收 / 发 / 管理）。**自托管部署**（装 `oih` / docker compose / 反代 / env）见 `vps-maintenance` skill 的 [`references/wechat-clawbot.md`](../../vps-maintenance/references/wechat-clawbot.md)。hub 地址、用户名、app_id、installation_id 等通过 env / 参数传入，不写死在此。远端执行 / 密码注入用 `portal_*` MCP 工具（`portal_exec` / `portal secret`，用法见其工具 docstring）。
+> 本 skill 只写**使用侧**通用操作（收 / 发 / 管理）。**自托管部署**（装 `oih` / docker compose / 反代 / env）见 `vps-maintenance` skill 的 OpeniLink Hub 自托管部署章节。hub 地址、用户名、app_id、installation_id 等通过 env / 参数传入，不写死在此。远端执行 / 密码注入用 `portal_*` MCP 工具（`portal_exec` / `portal secret`，用法见其工具 docstring）。
 
 ## 一句话心智模型
 
