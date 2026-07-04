@@ -392,4 +392,45 @@ if !slices.Contains(actualChallenges, expectedChallenge) { 拒绝 } // 命中任
 
 # 附录 C · 参考源码位置
 
-把仓库克隆到本地读源码（`git clone --depth 1 https://codeberg.org/git-pages/git-pages.git`）。关键文件：`src/auth.go`（5 种鉴权）、`src/wildcard.go`（通配匹配）、`src/main.go`（启动参数）、`Dockerfile`（standalone vs supervisord）、`conf/config.example.toml`（含 Codeberg 自己的 wildcard 配置）、`.forgejo/workflows/ci.yaml`（4 平台 release）。相关仓库：[git-pages](https://codeberg.org/git-pages/git-pages) / [git-pages-cli](https://codeberg.org/git-pages/git-pages-cli) / [action](https://codeberg.org/git-pages/action)。
+把仓库克隆到本地读源码（`git clone --depth 1 https://codeberg.org/git-pages/git-pages.git`）。关键文件：`src/auth.go`（内容更新鉴权 8 条规则，见附录 D）、`src/pages.go`（`putPage`/`patchPage`/`postPage`/`deletePage` 的 HTTP 通道分发）、`src/wildcard.go`（通配匹配）、`src/main.go`（启动参数）、`Dockerfile`（standalone vs supervisord）、`conf/config.example.toml`（含 Codeberg 自己的 wildcard 配置）、`.forgejo/workflows/ci.yaml`（4 平台 release）。相关仓库：[git-pages](https://codeberg.org/git-pages/git-pages) / [git-pages-cli](https://codeberg.org/git-pages/git-pages-cli) / [action](https://codeberg.org/git-pages/action)。
+
+---
+
+# 附录 D · 与 git forge 配合机制总表（ingest × 鉴权）
+
+把"内容怎么进来"和"凭什么放行"两个正交轴各列一张表，是 §2.4 / §2.5 与附录 A/B 的**交叉汇总**——补上前面分散各处、以及"哪条机制配哪个 forge（尤其 GitHub）"这个没单独点名的维度。判断依据来自 `src/auth.go` / `src/pages.go` 与 [README Authorization 段](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md)（内容更新的鉴权在 README 里正好是 **8 条按序尝试的规则**）。
+
+## D.1 内容进来：5 个 HTTP wire 通道
+
+git-pages 的"入口"按 **HTTP 方法 + body 类型**分（`ServePages` 的方法分发，`src/pages.go`）。`git-pages-cli` 和官方 Action 都**不是独立通道**，而是**驱动这些通道的客户端**（Action 本身是 cli 的 wrapper）。
+
+| HTTP 通道 | body | 干什么 | 谁驱动 | 鉴权入口（见 D.2）|
+|---|---|---|---|---|
+| **PUT**（仓库 URL）| clone URL 文本 | 服务端**浅克隆**（`depth=1`、单分支）后全量替换 | curl / `cli --upload-git` | `AuthorizeUpdateFromRepository` |
+| **PUT**（归档）| tar / tar+gzip / tar+zstd / **zip** | 全量替换 | curl / `cli --upload-dir` / Action | `AuthorizeUpdateFromArchive` |
+| **PATCH**（归档）| tar / tar+gzip / tar+zstd（**无 zip**）| 增量合并（char device(0,0)=whiteout 删；`Atomic:` 头）| `cli --upload-dir --path` / Action `path:` | `AuthorizeUpdateFromArchive` |
+| **POST**（webhook）| Forgejo/Gitea/Gogs/**GitHub** push payload | 按事件头（`X-*-Event`）触发，仅处理**授权分支**（通常 `pages`；wildcard index 站点可配 `index-repo-branch`）| forge webhook | `AuthorizeUpdateFromRepository` |
+| **DELETE**（或空 body PUT）| — | 下线站点 | curl / `cli --delete` | `AuthorizeDeletion` |
+
+> 关键纠缠点：`cli --upload-git` **不在本地 clone**，只是把仓库 URL 当 body PUT 上去、由服务端克隆——和"PUT 仓库 URL"是**同一个通道**（`git-pages-cli/main.go:312`：`http.NewRequest("PUT", …, url)`）。而 PUT-仓库-URL 走的 `AuthorizeUpdateFromRepository` **只认 DNS Challenge / repository allowlist**，PUT 时压根不读 `Forge-Authorization`（`src/auth.go:441` 的 allowlist 分支限 PUT/POST、`:454` 的 wildcard-match 限 POST）——所以 `--upload-git --token X` 里的 token 会被静默忽略；forge-token 鉴权只在**归档**（PUT/PATCH archive）路径上有意义。
+
+## D.2 凭什么放行：README 的 7 条鉴权规则（+ 默认拒绝）
+
+内容更新鉴权 README 列了 **8 条按序尝试**的规则（`src/auth.go` 逐条对应）。真正"配合 git-server"的差异全在**`调 forge API?` 和 `对 GitHub`** 两列（前面正文没单独汇总过）。
+
+| # | 规则（README）| 触发方法 | 载体 | 调 forge API? | 对 GitHub | 关键限制 |
+|---|---|---|---|---|---|---|
+| 1 | Development Mode | 任意 | `PAGES_INSECURE=1`（§2.4 方案 D 的"边缘 Bearer"是 **Caddy 层**附加约定，git-pages 代码里无对应实现）| 否 | ✓ | 无条件放行，生产禁用 |
+| 2 | DNS Challenge | PUT/PATCH/DELETE/POST | `_git-pages-challenge.<host>` TXT + 口令（`Authorization: Pages <口令>`，或 Basic `Base64("Pages:<口令>")`——给**发不了自定义头的 GitHub/Gogs**）| 否 | ✓ | 绝对权限；PUT/POST 限分支 `pages` |
+| 3 | DNS Allowlist（repo）| PUT / POST | `_git-pages-repository.<host>` TXT 列 clone URL | **否、免 token** | ✓ | **仅根 / `.index` 站**；**不能 DELETE** |
+| 4 | Wildcard Match（content）| **仅 POST**(webhook) | `[[wildcard]]` 配置 + webhook payload | **否** | ✓（webhook 收 GitHub payload）| 只走 webhook，REST 不行 |
+| 5 | Forge Auth（wildcard）| PUT/PATCH/DELETE | `[[wildcard]]` + `Forge-Authorization` 头 | **是**（Gogs/Gitea/Forgejo 兼容 API）| ✗ | 多租户；archive 路径 |
+| 6 | Forge Auth（wildcard, preview）| PUT/PATCH/DELETE | `[[wildcard]].preview-domain` + token，走 `/api/v1/actions/run` | **是** | ✗ | **仅 Forgejo 16+、需 feature flag**；PR 预览站 |
+| 7 | Forge Auth（DNS allowlist）| PUT/PATCH/DELETE | `_git-pages-forge-allowlist.<host>` TXT + `Forge-Authorization` 头 | **是**（同上）| ✗ | **仅根 / `.index` 站** |
+| 8 | Default Deny | — | — | — | — | 其余一律拒 |
+
+对照 §2.4 的四方案：**方案 A** = 规则 2，**方案 B** = 规则 7，**方案 C** = 规则 5，**方案 D** = 规则 1，另有免 token 的 **repository allowlist** = 规则 3。规则 4（wildcard-match、免 forge API）和规则 6（preview、仅 Forgejo）§2.4 没展开——分别是"多租户但只走 webhook、不需 token"和"Forgejo PR 预览站"两种少见场景。
+
+**两条"仅根站"限制同源**：规则 3 与规则 7 都调用同一个 `authorizeDNSAllowlist(r, scope)`（`src/auth.go:200`），`.index`-only 检查（`if projectName != ".index"`，行 218）写在该共享函数里，所以两者都**只授权根 / 索引站点、不能给 `/子项目/` 单独授权**（附录 A④ 只在方案 B 下点了这条，其实规则 3 同受此限）。
+
+**对 GitHub 一句话**：能"发布"（规则 2 DNS-challenge / 规则 3 repo-allowlist / 规则 4 webhook 都收 GitHub payload），但**不能复用 GitHub 的权限校验**——规则 5/6/7 的 forge-token 走的是 Gogs/Gitea/Forgejo 兼容 API（`src/forge_api.go` 的 `makeGogsAPIRequest` 打 `/api/v1/…`，无任何 GitHub 代码路径），GitHub 的 API 不兼容这套。
