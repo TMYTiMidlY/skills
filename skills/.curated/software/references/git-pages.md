@@ -13,54 +13,105 @@
 
 ## 背景速览
 
-### 三个东西要分清：Pages Server v2、git-pages、Codeberg Pages
+### 从 Codeberg Pages 说起：它的后端 git-pages 你也能自建
+
+**Codeberg Pages** 是非营利代码托管平台 [Codeberg](https://codeberg.org/) 给用户提供的静态站托管服务，相当于"Codeberg 版的 GitHub Pages"（Codeberg 跑的是 **Forgejo**——Gitea 的社区硬分叉，这段背景见本 skill 的 [git-server.md「同源与现状」](git-server.md#同源与现状)）。对本文来说最关键的一点是：**Codeberg Pages 的后端是开源的 `git-pages`，同一套服务你能照搬到自己的 Forgejo/Gitea 上自建**（就是 Part 2 要做的事）。要真正理解怎么部署、以及官方托管的一些行为差异，得先把常被混为一谈的三个名字分清：
 
 - **Pages Server v2** —— 旧后端**代码库**（仓库 [`Codeberg/pages-server`](https://codeberg.org/Codeberg/pages-server)，EUPL-1.2）。2024-11 起进入维护模式，见置顶 issue [#399 "We will not accept new features!"](https://codeberg.org/Codeberg/pages-server/issues/399)；仓库首页写着 "This code is in maintenance mode… **Codeberg Pages itself is in the process of migrating to the new git-pages server**"。
 - **git-pages** —— 新后端**代码库**，v2 的官方继任者。[官方文档](https://docs.codeberg.org/codeberg-pages/) 原文："Codeberg Pages **has recently migrated** from the legacy v2 codebase to the newer git-pages codebase"、"**Since December 2025**, Codeberg offers a new Pages service based on git-pages… It is free/libre open source software."
 - **Codeberg Pages** —— Codeberg 面向用户的**服务品牌**（不是代码库）。今天它 = **git-pages（新迁移的站点）+ 老 v2（未迁移的存量站点）并存**，底层跑在 git-pages 上。迁移是**单向、要用户主动推一次才生效**的软切换（[迁移文档](https://docs.codeberg.org/codeberg-pages/migrating-from-pages-v2/)："your old v2 Pages deployment will continue working indefinitely"）。
 
-> `Codeberg Pages` 是服务品牌、不是代码库——把它叫作"git-pages 的前身"会把关系搞反：git-pages 的前身是 Pages Server v2，而 Codeberg Pages 如今就跑在 git-pages 之上。Codeberg 未公布 codeberg.page 服务多少仓库/站点；官方唯一量化数字是"[50,000+ 用户](https://blog.codeberg.org/the-hardest-scaling-issue.html)"的平台总量（该博文发于 2023-01，如今应更多）。
+一句话理顺三者关系：**代码库这条线是 Pages Server v2 → git-pages 的新旧更替**（git-pages 的"前身"就是 v2）；而 **Codeberg Pages 是 Codeberg 面向用户的服务品牌、不是任何一个代码库**——它自始至终是同一个服务，只是把底层后端从 v2 换成了 git-pages。所以今天的 codeberg.page = 跑在 git-pages 上的新站 + 尚未迁移的 v2 存量站并存。（Codeberg 未公布 codeberg.page 托管了多少仓库/站点，官方唯一量化数字是平台总量"[50,000+ 用户](https://blog.codeberg.org/the-hardest-scaling-issue.html)"，该博文发于 2023-01，如今应更多。）
 
-> 从 v2 迁到 git-pages 有几处 breaking change（[迁移文档](https://docs.codeberg.org/codeberg-pages/migrating-from-pages-v2/)）：内容不再自动拉取（要 webhook/Action 主动推）、`raw.codeberg.page` 取消（CORS 头改为直接设在站点上）、不再能用 `/仓库/@分支` 直接访问任意 repo/branch（旧的滥用向量，已弃）。v2 也已因滥用对**新用户**关闭注册，存量用户继续可用。
+**从 v2 迁到 git-pages 有几处 breaking change**，迁移前值得先知道（均据[迁移文档](https://docs.codeberg.org/codeberg-pages/migrating-from-pages-v2/)）：
 
-### 是否免费：是，且比 GitHub Pages 限制更少（但不透明）
+- **内容不再自动拉取**。v2 会替你把仓库内容取过去发布；git-pages 改成推送模型——**每次更新后你必须主动"推一下"**（配一个 webhook，或用 Forgejo Actions）它才会更新（原文 "Content is no longer fetched automatically"）。
+- **`raw.codeberg.page` 取消**。先一句话交代 **CORS（Cross-Origin Resource Sharing，跨源资源共享）**：浏览器默认按"同源策略"拦截跨源读取——跑在 `https://a.com` 页面里的 JS 用 `fetch()` 去读 `https://b.com` 的文件会被浏览器拦掉，除非 `b.com` 在**响应头**里加一句 `Access-Control-Allow-Origin` 明确放行（这个头只能由被读取的一方 `b.com` 来设、请求方设不了）。v2 为此单独提供一个 `raw.codeberg.page` 裸内容域名，凡经它取的响应**一律带上 `Access-Control-Allow-Origin: *`**（源码 [pages-server `handler.go`](https://codeberg.org/Codeberg/pages-server/src/branch/main/server/handler/handler.go)：请求 host 命中 `AllowedCorsDomains` 就写死 `*` + `Access-Control-Allow-Methods: GET, HEAD`，`raw.codeberg.page` 正是这个允许域）——等于"经这个域名取的东西，**任何**外部站点都能跨源读"，一个不分来源、全站无差别放开的开关。git-pages 取消了这个域名，**改由站点作者在自己站点根的 `_headers` 文件里、按路径自行声明要不要发 CORS 头、对哪个源开**（Netlify 风格 `_headers`，见附录 B）——从"一个裸域名对所有源无差别放开"收回成"作者自己精确控制哪条路径、放行哪个源"（原文 "CORS headers are now directly set on your page and this workaround is no longer necessary"）。
+- **不能再用 `/仓库/@分支` 直接翻任意 repo/branch**。v2 允许 `用户名.codeberg.page/仓库/@分支/…` 直接访问任意仓库任意分支的文件——等于把整个 forge 当免费 CDN，是个常见滥用向量；git-pages 改为**只服务你显式部署过的那个站点**，`/仓库/@分支` 这种直接访问任意 repo/branch 的老方式随之弃用（原文 "Serving arbitrary resources from Codeberg was a common abuse vector"）。
 
-| | [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages) | Codeberg Pages |
+迁移本身是**零停机、单向软切换**：老 v2 站点无限期继续可用（"your old v2 Pages deployment will continue working indefinitely"），一旦你改用任一新发布方式，该站从此改由 git-pages 服务（想确认切没切，看 HTTP 响应头 `Server`：`pages-server` 是老后端、`git-pages` 是新后端）。也正因为 v2 有这些设计缺陷（含上面那个被滥用的访问方式），**新站点如今一律建在 git-pages 上、v2 只维护存量**——存量用户不受影响。
+
+### 免费与配额：Codeberg Pages 和 GitHub Pages 都免费，差别在配额透明度
+
+真正的区别不在收费（都免费），而在**配额是否公开**、以及**私有站要不要钱**——不宜笼统说"谁限制更少"，因为 Codeberg 根本没公布数字，无从比大小（下表把能查到的角度都列上，未公开的直接标未公开）：
+
+| 维度 | [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages) | Codeberg Pages（git-pages）|
 |---|---|---|
 | 收费 | 免费 | 免费 |
-| 私有仓库发布 Pages | 需 Pro/Team/Enterprise 付费计划 | 无付费分级 |
-| 明文配额 | ✅ 站点 1GB、带宽 100GB/月、构建 10 次/小时（软限）——[limits 文档](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits) | ❌ 未公开具体数字 |
-| 资金来源 | 商业公司（GitHub/Microsoft） | Codeberg e.V.，柏林注册非营利协会，纯捐款 |
+| 私有仓库发布 Pages | 需 Pro/Team/Enterprise 付费计划 | 不分公开/私有、无付费分级 |
+| 配额是否公开 | ✅ 明文：站点 1GB、带宽 100GB/月（软限）、构建 10 次/小时——[limits 文档](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits) | ❌ 未公布具体数字，只有"合理使用 / 反滥用"口径 |
+| 自定义域名 + HTTPS | ✅ 免费、自动签证书 | ✅ 免费、自动签证书（DNS 记录授权，见 §1.4）|
+| 站点公开性 | 公开，**即使仓库私有也公开**（[配置发布源文档](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)的 warning）| 公开；官方托管**无内建访问控制**（自建 git-pages 可加，见 Part 2）|
+| 后端能否自托管 | ❌ 专有 | ✅ git-pages 开源（0BSD），可自建（Part 2）|
+| 运营方 | GitHub / Microsoft（商业公司）| Codeberg e.V.（柏林注册非营利协会，纯捐款）|
 
-### 核心机制：发布 ≠ 源码托管（"不可猜路径"从哪来）
+### 发布模型：从分支拉取 vs 推到 Pages 存储
 
-git-pages 把**发布（deploy）**和**源码托管（source control）**彻底分开：你上传的字节直接进 Pages 服务自己的私有存储（fs 或 S3），不经过任何 git 仓库、也没有对外的"列目录 / 列所有站点"接口。
+这是 git-pages 与 GitHub Pages 最本质、也最容易被搞混的一处差别，单独讲清楚。
 
-- 对比 `git push 到 pages 分支`那种模式（如 [d7z gitea-pages](https://github.com/d7z-project/gitea-pages)）：内容就是某个 git 分支，只要仓库公开，forge 自带的文件浏览器（`/owner/repo/src/branch/pages/…`）就能绕过 Pages 层翻到"随机"目录。
-- git-pages 的存储是私有黑盒、无 listing 接口——不知道确切路径就无从翻找，安全性来自 key 随机 + 不做 listing，**和"S3 桶不开 listing、只靠随机 key"是同一套逻辑**（注意：这**不是**签名/限时的 presigned URL，路径一旦泄露内容即公开——降低被枚举/撞见的概率 ≠ 访问控制；真要保护敏感内容仍需鉴权），不靠版本控制机制。
-- **"owner/repo + 随机路径"也能不可猜**（"路径随机"的另一种形态）：git-pages 发布时项目名可任选（含随机串）、天生不可猜；`Forge-Pages` 前缀虽固定 `owner/repo`，但官方 `additional_base_path` 参数能再追加一段——设成随机串就是 `owner/repo/<随机>/`，裸访问 `owner/repo/` 无部署则 404（[Forge-Pages README](https://github.com/MexHigh/Forge-Pages)）；`gitea-pages` 无此内置项、只能自写 JS 路由。**前提都一样**：内容别挂公开可浏览的 git 分支，否则随机段照样能从 forge 文件树翻到。
+**git-pages：推送式，且"发布"与"源码托管"是分开的两件事。** git-pages 把**发布**（deploy，把构建好的产物交出去）和**源码托管**（source control，git 仓库存源文件）拆成两件事：你把产物**主动推**给 git-pages（HTTP `PUT`/`PATCH`、webhook `POST`，或官方 CLI / Forgejo Action，见附录 B 的 HTTP API），它存进自己的私有存储（文件系统或 S3），**中间不经过任何可对外浏览的 git 仓库**。两个直接后果：
 
-（顺带：GitHub Pages 也有**两种发布模型**——Settings → Pages → Source 下拉框里的 **Deploy from a branch**（分支源，类比 Codeberg v2 拉取式）vs **GitHub Actions**（类比 git-pages 推送式），可逆无感切换。这是"发布源/发布方式"层面的类比，不代表 GitHub 内部真有两套独立后端。见[配置发布源](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)。）
+- **内容不会被自动拉取**：git-pages 不轮询你的仓库，每次更新都要主动"推一下"（webhook / Action）才生效（[迁移文档](https://docs.codeberg.org/codeberg-pages/migrating-from-pages-v2/) "Content is no longer fetched automatically"）。
+- **路径可以做到"不可猜"**：私有存储没有"列目录 / 列所有站点"接口，路径不泄露就无从枚举——和"S3 桶不开 listing、只靠随机 key"是同一套逻辑。注意这**不是**签名 / 限时的 presigned URL：路径一旦泄露内容即公开，"降低被撞见的概率" ≠ 访问控制，真要保护敏感内容仍需鉴权。前提是别把同一份内容**也**挂在一个公开可浏览的 git 分支上，否则 forge 文件浏览器照样能翻到（这正是后面几个"从分支发布"的工具做不到不可猜路径的原因）。
 
-### 三个同类工具对比：Codeberg 官方用的是 git-pages
+**GitHub Pages：有两种"发布源"可切换（[配置发布源](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)）。** 在 Settings → Pages → Source 里二选一，可逆无感切换：
 
-三个候选里 Codeberg 官方在用的是 **git-pages**（[docs.codeberg.org/codeberg-pages](https://docs.codeberg.org/codeberg-pages/) 明写 "served using a deployment of git-pages"），另两个是跟 Codeberg 无关、给自建 Gitea/Forgejo 用的第三方项目。
+- **Deploy from a branch（从分支部署）**：选一个分支 + 目录（仓库根 `/` 或 `/docs`），推到该分支就自动发布；官方原话是"不需要控制构建过程"时推荐这种（会自动跑 Jekyll 构建）。内容**就是**一个 git 分支 → 属于"分支 / 拉取式"，和 Codeberg v2、下面两个 gitea-pages 同类。
+- **GitHub Actions**：想自定义构建、或不想专门留一个放产物的分支时用；由 workflow 把产物打成 artifact 再 deploy，更接近 git-pages 的"推送式"（产物直接交给 Pages、不落在可浏览分支）。官方给了常见场景的 workflow 模板。
 
-| 维度 | [**git-pages**](https://codeberg.org/git-pages/git-pages) 🏆 | [d7z-project/gitea-pages](https://github.com/d7z-project/gitea-pages) | [MexHigh/Forge-Pages](https://github.com/MexHigh/Forge-Pages) |
-|---|---|---|---|
-| 许可 | 0BSD（0-clause BSD） | Apache-2.0 | AGPL-3.0 |
-| Star | 424（2026-07-03，会浮动） | 17 | 2（GitHub 是镜像，正身在作者自建 Forgejo [code.leon.wtf](https://code.leon.wtf/leon/Forge-Pages)） |
-| 定位 | 通用、可横向扩展、官方生产级 | 个人 homelab（README 自述 "part of Dragon's Zone HomeLab"） | 小众自托管，卖点是 OAuth2 保护私有页 |
-| 部署方式 | HTTP PUT/PATCH/POST(tar/zip/webhook) **或** CLI，内容不必挂公开仓库 | **只能** `git push` 到 `pages`/`gh-pages` 分支 | `POST /deploy` 直传 tar.gz + access_token |
-| 路径方案 | 发布时任选字符串、可与仓库名无关（天生不可猜） | 固定 `owner/repo` | 前缀 `owner/repo`，可加 `additional_base_path` 追加一段 |
-| 生命周期 | `Expires:` 头 + DELETE | 无 TTL | DELETE（无 TTL） |
-| 存储后端 | 文件系统 或 **S3** | Gitea API + Redis | 本地文件系统 |
-| 私有/鉴权 | DNS challenge / forge token（弱 Basic 可选） | Gitea OAuth2 | Forgejo/Gitea OAuth2（卖点之一） |
+> 说明：上面这"两种发布源"只是**发布方式**层面的区分，不代表 GitHub 内部真有两套独立后端。另外，[配置发布源文档](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)（就是这一段引用的那篇 GitHub 官方文档）页面里有一个显式的 **Warning 提示框**，明确写着：**GitHub Pages 站点一旦发布就在公网公开可见，哪怕它的源码仓库是私有的**（原文 "GitHub Pages sites are publicly available on the internet, even if the repository for the site is private"）——所以别把敏感内容留在用来发布的那个仓库里。
 
-（star 取自各自 API、许可取自各仓库 LICENSE/README，核验于 2026-07-03：git-pages `GET codeberg.org/api/v1/repos/git-pages/git-pages` 返回 424★、许可见 [LICENSE.txt](https://codeberg.org/git-pages/git-pages/raw/branch/main/LICENSE.txt) + README 明写 `0-clause BSD`（**该 API 不返回 license 字段**，别指望从 API 读许可）；`GET api.github.com/repos/d7z-project/gitea-pages` 17★ Apache-2.0；`GET api.github.com/repos/MexHigh/Forge-Pages` 2★ AGPL 且 description 带 `[MIRROR]`。star 数会随时间浮动。）
+**两种模型对照：**
 
-- **gitea-pages** 比表格看着更强：除了从 `pages` 分支发静态文件，还有 JS 路由处理器（Goja 引擎）、反代路由、自定义域名、Gitea OAuth 私有页。但内容仍是 git 分支，公开仓库能被 forge 文件浏览器翻（见上"核心机制"）。
-- **Forge-Pages** 用 workflow token（如 `${{ forgejo.token }}`）校验对仓库的写权限；`additional_base_path` 初衷是"preview PR / 一仓多版本"，也正是上面"`owner/repo/<随机>`"的官方实现；`POST /deploy` 直传 tar.gz、不必挂公开分支，这点与 git-pages 同理。
+| 维度 | git-pages（推送式）| GitHub Pages |
+|---|---|---|
+| 发布源 | 只有一种：`PUT`/`PATCH`/webhook/CLI/Action 主动推产物 | 两种可切：Deploy from a branch（分支源）/ GitHub Actions |
+| 产物与源码的关系 | **分离**：产物进 Pages 私有存储，可不挂公开分支 | 分支源＝产物就是某分支；Actions＝产物打成 artifact、不落分支 |
+| 是否自动发布 | 否，必须 webhook/Action 触发 | 分支源＝推到分支即自动发；Actions＝workflow 触发 |
+| 构建在哪 | 你自己在 CI 里构建，git-pages 只收产物 | 分支源可自动跑 Jekyll；Actions＝你自定义构建 |
+| "不可猜路径" | ✅ 私有存储、无 listing | ❌ 站点公开、URL 规则固定；私有仓库的站点仍公开可见 |
+| 佐证 | [迁移文档](https://docs.codeberg.org/codeberg-pages/migrating-from-pages-v2/)、[README HTTP API](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md)（`PUT`/`PATCH`/`POST`/`DELETE`）| [配置发布源文档](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site) |
+
+### 同类工具横向对比（自建场景，共 4 个）
+
+Codeberg 官方在用的是 **git-pages**（[docs.codeberg.org/codeberg-pages](https://docs.codeberg.org/codeberg-pages/) 明写 "served using a deployment of git-pages"）。另外三个是跟 Codeberg 无关、给**自建 Gitea/Forgejo** 用的第三方项目，能力跨度极大——从"4 个环境变量的极简静态托管"（deadnews）到"带 JS 动态路由 + 反代 + OAuth 的准应用服务器"（d7z）都有。下表把各家实测能力直接摊进来（✓/✗ 按当前 `main` 源码核验，非道听途说）：
+
+| 维度 | [**git-pages**](https://codeberg.org/git-pages/git-pages) 🏆 | [d7z-project/gitea-pages](https://github.com/d7z-project/gitea-pages) | [deadnews/gitea-pages](https://github.com/deadnews/gitea-pages) | [MexHigh/Forge-Pages](https://github.com/MexHigh/Forge-Pages) |
+|---|---|---|---|---|
+| 许可 | 0BSD | Apache-2.0 | MIT | AGPL-3.0 |
+| Star / 最新 release | 424★ · v0.9.1 | 17★ · v0.0.2 | 8★ · v1.0.1 | 2★ · 无 release（GitHub 是[MIRROR]）|
+| 语言 / 依赖体量 | Go，独立后端 | Go，**重**（goja + goja_nodejs + websocket + lru + afero + gitea SDK）| Go，**极轻**（仅 gitea SDK 依赖，仅几百行核心代码，distroless 静态镜像）| Go，轻（oauth2 + scs + yaml）|
+| 定位 | 通用、可横向扩展、官方生产级 | homelab 全功能"准应用服务器" | 极简静态托管 | 小众自托管，卖点是 OAuth2 私有页 |
+| 内容怎么进来（发布模型）| **推**产物到 Pages 存储（`PUT`/`PATCH`/webhook/CLI/Action），不必挂公开分支 | 从 `gh-pages` **分支**经 Gitea API 读 | 从 `gh-pages` **分支**经 Gitea API 读 | **推** `POST /deploy`（tar.gz），不必挂公开分支 |
+| 发布鉴权（**谁能推**站点，写侧）| DNS challenge / forge token / wildcard / `PAGES_INSECURE`（四选一，§2.4）| 靠 forge 本身的 repo 写权限（谁能推 `gh-pages` 分支谁就能发）| 靠 forge 本身的 repo 写权限（同左）| workflow token（如 `${{ forgejo.token }}`）校验对该 repo 的写权限 |
+| 静态托管 | ✓ | ✓ | ✓ | ✓ |
+| JS 动态路由 | ✗ | ✓ **Goja 引擎**（按路由挂 JS handler）| ✗ | ✗ |
+| 反向代理 | ✗ | ✓ 按路由反代到上游 | ✗ | ✗ |
+| WebSocket / SSE | ✗ | ✓ JS realtime（shared/version event，示例 `js_ws`/`js_sse`）| ✗ | ✗ |
+| 自定义域名 | ✓（DNS 记录授权）| ✓（CNAME alias，写在 `.pages.yaml`）| ✗ | ✓（`<owner>` 子域名，需通配 DNS）|
+| 私有页 / 访问控制（**谁能看**已发布站，读侧）| ✗ **无登录鉴权**：只有 `_headers` 里的 `Basic-Auth` 伪头，且 README/源码明说"**非安全特性**、明文存储、仅防搜索引擎收录"（`src/headers.go:241`）——真正的"别人看不看得到"靠下面那行"不可猜路径" | ✓ **Gitea OAuth 登录**：`.pages.yaml` 里 `private: true` 的站会要求登录，按当前用户对该 repo 的 read 权限放行 | ✗ 无：服务端 token 读得到的仓库，谁都能看 | ✓ **Forgejo/Gitea OAuth2**（`protect` 参数 / `.protect` 文件）：仅对该 repo 有 read/pull 权限者可见 |
+| 缓存 | 产物即存储 | **TTL 缓存**（meta/blob/dir，默认约 1min，后端 memory/redis），自动刷新非重启 | **无缓存**，每请求实时读 Gitea API | 产物存本地 fs |
+| 存储后端 | 文件系统 / **S3** | memory/local/etcd/badger/**S3**/overlay + redis（blob 缓存）| 无（实时读 Gitea）| 本地文件系统 |
+| 路径可否不可猜（obscurity，**不是**访问控制）| ✅ 私有存储、无 listing | ❌ 内容在公开分支，forge 可翻 | ❌ 同左 | ◑ `additional_base_path` 可加随机段，且产物不挂公开分支 |
+| 生命周期 | `Expires:` 头 + `DELETE` | 无站点 TTL | 无站点 TTL | `DELETE`（无 TTL）|
+| 配置复杂度 | `config.toml` | `config.yaml` + 分支内 `.pages.yaml`（面大）| **4 个环境变量**（极简）| `config.yml` + 通配 DNS |
+
+（star / license / release 核验于 2026-07-04：git-pages `GET codeberg.org/api/v1/repos/git-pages/git-pages` = 424★、许可见 [LICENSE.txt](https://codeberg.org/git-pages/git-pages/raw/branch/main/LICENSE.txt) + README 明写 `0-clause BSD`（**该 API 不返回 license 字段**）、release v0.9.1；`GET api.github.com/repos/d7z-project/gitea-pages` = 17★ Apache-2.0、release v0.0.2；`.../deadnews/gitea-pages` = 8★ MIT、release v1.0.1；`.../MexHigh/Forge-Pages` = 2★ AGPL-3.0、description 带 `[MIRROR]`、无 release，正身在作者自建 Forgejo [code.leon.wtf](https://code.leon.wtf/leon/Forge-Pages)。数字会随时间浮动。能力列据各仓库当前 `main` 的 README/config/源码核验。）
+
+> **表里三行"鉴权/隐私"别混，它们管的是不同的事**（这也是本表最容易看拧的地方）：
+> - **发布鉴权（写侧）** = "谁能把站点推上去"；
+> - **访问控制（读侧）** = "谁能看已发布的站点"，这才是**私有页**；
+> - **不可猜路径** = 一种**弱隐私**手段（security-through-obscurity，靠 URL 难猜），**不是**访问控制——路径一旦泄露内容即公开。
+>
+> 三者正交。关键结论：**git-pages 的写侧很强（DNS challenge / forge token…），但读侧没有真正的登录鉴权**——它对"别人能不能看"只给两样：不可猜路径，和 `_headers` 的 `Basic-Auth` 伪头（官方明说非安全、明文、仅防爬虫）。**要"登录才能看"的真·私有页，得用 d7z 或 Forge-Pages 的 forge OAuth**（deadnews 则完全没有）。所以上面"访问控制"和"不可猜路径"两行不矛盾：前者是真鉴权、后者是 obscurity，git-pages 只有后者。
+
+各家一句话取舍：
+
+- **deadnews/gitea-pages**——最省心的极简派：4 个环境变量（`GITEA_PAGES_SERVER/TOKEN/BRANCH/ADDR`）、单静态二进制 distroless 镜像、无缓存每次实时读 Gitea，适合"就是发点静态 HTML、推到 `gh-pages` 就行"。代价：**无鉴权**（服务端 token 能读到的仓库谁都能通过它访问，别直接裸暴露公网）、无自定义域名、无任何动态能力。（社区也有博客正因需求简单而选它、而非功能更全的 d7z。）
+- **d7z-project/gitea-pages**——比名字看着强得多，其实是个**准应用服务器**：`.pages.yaml` 里按路由挂 Goja JS 处理器 / 反向代理 / 模板 / 重定向 / 屏蔽，另带 WebSocket、SSE、受限 `fetch`、按 repo 隔离的 KV 存储，私有页走 Gitea OAuth；存储/缓存后端可选 memory/local/etcd/badger/S3/overlay + redis。想要"静态站 + 少量动态 / 鉴权"时它最全。代价：配置面大、依赖重。
+- **Forge-Pages**——四个里唯一和 git-pages 一样"推产物、不挂公开分支"的第三方项目（`POST /deploy` + tar.gz）；用 workflow token（如 `${{ forgejo.token }}`）校验对仓库的写权限，`additional_base_path` 给"一仓多版本 / PR 预览"各自独立路径（也是"`owner/repo/<随机>`"不可猜路径的官方实现），私有页走 OAuth2。URL 布局是 `https://<owner>.<base>/<repo>/*`，需要为子域名配通配 DNS。
+- **共同前提（两个 gitea-pages）**：它们的内容都是一个 **git 分支**——只要仓库公开，forge 文件浏览器（`/owner/repo/src/branch/gh-pages/…`）就能绕过 Pages 层翻到，所以做不到 git-pages 那种"不可猜路径"（见上"发布模型"）。
+  - 顺带澄清 `gh-pages` 这个名字：它只是二者**沿用了 GitHub Pages 的默认分支名**（`gh` = GitHub），纯粹是命名惯例、**与 GitHub 平台本身无关**——那个分支就躺在你自己的 Gitea/Forgejo 仓库里。而且**可配**：deadnews 用环境变量 `GITEA_PAGES_BRANCH`、d7z 用 `config.yaml` 的 `page.default_branch`，默认都是 `gh-pages`（Codeberg 官方 git-pages 则另用 `pages` 分支）。
 
 ---
 
