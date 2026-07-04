@@ -290,3 +290,46 @@ $u->save();
 3. （可选）撤掉那条非标准端口映射，彻底退役。
 
 **常见硬卡点**：中间转发层如果是 WSL NAT 下的 Windows `netsh portproxy`，**加新端口转发规则需要 Windows 管理员权限**（见 network skill 的 wsl.md）。拿不到 admin 时就只能停在拓扑 A——保留那条已有的非标准端口映射当活口，功能不受影响，只是没"回到官方默认端口"这个整洁性收益。**所以是否迁移是个整洁性/自动化兼容性的权衡，不是功能必需**：只做上游反代入口、不用这台 Coolify 部署对外 app 的话，拓扑 A 一直用下去也没问题。
+
+---
+
+## 用它部署对外应用：Domain 字段怎么填 + Destination 类型 + Git 认证
+
+前面几节是"运维 Coolify 实例本身"；这节是**用这台 Coolify 去部署一个对外 web 应用**时，GUI 里几个最容易填错/误解的点（都在前置反代拓扑下验证过）。
+
+### Destination 类型（Standalone Docker vs Swarm）——也不是 DinD，默认 Standalone
+
+New Resource 时要选 **Destination**：它就是目标 server 上的一个 **Docker network**（应用容器的落点，提供网络隔离）。两种类型：
+
+- **Standalone Docker**：普通单机 docker daemon 上的 bridge / 自定义网络。
+- **Docker Swarm**：Swarm 集群的 overlay 网络（跨节点通信）。
+
+两种**都不是** DinD（和上一节"部署机制不是 DinD"同理，只是那节讲构建过程、这里讲网络落点）。类型**不是你在 UI 里选的，是目标 server 加入 Coolify 时按它底层 Docker 是不是 Swarm 模式自动判定的**——官方 [destinations/create](https://coolify.io/docs/knowledge-base/destinations/create) 原文："automatically determined... You cannot manually choose"。**默认 Standalone**：标准单机安装脚本不开 Swarm，新装 server 就是 Standalone，对应自动建的 `coolify` bridge 网络（前文 Traefik 的 `--providers.docker.network=coolify` 就是它）；要 Swarm 得先手动把 server 配成 Swarm 节点再加进来。
+
+### Domain 字段：前置反代后填 `http://<真实域名>`，**不带 s**
+
+app 的 **Domain** 字段决定 Coolify 给这个 app 生成的 Traefik 路由 label。前置反代拓扑（边缘反代已终结 TLS、以明文回源到 Coolify Traefik）下有三个要点：
+
+- **协议前缀决定 Traefik 要不要自己再签证书**。填 `https://` → Traefik 会去 Let's Encrypt 申证（官方 [domains](https://coolify.io/docs/knowledge-base/domains)）。但这一步在本拓扑里既**多余**（TLS 已在边缘终结）又**大概率失败**——该域名的公网 DNS 指向的是边缘反代、不是 Coolify 这台机器，ACME HTTP-01 挑战根本连不到 Traefik，超时失败后退化成自签证书，纯浪费重试和日志。所以填 **`http://`** 前缀，让 Traefik 只做明文路由、不碰证书。
+- **域名部分必须 = 外部访客实际访问的那个真实域名**。Traefik 靠 `Host()` 请求头字符串匹配路由，边缘反代默认原样透传 Host 头，所以 Traefik 收到的就是真实域名——这里填别的（比如自造一个"内网名"）Traefik 匹配不上，直接 404。**不是**填某个内网专用域名。
+- **不填 = 这个 app 在 Traefik 里没有任何路由规则**。`Host()` 规则直接由 Domain 字段生成，空着就没有路由条目，边缘反代转过来的请求匹配不到 → 404。空 Domain 只适合"仅在同一 Docker 网络内被别的容器按服务名互调、完全不对外"的场景。
+
+**证据**（本部署 `docker inspect` 一个 Coolify 部署出来的容器的 labels，节选）：
+
+```
+traefik.http.routers.http-0-<id>.rule                      = Host(`<app域名>`) && PathPrefix(`/`)
+traefik.http.routers.http-0-<id>.entryPoints               = http           # 只有 http 入口、没有 https
+traefik.http.services.http-0-<id>.loadbalancer.server.port = 3001
+```
+
+当初 Domain 填的就是不带 `https://` 的域名，所以 Traefik 只生成了 http 路由、完全没有证书相关配置。多个 app 共享 Coolify Traefik 的同一个宿主端口，靠各自 `Host()` label 分流（Host-based 多路复用），不用为每个 app 单开端口。
+
+### Git 认证：Deploy Key vs GitHub App 是**两个正交维度**，别混成"三选一"
+
+容易把"认证方式"和"自动触发"混成一张并列表。其实是两个独立维度：
+
+- **维度 1 — 认证（Coolify 怎么读到你的代码）**：**GitHub App**（仅 GitHub；App 权限大：读代码 + 管 webhook + 读 PR + 写 commit 状态）vs **Deploy Key**（任何 Git 平台都行——GitLab/Gitea/Bitbucket/自建；就是一把**单仓库只读** SSH key，除了 `git clone` 这一个仓库什么 API 权限都没有）。二选一。
+- **维度 2 — 触发（push 之后谁去重新部署）**：独立问题。GitHub App 借自己那套权限**自动把 webhook 也装好** → push 自动部署；Deploy Key 只读、没权限替你建 webhook，默认只有"手动点 Deploy"，想要自动就得**自己去仓库设置手动加一条 webhook** 指回 Coolify（官方 [ci-cd](https://coolify.io/docs/applications/ci-cd) 原文 "More manual webhook setup required"）。
+- **手动配了 webhook ≠ 功能对等**：`Auto Deploy` 开关、PR 自动预览部署这两个功能官方明确写 "only available for GitHub App based repositories"（[applications](https://coolify.io/docs/applications)），commit 状态回写 GitHub 也仅 App 有。Deploy Key + 手动 webhook 顶多做到"push 触发一次重新部署"，拿不到这两个更深的功能（它们要 App 那种 GitHub API 权限，普通 webhook 顶不上）。
+
+> 构建这一步本身**不是**另起一个 CI runner：Coolify 自己在目标 server 上用你选的 Build Pack（Nixpacks 默认 / Dockerfile / Docker Compose / 直接拉镜像）build 出镜像再起容器（见上文"部署机制"）。官方把"push→自动构建部署"整个流程叫 CI/CD，但它指这个内建流程，不是接了 GitHub Actions 之类的外部流水线。

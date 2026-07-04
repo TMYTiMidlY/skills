@@ -49,6 +49,7 @@ sudo systemctl reload caddy
 - **`caddy validate` 读不到 systemd 注入的环境变量**。无论是 `sudo` shell 下的 env placeholder，还是 `systemctl edit caddy` 里的 `Environment=...`，`validate` 都是命令行直接启动的，不会经过 systemd。  
   如果 Caddyfile 里用了 `{env.XYZ}`，先在当前 shell 里手动 `export` 一遍即可；值随便填，`validate` 只检查占位符能否解析。
 - **`reload` 真失败（新配置语法/校验不过）时服务不停**：进程继续跑内存里已加载的旧配置，线上不断——所以改 Caddyfile 优先 `reload`、别用 `restart`。`restart` 会真停进程再起，遇到错配置会直接起不来、真断服（比 reload 失败严重）；改完先 `caddy validate`（nginx 用 `nginx -t`）dry-run 过了再 reload。
+- **判断语法是否通过的锚点：validate 输出里出现 `adapted config to JSON` 这行，就说明 Caddyfile 语法已解析成功。** 后面即便因 `{env.XYZ}` 填的假值在 provision 阶段 `Error: ...` 让整体 exit 1，那也只是运行期配置问题、不是语法错。所以哪怕 `validate` 退出非零，只要看到 `adapted config to JSON` 且没有 adapt 阶段的语法报错，就足以确认 `restart` 不会因语法错起不来——这在**用 `restart`（而非 `reload`）落地时尤其值得先确认**，因为语法错会让 `restart` 直接把服务干趴，而 `reload` 失败还能保留旧配置。
 
 ## 基础反代：先选站点模式
 
@@ -176,6 +177,31 @@ https://<主 IP>:<对外端口> {
       redir https://{host}:<端口B>{uri} 308
   }
   ```
+
+### `:80` catch-all 兜底：一条规则兜住所有域名的 HTTP→HTTPS
+
+上面每个 `http://<域名> { redir ... }` 是给**单个**域名手写跳转。域名一多、或要给 on_demand 签发的**没有显式站点**的野域名做跳转时，逐个写很烦。可以用一条**不带 host 限定**的 `:80` catch-all 一次兜住：
+
+```caddyfile
+:80 {
+    redir https://{host}{uri} 308
+}
+```
+
+**`{host}` / `{uri}` 是运行时占位符（placeholder），不是写死的字符串。** 每个请求进来，Caddy 用该请求**自己的**值替换：
+
+- `{host}` = 请求 Host 头里的域名（不含端口），是 `{http.request.host}` 的简写。
+- `{uri}` = 请求的完整路径 + 查询串，是 `{http.request.uri}` 的简写（如 `/status?id=3`）。
+
+所以 `redir https://{host}{uri} 308` 对**每个**请求跳到“同域名、同路径、同参数的 https 版”——保留一切、只把 `http` 换成 `https`，与 Caddy 内建自动跳转逻辑一致。写死成 `redir https://a.example.com/ 308` 才是“只能跳一个固定 URL”；占位符版避免了这点。
+
+**优先级**：`:80`（无 host）优先级最低，任何 `http://<具体域名> { }` 专属 block 都更具体、会先匹配。所以加这条 catch-all 后，现有专属 http block 行为不变，它只兜“没写专属 block”的域名（含未来新增、含 on_demand 野域名）——与 `:443 { }` catch-all + 具体 https 站点共存是同一套机制。
+
+**为什么对“域名 + IP 共存”模式特别好用**：机器上一旦有 IP+非标端口站点，就**必须**全局 `auto_https disable_redirects`（否则 :80 自动跳会把明文请求乱指到字典序最小的端口，见上文）。关掉后域名侧也“连累”着没了自动 http→https。这条 `:80` catch-all 正好把域名侧补回来，而它**只监听 :80**，完全不碰各 IP+非标端口独占的 TLS 监听——域名侧靠它统一跳转，IP+非标端口侧仍是“要求访问方显式写 `https://`”（同口跳不了，见上文约束），两边互不干扰。
+
+**如果没有任何 IP 站点**（纯域名、都走标准 443）：本就不需要 `auto_https disable_redirects`，让 Caddy 自动跳转即可，此时这条手写 catch-all 与默认自动跳转**基本等价**。差别只有一处：默认自动跳转只为**已显式定义**的域名生成 :80 跳转，覆盖不到 on_demand 签发的**未显式定义**野域名；手写 `:80` catch-all 对任意 Host 都跳，连野域名也兜。所以只要用到 on_demand 野域名，这条仍比默认自动跳转覆盖更全。
+
+> 典型场景：一台边缘 Caddy 同时跑域名站点（标准 443 + on_demand 野域名）和若干 IP+非标端口站点，全局开 `auto_https disable_redirects`；在所有业务块之外放一条 `:80 { redir https://{host}{uri} 308 }`，把所有域名的明文访问统一 308 升级到 https，IP+非标端口站点各自独占端口、不受影响。
 
 ### 导入 Caddy local root CA（仅 `tls internal` 场景）
 
