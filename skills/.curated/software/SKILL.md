@@ -26,6 +26,10 @@ SSH 密钥 passphrase、ssh-agent、非交互环境（CI / `bash -c`）私钥带
 
 多设备协作且部分设备无法访问 GitHub 时，用一台公网 VPS 做双向 SSH git 镜像。架构、搭建步骤、hooks、Actions workflow、防回环、防 split-brain 的完整方案见 [references/git-mirror.md](references/git-mirror.md)。
 
+## git-pages（给 Forgejo/Gitea 补静态站托管）
+
+Forgejo/Gitea 无原生 Pages，[git-pages](https://codeberg.org/git-pages/git-pages)（0BSD，Codeberg 官方 `*.codeberg.page` 现用后端）是单独部署、配合 forge 使用的服务：一次 HTTP PUT/tar 或 git push 发布、内容存进自己的 fs/S3 存储（**不挂靠可公开浏览的 git 分支**，故能做"路径不可猜"分享，类比"S3 桶不开 listing、只靠随机 key"、非签名 URL）。文档按身份分**两大部分**（前有背景速览：v2→git-pages 迁移史与 breaking changes、免费 + GitHub Pages 对比、**三个同类工具对比 git-pages/d7z gitea-pages/MexHigh Forge-Pages**、"发布≠源码托管"不可猜路径原理含 Forge-Pages `additional_base_path`=owner/repo+随机段）：**Part 1 用 Codeberg 官方托管**（建 `pages` 仓库、三种发布法 webhook/Forgejo Actions/git-pages-cli、访问 URL 规则、自定义域名 DNS 记录 + 授权 TXT、`404.html`+`_redirects`）；**Part 2 自建 Forgejo/Gitea + 自部署 git-pages**（4 种安装 + standalone vs supervisord、config.toml + S3 后端 + systemd LoadCredential 密钥、**Caddyfile 反代模板**、**四选一鉴权方案**：DNS Challenge 自签口令 / Forge Access Token+Allowlist 即 deploy token / Forge Wildcard 多租户 / 边缘 Bearer+PAGES_INSECURE，另有免 token 的 `_git-pages-repository` DNS allowlist、三种推送客户端 curl/cli/Action、Expires+DELETE 生命周期）。附录含鉴权源码剖析（`src/auth.go`：归档路径 ①–④ + 仓库/webhook 路径）、HTTP API 速查、参考源码位置。每条关键说法挂官方链接或源码行号。见 [references/git-pages.md](references/git-pages.md)。
+
 ## 自建 Forgejo（公网 22 SSH relay + CI runner）
 
 无独立公网 IP 的内网 WSL2 机上自建 Forgejo，借唯一公网落点 VPS 做入口。核心做法是 SSH passthrough（公网 sshd 按登录名 `git` vs 运维用户分流，不破坏运维 shell）+ 跨机 relay（key 查询/git 命令经一条 SSH 转发到内网 Forgejo 容器的 `forgejo keys`/`serv`）。覆盖整体三段链路架构、为什么网页端加 SSH key 入口机即认（`AuthorizedKeysCommand` 当场查 Forgejo 数据库、不拷文件）、内网机用 authorized_keys 内联 forced command 转发 keys/serv（不另放脚本）、ControlMaster 复用绕过坑、`serv` stdin 透传、入口机发行版差异（SSH service 名/SELinux/sshd_config.d 因发行版而异）、sshd 幂等 append + 安全兜底、Forgejo Actions runner（DinD 隔离、token 注册三步、job 容器回连 `http://forgejo:3000` 的网络设计）、web 经边缘 Caddy 反代（默认中文 header；WSL/Docker 网络细节转 `network` skill）、session COOKIE_NAME 改名治登录 500、数据卷 `/data` 挂载坑（非 rootless 镜像）见 [references/git-server.md](references/git-server.md)。
