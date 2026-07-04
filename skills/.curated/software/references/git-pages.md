@@ -352,6 +352,7 @@ pages.example.com {
 
 - **过期**：发布带 `Expires: <HTTP-date>` 头（或 CLI `--expires <天>`），需 `config.toml` 开 `allow-expiration`；过期站由定时任务 `git-pages -site-expire` 清（[README](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md)）。
 - **下线**：`DELETE`（或 CLI `--delete`，或 PUT 空 body）——站点变得不可访问，数据保留一段不确定时间后彻底清除。
+- **管理员直删（不走 HTTP 鉴权，本机跑）**：`git-pages -config … -secrets … -delete-site <ref>`（`ref` 形如 `域名` 或 `域名/.index`）。⚠️ `-delete-site` 是 `main` 里较新加的，**release 二进制可能没有**（实测 v0.9.1 即无，`-help` 也不列它——又一个"release 落后 main"的例子）。这种情况改用 `git-pages … -update-site <ref> <空.tar>` 代替：**空 tar 归档 = 删除**（日志出 `ok: deleted`）。注意那个空文件要带 `.tar` 后缀（git-pages 靠扩展名判 content-type，喂 `/dev/null` 会报 "cannot determine content type")。适合"没 `-delete-site` 又不方便走 HTTP DELETE"（HTTP 下线要过 `AuthorizeDeletion` 鉴权，一个没有 forge-token / DNS-challenge 的裸租户站未必删得掉）的场景。
 
 ---
 
