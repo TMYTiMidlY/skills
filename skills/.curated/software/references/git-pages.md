@@ -186,6 +186,10 @@ CMD ["git-pages"]        # 默认 standalone：只跑 git-pages，纯 HTTP :3000
 
 启动参数（`src/main.go`）：`-config`（默认 `config.toml`）、`-secrets`（默认 `$CREDENTIALS_DIRECTORY/secrets.toml`——**原生适配 systemd `LoadCredential`**，密钥只挂给这个服务的私有运行时目录，不落持久化明文）、`-no-config`（全用环境变量）。
 
+> ⚠️ `LoadCredential=` 需要 **systemd ≥ 247**（`$CREDENTIALS_DIRECTORY` 才由它注入）。老发行版（如 systemd 239 的 RHEL8 / Anolis / Alibaba Cloud Linux 3 系）会**静默忽略** `LoadCredential`——`$CREDENTIALS_DIRECTORY` 为空、`-secrets` 落到默认路径读不到密钥 → S3 后端 `Access Denied` 起不来。回退：unit 用**固定** `User=<svc>`（别用 `DynamicUser`），`secrets.toml` 属主设成该用户、权限 `0600`，`ExecStart` 里**显式** `-secrets /etc/git-pages/secrets.toml`，绕开 LoadCredential。
+
+> release 二进制常**落后 `main`**：照 `main` 的 `config.example.toml` 写的键（本文示例含少量 `main` 才有的项）在旧 release 上会被拒为 `unknown keys`。落盘前先跑一遍 `git-pages -config <file> -print-config` 验证——能解析就打印 effective 配置，非法键会被逐条点名。
+
 关键段（**改自** [`conf/config.example.toml`](https://codeberg.org/git-pages/git-pages/src/branch/main/conf/config.example.toml)，此处示意 S3 后端；注意 example 里 `[storage]` 默认是 `type = 'fs'`、S3 为 non-default 段）：
 
 ```toml
@@ -203,6 +207,8 @@ access-key-id     = '...'        # 建议改放 secrets.toml，别写这里
 secret-access-key = '...'
 bucket            = 'git-pages'
 region            = 'us-east-1'
+insecure          = true         # 自建 endpoint 走明文 HTTP（RustFS/MinIO 本地口）必须开；
+                                 # 默认按 https 连，连 http 端口会静默报 Access Denied（backend_s3.go: Secure = !insecure）
 
 [limits]
 max-site-size    = '128M'
