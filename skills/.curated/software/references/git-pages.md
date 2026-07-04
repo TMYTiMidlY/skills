@@ -321,6 +321,10 @@ authorization = "forgejo"
 
 请求 `alice.pages.example.com/proj/` 进来，git-pages 把 `alice` 当用户名提取、套 `clone-url` 模板**现算**出对应仓库、再拿请求带的 forge token 核权限（`authorizeForgeWildcard` + `src/wildcard.go`，见附录 A ③）。CI 里用官方 [git-pages/action](https://codeberg.org/git-pages/action) 时，Forgejo Actions 的自动 token 就够（无需手建 token），还支持 PR 预览站（`<用户>.preview.pages.example.com/site@<PR号>/`）。单站场景**别用它**——它要求"后缀前恰好多一段子域名"，固定单域名套不上。
 
+> **多 forge 并存 + 排序坑（实测 v0.9.1，与 gitea/github 各自联动均已跑通）**：可以配多个 `[[wildcard]]` 段，让不同 forge 各自多租户（如 forgejo 用 `pages.example.com`、gitea 用 `gitea.pages.example.com`）。但**若一个 domain 是另一个的后缀，务必把更长/更具体的排在前面**——否则短后缀那段会先匹配到长后缀租户的 host：实测 v0.9.1 把"host 去掉 domain 后缀"的**整段前缀**当 user（如 `alice.gitea.pages.example.com` 落到 `pages.example.com` 段时被当成 user=`alice.gitea`），clone-url 算错、鉴权失败。
+>
+> **GitHub 做多租户**要单独说：GitHub 不认 gogs 兼容 API（`authorization` 不能设成任何 forge），只能走 **rule 4（Wildcard Match content，见附录 D）**——`[[wildcard]]` 的 `authorization` **留空**，然后 `POST` 一个 GitHub push webhook（body 含 `repository.clone_url` + `ref`，头 `X-GitHub-Event: push`、`Content-Type: application/json`），git-pages 按模板匹配 clone-url（**免 token、免 forge API**）后现克隆该**公开** repo 的对应分支。实测 git-pages 能从公网直接 clone GitHub 公开库并发布。
+
 ### 方案 D · 边缘 Bearer + `PAGES_INSECURE`（不碰 DNS，安全押在反代上）
 
 `PAGES_INSECURE=1` 让 git-pages **无条件放行**所有到达它的请求（[README](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md)，`authorizeInsecure`）。配合 git-pages 只监听 `127.0.0.1` + Caddy 只对带正确 `Authorization: Bearer <token>` 的写请求放行，就成了"Caddy 是唯一关卡"：
