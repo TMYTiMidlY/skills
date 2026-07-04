@@ -255,6 +255,20 @@ pages.example.com {
 
 > 注意首次 HTTPS 发布的鸡生蛋问题：git-pages **在站点发布前无法为该域名申请证书**（[git-pages-cli 文档](https://codeberg.org/git-pages/git-pages-cli)）。首发要么走明文 HTTP，要么用 CLI 的 `--server <已有证书的域名>` 指一个 git-pages 已经有证书的 host 中转。
 
+### 2.3.1 要改哪些 DNS 记录（自建速查）
+
+`<域名>` = 你的站点根域（如 `example.com`）、`<edge>` = 边缘反代服务器的公网 IP、`<host>` = 完整站点域名（如 `alice.pages.<域名>` 或自定义域名本身）。按你选的模式加：
+
+| 场景 | 要加的记录 | 说明 |
+|---|---|---|
+| **通配多租户**（方案 C，最常用） | `*.pages.<域名>`　A/AAAA → `<edge>`（或 CNAME 到边缘主机名） | 让任意 `<user>.pages.<域名>` 都解析到边缘；**forge-wildcard 鉴权不需要任何 TXT** |
+| **单域名固定站** | `pages.<域名>`　A/AAAA/CNAME → `<edge>` | 一个站一条即可 |
+| **DNS Challenge（方案 A）** | 上面那条 + `_git-pages-challenge.<host>`　TXT = CLI `--challenge` 算出的哈希 | 口令可多条 TXT |
+| **Forge Allowlist（方案 B）/ 免 token Repository Allowlist（rule 3）** | 上面那条 + `_git-pages-forge-allowlist.<host>` 或 `_git-pages-repository.<host>`　TXT = 仓库 clone URL（可多条） | 只授权根 / `.index` 站 |
+| **自定义域名接到某租户** | `<自定义域名>` CNAME → 边缘 + 上面对应的授权 TXT | Part 1.4 是 Codeberg 托管版，自建同理 |
+
+> 为什么方案 C 只要一条通配记录、不要 TXT：它的鉴权靠请求带的 forge token 现问 forge API（见下 2.4 方案 C），DNS 只负责"把域名解析到边缘"。**只有 DNS Challenge / Allowlist 那几种**才另加 `_git-pages-*` TXT。有 DNS 服务商 API（如 Spaceship）时，通配记录 + 这些 TXT 都能脚本化下发——**前提是那把 API key 对`<域名>`本身有 DNS 写权限**（key 若只授权了别的域名，改这个域名会 404 `SOA ... not found`）。
+
 ## 2.4 选一种"谁能推"的鉴权方案
 
 **归档直传 / 删除**类请求（tar/zip 的 PUT/PATCH、DELETE）的鉴权入口是 `authorizeDNSChallengeOrForgeWithToken`（[`src/auth.go`](https://codeberg.org/git-pages/git-pages/src/branch/main/src/auth.go)），**按顺序**尝试 `PAGES_INSECURE → DNS Challenge → Forge Wildcard → Forge DNS Allowlist`，第一个通过即放行。挑一种即可：
