@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 镜像与自建 Forgejo、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Hermes agent、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 镜像与自建 Forgejo、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Hermes agent、Coolify 自托管 PaaS（前置反代后的 CSS/WebSocket/端口/汉化排障）、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
 ---
 
 # Software
@@ -101,3 +101,7 @@ MinerU（mineru.net）提供 VLM 模型将 PDF 转为 Markdown/JSON，支持公�
 ## Hermes
 
 [NousResearch/hermes-agent](https://github.com/nousresearch/hermes-agent)：Python CLI agent 框架。systemd 常驻服务（gateway / dashboard）配置、`HERMES_HOME` 与身份管理、terminal backend（local / ssh / docker / modal / daytona / singularity）切换、provider 兼容性踩坑、skill 体系（builtin / hub / local 三种来源、install/uninstall、`external_dirs` 挂载外部目录、按项目激活 skill 的缺失与近似解、跨 backend 的 symlink 差异、`--skills` 预加载）见 [references/hermes.md](references/hermes.md)。
+
+## Coolify（自托管 PaaS）
+
+[Coolify](https://coolify.io)（Laravel + Livewire + 自带 Traefik 的 Heroku/Vercel 替代品）**放到另一层前置反代（Cloudflare/独立 Caddy/nginx）后面**时的整套坑与源码定位（行号对齐 v4.1.2）：架构（6 容器 + source/proxy 两个 compose project + sentinel standalone、哪个文件升级会被覆盖）、端口拓扑（官方 80/443/8000/6001/6002 vs 安装时自动避让的实际端口）、**CSS 全变 http**（Traefik 默认不信 `X-Forwarded-Proto` → 加 `forwardedHeaders.trustedIPs`）、**"Cannot connect to real-time service"**（Soketi WebSocket，用 Traefik file provider 把 `/app/*` 路由到 `coolify-realtime:6001`）、两个"升级不丢"的官方扩展点（`extractCustomProxyCommands()` + `dynamic/*.yaml`）、artisan 改管理员账号（`users` 表无 `role` 列、角色在 `team_user` pivot）、界面汉化为什么不值得做（i18n 只 42 key、主体 UI 全硬编码）见 [references/coolify.md](references/coolify.md)。WSL/mesh 入站 portproxy 相关见 `network` skill 的 wsl.md；边缘 Caddy 服务端配置见 `vps-maintenance` skill。

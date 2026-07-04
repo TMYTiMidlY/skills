@@ -141,7 +141,7 @@ Host <name>
 
 > 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。WSL 出站流量走 Mihomo 的部分在上面的 [WSL NAT 下出站走 Mihomo / fake-ip](#wsl-nat-下出站走-mihomo--fake-ip)，两者互不相干。
 
-WSL NAT 下，要把 WSL 内服务暴露给 Windows / EasyTier / 远端反代，需要 Windows `netsh interface portproxy` 做 TCP 转发：它把 Windows 宿主某个监听地址和端口转到 WSL 内服务。`portproxy` 不负责让 WSL 出站走 Mihomo，也**不支持 UDP**。
+WSL NAT 下，要把 WSL 内服务暴露给 Windows / EasyTier / 远端反代，需要 Windows `netsh interface portproxy` 做 TCP 转发：它把 Windows 宿主某个监听地址和端口转到 WSL 内服务。`portproxy` 不负责让 WSL 出站走 Mihomo，也**不支持 UDP**，且 `netsh interface portproxy add/delete/set` 都**需要 Windows 管理员权限**——从 WSL 用 `Start-Process -Verb RunAs` 弹 UAC 提权即可（见 `software` skill 的 windows.md「从 WSL 弹 UAC 拿管理员权限」，那节正是拿 `portproxy add` 当例子）。实在拿不到 admin 时，退而沿用已有 portproxy 条目、在其后面的反代里按 path/Host 分流即可。
 
 ```powershell
 # 示例：Windows 在 <windows-listen-ip>:18080 监听，转发到 WSL localhost:18080
