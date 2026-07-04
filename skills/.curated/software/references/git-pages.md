@@ -186,7 +186,7 @@ CMD ["git-pages"]        # 默认 standalone：只跑 git-pages，纯 HTTP :3000
 
 启动参数（`src/main.go`）：`-config`（默认 `config.toml`）、`-secrets`（默认 `$CREDENTIALS_DIRECTORY/secrets.toml`——**原生适配 systemd `LoadCredential`**，密钥只挂给这个服务的私有运行时目录，不落持久化明文）、`-no-config`（全用环境变量）。
 
-> ⚠️ `LoadCredential=` 需要 **systemd ≥ 247**（`$CREDENTIALS_DIRECTORY` 才由它注入）。老发行版（如 systemd 239 的 RHEL8 / Anolis / Alibaba Cloud Linux 3 系）会**静默忽略** `LoadCredential`——`$CREDENTIALS_DIRECTORY` 为空、`-secrets` 落到默认路径读不到密钥 → S3 后端 `Access Denied` 起不来。回退：unit 用**固定** `User=<svc>`（别用 `DynamicUser`），`secrets.toml` 属主设成该用户、权限 `0600`，`ExecStart` 里**显式** `-secrets /etc/git-pages/secrets.toml`，绕开 LoadCredential。
+> ⚠️ git-pages **不自带 systemd unit**（仓库里只有 Dockerfile + supervisord，没有 `.service`），自建要**自己写一个**——按**系统 service** 装（`/etc/systemd/system/git-pages.service`、`WantedBy=multi-user.target`、固定 `User=` 跑），不是 user service。写 unit 时注意：`LoadCredential=` 需要 **systemd ≥ 247**（`$CREDENTIALS_DIRECTORY` 才由它注入）。老发行版（如 systemd 239 的 RHEL8 / Anolis / Alibaba Cloud Linux 3 系）会**静默忽略** `LoadCredential`——`$CREDENTIALS_DIRECTORY` 为空、`-secrets` 落到默认路径读不到密钥 → S3 后端 `Access Denied` 起不来。回退：unit 用**固定** `User=<svc>`（别用 `DynamicUser`），`secrets.toml` 属主设成该用户、权限 `0600`，`ExecStart` 里**显式** `-secrets /etc/git-pages/secrets.toml`，绕开 LoadCredential。
 
 > release 二进制常**落后 `main`**：照 `main` 的 `config.example.toml` 写的键（本文示例含少量 `main` 才有的项）在旧 release 上会被拒为 `unknown keys`。落盘前先跑一遍 `git-pages -config <file> -print-config` 验证——能解析就打印 effective 配置，非法键会被逐条点名。
 
@@ -250,6 +250,8 @@ pages.example.com {
     reverse_proxy 127.0.0.1:3000
 }
 ```
+
+> 通配块**按 Host/SNI 路由**、与别的站共用 Caddy 的 `:443`（不占独立端口，靠 Host 分流）；**不写 `authorize with`**——pages 本就是公开静态站、不设登录墙。`permission` 那支把"该不该为这个域名签证书"外包给 git-pages 的 caddy 口（`[server].caddy`，默认 `:3001`），只对**它确实在服务的站**答应，天然挡住"野域名来握手就触发签证书"。
 
 > 注意首次 HTTPS 发布的鸡生蛋问题：git-pages **在站点发布前无法为该域名申请证书**（[git-pages-cli 文档](https://codeberg.org/git-pages/git-pages-cli)）。首发要么走明文 HTTP，要么用 CLI 的 `--server <已有证书的域名>` 指一个 git-pages 已经有证书的 host 中转。
 
@@ -319,7 +321,7 @@ index-repo    = "pages"
 authorization = "forgejo"
 ```
 
-请求 `alice.pages.example.com/proj/` 进来，git-pages 把 `alice` 当用户名提取、套 `clone-url` 模板**现算**出对应仓库、再拿请求带的 forge token 核权限（`authorizeForgeWildcard` + `src/wildcard.go`，见附录 A ③）。CI 里用官方 [git-pages/action](https://codeberg.org/git-pages/action) 时，Forgejo Actions 的自动 token 就够（无需手建 token），还支持 PR 预览站（`<用户>.preview.pages.example.com/site@<PR号>/`）。单站场景**别用它**——它要求"后缀前恰好多一段子域名"，固定单域名套不上。
+请求进来时 git-pages 按 **host 子域名标签 = 用户名** + **路径首段 = 项目名** 套 `clone-url` 模板**现算**仓库：**根路径 `/`**（用户主站）→ 项目名取 `.index` → 用 `index-repo`（如 `pages`）→ 仓库 `<user>/pages`；**`/<项目>/`**（项目站）→ 仓库 `<user>/<项目>`；分支取 `index-repo-branch`（项目站默认 `pages`）。例：`alice.pages.example.com/` → `alice/pages`，`alice.pages.example.com/proj/` → `alice/proj`。算出仓库后再拿请求带的 forge token 核权限（`authorizeForgeWildcard` + `src/wildcard.go`，见附录 A ③）。CI 里用官方 [git-pages/action](https://codeberg.org/git-pages/action) 时，Forgejo Actions 的自动 token 就够（无需手建 token），还支持 PR 预览站（`<用户>.preview.pages.example.com/site@<PR号>/`）。单站场景**别用它**——它要求"后缀前恰好多一段子域名"，固定单域名套不上。
 
 > **多 forge 并存 + 排序坑（实测 v0.9.1，与 gitea/github 各自联动均已跑通）**：可以配多个 `[[wildcard]]` 段，让不同 forge 各自多租户（如 forgejo 用 `pages.example.com`、gitea 用 `gitea.pages.example.com`）。但**若一个 domain 是另一个的后缀，务必把更长/更具体的排在前面**——否则短后缀那段会先匹配到长后缀租户的 host：实测 v0.9.1 把"host 去掉 domain 后缀"的**整段前缀**当 user（如 `alice.gitea.pages.example.com` 落到 `pages.example.com` 段时被当成 user=`alice.gitea`），clone-url 算错、鉴权失败。
 >
