@@ -48,6 +48,7 @@ sudo systemctl reload caddy
 - **`systemctl reload caddy` 退出非零 ≠ reload 失败**：caddy 关旧 admin endpoint 时常有 10s timeout 让 systemctl 退出 1，但配置其实已加载。脚本里用 exit code 触发回滚会误把好配置覆盖回旧的；要判断真失败请看 `curl` 实测或 `journalctl -u caddy` 有无 `loading new config` 之类成功标志。
 - **`caddy validate` 读不到 systemd 注入的环境变量**。无论是 `sudo` shell 下的 env placeholder，还是 `systemctl edit caddy` 里的 `Environment=...`，`validate` 都是命令行直接启动的，不会经过 systemd。  
   如果 Caddyfile 里用了 `{env.XYZ}`，先在当前 shell 里手动 `export` 一遍即可；值随便填，`validate` 只检查占位符能否解析。
+- **`reload` 真失败（新配置语法/校验不过）时服务不停**：进程继续跑内存里已加载的旧配置，线上不断——所以改 Caddyfile 优先 `reload`、别用 `restart`。`restart` 会真停进程再起，遇到错配置会直接起不来、真断服（比 reload 失败严重）；改完先 `caddy validate`（nginx 用 `nginx -t`）dry-run 过了再 reload。
 
 ## 基础反代：先选站点模式
 
