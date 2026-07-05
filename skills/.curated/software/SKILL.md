@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 镜像与自建 Forgejo、git-pages 静态站托管（Forgejo/Gitea 的 GitHub Pages 替代服务、Codeberg Pages 后端、不可猜路径、DNS Challenge 鉴权）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Hermes agent、Coolify 自托管 PaaS（前置反代后的 CSS/WebSocket/端口/汉化排障）、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 镜像与自建 Forgejo、git-pages 静态站托管（Forgejo/Gitea 的 GitHub Pages 替代服务、Codeberg Pages 后端、不可猜路径、DNS Challenge 鉴权）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Hermes agent、Coolify 自托管 PaaS（前置反代后的 CSS/WebSocket/端口/汉化排障）、Windows/Office 激活与 macOS 杂项、Go 工具链（模块 / `go install` / 依赖解析 / GOPROXY）等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
 ---
 
 # Software
@@ -37,6 +37,10 @@ Forgejo/Gitea 无原生 Pages，[git-pages](https://codeberg.org/git-pages/git-p
 ## Zellij
 
 Zellij Web client、HTTPS 证书要求、login token/session token、反代注入 Cookie、`default_shell`、Web/xterm 主题分层、给特定软件写 OSC 10/11 颜色 wrapper、Codex 输入框颜色、鼠标选区颜色与 WSL systemd service 写法见 [references/zellij.md](references/zellij.md)。
+
+## Go 工具链（模块 / `go install` / 依赖解析）
+
+Go 没有 PyPI/npm 那样的中央包索引——**导入路径本身就是仓库地址**（`github.com/u/p` 直接指向该仓库），push 一个 git tag 即发布。覆盖：`go install pkg@version` 装二进制的语义（装到 `GOBIN`、带 `@ver` 时忽略当前 `go.mod` 不污染项目依赖、Go 1.16 起装工具专用它）、导入路径→仓库的解析（已知托管站规则 / `.git` 后缀 / vanity 路径的 `?go-get=1` + `<meta name="go-import">` 重定向 + Go 1.25 subdir + `mod` 代理变体）、版本模型（SemVer、major ≥ 2 的 `/vN` 路径后缀共存、伪版本、MVS 最小版本选择）、`go.mod`/`go.sum`/模块缓存、GOPROXY/GOSUMDB/GOPRIVATE（默认 `proxy.golang.org` + `sum.golang.org`、`direct` 回落、私有模块绕过）。每条据 `go.dev/ref/mod` 与 `go help <topic>`。见 [references/go.md](references/go.md)。
 
 ## Service / systemd
 

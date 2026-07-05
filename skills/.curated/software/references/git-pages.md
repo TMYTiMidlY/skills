@@ -15,7 +15,7 @@
 
 ### 从 Codeberg Pages 说起：它的后端 git-pages 你也能自建
 
-**Codeberg Pages** 是非营利代码托管平台 [Codeberg](https://codeberg.org/) 给用户提供的静态站托管服务，相当于"Codeberg 版的 GitHub Pages"（Codeberg 跑的是 **Forgejo**——Gitea 的社区硬分叉，这段背景见本 skill 的 [git-server.md「同源与现状」](git-server.md#同源与现状)）。对本文来说最关键的一点是：**Codeberg Pages 的后端是开源的 `git-pages`，同一套服务你能照搬到自己的 Forgejo/Gitea 上自建**（就是 Part 2 要做的事）。要真正理解怎么部署、以及官方托管的一些行为差异，得先把常被混为一谈的三个名字分清：
+**Codeberg Pages** 是非营利代码托管平台 [Codeberg](https://codeberg.org/) 给用户提供的静态站托管服务，相当于"Codeberg 版的 GitHub Pages"（Codeberg 跑的是 **Forgejo**——Gitea 的社区硬分叉，这段背景见本 skill 的 [git-server.md「同源与现状」](git-server.md#同源与现状)）。对本文来说最关键的一点是：**Codeberg Pages 的后端是开源的 `git-pages`，同一套服务你能照搬到自己的 Forgejo/Gitea 上自建**（就是 [Part 2](#part-2--自建forgejogitea--自部署-git-pages) 要做的事）。要真正理解怎么部署、以及官方托管的一些行为差异，得先把常被混为一谈的三个名字分清：
 
 - **Pages Server v2** —— 旧后端**代码库**（仓库 [`Codeberg/pages-server`](https://codeberg.org/Codeberg/pages-server)，EUPL-1.2）。2024-11 起进入维护模式，见置顶 issue [#399 "We will not accept new features!"](https://codeberg.org/Codeberg/pages-server/issues/399)；仓库首页写着 "This code is in maintenance mode… **Codeberg Pages itself is in the process of migrating to the new git-pages server**"。
 - **git-pages** —— 新后端**代码库**，v2 的官方继任者。[官方文档](https://docs.codeberg.org/codeberg-pages/) 原文："Codeberg Pages **has recently migrated** from the legacy v2 codebase to the newer git-pages codebase"、"**Since December 2025**, Codeberg offers a new Pages service based on git-pages… It is free/libre open source software."
@@ -26,7 +26,7 @@
 **从 v2 迁到 git-pages 有几处 breaking change**，迁移前值得先知道（均据[迁移文档](https://docs.codeberg.org/codeberg-pages/migrating-from-pages-v2/)）：
 
 - **内容不再自动拉取**。v2 会替你把仓库内容取过去发布；git-pages 改成推送模型——**每次更新后你必须主动"推一下"**（配一个 webhook，或用 Forgejo Actions）它才会更新（原文 "Content is no longer fetched automatically"）。
-- **`raw.codeberg.page` 取消**。先一句话交代 **CORS（Cross-Origin Resource Sharing，跨源资源共享）**：浏览器默认按"同源策略"拦截跨源读取——跑在 `https://a.com` 页面里的 JS 用 `fetch()` 去读 `https://b.com` 的文件会被浏览器拦掉，除非 `b.com` 在**响应头**里加一句 `Access-Control-Allow-Origin` 明确放行（这个头只能由被读取的一方 `b.com` 来设、请求方设不了）。v2 为此单独提供一个 `raw.codeberg.page` 裸内容域名，凡经它取的响应**一律带上 `Access-Control-Allow-Origin: *`**（源码 [pages-server `handler.go`](https://codeberg.org/Codeberg/pages-server/src/branch/main/server/handler/handler.go)：请求 host 命中 `AllowedCorsDomains` 就写死 `*` + `Access-Control-Allow-Methods: GET, HEAD`，`raw.codeberg.page` 正是这个允许域）——等于"经这个域名取的东西，**任何**外部站点都能跨源读"，一个不分来源、全站无差别放开的开关。git-pages 取消了这个域名，**改由站点作者在自己站点根的 `_headers` 文件里、按路径自行声明要不要发 CORS 头、对哪个源开**（Netlify 风格 `_headers`，见附录 B）——从"一个裸域名对所有源无差别放开"收回成"作者自己精确控制哪条路径、放行哪个源"（原文 "CORS headers are now directly set on your page and this workaround is no longer necessary"）。
+- **`raw.codeberg.page` 取消**。先一句话交代 **CORS（Cross-Origin Resource Sharing，跨源资源共享）**：浏览器默认按"同源策略"拦截跨源读取——跑在 `https://a.com` 页面里的 JS 用 `fetch()` 去读 `https://b.com` 的文件会被浏览器拦掉，除非 `b.com` 在**响应头**里加一句 `Access-Control-Allow-Origin` 明确放行（这个头只能由被读取的一方 `b.com` 来设、请求方设不了）。v2 为此单独提供一个 `raw.codeberg.page` 裸内容域名，凡经它取的响应**一律带上 `Access-Control-Allow-Origin: *`**（源码 [pages-server `handler.go`](https://codeberg.org/Codeberg/pages-server/src/branch/main/server/handler/handler.go)：请求 host 命中 `AllowedCorsDomains` 就写死 `*` + `Access-Control-Allow-Methods: GET, HEAD`，`raw.codeberg.page` 正是这个允许域）——等于"经这个域名取的东西，**任何**外部站点都能跨源读"，一个不分来源、全站无差别放开的开关。git-pages 取消了这个域名，**改由站点作者在自己站点根的 `_headers` 文件里、按路径自行声明要不要发 CORS 头、对哪个源开**（Netlify 风格 `_headers`，见 [§2.5 的 HTTP API 速查](#http-api-速查底层-wire-协议)）——从"一个裸域名对所有源无差别放开"收回成"作者自己精确控制哪条路径、放行哪个源"（原文 "CORS headers are now directly set on your page and this workaround is no longer necessary"）。
 - **不能再用 `/仓库/@分支` 直接翻任意 repo/branch**。v2 允许 `用户名.codeberg.page/仓库/@分支/…` 直接访问任意仓库任意分支的文件——等于把整个 forge 当免费 CDN，是个常见滥用向量；git-pages 改为**只服务你显式部署过的那个站点**，`/仓库/@分支` 这种直接访问任意 repo/branch 的老方式随之弃用（原文 "Serving arbitrary resources from Codeberg was a common abuse vector"）。
 
 迁移本身是**零停机、单向软切换**：老 v2 站点无限期继续可用（"your old v2 Pages deployment will continue working indefinitely"），一旦你改用任一新发布方式，该站从此改由 git-pages 服务（想确认切没切，看 HTTP 响应头 `Server`：`pages-server` 是老后端、`git-pages` 是新后端）。也正因为 v2 有这些设计缺陷（含上面那个被滥用的访问方式），**新站点如今一律建在 git-pages 上、v2 只维护存量**——存量用户不受影响。
@@ -40,8 +40,8 @@
 | 收费 | 免费 | 免费 |
 | 私有仓库发布 Pages | 需 Pro/Team/Enterprise 付费计划 | 不分公开/私有、无付费分级 |
 | 配额是否公开 | ✅ 明文：站点 1GB、带宽 100GB/月（软限）、构建 10 次/小时——[limits 文档](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits) | ❌ 未公布具体数字，只有"合理使用 / 反滥用"口径 |
-| 自定义域名 + HTTPS | ✅ 免费、自动签证书 | ✅ 免费、自动签证书（DNS 记录授权，见 §1.4）|
-| 站点公开性 | 公开，**即使仓库私有也公开**（[配置发布源文档](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)的 warning）| 公开；官方托管**无内建访问控制**（自建 git-pages 可加，见 Part 2）|
+| 自定义域名 + HTTPS | ✅ 免费、自动签证书 | ✅ 免费、自动签证书（DNS 记录授权，见 [§1.4](#14-自定义域名绑自己买的域名)）|
+| 站点公开性 | 公开，**即使仓库私有也公开**（[配置发布源文档](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)的 warning）| 公开；官方托管**无内建访问控制**（自建 git-pages 可加，见 [Part 2](#part-2--自建forgejogitea--自部署-git-pages)）|
 | 后端能否自托管 | ❌ 专有 | ✅ git-pages 开源（0BSD），可自建（Part 2）|
 | 运营方 | GitHub / Microsoft（商业公司）| Codeberg e.V.（柏林注册非营利协会，纯捐款）|
 
@@ -49,7 +49,7 @@
 
 这是 git-pages 与 GitHub Pages 最本质、也最容易被搞混的一处差别，单独讲清楚。
 
-**git-pages：推送式，且"发布"与"源码托管"是分开的两件事。** git-pages 把**发布**（deploy，把构建好的产物交出去）和**源码托管**（source control，git 仓库存源文件）拆成两件事：你把产物**主动推**给 git-pages（HTTP `PUT`/`PATCH`、webhook `POST`，或官方 CLI / Forgejo Action，见附录 B 的 HTTP API），它存进自己的私有存储（文件系统或 S3），**中间不经过任何可对外浏览的 git 仓库**。两个直接后果：
+**git-pages：推送式，且"发布"与"源码托管"是分开的两件事。** git-pages 把**发布**（deploy，把构建好的产物交出去）和**源码托管**（source control，git 仓库存源文件）拆成两件事：你把产物**主动推**给 git-pages（HTTP `PUT`/`PATCH`、webhook `POST`，或官方 CLI / Forgejo Action，见 [§2.5 HTTP API 速查](#http-api-速查底层-wire-协议)），它存进自己的私有存储（文件系统或 S3），**中间不经过任何可对外浏览的 git 仓库**。两个直接后果：
 
 - **内容不会被自动拉取**：git-pages 不轮询你的仓库，每次更新都要主动"推一下"（webhook / Action）才生效（[迁移文档](https://docs.codeberg.org/codeberg-pages/migrating-from-pages-v2/) "Content is no longer fetched automatically"）。
 - **路径可以做到"不可猜"**：私有存储没有"列目录 / 列所有站点"接口，路径不泄露就无从枚举——和"S3 桶不开 listing、只靠随机 key"是同一套逻辑。注意这**不是**签名 / 限时的 presigned URL：路径一旦泄露内容即公开，"降低被撞见的概率" ≠ 访问控制，真要保护敏感内容仍需鉴权。前提是别把同一份内容**也**挂在一个公开可浏览的 git 分支上，否则 forge 文件浏览器照样能翻到（这正是后面几个"从分支发布"的工具做不到不可猜路径的原因）。
@@ -83,14 +83,14 @@ Codeberg 官方在用的是 **git-pages**（[docs.codeberg.org/codeberg-pages](h
 | 语言 / 依赖体量 | Go，独立后端 | Go，**重**（goja + goja_nodejs + websocket + lru + afero + gitea SDK）| Go，**极轻**（仅 gitea SDK 依赖，仅几百行核心代码，distroless 静态镜像）| Go，轻（oauth2 + scs + yaml）|
 | 定位 | 通用、可横向扩展、官方生产级 | homelab 全功能"准应用服务器" | 极简静态托管 | 小众自托管，卖点是 OAuth2 私有页 |
 | 内容怎么进来（发布模型）| **推**产物到 Pages 存储（`PUT`/`PATCH`/webhook/CLI/Action），不必挂公开分支 | 从 `gh-pages` **分支**经 Gitea API 读 | 从 `gh-pages` **分支**经 Gitea API 读 | **推** `POST /deploy`（tar.gz），不必挂公开分支 |
-| 发布鉴权（**谁能推**站点，写侧）| DNS challenge / forge token / wildcard / `PAGES_INSECURE`（四选一，§2.4）| 靠 forge 本身的 repo 写权限（谁能推 `gh-pages` 分支谁就能发）| 靠 forge 本身的 repo 写权限（同左）| workflow token（如 `${{ forgejo.token }}`）校验对该 repo 的写权限 |
+| 发布鉴权（**谁能推**站点，写侧）| DNS challenge / forge token / wildcard / `PAGES_INSECURE`（四选一，[§2.4](#24-选一种谁能推的鉴权方案)）| 靠 forge 本身的 repo 写权限（谁能推 `gh-pages` 分支谁就能发）| 靠 forge 本身的 repo 写权限（同左）| workflow token（如 `${{ forgejo.token }}`）校验对该 repo 的写权限 |
 | 静态托管 | ✓ | ✓ | ✓ | ✓ |
 | JS 动态路由 | ✗ | ✓ **Goja 引擎**（按路由挂 JS handler）| ✗ | ✗ |
 | 反向代理 | ✗ | ✓ 按路由反代到上游 | ✗ | ✗ |
 | WebSocket / SSE | ✗ | ✓ JS realtime（shared/version event，示例 `js_ws`/`js_sse`）| ✗ | ✗ |
 | 自定义域名 | ✓（DNS 记录授权）| ✓（CNAME alias，写在 `.pages.yaml`）| ✗ | ✓（`<owner>` 子域名，需通配 DNS）|
 | 私有页 / 访问控制（**谁能看**已发布站，读侧）| ✗ **无登录鉴权**：只有 `_headers` 里的 `Basic-Auth` 伪头，且 README/源码明说"**非安全特性**、明文存储、仅防搜索引擎收录"（`src/headers.go:241`）——真正的"别人看不看得到"靠下面那行"不可猜路径" | ✓ **Gitea OAuth 登录**：`.pages.yaml` 里 `private: true` 的站会要求登录，按当前用户对该 repo 的 read 权限放行 | ✗ 无：服务端 token 读得到的仓库，谁都能看 | ✓ **Forgejo/Gitea OAuth2**（`protect` 参数 / `.protect` 文件）：仅对该 repo 有 read/pull 权限者可见 |
-| 缓存 | 产物即存储 | **TTL 缓存**（meta/blob/dir，默认约 1min，后端 memory/redis），自动刷新非重启 | **无缓存**，每请求实时读 Gitea API | 产物存本地 fs |
+| 缓存 | 产物即存储 | **TTL 缓存**（meta/blob/dir，默认约 1min，后端 memory/redis），自动刷新非重启 | **无缓存**，每请求实时读 Gitea API | 产物存本地 fs |0.
 | 存储后端 | 文件系统 / **S3** | memory/local/etcd/badger/**S3**/overlay + redis（blob 缓存）| 无（实时读 Gitea）| 本地文件系统 |
 | 路径可否不可猜（obscurity，**不是**访问控制）| ✅ 私有存储、无 listing | ❌ 内容在公开分支，forge 可翻 | ❌ 同左 | ◑ `additional_base_path` 可加随机段，且产物不挂公开分支 |
 | 生命周期 | `Expires:` 头 + `DELETE` | 无站点 TTL | 无站点 TTL | `DELETE`（无 TTL）|
@@ -110,7 +110,7 @@ Codeberg 官方在用的是 **git-pages**（[docs.codeberg.org/codeberg-pages](h
 - **deadnews/gitea-pages**——最省心的极简派：4 个环境变量（`GITEA_PAGES_SERVER/TOKEN/BRANCH/ADDR`）、单静态二进制 distroless 镜像、无缓存每次实时读 Gitea，适合"就是发点静态 HTML、推到 `gh-pages` 就行"。代价：**无鉴权**（服务端 token 能读到的仓库谁都能通过它访问，别直接裸暴露公网）、无自定义域名、无任何动态能力。（社区也有博客正因需求简单而选它、而非功能更全的 d7z。）
 - **d7z-project/gitea-pages**——比名字看着强得多，其实是个**准应用服务器**：`.pages.yaml` 里按路由挂 Goja JS 处理器 / 反向代理 / 模板 / 重定向 / 屏蔽，另带 WebSocket、SSE、受限 `fetch`、按 repo 隔离的 KV 存储，私有页走 Gitea OAuth；存储/缓存后端可选 memory/local/etcd/badger/S3/overlay + redis。想要"静态站 + 少量动态 / 鉴权"时它最全。代价：配置面大、依赖重。
 - **Forge-Pages**——四个里唯一和 git-pages 一样"推产物、不挂公开分支"的第三方项目（`POST /deploy` + tar.gz）；用 workflow token（如 `${{ forgejo.token }}`）校验对仓库的写权限，`additional_base_path` 给"一仓多版本 / PR 预览"各自独立路径（也是"`owner/repo/<随机>`"不可猜路径的官方实现），私有页走 OAuth2。URL 布局是 `https://<owner>.<base>/<repo>/*`，需要为子域名配通配 DNS。
-- **共同前提（两个 gitea-pages）**：它们的内容都是一个 **git 分支**——只要仓库公开，forge 文件浏览器（`/owner/repo/src/branch/gh-pages/…`）就能绕过 Pages 层翻到，所以做不到 git-pages 那种"不可猜路径"（见上"发布模型"）。
+- **共同前提（两个 gitea-pages）**：它们的内容都是一个 **git 分支**——只要仓库公开，forge 文件浏览器（`/owner/repo/src/branch/gh-pages/…`）就能绕过 Pages 层翻到，所以做不到 git-pages 那种"不可猜路径"（见上"[发布模型](#发布模型从分支拉取-vs-推到-pages-存储)"）。
   - 顺带澄清 `gh-pages` 这个名字：它只是二者**沿用了 GitHub Pages 的默认分支名**（`gh` = GitHub），纯粹是命名惯例、**与 GitHub 平台本身无关**——那个分支就躺在你自己的 Gitea/Forgejo 仓库里。而且**可配**：deadnews 用环境变量 `GITEA_PAGES_BRANCH`、d7z 用 `config.yaml` 的 `page.default_branch`，默认都是 `gh-pages`（Codeberg 官方 git-pages 则另用 `pages` 分支）。
 
 ---
@@ -157,11 +157,24 @@ Codeberg 官方在用的是 **git-pages**（[docs.codeberg.org/codeberg-pages](h
 
 ### (c) git-pages-cli 手推（本地/脚本一次性发）
 
-官方 CLI [git-pages-cli](https://codeberg.org/git-pages/git-pages-cli)（`go install codeberg.org/git-pages/git-pages-cli@latest` 或下 release 二进制）可以从本地目录直接发。发到 codeberg.page 的 `<用户名>/<repo>` 站点需要一个 forge access token（见 §2.4 方案 B 的建 token 步骤）：
+官方 CLI [git-pages-cli](https://codeberg.org/git-pages/git-pages-cli)（`go install codeberg.org/git-pages/git-pages-cli@latest` 或下 release 二进制）可以从本地目录直接发。发到 codeberg.page 的 `<用户名>/<repo>` 站点需要一个 forge access token（见 [§2.4 方案 B](#方案-b--forge-access-token--dns-allowlist复用-forge-账号权限即deploy-token) 的建 token 步骤）：
 
 ```bash
 git-pages-cli https://用户名.codeberg.page/repo/ --token <forge-token> --upload-dir ./_site
 ```
+
+### 发布哪份内容、走哪个分支（三方式对比）
+
+git-pages 服务的**不是某个分支的实时镜像**，而是你**每次推送时交给它的那一份内容**；每个站点只存**当前最新的一份**——新一次发布**原子替换**旧的，没有历史版本、也没有多分支并存（所以"永远只有一份最新的"是对的，但那一份**不一定来自 `main`**）。这份内容"从哪来、算哪个分支"取决于推送方式：
+
+| 发布方式 | git-pages 拿到的内容 | "分支"怎么定 |
+|---|---|---|
+| (a) 手推 `pages` 分支 + webhook | 去 clone 你仓库的某个**分支** | **只认 `pages`**：webhook payload 里 `ref` 不是 `refs/heads/pages` 的一律忽略（[README](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md) "only the `pages` branch is used"），硬编码不可改 |
+| (b) Forgejo Action `source:` | 把 CI **产物目录**打包上传 | **不涉及分支**——发的是 `source:` 指的目录（如 `_site/`）里的内容 |
+| (c) git-pages-cli `--upload-dir` | 把**本地目录**打包上传 | **不涉及分支**——发的是 `--upload-dir` 指的目录 |
+| 底层 HTTP `PUT` + 仓库 URL | clone 仓库分支 | `Branch` 头指定，**默认 `pages`**（[README](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md) "the `pages` branch is used if the header is absent"），可改任意分支 |
+
+**所以"站点根"= git-pages 收到的那份内容树的根**：clone 方式（a / PUT）是**那个分支的仓库根**（默认 `pages` 分支，不是你 `main` 的根）；上传方式（b / c）是**你上传的那个目录的根**（如 `_site/`、`public/`，通常是构建产物子目录、**不等于仓库根**）。`404.html` / `_redirects` / `_headers` 就放在这个站点根。
 
 ## 1.3 访问：URL 规则
 
@@ -173,12 +186,12 @@ https://<用户名>.codeberg.page[/<仓库名>][/@<分支>]
 
 - `https://alice.codeberg.page/` —— 用户主站（仓库 `pages`）。
 - `https://alice.codeberg.page/myrepo/` —— 项目站。
-- ~~用 `@` 指定分支：`https://alice.codeberg.page/@develop/README.md`~~ —— **这是旧 v2 行为，git-pages 已弃用**：[迁移文档](https://docs.codeberg.org/codeberg-pages/migrating-from-pages-v2/)明确 "Direct access to repos and branches is no longer possible… `/repository/@branch`"。（不过 codeberg.page 首页 URL 模板至今仍印着 `[/@BRANCH]`，Codeberg 自己的文档没对齐——别依赖它。）
+- ~~用 `@` 指定分支：`https://alice.codeberg.page/@develop/README.md`~~ —— **这是旧 v2 行为，git-pages 已弃用**：[迁移文档](https://docs.codeberg.org/codeberg-pages/migrating-from-pages-v2/)明确 "You can no longer use the `/repository/@branch` access"。（codeberg.page 首页至今仍印着 `[/@BRANCH]`，但那是新后端 serve 的**过时文案**、非向后兼容特性：实测真分支 `/@main/` 与瞎编分支、普通假路径返回**逐字节相同的 404**——`@` 已无选分支语义，照用即 404，别信首页模板。）
 - 用户名/仓库名带点号（`.`）会撞 Let's Encrypt 通配证书，改用 `https://pages.codeberg.org/user.name/`（[troubleshooting](https://docs.codeberg.org/codeberg-pages/troubleshooting/)）。
 
 ## 1.4 自定义域名（绑自己买的域名）
 
-不想用 `*.codeberg.page` 就绑自己的域名。**新版 git-pages 用 DNS 记录本身做授权，`.domains` 文件已不再需要**（[自定义域名文档](https://docs.codeberg.org/codeberg-pages/using-custom-domain/)）。加一条指向 Codeberg 的记录（三选一）：
+不想用 `*.codeberg.page` 就绑自己的域名。跟 v2 有个区别值得先讲：**v2 要在仓库根放一个 `.domains` 文件**——每行写一个你要绑的自定义域名，v2 靠读它来识别该站绑了哪些域名（签证书、多域名重定向都据此）；**git-pages 改用 DNS 记录本身做授权**，仓库里那个 `.domains` 文件就不再需要了（[自定义域名文档](https://docs.codeberg.org/codeberg-pages/using-custom-domain/) 原文 "it is no longer necessary to have a `.domains` file in your repository. You may remove it if you are migrating…"）。加一条指向 Codeberg 的记录（三选一）：
 
 | 场景 | 记录类型 | 值 |
 |---|---|---|
@@ -195,7 +208,7 @@ https://<用户名>.codeberg.page[/<仓库名>][/@<分支>]
 
 ## 1.5 404 页与重定向
 
-站点根放这些文件即可自定义行为（[高级用法文档](https://docs.codeberg.org/codeberg-pages/advanced-usage/)）：
+把这些文件放在**站点根**（就是上面 [发布哪份内容](#发布哪份内容走哪个分支三方式对比) 那份内容树的根，未必是仓库根）即可自定义行为（[高级用法文档](https://docs.codeberg.org/codeberg-pages/advanced-usage/)）：
 
 - **`404.html`** —— 自定义 404 页。
 - **`_redirects`** —— 每行 `from  to  [status]`（`#` 注释）。status：`200`=不改 URL 取另一路径内容（SPA 回退）、`301`=永久跳、`302`=临时跳。例：
@@ -222,7 +235,7 @@ https://<用户名>.codeberg.page[/<仓库名>][/@<分支>]
 git-pages.linux-amd64 / git-pages.linux-arm64 / git-pages.darwin-arm64 / git-pages.windows-amd64.exe
 ```
 
-安装选项：**① 二进制直下**（最轻，适合资源紧的机器）→ 丢进 `/usr/local/bin/`；**② Docker** `codeberg.org/git-pages/git-pages:latest`；**③ Nix** 仓库根有 `flake.nix`（`nix run`）；**④ 源码** `go install codeberg.org/git-pages/git-pages@latest`（需 Go ≥ 1.25，见 `go.mod`）。
+安装选项：**① 二进制直下**（最轻，适合资源紧的机器）→ 丢进 `/usr/local/bin/`；**② Docker** `codeberg.org/git-pages/git-pages:latest`；**③ Nix**（声明式包管理 / 构建系统）仓库根有 `flake.nix`——即 Nix 的项目清单，把依赖和构建产物锁到精确版本以求可复现构建；装了 Nix 直接 `nix run` 一次拉起、不往系统里散装依赖；**④ 源码** `go install codeberg.org/git-pages/git-pages@latest`（需 Go ≥ 1.25，见 `go.mod`）。
 
 **关键：standalone vs supervisord**——看 [Dockerfile](https://codeberg.org/git-pages/git-pages/src/branch/main/Dockerfile) 结尾：
 
@@ -237,11 +250,11 @@ CMD ["git-pages"]        # 默认 standalone：只跑 git-pages，纯 HTTP :3000
 
 启动参数（`src/main.go`）：`-config`（默认 `config.toml`）、`-secrets`（默认 `$CREDENTIALS_DIRECTORY/secrets.toml`——**原生适配 systemd `LoadCredential`**，密钥只挂给这个服务的私有运行时目录，不落持久化明文）、`-no-config`（全用环境变量）。
 
-> ⚠️ git-pages **不自带 systemd unit**（仓库里只有 Dockerfile + supervisord，没有 `.service`），自建要**自己写一个**——按**系统 service** 装（`/etc/systemd/system/git-pages.service`、`WantedBy=multi-user.target`、固定 `User=` 跑），不是 user service。写 unit 时注意：`LoadCredential=` 需要 **systemd ≥ 247**（`$CREDENTIALS_DIRECTORY` 才由它注入）。老发行版（如 systemd 239 的 RHEL8 / Anolis / Alibaba Cloud Linux 3 系）会**静默忽略** `LoadCredential`——`$CREDENTIALS_DIRECTORY` 为空、`-secrets` 落到默认路径读不到密钥 → S3 后端 `Access Denied` 起不来。回退：unit 用**固定** `User=<svc>`（别用 `DynamicUser`），`secrets.toml` 属主设成该用户、权限 `0600`，`ExecStart` 里**显式** `-secrets /etc/git-pages/secrets.toml`，绕开 LoadCredential。
+> ⚠️ git-pages **不自带 systemd unit**（仓库里只有 Dockerfile + supervisord，没有 `.service`），自建要**自己写一个**：`ExecStart` 指到二进制、传 `-config` / `-secrets`，用一个专用 `User=` 跑即可。S3 key 这类敏感值走 `-secrets` 文件、配 systemd `LoadCredential=` 注入最干净——但 `LoadCredential` 有 systemd 版本门槛（≥ 247）和老发行版静默失败的坑，完整写法与回退方案见 [service.md 的 LoadCredential 一节](service.md#systemd-loadcredential-注入密钥)。
 
-> release 二进制常**落后 `main`**：照 `main` 的 `config.example.toml` 写的键（本文示例含少量 `main` 才有的项）在旧 release 上会被拒为 `unknown keys`。落盘前先跑一遍 `git-pages -config <file> -print-config` 验证——能解析就打印 effective 配置，非法键会被逐条点名。
+> release 落后 `main` 到底差多少？实测（2026-07-04，Codeberg API + 源码核对）：**v0.9.1（2026-05-20）是目前唯一的 release**，`main` 领先它 **21 个 commit**——但 `config.example.toml` 的**键几乎没动**，只多出 3 个：`[[wildcard]]` 的 `preview-domain` / `max-preview-lifetime`、`[limits]` 的 `allow-expiration`。**本文示例只碰到其中 `allow-expiration`**（上面那行），所以在 v0.9.1 上就这一个键有 `unknown keys` 风险，其余键 v0.9.1 全认。落盘前跑一遍 `git-pages -config <file> -print-config`（v0.9.1 与 `main` 都有这个 flag）验证——能解析就打印 effective 配置，非法键逐条点名。
 
-关键段（**改自** [`conf/config.example.toml`](https://codeberg.org/git-pages/git-pages/src/branch/main/conf/config.example.toml)，此处示意 S3 后端；注意 example 里 `[storage]` 默认是 `type = 'fs'`、S3 为 non-default 段）：
+关键段（段结构与键名**照搬** [`conf/config.example.toml`](https://codeberg.org/git-pages/git-pages/src/branch/main/conf/config.example.toml) 的 `[server]` / `[storage]` / `[storage.s3]` / `[limits]`，本文只做三处改动：① `[storage] type` 由 example 默认的 `'fs'` 改成 `'s3'`（S3 在 example 里是 non-default 段）；② 换成自建常用的本地值、并对明文 HTTP 端点开 `insecure`；③ 只留最小必需键、密钥挪进 `secrets.toml`。example 里的 `play.min.io` 演示值和 `[storage.s3.blob-cache]` 等缓存段这里省略）：
 
 ```toml
 [server]
@@ -287,7 +300,7 @@ pages.example.com {
 }
 ```
 
-**(b) 通配 / on-demand（一个 Caddy 服务多个 pages 子域名）**——git-pages 自己也提供 on-demand 询问口，让 Caddy 只给"已发布的站"签证书：
+**(b) 通配 / on-demand（一个 Caddy 服务多个 pages 子域名）**——**on-demand TLS** 是 Caddy 的一个特性：不预先给每个域名签证书，而是**等第一个 HTTPS 请求进来、按 SNI 里的主机名当场现签**（适合子域名动态、数量未知的通配场景）。风险是随便一个主机名来访都会触发签发、撞 Let's Encrypt 限额，所以 Caddy 允许配一个询问端点：签之前先问一句"这个域名该不该签"。git-pages 正好提供这个口（`[server] caddy` 那个地址），让 Caddy 只给**已发布的站**签证书：
 
 ```caddyfile
 {
@@ -318,13 +331,13 @@ pages.example.com {
 | **Forge Allowlist（方案 B）/ 免 token Repository Allowlist（rule 3）** | 上面那条 + `_git-pages-forge-allowlist.<host>` 或 `_git-pages-repository.<host>`　TXT = 仓库 clone URL（可多条） | 只授权根 / `.index` 站 |
 | **自定义域名接到某租户** | `<自定义域名>` CNAME → 边缘 + 上面对应的授权 TXT | Part 1.4 是 Codeberg 托管版，自建同理 |
 
-> 为什么方案 C 只要一条通配记录、不要 TXT：它的鉴权靠请求带的 forge token 现问 forge API（见下 2.4 方案 C），DNS 只负责"把域名解析到边缘"。**只有 DNS Challenge / Allowlist 那几种**才另加 `_git-pages-*` TXT。有 DNS 服务商 API（如 Spaceship）时，通配记录 + 这些 TXT 都能脚本化下发——**前提是那把 API key 对`<域名>`本身有 DNS 写权限**（key 若只授权了别的域名，改这个域名会 404 `SOA ... not found`）。
+> 为什么方案 C 只要一条通配记录、不要 TXT：它的鉴权靠请求带的 forge token 现问 forge API（见下 [2.4 方案 C](#方案-c--forge-wildcard多租户一个域名后缀无数用户各发各站)），DNS 只负责"把域名解析到边缘"。**只有 DNS Challenge / Allowlist 那几种**才另加 `_git-pages-*` TXT。有 DNS 服务商 API（如 Spaceship）时，通配记录 + 这些 TXT 都能脚本化下发——**前提是那把 API key 对`<域名>`本身有 DNS 写权限**（key 若只授权了别的域名，改这个域名会 404 `SOA ... not found`）。
 
 ## 2.4 选一种"谁能推"的鉴权方案
 
 **归档直传 / 删除**类请求（tar/zip 的 PUT/PATCH、DELETE）的鉴权入口是 `authorizeDNSChallengeOrForgeWithToken`（[`src/auth.go`](https://codeberg.org/git-pages/git-pages/src/branch/main/src/auth.go)），**按顺序**尝试 `PAGES_INSECURE → DNS Challenge → Forge Wildcard → Forge DNS Allowlist`，第一个通过即放行。挑一种即可：
 
-> 注意：**推 git 仓库 / webhook**（PUT body 为仓库 URL、POST webhook）走的是另一个函数 `AuthorizeUpdateFromRepository`，多一种**免 token、免 forge API** 的方式——在 `_git-pages-repository.<域名>` TXT 里列出允许的 clone URL 即可（[README Authorization 第 3 条](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md)，见附录 A ⑥）。想"webhook 推 `pages` 分支就发布"、又不想建任何密钥的自建场景，这条最省事。下面的方案表对照的是归档直传路径。
+> 注意：**推 git 仓库 / webhook**（PUT body 为仓库 URL、POST webhook）走的是另一个函数 `AuthorizeUpdateFromRepository`，多一种**免 token、免 forge API** 的方式——在 `_git-pages-repository.<域名>` TXT 里列出允许的 clone URL 即可（[README Authorization 第 3 条](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md)，见 [附录 A ⑥](#-推仓库-url--webhook-路径authorizeupdatefromrepository)）。想"webhook 推 `pages` 分支就发布"、又不想建任何密钥的自建场景，这条最省事。下面的方案表对照的是归档直传路径。
 
 | 方案 | 密钥类型 | 要不要 DNS | 要不要 forge API | 适合 |
 |---|---|---|---|---|
@@ -352,7 +365,7 @@ curl https://pages.example.com/ -X PUT --data-binary @site.tar.gz \
   -H 'Content-Type: application/x-tar+gzip' -H 'Authorization: Pages <口令>'
 ```
 
-**口令可以设多个**：`net.LookupTXT` 返回该名下**所有** TXT，命中任意一条即通过（`authorizeDNSChallenge`，见附录 A ②）——同名挂多条 TXT = 多个口令，适合轮换或多发布者。口令别名 `--password-file` / `GIT_PAGES_PASSWORD` 环境变量，避免进 argv。
+**口令可以设多个**：`net.LookupTXT` 返回该名下**所有** TXT，命中任意一条即通过（`authorizeDNSChallenge`，见 [附录 A ②](#-dns-challenge推荐单站首选)）——同名挂多条 TXT = 多个口令，适合轮换或多发布者。口令别名 `--password-file` / `GIT_PAGES_PASSWORD` 环境变量，避免进 argv。
 
 > 与 Let's Encrypt 的 DNS-01 challenge **不是一回事**：LE 是实时一次性验证域名控制权；这里是永久 TXT，每次发布现查现比。
 
@@ -372,7 +385,7 @@ curl https://pages.example.com/ -X PUT --data-binary @site.tar.gz \
    # CI 里更常用 forge 的自动 token：见方案 C / 官方 action
    ```
 
-**好处**：复用 forge 账号体系，撤销某人权限只需在 forge 改，不用换口令。**代价**：多一个"必须活着的 forge API"运行时依赖；源码 `if projectName != ".index"` 写死——**只能授权根/索引站点，不能给子项目单独授权**（`authorizeForgeDNSAllowlist`，见附录 A ④）。token 别名 `GIT_PAGES_TOKEN` 环境变量。
+**好处**：复用 forge 账号体系，撤销某人权限只需在 forge 改，不用换口令。**代价**：多一个"必须活着的 forge API"运行时依赖；源码 `if projectName != ".index"` 写死——**只能授权根/索引站点，不能给子项目单独授权**（`authorizeForgeDNSAllowlist`，见 [附录 A ④](#-forge-dns-allowlist不需要-wildcard)）。token 别名 `GIT_PAGES_TOKEN` 环境变量。
 
 ### 方案 C · Forge Wildcard（多租户：一个域名后缀，无数用户各发各站）
 
@@ -386,11 +399,11 @@ index-repo    = "pages"
 authorization = "forgejo"
 ```
 
-请求进来时 git-pages 按 **host 子域名标签 = 用户名** + **路径首段 = 项目名** 套 `clone-url` 模板**现算**仓库：**根路径 `/`**（用户主站）→ 项目名取 `.index` → 用 `index-repo`（如 `pages`）→ 仓库 `<user>/pages`；**`/<项目>/`**（项目站）→ 仓库 `<user>/<项目>`；分支取 `index-repo-branch`（项目站默认 `pages`）。例：`alice.pages.example.com/` → `alice/pages`，`alice.pages.example.com/proj/` → `alice/proj`。算出仓库后再拿请求带的 forge token 核权限（`authorizeForgeWildcard` + `src/wildcard.go`，见附录 A ③）。CI 里用官方 [git-pages/action](https://codeberg.org/git-pages/action) 时，Forgejo Actions 的自动 token 就够（无需手建 token），还支持 PR 预览站（`<用户>.preview.pages.example.com/site@<PR号>/`）。单站场景**别用它**——它要求"后缀前恰好多一段子域名"，固定单域名套不上。
+请求进来时 git-pages 按 **host 子域名标签 = 用户名** + **路径首段 = 项目名** 套 `clone-url` 模板**现算**仓库：**根路径 `/`**（用户主站）→ 项目名取 `.index` → 用 `index-repo`（如 `pages`）→ 仓库 `<user>/pages`；**`/<项目>/`**（项目站）→ 仓库 `<user>/<项目>`；分支取 `index-repo-branch`（项目站默认 `pages`）。例：`alice.pages.example.com/` → `alice/pages`，`alice.pages.example.com/proj/` → `alice/proj`。算出仓库后再拿请求带的 forge token 核权限（`authorizeForgeWildcard` + `src/wildcard.go`，见 [附录 A ③](#-forge-wildcard依赖-wildcard-配置段)）。CI 里用官方 [git-pages/action](https://codeberg.org/git-pages/action) 时，Forgejo Actions 的自动 token 就够（无需手建 token），还支持 PR 预览站（`<用户>.preview.pages.example.com/site@<PR号>/`）。单站场景**别用它**——它要求"后缀前恰好多一段子域名"，固定单域名套不上。
 
 > **多 forge 并存 + 排序坑（实测 v0.9.1，与 gitea/github 各自联动均已跑通）**：可以配多个 `[[wildcard]]` 段，让不同 forge 各自多租户（如 forgejo 用 `pages.example.com`、gitea 用 `gitea.pages.example.com`）。但**若一个 domain 是另一个的后缀，务必把更长/更具体的排在前面**——否则短后缀那段会先匹配到长后缀租户的 host：实测 v0.9.1 把"host 去掉 domain 后缀"的**整段前缀**当 user（如 `alice.gitea.pages.example.com` 落到 `pages.example.com` 段时被当成 user=`alice.gitea`），clone-url 算错、鉴权失败。
 >
-> **GitHub 做多租户**要单独说：GitHub 不认 gogs 兼容 API（`authorization` 不能设成任何 forge），只能走 **rule 4（Wildcard Match content，见附录 D）**——`[[wildcard]]` 的 `authorization` **留空**，然后 `POST` 一个 GitHub push webhook（body 含 `repository.clone_url` + `ref`，头 `X-GitHub-Event: push`、`Content-Type: application/json`），git-pages 按模板匹配 clone-url（**免 token、免 forge API**）后现克隆该**公开** repo 的对应分支。实测 git-pages 能从公网直接 clone GitHub 公开库并发布。
+> **GitHub 做多租户**要单独说：GitHub 不认 gogs 兼容 API（`authorization` 不能设成任何 forge），只能走 **rule 4（Wildcard Match content，见 [附录 D](#附录-d--与-git-forge-配合机制总表ingest--鉴权)）**——`[[wildcard]]` 的 `authorization` **留空**，然后 `POST` 一个 GitHub push webhook（body 含 `repository.clone_url` + `ref`，头 `X-GitHub-Event: push`、`Content-Type: application/json`），git-pages 按模板匹配 clone-url（**免 token、免 forge API**）后现克隆该**公开** repo 的对应分支。实测 git-pages 能从公网直接 clone GitHub 公开库并发布。
 
 ### 方案 D · 边缘 Bearer + `PAGES_INSECURE`（不碰 DNS，安全押在反代上）
 
@@ -415,6 +428,20 @@ pages.example.com {
 - **git-pages-cli**：`--upload-dir <目录>` / `--upload-git <仓库URL>` / `--delete` / `--dry-run`（只验权不落盘）/ `--expires 14`（临时站，需服务端开 `allow-expiration`）。
 - **Forgejo Action** `git-pages/action@v2`：CI 里最省事，`with: { site, token: ${{ forge.token }}, source }`（[action 文档](https://codeberg.org/git-pages/action)）。
 
+### HTTP API 速查（底层 wire 协议）
+
+上面三种客户端底层都是打这套 HTTP 接口（[README](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md)）：
+
+| 方法 | 作用 |
+|---|---|
+| `GET`/`HEAD` | 按 host + 可选 project name 选站返回文件；`/.git-pages/health`、`/.git-pages/manifest.json`、`/.git-pages/manifest.pb`（稳定二进制清单）、`/.git-pages/archive.tar` 为保留接口 |
+| `PUT` | 全量发布：body 为仓库 URL（浅克隆，`Branch` 头指定分支、默认 `pages`）或 tar/tar+gzip/tar+zstd/zip 归档；空 body = `DELETE` |
+| `PATCH` | 增量合并：tar 归档 merge；char device(0,0)=whiteout 删除标记；`Atomic: yes/no`；输掉竞态返回 `409` 重试 |
+| `POST` | body 为 Forgejo/Gitea/Gogs/GitHub webhook payload；仅 `refs/heads/pages` 生效 |
+| `DELETE` | 下线站点 |
+
+特殊头/文件：`Expires: <HTTP-date>`（配 `allow-expiration`）、`Dry-Run: yes`（只验权不落盘）；站点根 Netlify 风 `_redirects` / `_headers`（`_headers` 里 `Basic-Auth:` 伪头**明文存储、非安全特性**，仅防搜索引擎）。所有更新原子生效。两个"不支持"原因不同：**SHA-256 Git 哈希**是暂时受 [go-git 限制](https://github.com/go-git/go-git/issues/706)（将来会自动获得）；**Git LFS** 是**有意不支持**（单厂商规格、无稳定 Go API、有反射型 HTTP DoS 滥用风险）。
+
 ## 2.6 生命周期
 
 - **过期**：发布带 `Expires: <HTTP-date>` 头（或 CLI `--expires <天>`），需 `config.toml` 开 `allow-expiration`；过期站由定时任务 `git-pages -site-expire` 清（[README](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md)）。
@@ -425,7 +452,7 @@ pages.example.com {
 
 # 附录 A · 鉴权机制源码剖析（`src/auth.go`）
 
-[`src/auth.go`](https://codeberg.org/git-pages/git-pages/src/branch/main/src/auth.go) 里发布鉴权分两条代码路径：**归档直传 / 删除**走 `AuthorizeUpdateFromArchive` / `AuthorizeDeletion` → `authorizeDNSChallengeOrForgeWithToken`（下面 ①–④ 按序尝试）；**推仓库 URL / webhook** 走 `AuthorizeUpdateFromRepository`（另一组机制，见 ⑥）。README 的 Authorization 段对内容更新其实列了 8 条规则，本附录①–④只覆盖归档路径那几条。上面 2.4 是"怎么用"，这里是"源码怎么判"。
+[`src/auth.go`](https://codeberg.org/git-pages/git-pages/src/branch/main/src/auth.go) 里发布鉴权分两条代码路径：**归档直传 / 删除**走 `AuthorizeUpdateFromArchive` / `AuthorizeDeletion` → `authorizeDNSChallengeOrForgeWithToken`（下面 ①–④ 按序尝试）；**推仓库 URL / webhook** 走 `AuthorizeUpdateFromRepository`（另一组机制，见 [⑥](#-推仓库-url--webhook-路径authorizeupdatefromrepository)）。README 的 Authorization 段对内容更新其实列了 8 条规则，本附录①–④只覆盖归档路径那几条。上面 [2.4](#24-选一种谁能推的鉴权方案) 是"怎么用"，这里是"源码怎么判"。
 
 ### ① Development Mode（`PAGES_INSECURE=1`）
 `authorizeInsecure`：环境变量置真则无条件放行（[README 第 1 条](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md)）。对应 方案 D。
@@ -454,35 +481,21 @@ if !slices.Contains(actualChallenges, expectedChallenge) { 拒绝 } // 命中任
 
 ---
 
-# 附录 B · HTTP API 速查（[README](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md)）
-
-| 方法 | 作用 |
-|---|---|
-| `GET`/`HEAD` | 按 host + 可选 project name 选站返回文件；`/.git-pages/health`、`/.git-pages/manifest.json`、`/.git-pages/manifest.pb`（稳定二进制清单）、`/.git-pages/archive.tar` 为保留接口 |
-| `PUT` | 全量发布：body 为仓库 URL（浅克隆）或 tar/tar+gzip/tar+zstd/zip 归档；空 body = `DELETE` |
-| `PATCH` | 增量合并：tar 归档 merge；char device(0,0)=whiteout 删除标记；`Atomic: yes/no`；输掉竞态返回 `409` 重试 |
-| `POST` | body 为 Forgejo/Gitea/Gogs/GitHub webhook payload；仅 `refs/heads/pages` 生效 |
-| `DELETE` | 下线站点 |
-
-特殊头/文件：`Expires: <HTTP-date>`（配 `allow-expiration`）、`Dry-Run: yes`（只验权不落盘）；站点根 Netlify 风 `_redirects` / `_headers`（`_headers` 里 `Basic-Auth:` 伪头**明文存储、非安全特性**，仅防搜索引擎）。所有更新原子生效。两个"不支持"原因不同：**SHA-256 Git 哈希**是暂时受 [go-git 限制](https://github.com/go-git/go-git/issues/706)（将来会自动获得）；**Git LFS** 是**有意不支持**（单厂商规格、无稳定 Go API、有反射型 HTTP DoS 滥用风险）。
-
----
-
 # 附录 C · 参考源码位置
 
-把仓库克隆到本地读源码（`git clone --depth 1 https://codeberg.org/git-pages/git-pages.git`）。关键文件：`src/auth.go`（内容更新鉴权 8 条规则，见附录 D）、`src/pages.go`（`putPage`/`patchPage`/`postPage`/`deletePage` 的 HTTP 通道分发）、`src/wildcard.go`（通配匹配）、`src/main.go`（启动参数）、`Dockerfile`（standalone vs supervisord）、`conf/config.example.toml`（含 Codeberg 自己的 wildcard 配置）、`.forgejo/workflows/ci.yaml`（4 平台 release）。相关仓库：[git-pages](https://codeberg.org/git-pages/git-pages) / [git-pages-cli](https://codeberg.org/git-pages/git-pages-cli) / [action](https://codeberg.org/git-pages/action)。
+源码大致架构（顺着各文件职责读即可，不必克隆）：`src/auth.go`（内容更新鉴权，README 里那 8 条按序规则，见 [附录 D](#附录-d--与-git-forge-配合机制总表ingest--鉴权)）、`src/pages.go`（`putPage`/`patchPage`/`postPage`/`deletePage` 四个 HTTP 通道分发）、`src/wildcard.go`（通配匹配 `Matches`/`ApplyTemplate`）、`src/config.go`（配置结构体 + `toml:`/`env:` 标签——`-print-config-env-vars` 列的就是这些）、`src/main.go`（启动参数与 `-update-site`/`-delete-site` 等管理子命令）、`Dockerfile`（standalone vs supervisord 两种入口）、`conf/config.example.toml`（含 Codeberg 自己的 `[[wildcard]]` 配置）、`.forgejo/workflows/ci.yaml`（产出 4 平台 release）。相关仓库：[git-pages](https://codeberg.org/git-pages/git-pages) / [git-pages-cli](https://codeberg.org/git-pages/git-pages-cli) / [action](https://codeberg.org/git-pages/action)。
 
 ---
 
 # 附录 D · 与 git forge 配合机制总表（ingest × 鉴权）
 
-把"内容怎么进来"和"凭什么放行"两个正交轴各列一张表，是 §2.4 / §2.5 与附录 A/B 的**交叉汇总**——补上前面分散各处、以及"哪条机制配哪个 forge（尤其 GitHub）"这个没单独点名的维度。判断依据来自 `src/auth.go` / `src/pages.go` 与 [README Authorization 段](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md)（内容更新的鉴权在 README 里正好是 **8 条按序尝试的规则**）。
+把"内容怎么进来"和"凭什么放行"两个正交轴各列一张表，是 [§2.4](#24-选一种谁能推的鉴权方案) / [§2.5](#25-怎么推三种客户端) 与附录 [A](#附录-a--鉴权机制源码剖析srcauthgo) 和 [§2.5 HTTP API 速查](#http-api-速查底层-wire-协议) 的**交叉汇总**——补上前面分散各处、以及"哪条机制配哪个 forge（尤其 GitHub）"这个没单独点名的维度。判断依据来自 `src/auth.go` / `src/pages.go` 与 [README Authorization 段](https://codeberg.org/git-pages/git-pages/src/branch/main/README.md)（内容更新的鉴权在 README 里正好是 **8 条按序尝试的规则**）。
 
 ## D.1 内容进来：5 个 HTTP wire 通道
 
 git-pages 的"入口"按 **HTTP 方法 + body 类型**分（`ServePages` 的方法分发，`src/pages.go`）。`git-pages-cli` 和官方 Action 都**不是独立通道**，而是**驱动这些通道的客户端**（Action 本身是 cli 的 wrapper）。
 
-| HTTP 通道 | body | 干什么 | 谁驱动 | 鉴权入口（见 D.2）|
+| HTTP 通道 | body | 干什么 | 谁驱动 | 鉴权入口（见 [D.2](#d2-凭什么放行readme-的-7-条鉴权规则-默认拒绝)）|
 |---|---|---|---|---|
 | **PUT**（仓库 URL）| clone URL 文本 | 服务端**浅克隆**（`depth=1`、单分支）后全量替换 | curl / `cli --upload-git` | `AuthorizeUpdateFromRepository` |
 | **PUT**（归档）| tar / tar+gzip / tar+zstd / **zip** | 全量替换 | curl / `cli --upload-dir` / Action | `AuthorizeUpdateFromArchive` |
@@ -498,7 +511,7 @@ git-pages 的"入口"按 **HTTP 方法 + body 类型**分（`ServePages` 的方�
 
 | # | 规则（README）| 触发方法 | 载体 | 调 forge API? | 对 GitHub | 关键限制 |
 |---|---|---|---|---|---|---|
-| 1 | Development Mode | 任意 | `PAGES_INSECURE=1`（§2.4 方案 D 的"边缘 Bearer"是 **Caddy 层**附加约定，git-pages 代码里无对应实现）| 否 | ✓ | 无条件放行，生产禁用 |
+| 1 | Development Mode | 任意 | `PAGES_INSECURE=1`（[§2.4 方案 D](#方案-d--边缘-bearer--pages_insecure不碰-dns安全押在反代上) 的"边缘 Bearer"是 **Caddy 层**附加约定，git-pages 代码里无对应实现）| 否 | ✓ | 无条件放行，生产禁用 |
 | 2 | DNS Challenge | PUT/PATCH/DELETE/POST | `_git-pages-challenge.<host>` TXT + 口令（`Authorization: Pages <口令>`，或 Basic `Base64("Pages:<口令>")`——给**发不了自定义头的 GitHub/Gogs**）| 否 | ✓ | 绝对权限；PUT/POST 限分支 `pages` |
 | 3 | DNS Allowlist（repo）| PUT / POST | `_git-pages-repository.<host>` TXT 列 clone URL | **否、免 token** | ✓ | **仅根 / `.index` 站**；**不能 DELETE** |
 | 4 | Wildcard Match（content）| **仅 POST**(webhook) | `[[wildcard]]` 配置 + webhook payload | **否** | ✓（webhook 收 GitHub payload）| 只走 webhook，REST 不行 |
@@ -507,7 +520,7 @@ git-pages 的"入口"按 **HTTP 方法 + body 类型**分（`ServePages` 的方�
 | 7 | Forge Auth（DNS allowlist）| PUT/PATCH/DELETE | `_git-pages-forge-allowlist.<host>` TXT + `Forge-Authorization` 头 | **是**（同上）| ✗ | **仅根 / `.index` 站** |
 | 8 | Default Deny | — | — | — | — | 其余一律拒 |
 
-对照 §2.4 的四方案：**方案 A** = 规则 2，**方案 B** = 规则 7，**方案 C** = 规则 5，**方案 D** = 规则 1，另有免 token 的 **repository allowlist** = 规则 3。规则 4（wildcard-match、免 forge API）和规则 6（preview、仅 Forgejo）§2.4 没展开——分别是"多租户但只走 webhook、不需 token"和"Forgejo PR 预览站"两种少见场景。
+对照 [§2.4](#24-选一种谁能推的鉴权方案) 的四方案：**[方案 A](#方案-a--dns-challenge自签口令最简单)** = 规则 2，**[方案 B](#方案-b--forge-access-token--dns-allowlist复用-forge-账号权限即deploy-token)** = 规则 7，**[方案 C](#方案-c--forge-wildcard多租户一个域名后缀无数用户各发各站)** = 规则 5，**[方案 D](#方案-d--边缘-bearer--pages_insecure不碰-dns安全押在反代上)** = 规则 1，另有免 token 的 **repository allowlist** = 规则 3。规则 4（wildcard-match、免 forge API）和规则 6（preview、仅 Forgejo）[§2.4](#24-选一种谁能推的鉴权方案) 没展开——分别是"多租户但只走 webhook、不需 token"和"Forgejo PR 预览站"两种少见场景。
 
 **两条"仅根站"限制同源**：规则 3 与规则 7 都调用同一个 `authorizeDNSAllowlist(r, scope)`（`src/auth.go:200`），`.index`-only 检查（`if projectName != ".index"`，行 218）写在该共享函数里，所以两者都**只授权根 / 索引站点、不能给 `/子项目/` 单独授权**（附录 A④ 只在方案 B 下点了这条，其实规则 3 同受此限）。
 
