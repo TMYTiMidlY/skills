@@ -816,7 +816,7 @@ Copilot CLI **有**「Copilot 还在跑的时候继续发消息，自己选是�
 | **即时插话**（steer，注入正在跑的 turn） | **普通 `Enter`** | `immediate` |
 | **排队**，等当前 turn 结束再发（FIFO） | **`Ctrl+Q`**（kitty keyboard protocol 下提示/用 `Ctrl+Enter`） | `enqueue` |
 | 插入换行（多行编辑，**不提交**） | `Shift+Enter`（含 `Alt`/`Super`+`Enter`、`Ctrl+J`） | —— |
-| **硬停**当前 turn（真正打断） | `Esc` | —— |
+| **硬停**当前 turn（真正打断；需**双击**）；**≥1.0.69-1 会保留排队消息并接着跑**，见下方「双击 Esc 中断语义变更」 | `Esc`×2 | —— |
 
 ⚠️ 关键差异：Copilot 里区分「插话 / 排队」的是 **`Enter` vs `Ctrl+Q`**，不是 Codex 的 `Enter` / `Shift+Enter`。在 Copilot 里 `Shift+Enter` 被占用为换行。
 
@@ -875,6 +875,56 @@ this.enqueueUserMessage(e, e.prepend);              // 否则进 FIFO 队列
 - `shift+enter - insert newline` ← 佐证 `Shift+Enter` 不参与提交分流，只换行
 
 > 注：官方在线文档（docs.github.com 的 use-copilot-cli 页）只提了 `Esc` 停止、`Shift+Tab` plan mode，**没有**明文写 steer/queue 的 `Enter`/`Ctrl+Q` 语义；该语义由 `/help` 键位 + changelog + 源码三方印证。
+
+### 双击 Esc 中断语义变更：1.0.69-1 起「中断后接着跑排队消息」
+
+**现象**：主 turn 在跑、且你已排队一条 prompt，双击 `Esc` 不再是「停掉并丢弃队列」，而是**停掉当前 turn、然后自动把排队的 prompt 接着跑**。
+
+**变更历史**（对比缓存里 6 个版本 `~/.cache/copilot/pkg/linux-x64/*/app.js`，边界干净）：
+
+| 符号 | ≤1.0.68 | 1.0.69-0 | **1.0.69-1** |
+|---|---|---|---|
+| `interruptMainTurn` | 无 | 无 | **有** |
+| `flushQueuedAfterAbort` | 无 | 无 | **有** |
+| `"interrupt-main"`（键位 action） | 无 | 无 | **有** |
+
+- **旧行为（≤1.0.69-0）**：双击 `Esc` 只走 abort。agent 循环尾部判定 `if((!e||…)&&itemQueue.length>0)` 里 `e`（aborted）为 true ⇒ 不进 `processQueuedItems` ⇒ turn 直接 idle、排队消息被丢。
+- **新行为（1.0.69-1）**：官方 changelog（包内 `changelog.json`）原话 **"Double-press Esc now interrupts the running main turn (flushing queued messages), or stops background agents when the main agent is idle"**（PR `github/copilot-agent-runtime#11859`）。这里的 "flushing" 不是丢弃，是**冲出去执行**。
+
+**源码链（`app.js` v1.0.69-1）**：
+
+1. 键位分发把「主 turn 在跑时的双击 Esc」映射到新 action `"interrupt-main"`，写死带 `flushQueued`：
+   ```js
+   // 键名表：MKr={…,"interrupt-main":"interrupt",…}
+   case"interrupt-main":{ he.isRemote
+     ? he.abort({reason:nT.UserInitiated})            // 远程 session 仍是纯 abort（可能丢队列）
+     : he.interruptMainTurn({flushQueued:!0}) }       // 本地走新逻辑
+   ```
+2. 新方法 `interruptMainTurn` —— 差异总开关：`flushQueued` 分支只清「系统」待发项、**保留用户排队消息**，并置标志 `flushQueuedAfterAbort`；否则才是老式全清 `clearPendingItems()`（此分支当前无键位触达）：
+   ```js
+   async interruptMainTurn(e){ return this.isProcessing ? (
+     e?.flushQueued
+       ? this.flushQueuedAfterAbort = this.clearSystemPendingItems()   // 保留用户队列
+       : (this.flushQueuedAfterAbort=!1, this.clearPendingItems()),    // 全丢（未接键位）
+     this.cancelProcessing("Session interrupted",…,{preserveBackgroundWork:!0}),
+     {interrupted:!0}) : {interrupted:!1} }
+   ```
+3. abort 收尾时消费该标志，把 `(!e||r)` 从 false 翻成 true，于是队列被跑起来：
+   ```js
+   let e=…signal.aborted, r=e&&this.flushQueuedAfterAbort; this.flushQueuedAfterAbort=!1;
+   if((!e||r)&&this.itemQueue.length>0&&…){ await this.processQueuedItems(); return }
+   ```
+
+**社区讨论**：[github/copilot-cli#3692](https://github.com/github/copilot-cli/issues/3692) *"Escape should cancel the current task and focus the pending queued prompt (not discard it)"*（open，`area:input-keyboard`，报告于 v1.0.60-0）——正是这次改动落地的诉求。注意评论里有**反对声**（`@IanGraingerGMSL`：按 Esc 就该全停、别烧 token，"interrupt and send" 应绑到别的键）；另有人（`@jphreid`）抱怨双击 Esc 不灵、常要狂按。
+
+**当前（1.0.69-1）中断/清队列方案速查**：
+
+| 想要的效果 | 操作 |
+|---|---|
+| 中断当前 turn，**并接着跑**排队的 prompt | **双击 `Esc`**（本地 session；这是新默认，无开关可关） |
+| 只清排队消息、**不停**当前 turn | `Ctrl+C`（一次弹一条 `removeMostRecentPendingItem()`，FIFO 逐条删） |
+| 中断当前 turn 且**丢弃**队列 | 无直接键位（`clearPendingItems()` 全清分支存在但未接键位）；远程 session 的双击 Esc 走纯 `abort` 仍近似此效果 |
+| 主 agent 空闲时双击 Esc | 转为 `stop-agents`：停后台 agent，而非中断主 turn |
 
 ## Chronicle 搜索给 resume ID：必须给本地 ID
 
