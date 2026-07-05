@@ -779,6 +779,32 @@ grep -L 'tmy-retry-patch' ~/.cache/copilot/pkg/linux-x64/*/app.js
 可选：把脚本接到一个定时任务 / shell startup hook 里。但因为 patch 是幂等的、且 auto-update 不频繁（基本 days 级），手动跑也够。
 
 > 同款思路适用于任何想调 Copilot CLI 内部常量的场景（比如改 `defaultRetryAfterSeconds` / `maxRetryAfterSeconds` 之类的 rate-limit 配置）。锚点选**字面量唯一的 minified 片段**（带 `e?.retryPolicy?.` 这种独特路径），不要选纯数字（容易撞）。
+## 模型 / 思考程度（reasoning effort）：默认档从哪来 & hack 成最高档
+
+### 机制（够用即可）
+
+- **一行选定**：`copilot --model <id> --effort <level>`（`--effort` == `--reasoning-effort`，choices `none/low/medium/high/xhigh/max`；`--context <tier>` 管上下文档位）。三者都是**会话级覆盖、不落盘**。优先级：flag > `COPILOT_MODEL` env（**effort 无对应 env**）> `settings.json`（`model`/`effortLevel`/`contextTier`）> 内置默认。
+- **持久默认只在全局** `~/.copilot/settings.json`（无目录级 settings；`$COPILOT_HOME` 可整体挪位）。TUI 里选模型/档位会写回这里——所以「上次选择」就是「默认」。
+- **打字版 `/model <id>` 只吃一个 model 参数，且执行时必然把 `effortLevel`/`contextTier` 清空**（→ 回落该模型默认档）。故它塞不进 effort（`/model xxx-max` 会被当非法 model 报错）；会话内单独设档只有无参 `/model` 的两步选择器。
+- **每个模型的「默认档」来自 bundle 内静态表 `XAt`（源标签 `"sweagent-capi"`）的 `clientOptions.defaultReasoningEffort`**：按 model→family→vendor 匹配、缺省硬回落 `"medium"`，再过 native `modelResolverPickModelDefaultReasoningEffort` 用该模型 `supportedReasoningEfforts` 校验一遍。**用户不可配**（无 per-model effort 配置键；`subagents.agents.<name>.effortLevel` 只管子代理）。这既是 picker 里 `(default)` 标签的来源，也是 typed `/model` 回落的目标。
+- 源码链：`_x → bfe`（读 `XAt` 默认档）供 picker 标签与 `zC` 解析兜底；SDK 客户端另有一份从配置对象直读的 `defaultReasoningEffort`（形如 `…defaultReasoningEffort:t?.defaultReasoningEffort`）。
+
+### hack：让每个模型默认用它支持的最高档
+
+**目的**：免掉每次手选 / 带 `--effort`，让 picker `(default)`、启动/`zC` 解析、以及多数情况下 typed `/model` 的回落都落到该模型最高档（opus/sonnet→`max`、gpt→`xhigh`）。
+
+改根函数 `bfe`（`_x`、`zC` 都经它）。**apply / 备份 / 幂等 marker / 扫所有版本目录 / auto-update 后重跑，规矩全同上文《重试策略 patch》**——只是 marker 用 `tmy-max-effort`、备份用 `app.js.pre-maxeffort.bak`。核心是一条 `node` 正则替换（带反向引用，自动适配跨版本改名的 `bfe`/`ty`/参数名，勿硬编标识符）：
+
+```js
+// 锚点：唯一，只命中 bfe 一处（先 dry-run 数匹配数 === 1 再落盘）
+/async function (\w+)\((\w+),(\w+),(\w+),(\w+)\)\{return (\w+)\("sweagent-capi",\2,\3,\5\)\.clientOptions\?\.defaultReasoningEffort\?\?"medium"\}/g
+// 替换：取 supportedReasoningEfforts 里最高档；取不到就回落原逻辑
+'async function $1($2,$3,$4,$5){/*tmy-max-effort*/let _c=$6("sweagent-capi",$2,$3,$5),_s=_c&&_c.supportedReasoningEfforts;if(_s&&_s.length){for(const _o of["max","xhigh","high","medium","low"])if(_s.includes(_o))return _o}return _c?.clientOptions?.defaultReasoningEffort??"medium"}'
+```
+
+- **验证**：`node --check` 打过补丁的 `app.js` + `~/.local/bin/copilot --version` 能跑；`grep -l tmy-max-effort ~/.cache/copilot/pkg/linux-x64/*/app.js`；开**新**会话看 picker `(default)` 是否已在顶档（当前已运行的会话不受影响）。
+- **局限**：只改 `bfe` 覆盖 picker 标签 + 启动/`zC` 解析。若实测**会话内** typed `/model` 仍回落 medium（native `setModel` 读的是配置对象那份 `defaultReasoningEffort`，不经 `bfe`），再把源码里 `defaultReasoningEffort:<src>?.defaultReasoningEffort` 那 1~2 处 copy 站点也改成取 `supportedReasoningEfforts` 最高档即可。
+
 ## 运行中发消息：steer（即时插话）vs queue（排队）
 
 > 源码偏移基线 `@github/copilot@1.0.62` 的 `app.js`（与本文件其余章节的 1.0.41 基线不同，偏移仅供参考）。
