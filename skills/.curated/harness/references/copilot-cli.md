@@ -816,7 +816,7 @@ Copilot CLI **有**「Copilot 还在跑的时候继续发消息，自己选是�
 | **即时插话**（steer，注入正在跑的 turn） | **普通 `Enter`** | `immediate` |
 | **排队**，等当前 turn 结束再发（FIFO） | **`Ctrl+Q`**（kitty keyboard protocol 下提示/用 `Ctrl+Enter`） | `enqueue` |
 | 插入换行（多行编辑，**不提交**） | `Shift+Enter`（含 `Alt`/`Super`+`Enter`、`Ctrl+J`） | —— |
-| **硬停**当前 turn（真正打断；需**双击**）；**≥1.0.69-1 会保留排队消息并接着跑**，见下方「双击 Esc 中断语义变更」 | `Esc`×2 | —— |
+| **硬停**当前 turn（真正打断，双击 `Esc`）；**1.0.69-1 起中断会保留排队消息并接着跑**，见下方「双击 Esc 中断语义变更」 | `Esc`×2 | —— |
 
 ⚠️ 关键差异：Copilot 里区分「插话 / 排队」的是 **`Enter` vs `Ctrl+Q`**，不是 Codex 的 `Enter` / `Shift+Enter`。在 Copilot 里 `Shift+Enter` 被占用为换行。
 
@@ -888,8 +888,8 @@ this.enqueueUserMessage(e, e.prepend);              // 否则进 FIFO 队列
 | `flushQueuedAfterAbort` | 无 | 无 | **有** |
 | `"interrupt-main"`（键位 action） | 无 | 无 | **有** |
 
-- **旧行为（≤1.0.69-0）**：双击 `Esc` 只走 abort。agent 循环尾部判定 `if((!e||…)&&itemQueue.length>0)` 里 `e`（aborted）为 true ⇒ 不进 `processQueuedItems` ⇒ turn 直接 idle、排队消息被丢。
-- **新行为（1.0.69-1）**：官方 changelog（包内 `changelog.json`）原话 **"Double-press Esc now interrupts the running main turn (flushing queued messages), or stops background agents when the main agent is idle"**（PR `github/copilot-agent-runtime#11859`）。这里的 "flushing" 不是丢弃，是**冲出去执行**。
+- **旧行为（≤1.0.69-0）**：双击 `Esc`（这套「首击置 pending、再击才执行」的双击门早在 `≤1.0.68` 就有，提示即 `press esc again to interrupt`）**只走 abort**——agent 循环尾部判定 `if((!e||…)&&itemQueue.length>0)` 里 `e`（aborted）为 true ⇒ 不进 `processQueuedItems` ⇒ turn 直接 idle、排队消息被丢。
+- **新行为（1.0.69-1）**：**同一个**双击 `Esc`，中断**之后**改为保留并接着跑排队消息——官方 changelog（包内 `changelog.json`）原话 **"Double-press Esc now interrupts the running main turn (flushing queued messages), or stops background agents when the main agent is idle"**（PR `github/copilot-agent-runtime#11859`），"flushing" 不是丢弃、是**冲出去执行**；同版还多出「主 agent 空闲时双击 Esc → 停后台 agent」一路（`stop-agents`/`cancelAllBackgroundAgents`，旧版无此符号）。
 
 **源码链（`app.js` v1.0.69-1）**：
 
