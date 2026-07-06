@@ -77,7 +77,7 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 - Windows PowerShell `Test-NetConnection <ip> -Port <port>` 成功，`InterfaceAlias` 显示 `Meta`。
 - WSL 里 `curl`、`ssh`、`nc` 对同一目标超时，卡在 TCP connect 阶段，还没到 TLS/SSH 握手。
-- 根因与 DNS `enhanced-mode` 无关：WSL 是独立网络栈，`ip route` 里没有宿主 mihomo 的 TUN 路由（无 `0.0.0.0/2 via 198.18.x`），裸流量不被透明接管，只按默认路由丢给 NAT 网关。三种模式症状都是超时，差别只在“直连为什么失败”的最后一跳：
+- 根因与 DNS `enhanced-mode` 无关：**NAT 模式下** WSL 是独立网络栈，`ip route` 里没有宿主 mihomo 的 TUN 路由（无 `0.0.0.0/2 via 198.18.x`），裸流量不被透明接管，只按默认路由丢给 NAT 网关（mirrored 模式下 WSL 共享宿主栈，宿主 TUN 才能直接接管）。三种模式症状都是超时，差别只在“直连为什么失败”的最后一跳：
   - `fake-ip`：WSL 解析得到 `198.18.x.x` 占位 IP，只在宿主 TUN 内有意义，WSL 裸连它无人应答。
   - `redir-host` / `normal`：WSL 解析得到**真实 IP**，裸连真实（常被墙的）IP 同样超时。
 - 别凭“是否 198.18.x”判断，也别一律归到“fake-ip 映射不稳”——两种模式殊途同归，都是 WSL 出站没走宿主代理，不是远端服务故障。DNS 模式取值见 [mihomo.md](mihomo.md) §7。
@@ -142,6 +142,8 @@ Host <name>
 ### WSL 内自建 TUN 透明代理（tun2socks）
 
 上面是**方案 A**：逐工具显式指代理（`*_proxy` 环境变量 + ssh `ProxyCommand`）。**方案 B** 用 [`xjasonlyu/tun2socks`](https://github.com/xjasonlyu/tun2socks)（开源 Go 单文件）在 WSL 内建一块 TUN 网卡，把**全部**出站裸流量透明导进宿主 mihomo，免逐工具设代理。它**只补“透明网卡”这一层**，分流 / 选节点仍交给宿主已有的 mihomo——所以 WSL 内**不必再开第二个完整 mihomo**（除非要 WSL 独立订阅 / 规则）。
+
+**为什么需要方案 B（初衷）**：方案 A 只覆盖**读 `*_proxy` 的工具**（curl / git / pip…）。有一类工具不读任何代理环境变量、自己解析 DNS、把解析到的 IP **钉死直连**——典型是 **agent 内置抓取工具（如 Copilot CLI 的 `web_fetch`）**。它在 WSL NAT 下必失败：① `fake-ip` 解析到 `198.18.x` 撞其 SSRF 保留地址闸，连都不连；② 宿主改 `redir-host` 让它拿到真实 IP，但 NAT 模式下 WSL 裸流量又不被宿主 TUN 稳定接管（见上节），真实（被墙）IP 裸连照样超时。既设不了代理、又走不了宿主 TUN，方案 A 对它无效——只有方案 B 在 WSL 内建 TUN、把裸流量透明导进宿主 mihomo 才救得回。
 
 **装（不用 sudo）**：下载对应 arch 的二进制（`uname -m` → amd64 / arm64）到 `~/.local/bin/`，`tun2socks --version` 自检；GitHub 下载本身可先经宿主 `--proxy http://<gw>:7890`。
 
