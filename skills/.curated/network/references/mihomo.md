@@ -2,7 +2,7 @@
 
 > 本文把 Mihomo 的**配置用法**和**泄漏控制（DNS / WebRTC）**结合着讲，目标是读完能自己搭一套“不漏、分流准、能排障”的代理，并理解每个开关到底在做什么。全文分两部分：前半是**配置与使用**，后半是**泄漏控制**。WSL ↔ Windows ↔ 远端的网络管道是另一回事——WSL 出站怎么进 Mihomo、portproxy/wslrelay 入站见 [wsl.md](wsl.md)，RDP / serve-web 等远程接入见 [remote.md](remote.md)。
 >
-> **源码出处**：下文凡是讲到内部行为，都对照官方仓库 **`MetaCubeX/mihomo`** 的 **`Meta` 分支**（稳定线；开发线是 `Alpha`）。⚠️ 这个仓库的**默认分支 `main` 装的是一个同名的 Honkai: Star Rail Python 包，不是代理内核**——`git clone` 要带 `-b Meta` 才拿到 Go 源码（`module github.com/metacubex/mihomo`），否则会拿到一个 `pyproject.toml`。
+> **源码出处**：下文凡是讲到内部行为，都对照官方仓库 **`MetaCubeX/mihomo`** 的 **`Meta` 分支**（稳定线；开发线是 `Alpha`）。⚠️ 这个仓库的**默认分支 `main` 装的是一个同名的 Honkai: Star Rail Python 包，不是代理内核**——`git clone` 要带 `-b Meta` 才拿到 Go 源码（`module github.com/metacubex/mihomo`），否则会拿到一个 `pyproject.toml`。已经 clone 停在 `main` 时，裸 `git checkout Meta` 会 DWIM 失败，用显式的 `git checkout -b Meta origin/Meta`。
 
 ---
 
@@ -223,6 +223,19 @@ curl -s -o /dev/null --max-time 45 --proxy $P \
 > **验证 Brutal 有没有接管**：mihomo 不暴露 `brutal-debug`，客户端日志看不到 Brutal 速率，唯一办法是 sudo 读服务端 `/etc/hysteria/config.yaml` 看 `ignoreClientBandwidth`/`bandwidth`（机制见 §3.4）。服务端那套：独立 Hysteria2 搭建见 [hysteria2.md](hysteria2.md)，3x-ui 面板配置与带宽/iperf3 丢包质量测试见 `vps-maintenance` skill，客户端、服务端两边配合看。
 
 海外 VPS 上实测：给 Hysteria2 节点加 `up: "80 Mbps"`/`down: "120 Mbps"`（格式正则 `^(\d+)\s*[KMGT]?[Bb]ps$`，小写 `b`=bit）后，下载上传两向都进 Brutal——但当时链路 ~16 MB/s 下载、~9 MB/s 上传、**几乎无丢包**，加 `up`/`down` 前后吞吐无差异，印证「Brutal 收益要丢包才显现」。
+
+### 3.7 订阅覆写：内核只封装「节点级」，没有「配置级」
+
+常被问“mihomo 内核有没有替订阅 URL 封装覆写功能”。**分两层看，答案不一样**：
+
+- **配置级订阅覆写——内核没有**。“拉一个订阅 URL → 改写整份 clash 配置（`rules` / `proxy-groups` / `dns` …）”这种能力不在内核里；内核只从本地文件 / bytes 读一份**已经组装好**的配置。整份配置级的 merge / script 覆写是**外部工具**的事——Clash Verge Rev / mihomo-party 这类 GUI 的 profile override，或 Sub-Store / subconverter 这类订阅转换器。⚠️ 别被 `config/config.go` 里的 `override` 带偏：那里唯一的 `override` 是 `override-destination`（嗅探器 sniffer 改写目标地址），**跟订阅无关**。
+- **节点级订阅覆写——内核封装得很完整**，全挂在 **proxy-provider（订阅节点源，`type: http` + `url` 就是“URL 订阅”）** 上，源码在 `adapter/provider/`：
+  - **改字段** `override.go` 的 `overrideSchema.Apply()`：对订阅里**每个节点**改 `tfo/mptcp/udp/udp-over-tcp/up/down/dialer-proxy/skip-cert-verify/interface-name/routing-mark/ip-version`；改名类 `additional-prefix`/`additional-suffix` 和 `proxy-name`（正则 `pattern`→`target` 批量重命名，用 regexp2 即 .NET 风格正则，比 Go 原生正则语法更全）。
+  - **筛选** `parser.go` 的 schema：`filter` / `exclude-filter`（正则，多组用反引号 `` ` `` 分隔）/ `exclude-type`（按节点类型排除，`|` 分隔）。
+  - **拉取流程** `provider.go` 的 `NewProxiesParser`：HTTP 拉取（`header` 自定义请求头 / `proxy` 借某代理去拉 / `size-limit` / `age-secret-key` 解密）→ YAML 解析（失败回退 `ConvertsV2Ray`，兼容机场那种 base64 / `vmess://` 订阅）→ exclude/filter 过滤 → 去重 → `override.Apply` 覆写 → `ParseProxy`。
+- 另有 **rule-provider**（`rules/provider/`）远程规则集，也算“远程覆写”，但覆的是**规则**不是节点。
+
+一句话：**节点级（proxy-provider 的 `override` + `filter`）有且完整；整份配置级订阅覆写内核不管，交给外部管理程序 / 订阅转换器。**
 
 ## 4. 运行态控制：REST API 与 Web 面板
 
