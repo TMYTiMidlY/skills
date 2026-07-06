@@ -62,6 +62,18 @@ GOBIN=~/.local/bin go install <module-path>@latest
 
 **`go install …@version` 遇 `replace` 指令会失败**：`replace`（把某依赖重定向到 fork 或本地路径）**只对"主模块"生效**（[官方 replace](https://go.dev/ref/mod#go-mod-file-replace)）。而 `go install pkg@version` 是在**没有主模块**的模块感知模式下构建目标模块，它不应用目标 `go.mod` 里的 `replace`；若该模块**靠** `replace` 才能正确构建（例如依赖指向一个 fork），远程 `go install` 就解析不到、构建失败。解法是改用 `git clone` 后在仓库内 `go install .`（此时该仓库是主模块，`replace` 生效），或等作者去掉 `replace`。（forgejo-mcp 历史上就因此坏过，后来去掉 `replace` 已修，见 [git-server.md](git-server.md) 第四部分脚注。）
 
+**GOPROXY：墙内环境必换国内镜像**。默认 `GOPROXY=https://proxy.golang.org`（Google 域名）在国内**直连不通**——现象是 `go install` / `go mod download` 卡住后报 `dial tcp …:443: i/o timeout`（本 session 在一台墙内机器上就这么失败的，换代理后 22s 装完两个 mcp）。国内事实主流是 **`goproxy.cn`**（[七牛云 Qiniu 维护](https://goproxy.cn)，自称 "The most trusted Go module proxy in China"，CDN 无限速、支持代理 `sum.golang.org` 校验库）；备选 `goproxy.io`、`goproxy.baidu.com`（后者上游就挂着 goproxy.cn）。配法（末尾 `,direct` = 代理没有就回源直连，别丢）：
+
+```bash
+go env -w GOPROXY=https://goproxy.cn,direct     # 持久写进 ~/.config/go/env
+# 校验库(sum.golang.org 也是 Google 域名)墙内同样连不上，二选一：
+go env -w GOSUMDB=sum.golang.google.cn          # 用 Google 的中国镜像域名继续做校验(推荐，仍是真校验)
+# 或关掉校验库(下下策，只在实在连不上且信任源时)：go env -w GOSUMDB=off
+# 私有/自建源(不想过公共 proxy 和 sumdb)：go env -w GOPRIVATE=git.example.com,codeberg.org/yourorg
+```
+
+> `goproxy.cn` 支持[代理 checksum database](https://golang.org/design/25530-sumdb#proxying-a-checksum-database)，所以多数情况设了 `GOPROXY` 就够、`go.sum` 校验照常走；只有当 `sum.golang.org` 本身连不上导致校验超时才需要再设 `GOSUMDB=sum.golang.google.cn`（Google 官方在中国的镜像域名，仍是真校验、不是关掉校验）。
+
 ---
 
 ## 三、`pixi global install go` 的 cgo 坑（conda-forge go 包）
