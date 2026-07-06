@@ -110,13 +110,13 @@ WSL 里直接调 `powershell.exe` 起的是**当前用户态非 admin** PowerShe
 - 父进程（WSL 这边）拿不到 admin 子进程的 stdout——它已经在另一个用户上下文里。**结果靠落盘**：在被弹起的命令里 `... | Out-File C:\Temp\<task>\result.txt -Encoding utf8 ; Write-Output DONE | Out-File C:\Temp\<task>\done.txt`，WSL 端轮询 `done.txt` 文件出现即视为完成，再读 `result.txt`。
 - `Out-File` 路径不要写 `\\wsl.localhost\Ubuntu\...` —— Windows admin 进程不能用 UNC 当 CWD，也不能很流畅地写 WSL 文件系统。固定写 `C:\Temp\<task>\` 之类的本地路径，WSL 端读 `/mnt/c/Temp/<task>/result.txt`。
 
-## 判断“某软件最后被谁用过”：别信 `C:\Users\<user>` 的 LastWriteTime
+## 判断“某软件最后被谁用过”：别信 `%USERPROFILE%` 根目录的 LastWriteTime
 
-想在一台多用户 Windows 机上判断“某软件最后一次被哪个用户用过”时，**`C:\Users\<用户名>` 这个 profile 根目录的 `LastWriteTime` 不是可靠指标**——它不随登录/使用刷新。实测一台批量建号的机器，除本人外 10 个账号的根目录 `LastWriteTime` 全部冻在建号那一刻（同一分钟），据此会误判成“这些人从没登录、从没用过”。
+想在一台多用户 Windows 机上判断“某软件最后一次被哪个用户用过”时，**`%USERPROFILE%`（每个用户的 profile 根目录）的 `LastWriteTime` 不是可靠指标**——它不随登录/使用刷新。实测一台批量建号的机器，除本人外 10 个账号的根目录 `LastWriteTime` 全部冻在建号那一刻（同一分钟），据此会误判成“这些人从没登录、从没用过”。
 
 真正的“最后使用”痕迹在**各用户自己的 `AppData` 内部**：软件的 `cache.db`、`logs\*.log`、`window_state.json` 等文件的 mtime 才反映真实活动。但从 WSL 以普通用户 token 读 `/mnt/c/Users/<别人>/AppData` 会被 NTFS ACL 挡（`Permission denied`）——`AppData\Roaming` / `Local` 默认只有本人 + SYSTEM + Administrators 可读。
 
-所以要跨用户判断，得**提权**（见上一节「从 WSL 弹 UAC」），在 admin 上下文里遍历各用户 `AppData`、读软件数据文件的 mtime。踩过的坑：先拿 `C:\Users\*` 根目录 `LastWriteTime` 下过“只有某人用过”的结论，提权读 `AppData` 内部后被直接推翻（实际有 8 个用户用过）。
+所以要跨用户判断，得**提权**（见上一节「从 WSL 弹 UAC」），在 admin 上下文里遍历各用户 `AppData`、读软件数据文件的 mtime。踩过的坑：先拿各用户 `%USERPROFILE%` 根目录的 `LastWriteTime` 下过“只有某人用过”的结论，提权读 `AppData` 内部后被直接推翻（实际有 8 个用户用过）。
 
 ## cmd.exe 不接 UNC 路径当 CWD
 
