@@ -38,7 +38,7 @@ Mihomo 是 Clash Meta 的 Go 内核，**一个可执行文件**里同时跑两�
 两个最常见的认知纠正，先打预防针：
 
 - **TUN 模式通常要管理员/sudo 启动**（要创建管理虚拟网卡）。CLI 跑起来要**终端一直挂着**，关了就停；要常驻就做成 service。
-- **设了 `HTTPS_PROXY` ≠ 流量一定走代理节点**。env 只决定“流量送进 Mihomo 哪个入口端口”，**出口走哪个节点完全由 `rules` + `proxy-groups` 决定**（见第 3 节）。
+- **设了 `HTTPS_PROXY` ≠ 流量一定走代理节点**。env 只决定“流量送进 Mihomo 哪个入口端口”，**出口走哪个节点完全由 `rules` + `proxy-groups` 决定**（见[第 3 节](#3-流量链路入口规则与节点组)）。
 
 ## 2. 安装、配置目录与启动
 
@@ -62,15 +62,15 @@ mihomo 内核是一个**单文件静态二进制**，没有复杂依赖，“安
     -p 7890:7890 -p 9090:9090 \
     metacubex/mihomo   # TUN 还需 --cap-add NET_ADMIN --device /dev/net/tun 等
   ```
-- **从源码构建**：见第 8 节。
+- **从源码构建**：见[第 8 节](#8-从源码构建windows)。
 
 > 很多 GUI 客户端（Clash Verge Rev、FlClash 等）**内置了 mihomo 内核**，装它们就不用单独装内核；只有要纯内核 / 做服务端常驻时才手动装上面这些。
 >
-> **但 GUI 捆绑的内核 ≠ 你自装的 CLI——是多套各自独立、可共存的二进制**。每个 GUI 把自己的 mihomo（常改名）放在各自程序目录：实测同一台 Windows，Clash Verge → `Program Files\Clash Verge\verge-mihomo.exe`、Clash Party（mihomo-party）→ `...\Clash Party\resources\sidecar\mihomo.exe`；你自装的 CLI 又是独立第三套（如 `C:\Users\<user>\mihomo\mihomo.exe`，靠 `-d` 指向 `~/.config/mihomo`）。**谁在实际跑，看进程的 `-d`/`-f` 启动参数**（§6；Windows 上内核可能高权限跑、需 UAC 提权才读得到命令行）。推论：删某个 GUI 的**用户数据**（`AppData\Roaming|Local` 里的 profile / 订阅 / 缓存）既不动它程序目录里的内核、也不影响另一套独立跑着的 CLI——所以清 GUI 数据不会断掉一个单独常驻的 mihomo。
+> **但 GUI 捆绑的内核 ≠ 你自装的 CLI——是多套各自独立、可共存的二进制**。每个 GUI 把自己的 mihomo（常改名）放在各自程序目录：实测同一台 Windows，Clash Verge → `Program Files\Clash Verge\verge-mihomo.exe`、Clash Party（mihomo-party）→ `...\Clash Party\resources\sidecar\mihomo.exe`；你自装的 CLI 又是独立第三套（如 `C:\Users\<user>\mihomo\mihomo.exe`，靠 `-d` 指向 `~/.config/mihomo`）。**谁在实际跑，看进程的 `-d`/`-f` 启动参数**（[§6](#6-运行态控制rest-api-与-web-面板)；Windows 上内核可能高权限跑、需 UAC 提权才读得到命令行）。推论：删某个 GUI 的**用户数据**（`AppData\Roaming|Local` 里的 profile / 订阅 / 缓存）既不动它程序目录里的内核、也不影响另一套独立跑着的 CLI——所以清 GUI 数据不会断掉一个单独常驻的 mihomo。
 
 ### 2.2 配置目录是运行时算出来的（不是安装决定的）
 
-容易误解的一点：`~/.config/mihomo` 这个路径**和二进制装在哪无关**，是 mihomo 启动时按“当前用户的主目录”现算的。源码见 [`constant/path.go` 的路径解析逻辑](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L29-L40)（pin 到与 §6 同一 commit `24b6de71`、行号锁死不漂移；下方为节选）：
+容易误解的一点：`~/.config/mihomo` 这个路径**和二进制装在哪无关**，是 mihomo 启动时按“当前用户的主目录”现算的。源码见 [`constant/path.go` 的路径解析逻辑](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L29-L40)（pin 到与 [§6](#6-运行态控制rest-api-与-web-面板) 同一 commit `24b6de71`、行号锁死不漂移；下方为节选）：
 
 ```go
 const Name = "mihomo"
@@ -90,7 +90,7 @@ if _, err := os.Stat(homeDir); err != nil {     // 若该目录不存在
 - **`$XDG_CONFIG_HOME` 只在 `~/.config/mihomo` 不存在时才生效**（注意这个先后顺序）。
 - **`sudo` 启动**：`$HOME` 变 `/root`，目录就变 `/root/.config/mihomo`——所以 Linux 跑 TUN（要 `sudo`）时，要么显式 `-d /home/<user>/.config/mihomo`，要么把配置放到 root 的目录下。
 - 命令行覆盖：`-d <dir>` 改配置目录（源码 [`SetHomeDir`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L62)），`-f <file>` 改配置文件名（[`SetConfig`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L67)）。
-- **“安全路径”**：REST API 用 `path` 方式热重载（见第 6 节）默认只允许 home 的子路径；要放别处可用环境变量 `SAFE_PATHS` 加白名单，或 `SKIP_SAFE_PATH_CHECK=1` 整个关掉检查（源码 [`IsSafePath`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L88)）。
+- **“安全路径”**：REST API 用 `path` 方式热重载（见[第 6 节](#6-运行态控制rest-api-与-web-面板)）默认只允许 home 的子路径；要放别处可用环境变量 `SAFE_PATHS` 加白名单，或 `SKIP_SAFE_PATH_CHECK=1` 整个关掉检查（源码 [`IsSafePath`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L88)）。
 
 ### 2.3 启动与校验
 
@@ -220,7 +220,7 @@ proxies:
 
 ### 4.3 实测吞吐与验证（客户端排障）
 
-节点 `/delay` 只测 1KB 级 RTT（见第 6 节），拥塞控制有没有真生效得自己测吞吐。经 `mixed-port` 用 curl 的 `-w` 直接拿 speed、不落盘：
+节点 `/delay` 只测 1KB 级 RTT（见[第 6 节](#6-运行态控制rest-api-与-web-面板)），拥塞控制有没有真生效得自己测吞吐。经 `mixed-port` 用 curl 的 `-w` 直接拿 speed、不落盘：
 
 ```bash
 P=http://127.0.0.1:7890
@@ -235,7 +235,7 @@ curl -s -o /dev/null --max-time 45 --proxy $P \
 
 测速源踩坑：`speed.cloudflare.com/__down` 经某些落地 IP 回 **403**（节点 IP 命中 Cloudflare 风控），但同站 `__up` 上传能用；Hetzner `ash-speed.hetzner.com/100MB.bin` 稳，OVH `proof.ovh.net` 能用但跨洲偏慢。多换源交叉看、文件 ≥50–100MB（前几 MB 慢启动偏小）。换算：1 MB/s ≈ 8 Mbps。
 
-> **验证 Brutal 有没有接管**：mihomo 不暴露 `brutal-debug`，客户端日志看不到 Brutal 速率，唯一办法是 sudo 读服务端 `/etc/hysteria/config.yaml` 看 `ignoreClientBandwidth`/`bandwidth`（机制见 §4.1）。服务端那套：独立 Hysteria2 搭建见 [hysteria2.md](hysteria2.md)，3x-ui 面板配置与带宽/iperf3 丢包质量测试见 `vps-maintenance` skill，客户端、服务端两边配合看。
+> **验证 Brutal 有没有接管**：mihomo 不暴露 `brutal-debug`，客户端日志看不到 Brutal 速率，唯一办法是 sudo 读服务端 `/etc/hysteria/config.yaml` 看 `ignoreClientBandwidth`/`bandwidth`（机制见 [§4.1](#41-协议选型与性能)）。服务端那套：独立 Hysteria2 搭建见 [hysteria2.md](hysteria2.md)，3x-ui 面板配置与带宽/iperf3 丢包质量测试见 `vps-maintenance` skill，客户端、服务端两边配合看。
 
 海外 VPS 上实测：给 Hysteria2 节点加 `up: "80 Mbps"`/`down: "120 Mbps"`（格式正则 `^(\d+)\s*[KMGT]?[Bb]ps$`，小写 `b`=bit）后，下载上传两向都进 Brutal——但当时链路 ~16 MB/s 下载、~9 MB/s 上传、**几乎无丢包**，加 `up`/`down` 前后吞吐无差异，印证「Brutal 收益要丢包才显现」。
 
@@ -282,7 +282,7 @@ curl --max-time 3 "http://127.0.0.1:9090/logs?format=structured&level=info"
 curl --max-time 3 http://127.0.0.1:9090/traffic
 ```
 
-> **源码实证：没有任何端点回吐"当前配置文件路径"**（链接 pin 到 `MetaCubeX/mihomo` 的 `Alpha` 分支 commit [`24b6de71`](https://github.com/MetaCubeX/mihomo/tree/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c)——真实源码在 `Alpha`/`Meta` 等分支，`main` 只有 release/CI 元数据、连 `hub/route/` 都没有）。[全表路由注册](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/server.go#L105)共 18 个（`/ /logs /traffic /memory /version /configs /proxies /group /rules /connections /providers/* /cache /dns /storage /restart /upgrade /ui` + doh），其中 `C.Path.Config()` 只出现一次——在 [`updateConfigs`（`PUT /configs`）](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/configs.go#L415)里当热重载的**默认输入**（请求没带 `path` 时兜底），从不写进任何响应。`GET /configs` 返回的是 [`executor.GetGeneral()`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/executor/executor.go#L129)：纯运行态设置（端口/tun/mode/log/geo/keepalive…），无路径字段。内核**自己知道**路径（[`constant/path.go` 的 `Path.Config()`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L75)），只是不经 API 暴露。**要定位 active 配置只能看进程 `-d`/`-f` 启动参数**（Windows 上 mihomo 可能高权限跑、需 UAC 提权才读得到命令行），或按 §2.2 规则 + `/configs` 与 `/proxies` 运行态内容比对推断。
+> **源码实证：没有任何端点回吐"当前配置文件路径"**（链接 pin 到 `MetaCubeX/mihomo` 的 `Alpha` 分支 commit [`24b6de71`](https://github.com/MetaCubeX/mihomo/tree/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c)——真实源码在 `Alpha`/`Meta` 等分支，`main` 只有 release/CI 元数据、连 `hub/route/` 都没有）。[全表路由注册](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/server.go#L105)共 18 个（`/ /logs /traffic /memory /version /configs /proxies /group /rules /connections /providers/* /cache /dns /storage /restart /upgrade /ui` + doh），其中 `C.Path.Config()` 只出现一次——在 [`updateConfigs`（`PUT /configs`）](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/configs.go#L415)里当热重载的**默认输入**（请求没带 `path` 时兜底），从不写进任何响应。`GET /configs` 返回的是 [`executor.GetGeneral()`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/executor/executor.go#L129)：纯运行态设置（端口/tun/mode/log/geo/keepalive…），无路径字段。内核**自己知道**路径（[`constant/path.go` 的 `Path.Config()`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L75)），只是不经 API 暴露。**要定位 active 配置只能看进程 `-d`/`-f` 启动参数**（Windows 上 mihomo 可能高权限跑、需 UAC 提权才读得到命令行），或按 [§2.2](#22-配置目录是运行时算出来的不是安装决定的) 规则 + `/configs` 与 `/proxies` 运行态内容比对推断。
 
 **热重载**（配置在安全路径内时用 `path`）：
 
@@ -378,7 +378,7 @@ curl.exe -v -I --max-time 12 --proxy http://127.0.0.1:7890 <test-url> # 显式�
 
 ### 7.1 WSL ssh 借道宿主 mihomo（没开 TUN 时才需要）
 
-**宿主 mihomo 开了 TUN 时，WSL 里直连即被透明接管**——TUN 把整机路由（含 WSL NAT 出站流量）劫进 mihomo，连解析成 fake-ip 的自建域名也直接通，WSL 内 ssh / curl 无需任何代理配置。只有“没开 TUN、或目标没被 TUN/规则覆盖、直连出不去”时，才需要让 WSL 流量**显式借道**宿主 mihomo：HTTP 类工具设 `HTTPS_PROXY`，ssh 走 SOCKS 配 `ProxyCommand`，且 NAT 下宿主在 WSL 网段的网关 IP 每次启动可能变、得动态取。具体 `ProxyCommand` / 动态网关 / 代理环境变量配方（方案 A），以及 WSL 内自建 TUN 透明代理 tun2socks（方案 B），见 [wsl.md](wsl.md)「WSL NAT 下出站走 Mihomo」；Mirror 模式下 WSL 与宿主共享 `127.0.0.1`，可直接 `127.0.0.1:7890`、不必取网关。
+**宿主 mihomo 开了 TUN 时，WSL 里直连即被透明接管**——TUN 把整机路由（含 WSL NAT 出站流量）劫进 mihomo，连解析成 fake-ip 的自建域名也直接通，WSL 内 ssh / curl 无需任何代理配置。只有“没开 TUN、或目标没被 TUN/规则覆盖、直连出不去”时，才需要让 WSL 流量**显式借道**宿主 mihomo：HTTP 类工具设 `HTTPS_PROXY`，ssh 走 SOCKS 配 `ProxyCommand`，且 NAT 下宿主在 WSL 网段的网关 IP 每次启动可能变、得动态取。具体 `ProxyCommand` / 动态网关 / 代理环境变量配方（方案 A），以及 WSL 内自建 TUN 透明代理 tun2socks（方案 B），见 [wsl.md](wsl.md#wsl-nat-下出站走-mihomo)「WSL NAT 下出站走 Mihomo」；Mirror 模式下 WSL 与宿主共享 `127.0.0.1`，可直接 `127.0.0.1:7890`、不必取网关。
 
 ## 8. 从源码构建（Windows）
 
@@ -457,7 +457,7 @@ func (h *ListenerHandler) ShouldHijackDns(targetAddr netip.AddrPort) bool {
   if skipper.ShouldSkipped(host) { return next(ctx, r) } // fake-ip-filter 命中才放行去真解析
   ip := fakePool.Lookup(host)   // 直接给一个池子里的 198.18.x，不 call next（当场不做真解析）
   ```
-  应用瞬间拿到假 IP，**真解析推迟到连接时、在远端做**。最快、分流最准、最防污染。代价：少数按 IP 工作的程序会坏（见 9.4 的 `fake-ip-filter`）。
+  应用瞬间拿到假 IP，**真解析推迟到连接时、在远端做**。最快、分流最准、最防污染。代价：少数按 IP 工作的程序会坏（见 [9.4](#94-推荐配置) 的 `fake-ip-filter`）。
 - **`redir-host`**（`withMapping`）：
   ```go
   msg, err := next(ctx, r)             // 先做真解析，拿真 IP
@@ -514,7 +514,7 @@ dns:
 
 要点：`dns-hijack any:53` 堵住泄漏闸门；`fake-ip` 给快且准的分流；`nameserver` 用 **DoH/DoT** 让“上游解析”这步也加密、并配合 `respect-rules` 走代理出去——这样 ISP 既看不到你的明文查询，也截不到上游往哪查。`fake-ip-filter` 里的 `skipper`（源码 `component/fakeip/skipper.go`）让排除的域名走真解析，避免坏掉 ping、局域网设备、按 IP 比对的软件。
 
-> **注·与 WSL 的边界**：这个 `198.18.0.1/16` 是宿主自己的 fake-ip 段（TUN 默认网关 IP 也取自此值）。**WSL 内自建 TUN（tun2socks）要避开 `198.18.x`**，否则和宿主 fake-ip / TUN 网关撞——见 [wsl.md](wsl.md)「WSL 内自建 TUN 透明代理」。
+> **注·与 WSL 的边界**：这个 `198.18.0.1/16` 是宿主自己的 fake-ip 段（TUN 默认网关 IP 也取自此值）。**WSL 内自建 TUN（tun2socks）要避开 `198.18.x`**，否则和宿主 fake-ip / TUN 网关撞——见 [wsl.md](wsl.md#方案-bwsl-内自建-tun-透明代理tun2socks)「方案 B：WSL 内自建 TUN 透明代理」。
 
 > **注·对 agent 工具的副作用**：fake-ip 会让某些**自己解析 DNS + 做 SSRF 判黑**的 agent 工具误伤——典型是 GitHub Copilot CLI 的 `web_fetch`：它抓任何域名都先解析成 `198.18.x`，而这段属 RFC 保留段、被判为"blocked address"直接拒（换 `redir-host` 就没事）。绕过要改源码（定点放行 `198.18.0.0/15`），机制与补丁思路见 `harness` skill 的 `web_fetch` SSRF 章节。
 
@@ -580,7 +580,7 @@ rules:
 
 这些端口只是**常见**探测端口、不是“所有 WebRTC 端口”。先精准拒这几个；若 `/connections` 里还看到新的 UDP STUN/TURN 出口，再按日志补规则。若你需要 WebRTC 能用（如开会），则改成把这些 UDP 指向代理 group 而不是 REJECT。
 
-> **关键前提：REJECT 只在流量进了 mihomo 时才拦得住。** 开了 TUN，浏览器的 STUN UDP 被透明接管进 mihomo，上面的 REJECT 才生效；**只用 mixed-port（HTTP/SOCKS 代理）、没开 TUN 时，浏览器默认直接发 STUN 的 UDP、根本不经过 mihomo**，这些 REJECT 形同虚设、WebRTC 照样泄漏真实 IP（实测见 §10.4）。no-TUN 场景只能靠浏览器侧堵：Chromium 加 `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`，Firefox 设 `media.peerconnection.ice.proxy_only=true`（或干脆 `media.peerconnection.enabled=false` 关掉 WebRTC）。
+> **关键前提：REJECT 只在流量进了 mihomo 时才拦得住。** 开了 TUN，浏览器的 STUN UDP 被透明接管进 mihomo，上面的 REJECT 才生效；**只用 mixed-port（HTTP/SOCKS 代理）、没开 TUN 时，浏览器默认直接发 STUN 的 UDP、根本不经过 mihomo**，这些 REJECT 形同虚设、WebRTC 照样泄漏真实 IP（实测见 [§10.4](#104-用无头浏览器实测-webrtc-泄漏)）。no-TUN 场景只能靠浏览器侧堵：Chromium 加 `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`，Firefox 设 `media.peerconnection.ice.proxy_only=true`（或干脆 `media.peerconnection.enabled=false` 关掉 WebRTC）。
 
 ### 10.3 用运行态连接验证
 
@@ -618,11 +618,11 @@ await pc.setLocalDescription(await pc.createOffer())   // 等几秒收集完
 > | Camoufox（反检测）+ proxy | mixed-port、TUN 关 | **代理出口 IP（spoof）** | 不漏 |
 > | Camoufox | TUN 开 | 空 | 不漏 |
 >
-> 坐实 §10.2：no-TUN 下 mihomo 的 UDP-REJECT 拦不到浏览器 STUN（那条 UDP 压根不进 mihomo）。防泄漏三条路任选其一：① **TUN** 网络层兜底；② **浏览器策略**（Chromium flag / Firefox `media.peerconnection.ice.proxy_only`）；③ **反检测浏览器**（camoufox 默认把 WebRTC 出口 spoof 成代理 IP，连 flag 都不用——这正是 browser-use 之类用 camoufox 做 stealth 的原因）。OS 防火墙禁非代理 UDP 也算。**TUN 不是唯一解。**
+> 坐实 [§10.2](#102-处理让-stun-的-udp-别走真实出口)：no-TUN 下 mihomo 的 UDP-REJECT 拦不到浏览器 STUN（那条 UDP 压根不进 mihomo）。防泄漏三条路任选其一：① **TUN** 网络层兜底；② **浏览器策略**（Chromium flag / Firefox `media.peerconnection.ice.proxy_only`）；③ **反检测浏览器**（camoufox 默认把 WebRTC 出口 spoof 成代理 IP，连 flag 都不用——这正是 browser-use 之类用 camoufox 做 stealth 的原因）。OS 防火墙禁非代理 UDP 也算。**TUN 不是唯一解。**
 
 也可经代理**直接访问 `browserleaks.com/webrtc` 页面交叉验证**：默认 Chromium + no-TUN 下，该页 "Public IP Address" 显示的就是 srflx 那个真实公网 IP，并直接标 `WebRTC IP doesn't match your Remote IP` 判为漏——与上面自写 STUN 探针结论一致。
 
-**顺带分清 DNS 与 WebRTC（常被一起问"是不是都得开 TUN"）**：DNS 漏不漏，看「app 有没有把解析交给代理」——HTTP CONNECT / SOCKS5h 把**域名**发给代理、远端解析，乖乖走代理的 app（如浏览器）**没 TUN 也不漏**（§9 那次 mixed-port 实测就是零 ISP 解析器）；`dns-hijack`（TUN 功能）只是为了兜住**不走代理、自己硬解 DNS** 的程序。WebRTC 正相反：它为 STUN 自开**独立 UDP**、与代理那条连接无关，HTTP/SOCKS 代理搬不动，所以才必须 TUN 或浏览器策略。一句话——**域名解析是建连的一部分、代理协议自带；WebRTC 的 UDP 是另起炉灶、代理管不着**。
+**顺带分清 DNS 与 WebRTC（常被一起问"是不是都得开 TUN"）**：DNS 漏不漏，看「app 有没有把解析交给代理」——HTTP CONNECT / SOCKS5h 把**域名**发给代理、远端解析，乖乖走代理的 app（如浏览器）**没 TUN 也不漏**（[§9](#9-dns-泄漏原理劫持与-enhanced-mode) 那次 mixed-port 实测就是零 ISP 解析器）；`dns-hijack`（TUN 功能）只是为了兜住**不走代理、自己硬解 DNS** 的程序。WebRTC 正相反：它为 STUN 自开**独立 UDP**、与代理那条连接无关，HTTP/SOCKS 代理搬不动，所以才必须 TUN 或浏览器策略。一句话——**域名解析是建连的一部分、代理协议自带；WebRTC 的 UDP 是另起炉灶、代理管不着**。
 
 ---
 

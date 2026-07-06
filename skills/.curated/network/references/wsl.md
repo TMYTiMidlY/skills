@@ -69,7 +69,7 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 ## WSL NAT 下出站走 Mihomo
 
-> 本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。**内核侧**：DNS 模式（fake-ip / redir-host / normal）见 [mihomo.md](mihomo.md) §9、TUN 路由规则（IP-CIDR / route-exclude）见 §7、REST 控制见 §6、节点 / 协议选型见 §3·§4。
+> 本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。**内核侧**：DNS 模式（fake-ip / redir-host / normal）见 [mihomo.md §9](mihomo.md#9-dns-泄漏原理劫持与-enhanced-mode)、TUN 路由规则（IP-CIDR / route-exclude）见 [§7](mihomo.md#7-tun-路由的边界)、REST 控制见 [§6](mihomo.md#6-运行态控制rest-api-与-web-面板)、节点 / 协议选型见 [§3](mihomo.md#3-流量链路入口规则与节点组)·[§4](mihomo.md#4-协议性能与客户端配置)。
 
 在无法使用 WSL Mirror / mirrored networking、必须继续使用 WSL NAT 时，不要假设 Windows 宿主能走 Mihomo TUN 就等于 WSL 裸 TCP 也会被接管。更稳的做法是：WSL 内的 HTTP 类工具显式走 Windows 宿主 `mixed-port`，SSH 等不读代理环境变量的工具单独配置 `ProxyCommand`。
 
@@ -80,7 +80,7 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 - `fake-ip`：WSL 拿到 `198.18.x` 占位 IP——宿主 TUN 内部才有意义的地址，WSL 侧没有对应网卡 / 路由，裸连无人应答。
 - `redir-host` / `normal`：WSL 拿到**真实 IP**，但裸流量同样不经 mihomo，需要代理才通的目标照样到不了。
 
-别凭“是否 198.18.x”判断，也别一律归到“fake-ip 映射不稳”——两种模式殊途同归，都是 WSL 出站没走宿主代理，不是远端服务故障。DNS 模式取值见 [mihomo.md](mihomo.md) §9。
+别凭“是否 198.18.x”判断，也别一律归到“fake-ip 映射不稳”——两种模式殊途同归，都是 WSL 出站没走宿主代理，不是远端服务故障。DNS 模式取值见 [mihomo.md §9](mihomo.md#9-dns-泄漏原理劫持与-enhanced-mode)。
 
 快速判断：
 
@@ -160,7 +160,7 @@ ip addr add 198.19.0.1/24 dev tun0; ip link set tun0 up
 ip route replace default dev tun0                                   # 默认路由改走tun → 全流量透明进mihomo
 ```
 
-> **TUN 设备地址得自己 `ip addr add`（tun2socks 不给默认值）。** 官方 Examples 示例用的是 `198.18.0.1/15`——整个 RFC2544 基准段（`198.18.0.0/15`，含 `198.18.x` + `198.19.x`），选它是因为这段非真实互联网、不会撞公网目标。**本文故意偏离、改用 `198.19.0.1/24`**：官方那个 `/15` 把 `198.18.x` 也纳进来，而本机宿主已占用 `198.18.x`——mihomo 默认 `fake-ip-range: 198.18.0.1/16`（只含 198.18.x，定义见 [mihomo.md](mihomo.md) §9.4）+ 官方 wiki 注明「tun 默认 IPv4 地址也取自此值」，即宿主 fake-ip 段与其 TUN 网关都落在 `198.18.x`，直接套官方 `/15` 会和宿主撞。改用 `198.19.0.1/24` 既仍在安全的 RFC2544 段内、又避开 `198.18.x`，也不撞 mesh `10.x` / WSL NAT `172.28.x` / docker `172.17–172.31`。它是**合理选择、非唯一解**（任何不与 fake-ip / mesh / docker 冲突的保留段都行）；`198.19` 在默认 `/16` 下**不是** fake-ip，⚠️ 仅当你手动把 `fake-ip-range` 改成 `/15`（才会含 198.19）时需另换。
+> **TUN 设备地址得自己 `ip addr add`（tun2socks 不给默认值）。** 官方 Examples 示例用的是 `198.18.0.1/15`——整个 RFC2544 基准段（`198.18.0.0/15`，含 `198.18.x` + `198.19.x`），选它是因为这段非真实互联网、不会撞公网目标。**本文故意偏离、改用 `198.19.0.1/24`**：官方那个 `/15` 把 `198.18.x` 也纳进来，而本机宿主已占用 `198.18.x`——mihomo 默认 `fake-ip-range: 198.18.0.1/16`（只含 198.18.x，定义见 [mihomo.md §9.4](mihomo.md#94-推荐配置)）+ 官方 wiki 注明「tun 默认 IPv4 地址也取自此值」，即宿主 fake-ip 段与其 TUN 网关都落在 `198.18.x`，直接套官方 `/15` 会和宿主撞。改用 `198.19.0.1/24` 既仍在安全的 RFC2544 段内、又避开 `198.18.x`，也不撞 mesh `10.x` / WSL NAT `172.28.x` / docker `172.17–172.31`。它是**合理选择、非唯一解**（任何不与 fake-ip / mesh / docker 冲突的保留段都行）；`198.19` 在默认 `/16` 下**不是** fake-ip，⚠️ 仅当你手动把 `fake-ip-range` 改成 `/15`（才会含 198.19）时需另换。
 
 到宿主网关 `$GW` 本身仍走 eth0 的 `/20` 子网路由（比 `default` 更具体、不会被吞进 tun），加上 `-interface eth0` 绑定出站，两重保证 socks 连接不绕回 tun 死循环。首测务必包一层 `trap 'ip route del default dev tun0; ip link del tun0' EXIT INT TERM` 自动回滚——配错也不会把 WSL 网络卡死。验证：不带任何 `*_proxy` 跑 `curl https://www.google.com/generate_204` 得 `204` 即生效。
 
@@ -185,7 +185,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now tun2socks
 
 - 默认路由变成 `default dev tun0`（**无 `via`**）→ 任何 `ip route show default | awk '{print $3}'` 取网关的脚本会把 `tun0` 当成网关 IP 而坏（见下面 ssh）。健壮写法用 `ip route get 1.1.1.1`。
 - **mesh（`10.144.x` / `10.100.x`）出站不受影响**：包被 tun0 吞进 mihomo 后，靠宿主 mihomo 的 `IP-CIDR,10.x,DIRECT` 规则兜底仍直连可达（实测通）。想让 mesh 彻底不经 mihomo，加排除路由 `ip route add 10.0.0.0/8 via $GW dev eth0`。
-- 只治**出站**；入站（mesh → WSL 服务）的 portproxy 一条不少（见下节），要连入站一起免掉只有切 mirrored。
+- 只治**出站**；入站（mesh → WSL 服务）的 portproxy 一条不少（见[下节](#wsl--docker-服务暴露入站portproxy--wslrelay)），要连入站一起免掉只有切 mirrored。
 
 **ssh 在两种方案下的差异**：
 
@@ -195,7 +195,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now tun2socks
 
 ## WSL / Docker 服务暴露（入站：portproxy + wslrelay）
 
-> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。反方向的 WSL 出站走 Mihomo 见上面的 [WSL NAT 下出站走 Mihomo](#wsl-nat-下出站走-mihomo)。注意 **WSL 出站访问 mesh（`10.144.x`）本来就通、无需 portproxy**（NAT 下出站全交给宿主，宿主已有 mesh 路由）；portproxy 只解决**入站**（让 mesh / 远端访问 WSL 内服务）。要**少 / 免**逐服务配 portproxy，见下面「少 / 免逐服务 portproxy 的两条路」。
+> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。反方向的 WSL 出站走 Mihomo 见上面的 [WSL NAT 下出站走 Mihomo](#wsl-nat-下出站走-mihomo)。注意 **WSL 出站访问 mesh（`10.144.x`）本来就通、无需 portproxy**（NAT 下出站全交给宿主，宿主已有 mesh 路由）；portproxy 只解决**入站**（让 mesh / 远端访问 WSL 内服务）。要**少 / 免**逐服务配 portproxy，见下面[「少 / 免逐服务 portproxy 的两条路」](#少--免逐服务-portproxy-的两条路a-mirrored--b-单反代兜底)。
 
 ### 少 / 免逐服务 portproxy 的两条路（A mirrored / B 单反代兜底）
 
@@ -258,7 +258,7 @@ netsh interface portproxy show all
 
 - `netsh portproxy` 由 Windows `iphlpsvc` 承载，只是个通用 TCP 转发表，**不知道 WSL 存在**；它需要 connectaddress 那端有人接，正好 `127.0.0.1` 那端是 wslrelay 在 listen。
 - `wslrelay.exe` 是 WSL2 NAT 模式的 localhost forwarding 实现，**只在 Windows host 的 `127.0.0.1` / `[::1]` 上 listen**，不会 listen 任意 host IP（如 EasyTier 的 `<Windows机 mesh IP>`）。
-- `.wslconfig` 里 `hostAddressLoopback=true` 容易让人误以为是“让 host IP 也能 forward 进 WSL”——**不是**。它的方向是反的：让 WSL 进程能通过 host IP 访问 host loopback service。见下面实测。
+- `.wslconfig` 里 `hostAddressLoopback=true` 容易让人误以为是“让 host IP 也能 forward 进 WSL”——**不是**。它的方向是反的：让 WSL 进程能通过 host IP 访问 host loopback service。见下面[实测](#实测删掉-portproxy靠-wslrelay-单独扛行不行结论不行)。
 
 #### 实测：删掉 portproxy、靠 wslrelay 单独扛行不行（结论：不行）
 
