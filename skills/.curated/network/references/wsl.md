@@ -69,7 +69,7 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 ## WSL NAT 下出站走 Mihomo
 
-> 本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。**内核侧**：DNS 模式（fake-ip / redir-host / normal）见 [mihomo.md](mihomo.md) §7、TUN 路由规则（IP-CIDR / route-exclude）见 §5、REST / 节点 / 协议选型见 §3·§4。
+> 本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。**内核侧**：DNS 模式（fake-ip / redir-host / normal）见 [mihomo.md](mihomo.md) §9、TUN 路由规则（IP-CIDR / route-exclude）见 §7、REST 控制见 §6、节点 / 协议选型见 §3·§4。
 
 在无法使用 WSL Mirror / mirrored networking、必须继续使用 WSL NAT 时，不要假设 Windows 宿主能走 Mihomo TUN 就等于 WSL 裸 TCP 也会被接管。更稳的做法是：WSL 内的 HTTP 类工具显式走 Windows 宿主 `mixed-port`，SSH 等不读代理环境变量的工具单独配置 `ProxyCommand`。
 
@@ -80,7 +80,7 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 - `fake-ip`：WSL 拿到 `198.18.x` 占位 IP——宿主 TUN 内部才有意义的地址，WSL 侧没有对应网卡 / 路由，裸连无人应答。
 - `redir-host` / `normal`：WSL 拿到**真实 IP**，但裸流量同样不经 mihomo，需要代理才通的目标照样到不了。
 
-别凭“是否 198.18.x”判断，也别一律归到“fake-ip 映射不稳”——两种模式殊途同归，都是 WSL 出站没走宿主代理，不是远端服务故障。DNS 模式取值见 [mihomo.md](mihomo.md) §7。
+别凭“是否 198.18.x”判断，也别一律归到“fake-ip 映射不稳”——两种模式殊途同归，都是 WSL 出站没走宿主代理，不是远端服务故障。DNS 模式取值见 [mihomo.md](mihomo.md) §9。
 
 快速判断：
 
@@ -106,6 +106,8 @@ Test-NetConnection <target-ip> -Port <port>
 ```
 
 如果 Windows 成功、WSL 直连超时、WSL 走 `<wsl-gateway-ip>:7890` 成功，说明问题在 **WSL NAT 裸流量进入 Windows TUN 的透明接管路径**，不是远端目标或节点不可用。
+
+### 方案 A：逐工具显式设代理（`*_proxy` 环境变量 + ssh `ProxyCommand`）
 
 `<wsl-gateway-ip>` 通常是 WSL 默认路由的网关，例如：
 
@@ -139,7 +141,7 @@ Host <name>
   ProxyCommand nc -x <wsl-gateway-ip>:7890 -X 5 %h %p
 ```
 
-### WSL 内自建 TUN 透明代理（tun2socks）
+### 方案 B：WSL 内自建 TUN 透明代理（tun2socks）
 
 上面是**方案 A**：逐工具显式指代理（`*_proxy` 环境变量 + ssh `ProxyCommand`）。**方案 B** 用 [`xjasonlyu/tun2socks`](https://github.com/xjasonlyu/tun2socks)（开源 Go 单文件）在 WSL 内建一块 TUN 网卡，把**全部**出站裸流量透明导进宿主 mihomo，免逐工具设代理。它**只补“透明网卡”这一层**，分流 / 选节点仍交给宿主已有的 mihomo——所以 WSL 内**不必再开第二个完整 mihomo**（除非要 WSL 独立订阅 / 规则）。
 
@@ -158,7 +160,7 @@ ip addr add 198.19.0.1/24 dev tun0; ip link set tun0 up
 ip route replace default dev tun0                                   # 默认路由改走tun → 全流量透明进mihomo
 ```
 
-> **TUN 设备地址得自己 `ip addr add`（tun2socks 不给默认值）。** 官方 Examples 示例用的是 `198.18.0.1/15`——整个 RFC2544 基准段（`198.18.0.0/15`，含 `198.18.x` + `198.19.x`），选它是因为这段非真实互联网、不会撞公网目标。**本文故意偏离、改用 `198.19.0.1/24`**：官方那个 `/15` 把 `198.18.x` 也纳进来，而本机宿主已占用 `198.18.x`——mihomo 默认 `fake-ip-range: 198.18.0.1/16`（只含 198.18.x，定义见 [mihomo.md](mihomo.md) §7.4）+ 官方 wiki 注明「tun 默认 IPv4 地址也取自此值」，即宿主 fake-ip 段与其 TUN 网关都落在 `198.18.x`，直接套官方 `/15` 会和宿主撞。改用 `198.19.0.1/24` 既仍在安全的 RFC2544 段内、又避开 `198.18.x`，也不撞 mesh `10.x` / WSL NAT `172.28.x` / docker `172.17–172.31`。它是**合理选择、非唯一解**（任何不与 fake-ip / mesh / docker 冲突的保留段都行）；`198.19` 在默认 `/16` 下**不是** fake-ip，⚠️ 仅当你手动把 `fake-ip-range` 改成 `/15`（才会含 198.19）时需另换。
+> **TUN 设备地址得自己 `ip addr add`（tun2socks 不给默认值）。** 官方 Examples 示例用的是 `198.18.0.1/15`——整个 RFC2544 基准段（`198.18.0.0/15`，含 `198.18.x` + `198.19.x`），选它是因为这段非真实互联网、不会撞公网目标。**本文故意偏离、改用 `198.19.0.1/24`**：官方那个 `/15` 把 `198.18.x` 也纳进来，而本机宿主已占用 `198.18.x`——mihomo 默认 `fake-ip-range: 198.18.0.1/16`（只含 198.18.x，定义见 [mihomo.md](mihomo.md) §9.4）+ 官方 wiki 注明「tun 默认 IPv4 地址也取自此值」，即宿主 fake-ip 段与其 TUN 网关都落在 `198.18.x`，直接套官方 `/15` 会和宿主撞。改用 `198.19.0.1/24` 既仍在安全的 RFC2544 段内、又避开 `198.18.x`，也不撞 mesh `10.x` / WSL NAT `172.28.x` / docker `172.17–172.31`。它是**合理选择、非唯一解**（任何不与 fake-ip / mesh / docker 冲突的保留段都行）；`198.19` 在默认 `/16` 下**不是** fake-ip，⚠️ 仅当你手动把 `fake-ip-range` 改成 `/15`（才会含 198.19）时需另换。
 
 到宿主网关 `$GW` 本身仍走 eth0 的 `/20` 子网路由（比 `default` 更具体、不会被吞进 tun），加上 `-interface eth0` 绑定出站，两重保证 socks 连接不绕回 tun 死循环。首测务必包一层 `trap 'ip route del default dev tun0; ip link del tun0' EXIT INT TERM` 自动回滚——配错也不会把 WSL 网络卡死。验证：不带任何 `*_proxy` 跑 `curl https://www.google.com/generate_204` 得 `204` 即生效。
 
@@ -312,7 +314,7 @@ curl.exe --noproxy * -v --max-time 5 "http://[::1]:<port>/"
 4. **切 `networkingMode=mirrored`**（Win11 22H2+）：彻底没 wslrelay。代价是重排所有 portproxy + 评估对 EasyTier wintun 路由优先级的影响。
 5. **WSL 内补 socat v4 relay**：`socat TCP4-LISTEN:<port>,reuseaddr,fork,bind=0.0.0.0 TCP:[::1]:<port>`，让 wslrelay 看到的是纯 v4 listener。多一跳进程，仅作 fallback。
 
-#### 全双工大流量下 wslrelay 死锁（#10688）
+### 全双工大流量下 wslrelay 死锁（#10688）
 
 [microsoft/WSL#10688](https://github.com/microsoft/WSL/issues/10688)（open，与上面 #14154 不同）：WSL 本地转发（Linux 侧转发进程 + `wslrelay.exe`）用**单个阻塞线程同时拷贝一条连接的两个方向**（半双工逻辑）；双向同时大流量时两端缓冲填满、relay 卡在 `write()` 上不再读另一边 → 永久死锁。诊断特征（`ss -tn`，卡死的 socket 对收发队列堆住、流量永久冻结）：
 
@@ -339,7 +341,7 @@ ESTAB  3176712  0          127.0.0.1:<relay>      127.0.0.1:<svc>
 
 历史背景与 issue：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) (open)、[#10688](https://github.com/microsoft/WSL/issues/10688) (open，wslrelay 全双工 hang)；类似 v4/v6 困扰在 WSL repo 里有十几个独立 issue，labels 多数 `network`。
 
-#### EasyTier + 远端 Caddy 的入站稳定方案
+### EasyTier + 远端 Caddy 的入站稳定方案
 
 WSL NAT + Windows EasyTier + 远端 Caddy 的简单稳定方案：
 
