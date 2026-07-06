@@ -1,13 +1,16 @@
 [Unit]
 Description=tun2socks transparent proxy (WSL outbound -> Windows host mihomo)
-After=network.target
-Wants=network.target
+Documentation=https://github.com/xjasonlyu/tun2socks
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStartPre=/usr/local/bin/tun2socks-wsl.sh setup
-ExecStart=/usr/local/bin/tun2socks-wsl.sh run
-ExecStopPost=/usr/local/bin/tun2socks-wsl.sh teardown
+# 取宿主网关(default 的 via IP，缓存 /run)+ 建 tun0 + 私有/mesh 段直连排除 + 默认路由改 tun0 + 跑 tun2socks
+# （tun2socks 连宿主 7890 命中 172.16/12 排除 + eth0 子网 on-link + -interface eth0，不绕回 tun）
+ExecStart=/bin/sh -c 'GW=$(/usr/sbin/ip route show default | grep -oE "via [0-9.]+" | head -1 | cut -d" " -f2); [ -n "$$GW" ] && echo "$$GW" > /run/tun2socks-gw || GW=$(cat /run/tun2socks-gw); /usr/sbin/ip tuntap add mode tun dev tun0 2>/dev/null; /usr/sbin/ip addr replace 198.19.0.1/24 dev tun0; /usr/sbin/ip link set tun0 up; for c in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16; do /usr/sbin/ip route replace "$$c" via "$$GW" dev eth0; done; /usr/sbin/ip route replace default dev tun0; exec /usr/local/bin/tun2socks -device tun0 -proxy "socks5://$$GW:7890" -interface eth0'
+# 停时还原默认路由 + 删 tun0（网关读 /run 缓存）
+ExecStopPost=/bin/sh -c 'GW=$(cat /run/tun2socks-gw 2>/dev/null); /usr/sbin/ip route del default dev tun0 2>/dev/null; [ -n "$$GW" ] && /usr/sbin/ip route replace default via "$$GW" dev eth0 2>/dev/null; /usr/sbin/ip link del tun0 2>/dev/null; true'
 Restart=on-failure
 RestartSec=3
 

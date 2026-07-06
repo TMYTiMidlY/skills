@@ -160,17 +160,16 @@ ip route replace default dev tun0                                   # 默认路�
 
 到宿主网关 `$GW` 本身仍走 eth0 的 `/20` 子网路由（比 `default` 更具体、不会被吞进 tun），加上 `-interface eth0` 绑定出站，两重保证 socks 连接不绕回 tun 死循环。首测务必包一层 `trap 'ip route del default dev tun0; ip link del tun0' EXIT INT TERM` 自动回滚——配错也不会把 WSL 网络卡死。验证：不带任何 `*_proxy` 跑 `curl https://www.google.com/generate_204` 得 `204` 即生效。
 
-**转 systemd 持久化**：unit `../assets/tun2socks.service` 随 skill 附带，其 `ExecStartPre/ExecStart/ExecStopPost` 分别调包装脚本 `/usr/local/bin/tun2socks-wsl.sh` 的 `setup`/`run`/`teardown`。**包装脚本不随 skill 发布，按下述逻辑自行实现**（留给 agent 灵活性）：
+**转 systemd 持久化**：unit `../assets/tun2socks.service` 随 skill 附带，**自包含**——`ExecStart`/`ExecStopPost` 直接内联 `/bin/sh -c '…'`，不依赖外部脚本（脚本不入 skill）。它做的事：
 
-- `setup`：等 eth0 拿到 IP（抗 boot / `wsl --shutdown` 竞态）→ 建 `tun0`、加地址 `198.19.0.1/24`、`up` → 给私有/组网段加排除路由 `10.0.0.0/8`+`172.16.0.0/12`+`192.168.0.0/16`（`via <网关> dev eth0`，含 mesh、只代理公网）→ `ip route replace default dev tun0`。
-- `run`：`exec tun2socks -device tun0 -proxy socks5://<网关>:7890 -interface eth0`。
-- `teardown`：删默认/排除路由、还原 `default via <网关> dev eth0`、`ip link del tun0`。
-- `<网关>` 每次动态推导：`ip route show default` 有 `via … dev eth0` 就用，否则由 eth0 子网 `network+1` 兜底（抗网关漂移）。`-interface eth0` + 网关自身命中 eth0 子网路由，双重防绕回 tun 死循环。
+- `ExecStart`（一条 sh）：从 `ip route show default` 取宿主网关（`via` IP，缓存到 `/run/tun2socks-gw`）→ 建 `tun0` + 地址 `198.19.0.1/24` + up → 私有/组网段 `10.0.0.0/8`+`172.16.0.0/12`+`192.168.0.0/16` 加 `via <网关> dev eth0` 排除路由（含 mesh、只代理公网）→ 默认路由改 `tun0` → `exec tun2socks -device tun0 -proxy socks5://<网关>:7890 -interface eth0`。
+- `ExecStopPost`（一条 sh）：读 `/run` 缓存网关 → 删默认路由、还原 `default via <网关> dev eth0`、删 `tun0`。
+- 网关**动态取、不写死**：`ip route show default` 的 `via` IP；若 default 已是 tun0（重启态）则读 `/run` 缓存兜底。`-interface eth0` + 网关命中 eth0 子网 on-link，双重防绕回 tun。systemd 里 shell 变量写 `$$VAR`（`$$`→`$`），`$(…)` 命令替换保持单 `$`。
 
-安装（`<skill>` = 本 skill 目录，如 `~/.agents/skills/network`；包装脚本按上述逻辑写好放到 `/usr/local/bin/tun2socks-wsl.sh`）：
+安装（`<skill>` = 本 skill 目录，如 `~/.agents/skills/network`；只需二进制 + unit，无脚本）：
 
 ```bash
-sudo install -m0755 ~/.local/bin/tun2socks           /usr/local/bin/tun2socks
+sudo install -m0755 ~/.local/bin/tun2socks           /usr/local/bin/tun2socks   # 官方推荐位置即 /usr/local/bin
 sudo install -m0644 <skill>/assets/tun2socks.service /etc/systemd/system/tun2socks.service
 sudo systemctl daemon-reload && sudo systemctl enable --now tun2socks
 # 验证 systemctl status tun2socks；ip route show default(=tun0)；curl -so/dev/null -w '%{http_code}' https://www.google.com/generate_204(=204)
