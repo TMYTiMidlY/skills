@@ -1,6 +1,6 @@
 ---
 name: harness
-description: Agent harness / runtime 架构知识库。调试或设计 Copilot CLI / Copilot SDK / Claude Code / Codex 等 coding agent 的 runtime，处理 MCP / 工具注入、会话存储与导出、配置发现（指令 / hooks / skills），或在 CLI 子进程 / SDK client / extension host / JSON-RPC / HTTP 等集成形态间取舍、用代码编排 coding agent 时使用。
+description: Agent harness / runtime 架构知识库。调试或设计 Copilot CLI / Copilot SDK / Claude Code / Codex 等 coding agent 的 runtime，处理 MCP / 工具注入、会话存储与导出、配置发现（指令 / hooks / skills）与 Agent Skills 官方目录规范（`assets/` 等），或在 CLI 子进程 / SDK client / extension host / JSON-RPC / HTTP 等集成形态间取舍、用代码编排 coding agent 时使用。
 ---
 
 # Harness
@@ -27,6 +27,7 @@ agent runtime / harness（运行壳）相关问题看这里：一个 coding agen
 - [Copilot CLI 运行时笔记](references/copilot-cli.md)：进程模型、bash 工具环境变量、权限、终端、Git 认证、重试 patch、模型/思考档默认档来源与 hack（改 `bfe` 让每个模型默认用最高档）、运行中插话，以及会话存储与 `/share html` 导出。
 - [Copilot CLI 配置发现](references/copilot-discovery.md)：walk-up（向上查找）机制、Custom Instructions（指令文件）、Hooks、MCP 配置、Skills 发现。
 - [Coding-agent SDK：Copilot / Claude / Codex 横向对照](references/sdk.md)：agent SDK vs API SDK 区分、CLI 子进程 / SDK client / extension host / JSON-RPC / HTTP 取舍、三家官方 agent SDK 与官方 API SDK 各自的语言覆盖 / 开放度 / API 形状 / 内联文档源码，`CopilotClient`、`RuntimeConnection`、`joinSession()`、client-vs-extension 区分，以及把 agent SDK 包成多用户 web 服务的服务端集成模式。
+- [Agent Skills 官方结构与目录规范](references/agent-skills.md)：可移植 skill bundle 格式——`SKILL.md`（唯一硬要求）+ `scripts/`（执行、只回结果）/ `references/`（按需读进上下文）/ `assets/`（静态资源，不整体进上下文）的分野，及「是 `assets/` 复数、不是 `asset/`」等约定与边界。
 
 ## Claude Code / Codex 横向对照
 
