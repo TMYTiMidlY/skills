@@ -73,14 +73,14 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 在无法使用 WSL Mirror / mirrored networking、必须继续使用 WSL NAT 时，不要假设 Windows 宿主能走 Mihomo TUN 就等于 WSL 裸 TCP 也会被稳定接管。更稳的做法是：WSL 内的 HTTP 类工具显式走 Windows 宿主 `mixed-port`，SSH 等不读代理环境变量的工具单独配置 `ProxyCommand`。
 
-典型现象：
+**现象**：Windows PowerShell `Test-NetConnection <ip> -Port <port>` 成功（`InterfaceAlias` 显示 `Meta`），但 WSL 里 `curl` / `ssh` / `nc` 对同一目标超时，卡在 TCP connect 阶段、还没到 TLS/SSH 握手。
 
-- Windows PowerShell `Test-NetConnection <ip> -Port <port>` 成功，`InterfaceAlias` 显示 `Meta`。
-- WSL 里 `curl`、`ssh`、`nc` 对同一目标超时，卡在 TCP connect 阶段，还没到 TLS/SSH 握手。
-- 根因与 DNS `enhanced-mode` 无关：**NAT 模式下** WSL 是独立网络栈，`ip route` 里没有宿主 mihomo 的 TUN 路由（无 `0.0.0.0/2 via 198.18.x`），裸流量不被透明接管，只按默认路由丢给 NAT 网关（mirrored 模式下 WSL 共享宿主栈，宿主 TUN 才能直接接管）。三种模式症状都是超时，差别只在“直连为什么失败”的最后一跳：
-  - `fake-ip`：WSL 解析得到 `198.18.x.x` 占位 IP，只在宿主 TUN 内有意义，WSL 裸连它无人应答。
-  - `redir-host` / `normal`：WSL 解析得到**真实 IP**，裸连真实（常被墙的）IP 同样超时。
-- 别凭“是否 198.18.x”判断，也别一律归到“fake-ip 映射不稳”——两种模式殊途同归，都是 WSL 出站没走宿主代理，不是远端服务故障。DNS 模式取值见 [mihomo.md](mihomo.md) §7。
+**根因**（与 DNS `enhanced-mode` 无关）：**NAT 模式下** WSL 是独立网络栈，`ip route` 里没有宿主 mihomo 的 TUN 路由（无 `0.0.0.0/2 via 198.18.x`），出站裸流量不被宿主 TUN 接管、只按默认路由丢给 NAT 网关，等于**没走宿主代理**（mirrored 模式下 WSL 共享宿主栈，宿主 TUN 才能直接接管）。因此无论哪种 DNS 模式，对被墙目标都不可靠：
+
+- `fake-ip`：WSL 拿到 `198.18.x` 占位 IP，只在宿主 TUN 内有意义，WSL 裸连无人应答。
+- `redir-host` / `normal`：WSL 拿到**真实 IP**，但没走代理，裸连被墙 IP 一样不保证可达。
+
+别凭“是否 198.18.x”判断，也别一律归到“fake-ip 映射不稳”——两种模式殊途同归，都是 WSL 出站没走宿主代理，不是远端服务故障。DNS 模式取值见 [mihomo.md](mihomo.md) §7。
 
 快速判断：
 
@@ -156,9 +156,27 @@ ip addr add 198.19.0.1/24 dev tun0; ip link set tun0 up
 ip route replace default dev tun0                                   # 默认路由改走tun → 全流量透明进mihomo
 ```
 
-> TUN 设备地址 `198.19.0.1/24` 是特意选的：落在 RFC2544 基准段 `198.18.0.0/15`（不撞真实互联网，也不撞 mesh `10.x` / WSL NAT `172.28.x` / docker `172.17–172.31`），并**避开宿主占用的 `198.18.x`**——mihomo 默认 `fake-ip-range: 198.18.0.1/16` 只含 198.18.x，官方 wiki 注明「tun 默认 IPv4 地址也取自此值」，所以宿主 fake-ip 段与宿主 TUN 网关都在 198.18.x。因此 `198.19` 在默认 `/16` 下**不是** fake-ip；⚠️ 仅当你手动把 `fake-ip-range` 改成 `/15`（才会含 198.19）时需另换非路由段。
+> **TUN 设备地址得自己 `ip addr add`（tun2socks 不给默认值）。** 官方 Examples 示例用的是 `198.18.0.1/15`——整个 RFC2544 基准段（`198.18.0.0/15`，含 `198.18.x` + `198.19.x`），选它是因为这段非真实互联网、不会撞公网目标。**本文故意偏离、改用 `198.19.0.1/24`**：官方那个 `/15` 把 `198.18.x` 也纳进来，而本机宿主已占用 `198.18.x`——mihomo 默认 `fake-ip-range: 198.18.0.1/16`（只含 198.18.x）+ 官方 wiki 注明「tun 默认 IPv4 地址也取自此值」，即宿主 fake-ip 段与其 TUN 网关都落在 `198.18.x`，直接套官方 `/15` 会和宿主撞。改用 `198.19.0.1/24` 既仍在安全的 RFC2544 段内、又避开 `198.18.x`，也不撞 mesh `10.x` / WSL NAT `172.28.x` / docker `172.17–172.31`。它是**合理选择、非唯一解**（任何不与 fake-ip / mesh / docker 冲突的保留段都行）；`198.19` 在默认 `/16` 下**不是** fake-ip，⚠️ 仅当你手动把 `fake-ip-range` 改成 `/15`（才会含 198.19）时需另换。
 
-到宿主网关 `$GW` 本身仍走 eth0 的 `/20` 子网路由（比 `default` 更具体、不会被吞进 tun），加上 `-interface eth0` 绑定出站，两重保证 socks 连接不绕回 tun 死循环。首测务必包一层 `trap 'ip route del default dev tun0; ip link del tun0' EXIT INT TERM` 自动回滚——配错也不会把 WSL 网络卡死。验证：不带任何 `*_proxy` 跑 `curl https://www.google.com/generate_204` 得 `204` 即生效。稳定后转 systemd 服务即持久。
+到宿主网关 `$GW` 本身仍走 eth0 的 `/20` 子网路由（比 `default` 更具体、不会被吞进 tun），加上 `-interface eth0` 绑定出站，两重保证 socks 连接不绕回 tun 死循环。首测务必包一层 `trap 'ip route del default dev tun0; ip link del tun0' EXIT INT TERM` 自动回滚——配错也不会把 WSL 网络卡死。验证：不带任何 `*_proxy` 跑 `curl https://www.google.com/generate_204` 得 `204` 即生效。
+
+**转 systemd 持久化**：unit `../assets/tun2socks.service` 随 skill 附带，其 `ExecStartPre/ExecStart/ExecStopPost` 分别调包装脚本 `/usr/local/bin/tun2socks-wsl.sh` 的 `setup`/`run`/`teardown`。**包装脚本不随 skill 发布，按下述逻辑自行实现**（留给 agent 灵活性）：
+
+- `setup`：等 eth0 拿到 IP（抗 boot / `wsl --shutdown` 竞态）→ 建 `tun0`、加地址 `198.19.0.1/24`、`up` → 给私有/组网段加排除路由 `10.0.0.0/8`+`172.16.0.0/12`+`192.168.0.0/16`（`via <网关> dev eth0`，含 mesh、只代理公网）→ `ip route replace default dev tun0`。
+- `run`：`exec tun2socks -device tun0 -proxy socks5://<网关>:7890 -interface eth0`。
+- `teardown`：删默认/排除路由、还原 `default via <网关> dev eth0`、`ip link del tun0`。
+- `<网关>` 每次动态推导：`ip route show default` 有 `via … dev eth0` 就用，否则由 eth0 子网 `network+1` 兜底（抗网关漂移）。`-interface eth0` + 网关自身命中 eth0 子网路由，双重防绕回 tun 死循环。
+
+安装（`<skill>` = 本 skill 目录，如 `~/.agents/skills/network`；包装脚本按上述逻辑写好放到 `/usr/local/bin/tun2socks-wsl.sh`）：
+
+```bash
+sudo install -m0755 ~/.local/bin/tun2socks           /usr/local/bin/tun2socks
+sudo install -m0644 <skill>/assets/tun2socks.service /etc/systemd/system/tun2socks.service
+sudo systemctl daemon-reload && sudo systemctl enable --now tun2socks
+# 验证 systemctl status tun2socks；ip route show default(=tun0)；curl -so/dev/null -w '%{http_code}' https://www.google.com/generate_204(=204)
+```
+
+⚠️ 装前先停掉手动/测试脚本残留的 tun2socks——两个实例抢同一 tun0，且测试脚本退出时 `trap` 会 `ip link del tun0` 打断服务。
 
 **副作用 / 坑**：
 

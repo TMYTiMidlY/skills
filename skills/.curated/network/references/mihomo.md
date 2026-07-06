@@ -432,6 +432,12 @@ func (h *ListenerHandler) ShouldHijackDns(targetAddr netip.AddrPort) bool {
 
 一句话：**泄漏由 A（hijack）决定**（查询进不进 mihomo），**真假 IP 与分流准度由 B（enhanced-mode）决定**——两者无关。把“返回 198.18.x”算在 hijack 头上是常见误解：返回假 IP 是 fake-ip 干的，hijack 只负责“把你抓进来”。
 
+**补充维度：enhanced-mode 还决定“真解析在哪发生”，间接影响解析元数据落谁手里。** 实测坐实（同一 `curl` 触发、唯一变量 enhanced-mode，DNS-leak 权威台看到的解析器出口一个在境内、一个在境外）：
+
+- **`redir-host`**：DNS 查询时**本机**用 `nameserver-policy` 立即解析。**未命中 geosite 分类的冷门域名**会 fallback 到默认 `nameserver`——若默认配的是国内 DoH，这类域名的解析就落到**国内 DoH 商**手里。
+- **`fake-ip`**：真解析**推迟到连接时、走代理链路**，冷门境外域名的解析在**境外**完成。
+- 两者都**不暴露本地 ISP 明文解析器**（dns-hijack + DoH 该拦的都拦了）；差别只在“未分类冷门域名的解析交给境内还是境外 DoH”。想让 `redir-host` 也走境外，把域名纳入 `geosite:geolocation-!cn` 或调 `nameserver-policy`。
+
 ### 7.4 推荐配置
 
 防泄漏 + 分流准 + 防污染的一套：
@@ -496,7 +502,7 @@ curl -s "https://223.5.5.5/resolve?name=<域名>&type=A"
 curl --resolve <域名>:443:<IP> https://<域名>/
 ```
 
-> 普通 `dig`/`nslookup`/`getent`/`host` 在开了 `dns-hijack any:53` 的机器上会被劫持、回 `198.18.x`，不是真记录——别拿它们当 DNS 真相。
+> `dns-hijack any:53` 会把普通 `dig`/`nslookup`/`getent`/`host` 的查询都劫进 mihomo——**但回不回假 `198.18.x` 取决于 `enhanced-mode`**：只有 `fake-ip` 才回占位 IP（此时才需要上面两招绕开拿真实记录）；`redir-host`/`normal` 下劫持仍在、回的却是**真实 IP**（本机 redir-host 实测 `www.google.com`→`142.251.x`，`getent` 就是真记录、两招用不着）。所以这两招是 **fake-ip 专属**的排障手段，别默认 hijack 机器一定回 198.18.x。
 
 ## 8. WebRTC 泄漏：原理与处理
 

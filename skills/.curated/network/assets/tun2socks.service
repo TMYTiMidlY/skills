@@ -1,0 +1,15 @@
+[Unit]
+Description=tun2socks transparent proxy (WSL outbound -> Windows host mihomo)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/bin/tun2socks-wsl.sh setup
+ExecStart=/usr/local/bin/tun2socks-wsl.sh run
+ExecStopPost=/usr/local/bin/tun2socks-wsl.sh teardown
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
