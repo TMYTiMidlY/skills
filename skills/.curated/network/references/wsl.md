@@ -71,14 +71,14 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 > Mihomo / Clash 本身的配置、REST API、节点/协议选型、TUN 路由规则见 [mihomo.md](mihomo.md)；本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。
 
-在无法使用 WSL Mirror / mirrored networking、必须继续使用 WSL NAT 时，不要假设 Windows 宿主能走 Mihomo TUN 就等于 WSL 裸 TCP 也会被稳定接管。更稳的做法是：WSL 内的 HTTP 类工具显式走 Windows 宿主 `mixed-port`，SSH 等不读代理环境变量的工具单独配置 `ProxyCommand`。
+在无法使用 WSL Mirror / mirrored networking、必须继续使用 WSL NAT 时，不要假设 Windows 宿主能走 Mihomo TUN 就等于 WSL 裸 TCP 也会被接管。更稳的做法是：WSL 内的 HTTP 类工具显式走 Windows 宿主 `mixed-port`，SSH 等不读代理环境变量的工具单独配置 `ProxyCommand`。
 
 **现象**：Windows PowerShell `Test-NetConnection <ip> -Port <port>` 成功（`InterfaceAlias` 显示 `Meta`），但 WSL 里 `curl` / `ssh` / `nc` 对同一目标超时，卡在 TCP connect 阶段、还没到 TLS/SSH 握手。
 
-**根因**（与 DNS `enhanced-mode` 无关）：**NAT 模式下** WSL 是独立网络栈，`ip route` 里没有宿主 mihomo 的 TUN 路由（无 `0.0.0.0/2 via 198.18.x`），出站裸流量不被宿主 TUN 接管、只按默认路由丢给 NAT 网关，等于**没走宿主代理**（mirrored 模式下 WSL 共享宿主栈，宿主 TUN 才能直接接管）。因此无论哪种 DNS 模式，对被墙目标都不可靠：
+**根因**（与 DNS `enhanced-mode` 无关，也与目标墙不墙无关）：**NAT 模式下** WSL 是独立 VM——`ip addr` 里只有自己的 `eth0`，**根本看不到宿主的 Meta / TUN 网卡**，自然用不了宿主 mihomo 的透明接管（`ip route` 里也没有 `0.0.0.0/2 via 198.18.x`）。出站裸流量只按默认路由丢给 NAT 网关、从宿主物理网卡直出，**全程不经宿主 mihomo**（mirrored 模式共享宿主栈、或 WSL 内自建 tun2socks，才补上这层）。两种 DNS 模式差别只在 WSL 拿到什么地址：
 
-- `fake-ip`：WSL 拿到 `198.18.x` 占位 IP，只在宿主 TUN 内有意义，WSL 裸连无人应答。
-- `redir-host` / `normal`：WSL 拿到**真实 IP**，但没走代理，裸连被墙 IP 一样不保证可达。
+- `fake-ip`：WSL 拿到 `198.18.x` 占位 IP——宿主 TUN 内部才有意义的地址，WSL 侧没有对应网卡 / 路由，裸连无人应答。
+- `redir-host` / `normal`：WSL 拿到**真实 IP**，但裸流量同样不经 mihomo，需要代理才通的目标照样到不了。
 
 别凭“是否 198.18.x”判断，也别一律归到“fake-ip 映射不稳”——两种模式殊途同归，都是 WSL 出站没走宿主代理，不是远端服务故障。DNS 模式取值见 [mihomo.md](mihomo.md) §7。
 
