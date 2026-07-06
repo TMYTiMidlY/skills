@@ -2,7 +2,7 @@
 
 > 本文把 Mihomo 的**配置用法**和**泄漏控制（DNS / WebRTC）**结合着讲，目标是读完能自己搭一套“不漏、分流准、能排障”的代理，并理解每个开关到底在做什么。全文分两部分：前半是**配置与使用**，后半是**泄漏控制**。WSL ↔ Windows ↔ 远端的网络管道是另一回事——WSL 出站怎么进 Mihomo、portproxy/wslrelay 入站见 [wsl.md](wsl.md)，RDP / serve-web 等远程接入见 [remote.md](remote.md)。
 >
-> **源码出处**：下文凡是讲到内部行为，都对照官方仓库 **`MetaCubeX/mihomo`** 的 **`Meta` 分支**（稳定线；开发线是 `Alpha`）。⚠️ 这个仓库的**默认分支 `main` 装的是一个同名的 Honkai: Star Rail Python 包，不是代理内核**——`git clone` 要带 `-b Meta` 才拿到 Go 源码（`module github.com/metacubex/mihomo`），否则会拿到一个 `pyproject.toml`。已经 clone 停在 `main` 时，裸 `git checkout Meta` 会 DWIM 失败，用显式的 `git checkout -b Meta origin/Meta`。
+> **源码出处**：下文凡是讲到内部行为，都对照官方仓库 **`MetaCubeX/mihomo`** 的 **`Meta` 分支**（稳定线；开发线是 `Alpha`）。⚠️ 这个仓库的**默认分支就是 `main`、装的是一个同名的 Honkai: Star Rail Python 包，不是代理内核**——这是维护者**故意的伪装**，不是仓库被劫持：Clash 系自 2023 年底原版 `Dreamacro/clash` 被 DMCA 下架后普遍把门面伪装成无关项目来低调规避下架/审查，这里就是把默认分支和仓库元数据设成一个真实存在的星铁 pydantic 包（实测 `gh api` 与 GitHub MCP 双通道一致：`default_branch=main`、`language:Python`、`topics:[honkai-star-rail,…]`，而 3.2 万 star / `wiki.metacubex.one` 主页仍是内核的、`Meta`/`Alpha` 等内核分支原封未动——只换门面、核心没动，所以是伪装不是劫持）。所以 `git clone` 不带分支会落到 `main`、拿到一个 `pyproject.toml`；要 Go 源码（`module github.com/metacubex/mihomo`）得 `git clone -b Meta`。已经 clone 停在 `main` 时，直接 `git checkout Meta`（或 `git switch Meta`）即可——单 remote + 全量 refspec 下 Git 的 DWIM 会自动基于 `origin/Meta` 建同名跟踪分支（实测 exit 0）。
 
 ---
 
@@ -234,6 +234,8 @@ curl -s -o /dev/null --max-time 45 --proxy $P \
   - **筛选** `parser.go` 的 schema：`filter` / `exclude-filter`（正则，多组用反引号 `` ` `` 分隔）/ `exclude-type`（按节点类型排除，`|` 分隔）。
   - **拉取流程** `provider.go` 的 `NewProxiesParser`：HTTP 拉取（`header` 自定义请求头 / `proxy` 借某代理去拉 / `size-limit` / `age-secret-key` 解密）→ YAML 解析（失败回退 `ConvertsV2Ray`，兼容机场那种 base64 / `vmess://` 订阅）→ exclude/filter 过滤 → 去重 → `override.Apply` 覆写 → `ParseProxy`。
 - 另有 **rule-provider**（`rules/provider/`）远程规则集，也算“远程覆写”，但覆的是**规则**不是节点。
+
+**“自己就是内核，覆写之后给谁？”**——别被“覆写”这词带成“改完转交下游”。节点级 override 没有下游：覆写对象是**从订阅 URL 拉下来的那份原始节点清单**（机场给的、源头你改不动），覆写发生在“**外部订阅数据 → 内核内部节点对象**”这个**装载/入口边界**上——内核在把别人给的数据收进自己肚子前先按你的 `override`/`filter` 清洗一遍，然后**内核自用**（供 proxy-group 选择、被规则命中后建连接）。字段名 `override` 指的是“覆盖每个节点原本的字段值 / 补上它没有的字段”，不含“转交”义。对照才清楚：**配置级**覆写才是“外部工具改好整份配置 → 喂给内核，内核是下游”；**节点级 override** 是“内核在入口把拉进来的订阅节点清洗一遍，没有外部下游”——你直觉里那个“给谁”在这一层不存在。
 
 一句话：**节点级（proxy-provider 的 `override` + `filter`）有且完整；整份配置级订阅覆写内核不管，交给外部管理程序 / 订阅转换器。**
 
