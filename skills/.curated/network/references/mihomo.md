@@ -65,10 +65,12 @@ mihomo 内核是一个**单文件静态二进制**，没有复杂依赖，“安
 - **从源码构建**：见第 6 节。
 
 > 很多 GUI 客户端（Clash Verge Rev、FlClash 等）**内置了 mihomo 内核**，装它们就不用单独装内核；只有要纯内核 / 做服务端常驻时才手动装上面这些。
+>
+> **但 GUI 捆绑的内核 ≠ 你自装的 CLI——是多套各自独立、可共存的二进制**。每个 GUI 把自己的 mihomo（常改名）放在各自程序目录：实测同一台 Windows，Clash Verge → `Program Files\Clash Verge\verge-mihomo.exe`、Clash Party（mihomo-party）→ `...\Clash Party\resources\sidecar\mihomo.exe`；你自装的 CLI 又是独立第三套（如 `C:\Users\<user>\mihomo\mihomo.exe`，靠 `-d` 指向 `~/.config/mihomo`）。**谁在实际跑，看进程的 `-d`/`-f` 启动参数**（§4；Windows 上内核可能高权限跑、需 UAC 提权才读得到命令行）。推论：删某个 GUI 的**用户数据**（`AppData\Roaming|Local` 里的 profile / 订阅 / 缓存）既不动它程序目录里的内核、也不影响另一套独立跑着的 CLI——所以清 GUI 数据不会断掉一个单独常驻的 mihomo。
 
 ### 2.2 配置目录是运行时算出来的（不是安装决定的）
 
-容易误解的一点：`~/.config/mihomo` 这个路径**和二进制装在哪无关**，是 mihomo 启动时按“当前用户的主目录”现算的。源码 `constant/path.go`（`MetaCubeX/mihomo` 的 `Meta` 分支）：
+容易误解的一点：`~/.config/mihomo` 这个路径**和二进制装在哪无关**，是 mihomo 启动时按“当前用户的主目录”现算的。源码见 [`constant/path.go` 的路径解析逻辑](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L29-L40)（pin 到与 §4 同一 commit `24b6de71`、行号锁死不漂移；下方为节选）：
 
 ```go
 const Name = "mihomo"
@@ -87,8 +89,8 @@ if _, err := os.Stat(homeDir); err != nil {     // 若该目录不存在
 - 默认配置文件：Linux/macOS `~/.config/mihomo/config.yaml`，Windows `%USERPROFILE%\.config\mihomo\config.yaml`。
 - **`$XDG_CONFIG_HOME` 只在 `~/.config/mihomo` 不存在时才生效**（注意这个先后顺序）。
 - **`sudo` 启动**：`$HOME` 变 `/root`，目录就变 `/root/.config/mihomo`——所以 Linux 跑 TUN（要 `sudo`）时，要么显式 `-d /home/<user>/.config/mihomo`，要么把配置放到 root 的目录下。
-- 命令行覆盖：`-d <dir>` 改配置目录（源码 `SetHomeDir`），`-f <file>` 改配置文件名（`SetConfig`）。
-- **“安全路径”**：REST API 用 `path` 方式热重载（见第 4 节）默认只允许 home 的子路径；要放别处可用环境变量 `SAFE_PATHS` 加白名单，或 `SKIP_SAFE_PATH_CHECK=1` 整个关掉检查（源码 `IsSafePath`）。
+- 命令行覆盖：`-d <dir>` 改配置目录（源码 [`SetHomeDir`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L62)），`-f <file>` 改配置文件名（[`SetConfig`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L67)）。
+- **“安全路径”**：REST API 用 `path` 方式热重载（见第 4 节）默认只允许 home 的子路径；要放别处可用环境变量 `SAFE_PATHS` 加白名单，或 `SKIP_SAFE_PATH_CHECK=1` 整个关掉检查（源码 [`IsSafePath`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L88)）。
 
 ### 2.3 启动与校验
 
