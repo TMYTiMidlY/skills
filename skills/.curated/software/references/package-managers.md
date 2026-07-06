@@ -13,7 +13,7 @@
 1. **系统级 / OS package manager**：管整个操作系统的原生二进制与共享库，装进系统全局路径（`/usr`、`Program Files`）。
    - Linux：`apt`（底层 `dpkg`，`.deb`）、`dnf`/`yum`（`rpm`）、`pacman`（Arch，`.pkg.tar.zst`）、`apk`（Alpine）、`zypper`（openSUSE）。
    - 跨平台/用户级：**Homebrew**（macOS 原生，也能装 Linux，装进自己 prefix 不碰系统）。
-   - Windows：**Chocolatey (choco)**、**winget**（详见第四节）。
+   - Windows：**Chocolatey (choco)**、**winget**、**Scoop**（详见第四节）。
 2. **语言级 / 生态级 package manager**：只管某门语言的库和 CLI，通常装到项目本地或语言专属目录。`pip`(Python)、`npm`(Node)、`cargo`(Rust)、`go`(Go)、`gem`(Ruby)、`nuget`(.NET)、`maven`/`gradle`(Java)、`composer`(PHP)。
 3. **跨发行版声明式 / 函数式**：**Nix**、**Guix**。不依赖发行版，把每个包连同全部依赖装进带哈希的只读路径，换来多版本共存、原子回滚、可复现（详见第三节）。
 4. **应用沙箱分发（sandboxed app）**：把桌面应用连运行时依赖一起打包并沙箱隔离。**Flatpak**（Flathub 源、用户级、portal 权限模型）、**Snap**（Canonical，含服务/CLI/GUI，商店后端专有，自动更新，squashfs 挂载）、**AppImage**（单文件、下载即跑、无中心仓库、无"安装"步骤）。
@@ -69,40 +69,43 @@
 
 ---
 
-## 四、Windows 两家：Chocolatey (choco) vs winget
+## 四、Windows 三家：Chocolatey (choco) / winget / Scoop
 
-两者都是**"静默跑官方安装程序"的自动化壳**——本质是替你 `下载官方 installer → 静默安装`，装进系统标准位置（`Program Files` 等），**都不做 Nix 那种隔离**，装完就是普通的已安装程序。区别在"谁维护、包长什么样"。
+choco 和 winget 都是**"静默跑官方安装程序"的自动化壳**——本质是替你 `下载官方 installer → 静默安装`，装进系统标准位置（`Program Files` 等），**都不做 Nix 那种隔离**，装完就是普通的已安装程序。**Scoop 走的是另一条路**：把程序当**绿色便携版**解压到用户目录 `~/scoop/`、不进系统、不需管理员、卸载=删目录，更像"给 CLI 工具用的、免污染系统"的方案。区别在"谁维护、包长什么样、装到哪一层"。
 
-| | **Chocolatey (choco)** | **winget** |
-| --- | --- | --- |
-| 出身 | 第三方社区项目（另有商业版） | **微软官方**，Windows 10 1709+ / 11 内置（App Installer） |
-| 包格式 | NuGet `.nupkg`，内含 **PowerShell 脚本**（`chocolateyInstall.ps1` 等）包装 installer/exe/zip | GitHub 上的 **YAML manifest**，指向官方 installer 的 URL + 哈希 |
-| 源 | 社区源 `community.chocolatey.org`（社区审核） | 默认 `winget`(社区清单 [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs)) + `msstore` |
-| 装什么 | 脚本能干的都行（installer、绿色 zip、纯脚本动作） | 主要是"拉官方 installer 静默装" |
-| 权限 | 多数包需管理员 | 视包而定 |
-| 声明式 | 有 `packages.config`（清单文件批量装） | **Configuration**（基于 DSC 的 `*.dsc.yaml`，把装软件+配系统合成一条可重复命令，[docs](https://learn.microsoft.com/en-us/windows/package-manager/configuration/)） |
+| | **Chocolatey (choco)** | **winget** | **Scoop** |
+| --- | --- | --- | --- |
+| 出身 | 第三方社区（另有商业版） | **微软官方**，Win10 1709+/11 内置 | 第三方社区（[scoop.sh](https://scoop.sh/)） |
+| 装到哪 | 系统全局（`Program Files`） | 系统全局 | **用户目录 `~/scoop/`**，便携解压 |
+| 要管理员 | 多数包要 | 视包而定 | **默认不要**（装进自己家目录） |
+| 包格式 | NuGet `.nupkg` 内含 **PowerShell 脚本**包装 installer/exe/zip | GitHub 上 **YAML manifest** 指向官方 installer URL+哈希 | **JSON manifest**（多指向便携 zip / 官方免安装包） |
+| 源 | 社区源 `community.chocolatey.org` | 默认 `winget`([winget-pkgs](https://github.com/microsoft/winget-pkgs)) + `msstore` | **buckets**（`main`/`extras`/… 均为 git 仓库） |
+| 装什么 | installer、绿色 zip、纯脚本动作都行 | 主要"拉官方 installer 静默装" | 偏 **CLI 工具 / 绿色软件**（GUI 大件较少） |
+| 卸载/回滚 | 靠自身 DB | 靠自身 DB | 删目录即净卸；多版本可并存切换 |
+| 声明式 | `packages.config` 批量装 | **Configuration**（DSC `*.dsc.yaml`，装软件+配系统合一，[docs](https://learn.microsoft.com/en-us/windows/package-manager/configuration/)） | `scoop export`/`import` 导出装机清单 |
 
-官方定义（均为官方原文核实）：
+官方定义（均官方原文核实）：
 
-- **Chocolatey**：*"software management automation for Windows that wraps installers, executables, zips, and scripts into compiled packages"* —— 关键词是 **wraps … into compiled packages**（PowerShell 驱动）。见 [docs.chocolatey.org](https://docs.chocolatey.org/en-us/)。
+- **Chocolatey**：*"software management automation for Windows that wraps installers, executables, zips, and scripts into compiled packages"* —— 关键词 **wraps … into compiled packages**（PowerShell 驱动）。见 [docs.chocolatey.org](https://docs.chocolatey.org/en-us/)。
 - **winget**：*"a comprehensive package manager solution that consists of a command line tool and set of services"*。见 [learn.microsoft.com/windows/package-manager](https://learn.microsoft.com/en-us/windows/package-manager/)。
+- **Scoop**：把 Scoop 自己也用 `irm get.scoop.sh | iex` 一行装（PowerShell 版 `curl|sh`，见第七节）。
 
-常用命令（几乎一一对应）：
+常用命令（三家横向对照）：
 
 ```powershell
 # 搜索 / 安装 / 升级 / 卸载 / 列已装
-choco  search <pkg>   ;  winget search <pkg>
-choco  install <pkg> -y            ;  winget install <pkg>
-choco  upgrade <pkg> -y            ;  winget upgrade <pkg>       # winget upgrade --all
-choco  uninstall <pkg> -y          ;  winget uninstall <pkg>
-choco  list --local-only           ;  winget list
+choco search <pkg>    ;  winget search <pkg>   ;  scoop search <pkg>
+choco install <pkg> -y   ;  winget install <pkg>  ;  scoop install <pkg>
+choco upgrade <pkg> -y   ;  winget upgrade <pkg>  ;  scoop update <pkg>   # scoop update * = 全部
+choco uninstall <pkg> -y ;  winget uninstall <pkg>;  scoop uninstall <pkg>
+choco list --local-only  ;  winget list          ;  scoop list
 ```
 
 **关键区别与坑**：
 
-- **官方 vs 社区**：winget 是微软亲儿子、系统自带、manifest 直指官方下载；choco 覆盖面/历史更广、脚本更灵活，但社区源的信任模型要自己掂量。
-- **两套 DB 互不相认**：choco 装的东西 winget 不认，反之亦然（各记各的安装数据库）。同一软件别两家混装。
-- 都不隔离：装完就是全局已安装程序，卸载靠各自记录，不像 Nix 能原子回滚。
+- **谁维护**：winget 微软官方、系统自带、manifest 直指官方下载；choco 覆盖面/历史最广、脚本最灵活但社区源信任要自己掂量；Scoop 便携、免管理员、对 CLI 工具最省心。
+- **多套 DB 互不相认**：choco / winget / scoop 各记各的安装数据库，同一软件别跨家混装，卸载会对不上。
+- **隔离程度**：choco/winget 装完是全局已安装程序、不能原子回滚；Scoop 装进 `~/scoop/`、删目录即净卸、能多版本并存——但仍不是 Nix 式内容寻址隔离。
 
 ---
 
@@ -117,6 +120,19 @@ choco  list --local-only           ;  winget list
 - **允许依赖树里多版本共存**：A 依赖 `lodash@3`、B 依赖 `lodash@4`，npm 靠嵌套/去重让两份并存——这正是 apt 全局单版本**做不到**的事，是"语言级隔离"的典型。
 - 变体：**pnpm**（全局内容寻址 store + 硬链接，省磁盘、装得快）、**yarn**。
 - 常用：`npm install` / `npm install -g <pkg>` / `npm update` / `npm uninstall` / `npx <pkg>`（临时跑不留全局）。
+
+**npm / pnpm / yarn / bun 四家对照**（都读 `package.json`、都连 npm registry，差别在装法与速度）：
+
+| | **npm** | **pnpm** | **yarn** | **bun** |
+| --- | --- | --- | --- | --- |
+| 出身 | Node 官方自带 | 第三方（[pnpm.io](https://pnpm.io/)） | Meta 起（Yarn Berry v2+） | Bun 运行时自带（[bun.sh](https://bun.sh/)） |
+| `node_modules` 布局 | 扁平化、可能重复 | **全局 store + 硬/符号链接**，严格无幽灵依赖 | Berry 默认 PnP（无 `node_modules`，`.pnp.cjs` 索引） | 扁平、兼容 npm 布局 |
+| lockfile | `package-lock.json` | `pnpm-lock.yaml` | `yarn.lock` | `bun.lock`(文本, 1.2+) / 旧 `bun.lockb`(二进制) |
+| 速度 | 基准 | 快、省盘 | 快（PnP 更快） | **最快**（Zig 写，含自带 runtime/打包/测试） |
+| 定位 | 稳、无脑兼容 | monorepo/省盘首选 | 大厂/PnP 生态 | 一体化工具链，追新 |
+
+- 四家的库都来自同一个 `registry.npmjs.org`，**换的是客户端不是源**；`package.json` 通用，切换成本主要在 lockfile 与 `node_modules` 策略。
+- `corepack`（Node 自带）能按项目 `package.json` 的 `"packageManager"` 字段自动切到对应的 pnpm/yarn 版本，避免"本机装的版本和项目要求不一致"。
 
 ### pip（Python / PyPI）
 
@@ -134,12 +150,16 @@ choco  list --local-only           ;  winget list
 | Go `go` | **无中心仓库** | `go.mod` / `go.sum` | `go install pkg@ver` | import 路径即源码地址，详见 [go.md](go.md) |
 | Ruby `gem`/bundler | rubygems.org | `Gemfile` / `Gemfile.lock` | `gem install` / `bundle` | |
 | .NET `nuget` | nuget.org | `.csproj` / `packages.lock.json` | `dotnet add package` | choco 底层复用其包格式 |
+| C++ `vcpkg` | 无中心（端口树） | `vcpkg.json` manifest | `vcpkg install <x>` | 微软，多从源码编，[doc](https://learn.microsoft.com/en-us/vcpkg/) |
+| C++ `Conan` | ConanCenter + 可自建 | `conanfile.txt/py` / `conan.lock` | `conan install .` | 去中心、可存**预编译二进制**，[conan.io](https://conan.io/) |
+| PHP `composer` | packagist.org | `composer.json` / `composer.lock` | `composer require <x>` | |
+| Java `maven`/`gradle` | Maven Central | `pom.xml` / `build.gradle` | `mvn`/`gradle` 声明依赖 | |
 
 ---
 
-## 六、跨语言环境：conda / mamba / pixi / uv
+## 六、跨语言环境 & 版本管理器：conda / pixi / uv、asdf / mise
 
-介于"语言级"和"系统级"之间——给**项目**搭一整套隔离、可复现的工具链，且能带非 Python 的原生依赖（C 库、CUDA、甚至 `go`、`nodejs`）。
+**（A）环境管理器**——介于"语言级"和"系统级"之间，给**项目**搭一整套隔离、可复现的工具链，且能带非 Python 的原生依赖（C 库、CUDA、甚至 `go`、`nodejs`）。
 
 - **conda**：多语言、装的是**预编译二进制**，源是 channel（`conda-forge` / `defaults`）。经典痛点是 solver 慢 → 换 **libmamba** 求解器或直接用 **mamba**（C++ 重写、更快）。见 [docs.conda.io](https://docs.conda.io/)。
 - **pixi**：conda-forge 生态的**现代前端**（Rust 写、快），`pixi.toml` + `pixi.lock`，项目级 + `pixi global`。见 [pixi.sh](https://pixi.sh/)。
@@ -147,9 +167,40 @@ choco  list --local-only           ;  winget list
 
 > 本仓约定的 Python 环境优先级：**Pixi > uv > python/python3**（见顶层 AGENTS.md）。两条相关坑：① `conda base` 常年激活会污染 `PATH`、conda 与 pip 在同环境混装易冲突（先 conda 后 pip、别反复横跳）；② `pixi global install go` 装的 go 有 cgo 编译器坑（`DefaultCC` 被烧进二进制），判别与修法见 [go.md](go.md) 第三节。
 
+**（B）版本管理器**——不装"库"，只管**同一门语言的多个版本**并按目录/项目切换：
+
+- **单语言**：`nvm`(Node)、`pyenv`(Python)、`rbenv`(Ruby)、`fnm`(Node，Rust 写更快)——各管一门。
+- **多语言合一**：**`asdf`**（插件式，一个工具管 node/python/ruby/… 多版本，`.tool-versions` 声明，[asdf-vm.com](https://asdf-vm.com/)）、**`mise`**（Rust 写、更快、兼容 asdf 插件，还能管**环境变量 + task runner**，`mise.toml`/`.tool-versions`，[mise.jdx.dev](https://mise.jdx.dev/)）。
+- **和包管理器的关系**：版本管理器负责"用哪个版本的 node/python"，包管理器（pnpm/pip）负责"这个版本下装哪些库"——两层正交、常配合用（`mise use node@22` 定运行时 → `pnpm install` 装依赖）。conda/pixi/uv 有部分重叠（它们也能定 Python 版本），所以 Python 圈常直接用 uv/pixi 一把梭，不再单独上 pyenv。
+
 ---
 
-## 七、"想干嘛 × 各家"命令速查
+## 七、绕过包管理器的安装：`curl | sh` 与 `irm | iex`
+
+不是所有软件都进包管理器。很多工具的官方安装方式是**下载一段脚本直接执行**——这是一整类"装软件的方式"，跟包管理器并列：
+
+```bash
+# Linux / macOS：下载脚本管道给 shell 执行
+curl -fsSL https://sh.rustup.rs | sh          # rustup
+curl -LsSf https://astral.sh/uv/install.sh | sh   # uv
+# 常见还有 Homebrew、nvm、ollama、starship… 都用这个模式
+```
+
+```powershell
+# Windows PowerShell：等价物 —— irm 下载、iex 执行
+irm get.scoop.sh | iex                        # 装 Scoop（第四节）
+irm https://…/install.ps1 | iex
+irm https://…/install.ps1 -OutFile a.ps1      # 或先落地再跑（能先审阅）
+```
+
+- **`irm` = `Invoke-RestMethod`**（发 HTTP 请求、把响应体拿回来）；**`iex` = `Invoke-Expression`**（把拿到的字符串当 PowerShell 代码执行）。`irm <url> | iex` 就是 **PowerShell 版的 `curl <url> | sh`**——语义完全对应：下载一段远程脚本，直接喂给解释器跑。
+- **本质与风险**：这等于"**执行一段没审计过的远程代码**"。方便（一行装好、不依赖任何包管理器、跨发行版），代价是**信任完全押在那个 URL 和它的 TLS 上**——域名被劫持/中间人/脚本被改，就是在你机器上跑任意代码。对不熟的来源，稳妥做法是**先下载到文件、看一眼、再执行**（`-OutFile` / `curl -o`）。
+- **和包管理器的取舍**：包管理器给你**版本记录、可升级、可卸载、可复现**；`curl|sh`/`irm|iex` 给你**当下最快**，但装完这东西不在任何包数据库里，升级/卸载得靠它自己的机制。工具能进 winget/scoop/brew/apt 就优先走包管理器，进不了或要最新版才用脚本直装。
+- **easytier / mihomo** 等本仓工具的 Windows 安装就用 `irm … -OutFile`（见 `network` skill 相关 reference）。
+
+---
+
+## 八、"想干嘛 × 各家"命令速查
 
 **系统级**（同一动作横向对照）：
 
@@ -174,7 +225,7 @@ choco  list --local-only           ;  winget list
 
 ---
 
-## 八、踩坑合集（紧贴主题）
+## 九、踩坑合集（紧贴主题）
 
 - **PEP 668**：`pip install` 报 `externally-managed-environment` = 系统 Python 被 apt 保护，别硬装。用 `uv venv` / `venv` / `pipx`（详见第五节）。
 - **npm 全局 vs 项目本地**：CLI 工具用 `-g` 或 `npx`；库依赖留在项目 `node_modules`。`node_modules` 体积大是常态，pnpm 用硬链接大幅省盘。
