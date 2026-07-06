@@ -410,11 +410,26 @@ go build -v -tags "with_gvisor" -trimpath `
 
 # 第二部分：泄漏控制
 
-## 9. DNS 泄漏：原理、劫持与 enhanced-mode
+## 9. 泄漏控制总览：泄漏是什么 + DNS / WebRTC 要不要开 TUN
+
+**先说“泄漏”是什么。** 你挂上代理，以为流量都从节点出、真实身份藏好了；但有些信息会从**代理没兜住的旁路**漏回去，暴露你真实所在。最常见两类：**DNS 泄漏**（谁在替你查域名、你查了哪些站，落到本地 ISP / 运营商手里）和 **WebRTC 泄漏**（浏览器把你**真实公网 IP** 直接吐出来）。泄漏控制就是把这两条旁路也堵上。
+
+**最常被一起问的：“是不是都得开 TUN 才不漏？”** 两类答案不一样，根源是**这两类流量和代理的关系根本不同**：
+
+- **DNS：域名解析本来就是“建立连接”的一部分，代理协议自带。** 只要 app 把解析交给代理——HTTP CONNECT / SOCKS5h 把**域名**（而非 IP）发给代理、在**远端**解析——乖乖走代理的 app（如浏览器）**没 TUN 也不漏**（[§12.1](#121-dns-泄漏怎么测browserleaks--bashws--排障) 那次 mixed-port 实测就是零 ISP 解析器）。`dns-hijack`（TUN 的功能）只是为了兜住**另一类**：不走代理、自己硬解 DNS 的程序（硬编码 `8.8.8.8` 之类）。
+- **WebRTC：正相反，它为 STUN 探测另起一条独立 UDP。** 这条 UDP 与代理那条连接无关，HTTP / SOCKS 代理**搬不动**它，所以**必须**靠 TUN（网络层连 UDP 一起接管）或浏览器策略来堵。
+
+一句话——**域名解析是建连的一部分、代理协议自带；WebRTC 的 UDP 是另起炉灶、代理管不着。** 所以 DNS 泄漏能靠“让 app 走代理”解决，WebRTC 泄漏则非 TUN / 浏览器策略不可。
+
+> 下面 [§10](#10-dns-泄漏原理与-mihomo-配置)（DNS）、[§11](#11-webrtc-泄漏原理与-mihomo-配置)（WebRTC）各自只讲**原理 + mihomo 配置**；两类泄漏**怎么探测验证**统一放 [§12](#12-探测与验证-dns--webrtc-泄漏)。
+
+## 10. DNS 泄漏：原理与 mihomo 配置
 
 这一节是理解代理“干不干净”的关键，配置和原理必须一起讲。
 
-### 9.1 三方模型：DNS 泄漏泄给了谁
+### 10.1 原理：三方模型 · 两个正交开关 · 行为对照表
+
+#### 三方模型：DNS 泄漏泄给了谁
 
 解析一个域名牵涉**三方**，不是两方：
 
@@ -424,11 +439,11 @@ go build -v -tags "with_gvisor" -trimpath `
 
 所以 **DNS 泄漏 = 你的查询跑去了一个你不想让它知道的解析器（通常是 ISP 的）**，于是运营商攒下了你的域名清单，还能据此**按域名封锁 / 投毒**（故意回错 IP，就是 GFW 的 DNS 污染）。代理的目标因此不只是“内容走代理”，还要“DNS 也别落到 ISP 解析器手里”。
 
-### 9.2 两个正交的开关：dns-hijack 与 enhanced-mode
+#### 两个正交的开关：dns-hijack 与 enhanced-mode
 
 防不防泄漏、返回真 IP 还是假 IP，是**两个独立的开关**：
 
-#### 开关 A：`dns-hijack`（TUN 的功能）——决定“查询进不进 mihomo”
+**开关 A：`dns-hijack`（TUN 的功能）——决定“查询进不进 mihomo”**
 
 TUN 把流量劫进来后，判断是不是 DNS 包、要不要转给 mihomo 自己的 DNS。源码 `listener/sing_tun/dns.go` 的 `ShouldHijackDns`：
 
@@ -448,7 +463,7 @@ func (h *ListenerHandler) ShouldHijackDns(targetAddr netip.AddrPort) bool {
 
 > 漏网之鱼：hijack 只盯明文 :53。应用要是自己走 **DoH(443) / DoT(853)** 查，这道闸拦不住——这也是为什么排障时用 DoH 能“绕过”mihomo 看到真实 DNS 记录。
 
-#### 开关 B：`enhanced-mode`（DNS 的功能）——决定“进来后 mihomo 回什么”，三选一
+**开关 B：`enhanced-mode`（DNS 的功能）——决定“进来后 mihomo 回什么”，三选一**
 
 源码 `dns/enhancer.go` 里 mode 只有三种：`DNSNormal` / `DNSMapping`(=redir-host) / `DNSFakeIP`。对应 `dns/middleware.go` 三个中间件：
 
@@ -457,7 +472,7 @@ func (h *ListenerHandler) ShouldHijackDns(targetAddr netip.AddrPort) bool {
   if skipper.ShouldSkipped(host) { return next(ctx, r) } // fake-ip-filter 命中才放行去真解析
   ip := fakePool.Lookup(host)   // 直接给一个池子里的 198.18.x，不 call next（当场不做真解析）
   ```
-  应用瞬间拿到假 IP，**真解析推迟到连接时、在远端做**。最快、分流最准、最防污染。代价：少数按 IP 工作的程序会坏（见 [9.4](#94-推荐配置) 的 `fake-ip-filter`）。
+  应用瞬间拿到假 IP，**真解析推迟到连接时、在远端做**。最快、分流最准、最防污染。代价：少数按 IP 工作的程序会坏（见 [10.2](#102-mihomo-配置防泄漏--分流准--防污染) 的 `fake-ip-filter`）。
 - **`redir-host`**（`withMapping`）：
   ```go
   msg, err := next(ctx, r)             // 先做真解析，拿真 IP
@@ -466,7 +481,7 @@ func (h *ListenerHandler) ShouldHijackDns(targetAddr netip.AddrPort) bool {
   回**真 IP**，但记住“这个 IP 是哪个域名的”，连接时还能按域名分流。代价：每次要等真实解析、上游被污染会拿到污染结果。
 - **`normal`**：啥都不加，回真 IP、也不记映射。**分流退化**为只能按 IP（域名信息丢了，按域名的规则可能判错）。
 
-### 9.3 行为对照表
+#### 行为对照表
 
 | dns-hijack | enhanced-mode | 普通查询(`getent`)拿到 | 分流准度 | DNS 泄漏风险 |
 |---|---|---|---|---|
@@ -483,7 +498,7 @@ func (h *ListenerHandler) ShouldHijackDns(targetAddr netip.AddrPort) bool {
 - **`fake-ip`**：真解析**推迟到连接时、走代理链路**，冷门境外域名的解析在**境外**完成。
 - 两者都**不暴露本地 ISP 明文解析器**（dns-hijack + DoH 该拦的都拦了）；差别只在“未分类冷门域名的解析交给境内还是境外 DoH”。想让 `redir-host` 也走境外，把域名纳入 `geosite:geolocation-!cn` 或调 `nameserver-policy`。
 
-### 9.4 推荐配置
+### 10.2 mihomo 配置：防泄漏 + 分流准 + 防污染
 
 防泄漏 + 分流准 + 防污染的一套：
 
@@ -518,7 +533,40 @@ dns:
 
 > **注·对 agent 工具的副作用**：fake-ip 会让某些**自己解析 DNS + 做 SSRF 判黑**的 agent 工具误伤——典型是 GitHub Copilot CLI 的 `web_fetch`：它抓任何域名都先解析成 `198.18.x`，而这段属 RFC 保留段、被判为"blocked address"直接拒（换 `redir-host` 就没事）。绕过要改源码（定点放行 `198.18.0.0/15`），机制与补丁思路见 `harness` skill 的 `web_fetch` SSRF 章节。
 
-### 9.5 验证与排查：browserleaks/dns 原理 + 可脚本化自测
+## 11. WebRTC 泄漏：原理与 mihomo 配置
+
+WebRTC 泄漏和 DNS 泄漏**是两回事**，很多人混在一起。
+
+### 11.1 原理：浏览器自己把公网 IP 暴露出来
+
+网页里的 `RTCPeerConnection`（WebRTC 用于音视频/P2P）建连前要“收集 ICE 候选地址”，其中一步是**向 STUN 服务器发 UDP 探测**问“我的公网 IP 是多少”。STUN 服务器照实回它看到的来源 IP——**如果这个 UDP 没走代理，它看到的就是你真实出口 IP**。然后网页用 JS（`onicecandidate`）读到这些候选，直接显示出来。
+
+所以和 DNS 泄漏的检测方式正好相反：
+
+- **DNS 泄漏**：服务端（权威台）侧识破“替你查的解析器”。
+- **WebRTC 泄漏**：**你自己浏览器**里就能读到 STUN 探测回来的公网 IP——`browserleaks.com/webrtc` 就是读这些 ICE 候选，比对“WebRTC Public IP”和你的代理出口是否一致；不一致（露出真实 ISP IP）= 泄漏。
+
+### 11.2 mihomo 配置 / 浏览器策略：让 STUN 的 UDP 别走真实出口
+
+核心思路是正向的：**保证这些 STUN/TURN 的 UDP 探测要么走代理、要么直接拒掉**，让它们拿不到你的真实 IP。在规则里精准处理常见 STUN/TURN 端口：
+
+```yaml
+rules:
+  # 直接拒绝常见 STUN/TURN 探测（最稳，浏览器拿不到公网 candidate）
+  - AND,((NETWORK,UDP),(DST-PORT,19302)),REJECT       # 19302 常见于 Google STUN
+  - AND,((NETWORK,UDP),(DST-PORT,3478-3481)),REJECT    # 3478-3481 常见 STUN/TURN
+  # …这些要放在 RULE-SET(cn)/GEOIP,CN/MATCH 等宽泛规则【前面】
+```
+
+这些端口只是**常见**探测端口、不是“所有 WebRTC 端口”。先精准拒这几个；若 `/connections` 里还看到新的 UDP STUN/TURN 出口，再按日志补规则。若你需要 WebRTC 能用（如开会），则改成把这些 UDP 指向代理 group 而不是 REJECT。
+
+> **关键前提：REJECT 只在流量进了 mihomo 时才拦得住。** 开了 TUN，浏览器的 STUN UDP 被透明接管进 mihomo，上面的 REJECT 才生效；**只用 mixed-port（HTTP/SOCKS 代理）、没开 TUN 时，浏览器默认直接发 STUN 的 UDP、根本不经过 mihomo**，这些 REJECT 形同虚设、WebRTC 照样泄漏真实 IP（实测见 [§12.2](#122-webrtc-泄漏怎么测)）。no-TUN 场景只能靠浏览器侧堵：Chromium 加 `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`，Firefox 设 `media.peerconnection.ice.proxy_only=true`（或干脆 `media.peerconnection.enabled=false` 关掉 WebRTC）。
+
+## 12. 探测与验证 DNS / WebRTC 泄漏
+
+两类泄漏的**探测方法**集中放这儿（探测时顺带大致回顾原理）：DNS 靠“独一随机子域逼查询走到权威台”识破替你查的解析器，WebRTC 靠读 ICE 候选里的 `srflx` 看 STUN 拿到的出口 IP。
+
+### 12.1 DNS 泄漏怎么测：browserleaks / bash.ws + 排障
 
 **`browserleaks.com/dns` 凭什么知道你 DNS 泄漏？** 它把自己设成了“被查域名的权威总台”：
 
@@ -553,36 +601,9 @@ curl --resolve <域名>:443:<IP> https://<域名>/
 
 > `dns-hijack any:53` 会把普通 `dig`/`nslookup`/`getent`/`host` 的查询都劫进 mihomo——**但回不回假 `198.18.x` 取决于 `enhanced-mode`**：只有 `fake-ip` 才回占位 IP（此时才需要上面两招绕开拿真实记录）；`redir-host`/`normal` 下劫持仍在、回的却是**真实 IP**（本机 redir-host 实测 `www.google.com`→`142.251.x`，`getent` 就是真记录、两招用不着）。所以这两招是 **fake-ip 专属**的排障手段，别默认 hijack 机器一定回 198.18.x。
 
-## 10. WebRTC 泄漏：原理与处理
+### 12.2 WebRTC 泄漏怎么测
 
-WebRTC 泄漏和 DNS 泄漏**是两回事**，很多人混在一起。
-
-### 10.1 原理：浏览器自己把公网 IP 暴露出来
-
-网页里的 `RTCPeerConnection`（WebRTC 用于音视频/P2P）建连前要“收集 ICE 候选地址”，其中一步是**向 STUN 服务器发 UDP 探测**问“我的公网 IP 是多少”。STUN 服务器照实回它看到的来源 IP——**如果这个 UDP 没走代理，它看到的就是你真实出口 IP**。然后网页用 JS（`onicecandidate`）读到这些候选，直接显示出来。
-
-所以和 DNS 泄漏的检测方式正好相反：
-
-- **DNS 泄漏**：服务端（权威台）侧识破“替你查的解析器”。
-- **WebRTC 泄漏**：**你自己浏览器**里就能读到 STUN 探测回来的公网 IP——`browserleaks.com/webrtc` 就是读这些 ICE 候选，比对“WebRTC Public IP”和你的代理出口是否一致；不一致（露出真实 ISP IP）= 泄漏。
-
-### 10.2 处理：让 STUN 的 UDP 别走真实出口
-
-核心思路是正向的：**保证这些 STUN/TURN 的 UDP 探测要么走代理、要么直接拒掉**，让它们拿不到你的真实 IP。在规则里精准处理常见 STUN/TURN 端口：
-
-```yaml
-rules:
-  # 直接拒绝常见 STUN/TURN 探测（最稳，浏览器拿不到公网 candidate）
-  - AND,((NETWORK,UDP),(DST-PORT,19302)),REJECT       # 19302 常见于 Google STUN
-  - AND,((NETWORK,UDP),(DST-PORT,3478-3481)),REJECT    # 3478-3481 常见 STUN/TURN
-  # …这些要放在 RULE-SET(cn)/GEOIP,CN/MATCH 等宽泛规则【前面】
-```
-
-这些端口只是**常见**探测端口、不是“所有 WebRTC 端口”。先精准拒这几个；若 `/connections` 里还看到新的 UDP STUN/TURN 出口，再按日志补规则。若你需要 WebRTC 能用（如开会），则改成把这些 UDP 指向代理 group 而不是 REJECT。
-
-> **关键前提：REJECT 只在流量进了 mihomo 时才拦得住。** 开了 TUN，浏览器的 STUN UDP 被透明接管进 mihomo，上面的 REJECT 才生效；**只用 mixed-port（HTTP/SOCKS 代理）、没开 TUN 时，浏览器默认直接发 STUN 的 UDP、根本不经过 mihomo**，这些 REJECT 形同虚设、WebRTC 照样泄漏真实 IP（实测见 [§10.4](#104-用无头浏览器实测-webrtc-泄漏)）。no-TUN 场景只能靠浏览器侧堵：Chromium 加 `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`，Firefox 设 `media.peerconnection.ice.proxy_only=true`（或干脆 `media.peerconnection.enabled=false` 关掉 WebRTC）。
-
-### 10.3 用运行态连接验证
+**用运行态连接验证**
 
 排查时别只看网页上的数字，对照 mihomo 运行态：
 
@@ -593,7 +614,7 @@ curl -s --max-time 3 "http://127.0.0.1:9090/logs?format=structured&level=info"
 
 重点字段：`host`（访问的域名/STUN 域名）、`network`（tcp/udp）、`destinationPort`（STUN 常见 19302、3478-3481）、`chains`（最终是代理节点 / `DIRECT` / `REJECT`）、`rule`/`rulePayload`（是否被 `cn`/`GEOIP,CN`/`MATCH` 误命中）。看到 STUN 的 UDP 命中 `DIRECT` 就是泄漏源。
 
-### 10.4 用无头浏览器实测 WebRTC 泄漏
+**用无头浏览器实测 WebRTC 泄漏**
 
 `browserleaks.com/webrtc` 要手点；想可复现 / 给 agent 跑，用无头浏览器（Playwright/camoufox 之类）起一个、经 mixed-port 代理、收 ICE candidate，看 `srflx`（server-reflexive=STUN 看到的公网 IP）是不是你的代理出口。核心就一段页面内 JS：
 
@@ -618,11 +639,9 @@ await pc.setLocalDescription(await pc.createOffer())   // 等几秒收集完
 > | Camoufox（反检测）+ proxy | mixed-port、TUN 关 | **代理出口 IP（spoof）** | 不漏 |
 > | Camoufox | TUN 开 | 空 | 不漏 |
 >
-> 坐实 [§10.2](#102-处理让-stun-的-udp-别走真实出口)：no-TUN 下 mihomo 的 UDP-REJECT 拦不到浏览器 STUN（那条 UDP 压根不进 mihomo）。防泄漏三条路任选其一：① **TUN** 网络层兜底；② **浏览器策略**（Chromium flag / Firefox `media.peerconnection.ice.proxy_only`）；③ **反检测浏览器**（camoufox 默认把 WebRTC 出口 spoof 成代理 IP，连 flag 都不用——这正是 browser-use 之类用 camoufox 做 stealth 的原因）。OS 防火墙禁非代理 UDP 也算。**TUN 不是唯一解。**
+> 坐实 [§11.2](#112-mihomo-配置--浏览器策略让-stun-的-udp-别走真实出口)：no-TUN 下 mihomo 的 UDP-REJECT 拦不到浏览器 STUN（那条 UDP 压根不进 mihomo）。防泄漏三条路任选其一：① **TUN** 网络层兜底；② **浏览器策略**（Chromium flag / Firefox `media.peerconnection.ice.proxy_only`）；③ **反检测浏览器**（camoufox 默认把 WebRTC 出口 spoof 成代理 IP，连 flag 都不用——这正是 browser-use 之类用 camoufox 做 stealth 的原因）。OS 防火墙禁非代理 UDP 也算。**TUN 不是唯一解。**
 
 也可经代理**直接访问 `browserleaks.com/webrtc` 页面交叉验证**：默认 Chromium + no-TUN 下，该页 "Public IP Address" 显示的就是 srflx 那个真实公网 IP，并直接标 `WebRTC IP doesn't match your Remote IP` 判为漏——与上面自写 STUN 探针结论一致。
-
-**顺带分清 DNS 与 WebRTC（常被一起问"是不是都得开 TUN"）**：DNS 漏不漏，看「app 有没有把解析交给代理」——HTTP CONNECT / SOCKS5h 把**域名**发给代理、远端解析，乖乖走代理的 app（如浏览器）**没 TUN 也不漏**（[§9](#9-dns-泄漏原理劫持与-enhanced-mode) 那次 mixed-port 实测就是零 ISP 解析器）；`dns-hijack`（TUN 功能）只是为了兜住**不走代理、自己硬解 DNS** 的程序。WebRTC 正相反：它为 STUN 自开**独立 UDP**、与代理那条连接无关，HTTP/SOCKS 代理搬不动，所以才必须 TUN 或浏览器策略。一句话——**域名解析是建连的一部分、代理协议自带；WebRTC 的 UDP 是另起炉灶、代理管不着**。
 
 ---
 
