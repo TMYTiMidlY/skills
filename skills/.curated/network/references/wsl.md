@@ -1,6 +1,6 @@
 # WSL ↔ Windows 网络管道
 
-WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT、WSL / Docker 入站 portproxy / wslrelay、组网、远程接入与对外服务的常驻。
+WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT 网络，以及 WSL/Docker 服务入站（portproxy + wslrelay）。远程桌面 / VS Code serve-web 等远程接入见 [remote.md](remote.md)。
 
 ## WSL Mirror 模式网络
 
@@ -157,7 +157,8 @@ curl.exe --noproxy * -v --max-time 5 "http://[::1]:<port>/"
 1. **显式 v4 监听地址**（首选，零代价）：
    - Docker / docker-compose：**推荐写 `ports: ["127.0.0.1:9000:9000"]`**，不要 bare `"9000:9000"`（bare 让 docker-proxy 选 dual-stack v6 socket，触发 #14154）。显式写 v4 host IP `127.0.0.1` 即纯 v4，不踩坑。
    - 服务直接 listen：**推荐 listen `127.0.0.1`**，不要用 `::`。Python `http.server` 默认 v4，Go `net.Listen("tcp", ":N")` 默认 dual-stack v6，要写 `net.Listen("tcp4", "127.0.0.1:N")`。
-   - **Java / JVM 服务**（Neo4j / Elasticsearch / Kafka / Spark 等）：JVM 默认开 dual-stack v6，**即使配置文件写 `listen_address=0.0.0.0` 也会落到 `*:N` 形态**（socket 是 AF_INET6 + V6ONLY=0，恰好是 #14154 触发点）。fix 是加 JVM flag `-Djava.net.preferIPv4Stack=true` 强制纯 v4 socket。**Neo4j 5.x apt 包实测**：编辑 `/etc/neo4j/neo4j.conf`，把 `#server.bolt.listen_address=:7687` 取消注释改成 `server.bolt.listen_address=0.0.0.0:7687`，再追加一行 `server.jvm.additional=-Djava.net.preferIPv4Stack=true`，`systemctl restart neo4j` 之后 `ss -tlnp` 从 `*:7687` 变 `0.0.0.0:7687`，wslrelay 看到纯 v4 listener 才会在 Windows 端补 `127.0.0.1:7687` 的 v4 listener，portproxy `connectaddress=127.0.0.1` 这条才不会 RST。**单改 `listen_address=0.0.0.0` 一行不够**，必须同时给 JVM 加 preferIPv4Stack=true。（listen 用 `127.0.0.1` 或 `0.0.0.0` 都是纯 v4、等效；上面是当时实测的 `0.0.0.0` 原值，关键是 `preferIPv4Stack`。）
+   - **Java / JVM 服务**（Neo4j / Elasticsearch / Kafka / Spark 等）：JVM 默认开 dual-stack v6，**即使配置文件写 `listen_address=0.0.0.0` 也会落到 `*:N` 形态**（socket 是 AF_INET6 + V6ONLY=0，恰好是 #14154 触发点）。fix 是加 JVM flag `-Djava.net.preferIPv4Stack=true` 强制纯 v4 socket。
+     > **Neo4j 5.x apt 包实测**：编辑 `/etc/neo4j/neo4j.conf`，把 `#server.bolt.listen_address=:7687` 取消注释改成 `server.bolt.listen_address=0.0.0.0:7687`，再追加一行 `server.jvm.additional=-Djava.net.preferIPv4Stack=true`，`systemctl restart neo4j` 之后 `ss -tlnp` 从 `*:7687` 变 `0.0.0.0:7687`，wslrelay 看到纯 v4 listener 才会在 Windows 端补 `127.0.0.1:7687` 的 v4 listener，portproxy `connectaddress=127.0.0.1` 这条才不会 RST。**单改 `listen_address=0.0.0.0` 一行不够**，必须同时给 JVM 加 preferIPv4Stack=true。（listen 用 `127.0.0.1` 或 `0.0.0.0` 都是纯 v4、等效；上面是当时实测的 `0.0.0.0` 原值，关键是 `preferIPv4Stack`。）
 2. **portproxy `connectaddress` 指 WSL eth0 IP**（跳过 wslrelay 走 NAT）——**不推荐**：eth0 IP 随 WSL 重启变化、不稳；优先第 1 条（服务监听 `127.0.0.1` + `connectaddress=127.0.0.1`）。
 3. **portproxy 改用 `v4tov6` 转 `::1`**：理论可行，但实测在不少 WSL 版本上 wslrelay 的 `[::1]` listener 也 RST，所以不一定通。作为快速试探可用，长期不推荐。
 4. **切 `networkingMode=mirrored`**（Win11 22H2+）：彻底没 wslrelay。代价是重排所有 portproxy + 评估对 EasyTier wintun 路由优先级的影响。
