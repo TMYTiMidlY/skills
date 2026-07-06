@@ -725,3 +725,117 @@ git 的 `upload-pack` / `receive-pack` 是双向流。④(c) 里 `serv` 那路 `
 ### 数据落进匿名卷 → 迁回 bind mount
 
 若 data 挂错（见「第二部分 · 挂载路径必须匹配镜像类型」）、数据落进了匿名卷，迁回：① `docker compose stop server` ② `docker cp <server>:/data/. ./data/`（`docker cp` 走 docker API，能跨 Docker Desktop 的 VM 边界）③ 改 compose 挂载为 `./data:/data` ④ `docker compose up -d server` ⑤ 验证宿主 `./data` 有数据、不是全新装、loopback 200 ⑥ 旧匿名卷 dangling 后 `docker volume rm <id>`（**别用 `docker volume prune`**，会误删同机其它项目的 dangling 卷）。
+
+---
+
+# 第四部分 · MCP：把 Git server 接到 AI agent
+
+> **MCP**（Model Context Protocol，模型上下文协议）= 让 AI agent（Claude / Copilot / Cursor 等）用一套标准协议调外部工具。这里的 MCP server 就是一个中间进程：把 Gitea/Forgejo 的 REST API 包成 agent 能直接调用的工具集（列 issue、开 PR、读文件、看 Actions……）。**这是本文双栈里唯一一处两家生态严重不对称的地方**——先讲清这个不对称，再给配置。
+
+## 关键不对称：Gitea 有第一方官方 MCP，Forgejo 没有
+
+| | Gitea | Forgejo |
+| --- | --- | --- |
+| 第一方官方 MCP | ✅ **有**：`gitea.com/gitea/gitea-mcp`（官方 `gitea` 组织下、非 mirror，79★） | ❌ **无**（核实见下） |
+| 事实标准实现 | 就是官方那个 | `codeberg.org/goern/forgejo-mcp`（社区，Codeberg 上 111★/29 forks） |
+| 底层 SDK | `code.gitea.io/sdk/gitea`（Gitea 官方 Go SDK） | `codeberg.org/mvdkleijn/forgejo-sdk`（社区 Forgejo SDK，即官方文档 `user/api-usage` 页点名的那个） |
+
+> **"Forgejo 无第一方官方 MCP" 怎么核实的**（2026-07 实查）：① `code.forgejo.org` 三个官方组织逐仓列名——`forgejo`(48 仓)/`forgejo-contrib`(5)/`forgejo-integration`(2)，**无任何 MCP 仓库**；② 官方文档站 `forgejo.org/docs` 全站无 MCP 提及；③ 官方 Go SDK 维护者 `mvdkleijn` 名下只有 SDK、没有 MCP。所以 Forgejo 侧压根不存在能标"官方"的 MCP——只能退一步选**社区事实标准**。
+
+## 为什么 `goern/forgejo-mcp` 是 Forgejo 侧的社区事实标准
+
+不是拍脑袋，是几条可核验信号叠加（都在 Forgejo 自家平台 Codeberg 上实测，2026-07）：
+
+- **星标断层**：Codeberg 搜 `mcp`，`goern/forgejo-mcp` **111★**，第二名的 Forgejo MCP 只有个位数——差一个数量级，社区选择高度集中。GitHub 侧同名镜像也是同类里最高（89★）。
+- **用官方社区 SDK 而非自糊 REST**：`go.mod` 依赖 `codeberg.org/mvdkleijn/forgejo-sdk/forgejo/v3`——正是 Forgejo 官方文档 API-usage 页推荐的 Go SDK。
+- **供应链完整**：每次 release 出 **cosign 签名**的单架构 OCI 镜像 + 附 **CycloneDX SBOM**（软件物料清单），带 `checksums.txt` + `.sig`。个人 MCP 项目里这套少见，是"按基础设施在维护"的信号。
+- **活跃且成熟**：撰写时最新 `v2.30.1`（2026-06-30），版本号已滚到 v2.30+，附 `.mcpb`（一键装包）多平台构建。
+- **不是 Gitea MCP 换皮**：底层走 Forgejo SDK、暴露 `forgejo://` 资源模板等 Forgejo 特有形态——和 gitea-mcp 是两套东西，**别拿一个去连另一家**（虽然 Forgejo/Gitea API 大面重叠，但 host 语义、端点差异会咬人）。
+
+> ⚠️ **认镜像源**：官方源在 **Codeberg**（`codeberg.org/goern/forgejo-mcp`）；GitHub 上的 `goern/forgejo-mcp` 作者自己标了 **"MIRROR ONLY"**。装二进制/引用文档以 Codeberg release 为准。
+
+## 安装（推荐 go install）
+
+两家都是**单个静态 Go 二进制**。**首选 `go install …@latest`**——一条命令搞定、自动放进 `$GOBIN`、版本可控，不用手动下载/校验/解压：
+
+```bash
+go install gitea.com/gitea/gitea-mcp@latest              # gitea-mcp
+go install codeberg.org/goern/forgejo-mcp/v2@latest      # forgejo-mcp（注意路径带 /v2）
+```
+
+> 装到 `$(go env GOBIN)`（未设则 `$(go env GOPATH)/bin`）；要装到别处用 `GOBIN=/目标目录 go install …`（本机把 `GOBIN` 指到 `~/.local/bin`，正好是 Copilot 配置里 `command` 的路径）。**若 `go` 来自 pixi / conda-forge，头一次 cgo 构建会踩坑**——见本节末 ⚠️。另：forgejo-mcp 的 README 还残留一条"@latest 不可用"的**过时**说明，实际早已修好（见脚注）。
+
+**其他方式**（简述，按需选；下表同时标出两家各自的差异与出处）：
+
+| | gitea-mcp（`gitea.com/gitea/gitea-mcp` README） | forgejo-mcp（`codeberg.org/goern/forgejo-mcp` README） |
+| --- | --- | --- |
+| `go install …@latest` | ✅ **可用**：`go install gitea.com/gitea/gitea-mcp@latest`（实测装成 clean `v1.3.0`） | ✅ **可用**：实测 `go install codeberg.org/goern/forgejo-mcp/v2@latest` 装成 `v2.30.1`——但 README「Known Issues」仍残留"不可用"条目，**已过时**（见脚注） |
+| go 装（推荐路径） | `go run gitea.com/gitea/gitea-mcp@latest -t stdio`（README「Claude Code」段） | **Option A（README 标 Recommended）**：`git clone` + `go install .`；或直接 `go install …/v2@latest`（现已可用，见脚注） |
+| 下官方 release 二进制 | 📥 `gitea.com/gitea/gitea-mcp/releases` | **Option B**：`codeberg.org/goern/forgejo-mcp/releases`（带 `checksums.txt` + cosign `.sig` + SBOM） |
+| 容器镜像 | `docker.gitea.com/gitea-mcp-server`（README 的 VS Code/Mistral 一键块用它） | **Option D**：`podman/docker run codeberg.org/goern/forgejo-mcp:latest`（cosign 签名 + CycloneDX SBOM） |
+| 其它 | 从源码 build（README「Build from Source」） | **Option C** Nix（`nix run nixpkgs#forgejo-mcp`，仅 unstable channel）、AUR（`yay -S forgejo-mcp` 源码 / `forgejo-mcp-bin` 预编译）、`.mcpb` 一键包 |
+
+> **脚注·「`go install …@latest` 坏」是过时残留**：forgejo-mcp 的 README「Known Issues」写着 `go install …/v2@latest` fails，归因于 `go.mod` 里一条指向 **fork 版 Forgejo SDK** 的 `replace` 指令。原理：`replace` **只对主模块生效**，`go install pkg@version` 从 proxy 远程装时不认目标模块的 `replace`（Go 官方行为），于是那条 fork 依赖解析不到 → 构建失败（跟踪 issue **#67**）。**但该 issue 已 `closed`（2026-02-18）**：现在 `go.mod` 已**无** `replace`、直接 require 上游 `codeberg.org/mvdkleijn/forgejo-sdk/forgejo/v3 v3.0.0`——本 session 实测 `go install …/v2@latest` 成功装出 `v2.30.1`。README 只是没同步删掉这条。
+
+> **本 session 实际怎么装的**（留档）：
+> - **gitea-mcp** → `GOBIN=~/.local/bin go install gitea.com/gitea/gitea-mcp@latest`。装完 `go version -m` 显示 `mod …@v1.3.0` 带 proxy `h1:` 哈希、**无 `vcs.*` 戳**——这就是「从 module proxy 装 vs 本地 clone build」的判别点（本地 clone build 会打 `vcs.revision`/`vcs.modified`/版本尾 `+dirty`；旧的那个二进制就是 `+dirty` 的本地构建）。
+> - **forgejo-mcp** → 最终也统一成 `GOBIN=~/.local/bin go install codeberg.org/goern/forgejo-mcp/v2@latest`（clean `v2.30.1`，proxy `h1:` 哈希、无 `vcs.*` 戳）。**先前**曾走 **Option B（下 release 二进制）**：下 `forgejo-mcp_2.30.1_linux_amd64.tar.gz`、`sha256sum` 对官方 `checksums.txt` 校验通过后解包——当时以为 README「Known Issues」说的 `@latest` 不可用属实；后实测 `…/v2@latest` 能装（见脚注）遂改回 go install，与 gitea-mcp 一致。Option B 仍是好后备：有 cosign 签名+校验、不依赖本地 Go 工具链。
+
+> ⚠️ **若 `go` 来自 `pixi global install go`（conda-forge 包），头一次 cgo 构建会报「找不到 `x86_64-conda-linux-gnu-cc`」**——该编译器名被编译期烧进 go 二进制、但包没带编译器（跟用没用 conda 无关）。上面 gitea-mcp/forgejo-mcp 都是纯 Go，`CGO_ENABLED=0` 能绕；**正统修法** `pixi global install --environment go c-compiler`。判别四连 + 三种修法详见 [go.md](go.md) 第三节。
+
+**工具规模**（stdio `tools/list` 实测）：gitea-mcp `v1.3.0` = **53 个工具**；forgejo-mcp `v2.30.1` = **128 个工具**（后者覆盖面明显更广，含 attachments/time-tracking/team/branch-protection 等）。
+
+## 两家 MCP 配置对照（CLI flag / env / 优先级）
+
+两个 server 都是**单二进制、stdio 传输**（本地 agent 直连的标准形态），配置项同构但前缀不同：
+
+| 配置项 | gitea-mcp（`v1.3.0`） | forgejo-mcp（`v2.30.1`） |
+| --- | --- | --- |
+| 传输 | `-t/-transport stdio` | `-t/-transport stdio` |
+| **host** | `-H/-host` **或** env `GITEA_HOST` | `--url` **或** env `FORGEJO_URL`（**必填**，须带 `http(s)://`） |
+| **token** | `-T/-token` / env `GITEA_ACCESS_TOKEN` / env `GITEA_ACCESS_TOKEN_FILE`（读文件，适配 docker secret） | `--token` / env `FORGEJO_ACCESS_TOKEN` |
+| 只读 | `-r/-read-only` / env `GITEA_READONLY=true` | （见其 README，按 tool 过滤） |
+| 优先级 | flag > env（`-H` 的**默认值**就是 `GITEA_HOST`；token 见 `cmd/cmd.go:81-88`：flag 空才读 env，再空才读 `_FILE`） | **flag > env**（其 README：*Command-line arguments take priority over environment variables*） |
+
+> **两家优先级方向一致：显式 flag 覆盖 env。** 所以同一个值 flag 和 env 都写 = 冗余，只是"保险起见"，最终 flag 生效。
+
+## Copilot CLI 接入（`~/.copilot/mcp-config.json`）
+
+Copilot CLI 的 MCP 配置放在 `~/.copilot/mcp-config.json`，`mcpServers` 下每个 server 支持 `command` / `args` / `env` 三段。两家各一个条目、指向各自实例：
+
+```jsonc
+{
+  "mcpServers": {
+    "gitea": {                                   // 连 Gitea 实例
+      "type": "local",
+      "command": "/path/to/gitea-mcp",
+      "args": ["-t", "stdio", "-H", "https://<你的 gitea 域名>"],
+      "env": { "GITEA_ACCESS_TOKEN": "<PAT>" },  // token 只走 env，别进 args
+      "tools": ["*"]
+    },
+    "forgejo": {                                 // 连 Forgejo 实例（另一套二进制）
+      "type": "local",
+      "command": "/path/to/forgejo-mcp",
+      "args": ["--transport", "stdio", "--url", "https://<你的 forgejo 域名>"],
+      "env": {
+        "FORGEJO_ACCESS_TOKEN": "<PAT>",
+        "FORGEJO_USER_AGENT": "forgejo-mcp/1.0.0"
+      },
+      "tools": ["*"]
+    }
+  }
+}
+```
+
+> **PAT 从哪来**：两家都在 **Settings → Applications → Access Tokens** 生成；按需要勾权限 scope（起步 `repository` + `issue` 读写）。改完配置**重启 Copilot CLI**（重开会话）让它重新拉起 MCP 子进程。验证：让 agent 调 `get_me`（gitea）或列仓库（forgejo）——401/`invalid token` 就是 PAT 错/过期，重新生成即可。
+
+## 认证与安全：token 走 env 还是 flag？
+
+**技术上都行**（两家都有 `-T/-token` / `--token` flag），**但强烈建议只走 `env`**，原因是 **argv 暴露面比 env 大**：
+
+- 进程命令行（argv）在同机对**其他用户**可见——`ps aux`、`/proc/<pid>/cmdline`（后者常是同 uid 可读，但 `ps` 能列全机进程的命令行）。把 token 写进 `args` = 谁在这台机器上都能 `ps` 到你的 PAT。
+- 环境变量（`/proc/<pid>/environ`）**只有同 uid / root 可读**，不进 `ps` 默认输出——暴露面小一档。
+- 对 Copilot CLI 具体来说：`mcp-config.json` 的 `env` 段就是为此准备的，token 放这里最顺；`GITEA_ACCESS_TOKEN_FILE`（仅 gitea-mcp）更进一步——token 落文件、连 env 都不进，适配 docker secret / 挂载密钥。
+- 二选一的话：**token 一律 `env`（或 file），host/url 放 `args` 里明晃晃没关系**（host 不是秘密）。
+
+> ⚠️ **实例开了 `REQUIRE_SIGNIN_VIEW` 时**（见「第三部分 · ③ 登录」），连 `/api/v1/version` 匿名都 **403**——MCP 没配 token 会整个连不上，不只是私有仓看不了。这类实例上 token 是**必填**，不是可选。
