@@ -145,7 +145,9 @@ Host <name>
 
 **为什么需要方案 B（初衷）**：方案 A 只覆盖**读 `*_proxy` 的工具**（curl / git / pip…）。有一类工具不读任何代理环境变量、自己解析 DNS、把解析到的 IP **钉死直连**——典型是 **agent 内置抓取工具（如 Copilot CLI 的 `web_fetch`）**。它在 WSL NAT 下必失败：① `fake-ip` 解析到 `198.18.x` 撞其 SSRF 保留地址闸，连都不连；② 宿主改 `redir-host` 让它拿到真实 IP，但 NAT 模式下 WSL 裸流量又不被宿主 TUN 稳定接管（见上节），真实（被墙）IP 裸连照样超时。既设不了代理、又走不了宿主 TUN，方案 A 对它无效——只有方案 B 在 WSL 内建 TUN、把裸流量透明导进宿主 mihomo 才救得回。
 
-**装（不用 sudo）**：下载对应 arch 的二进制（`uname -m` → amd64 / arm64）到 `~/.local/bin/`，`tun2socks --version` 自检；GitHub 下载本身可先经宿主 `--proxy http://<gw>:7890`。
+**装（`/usr/local/bin`，要 sudo）**：取对应 arch 的二进制（`uname -m` → amd64 / arm64），`sudo install -m0755 <binary> /usr/local/bin/tun2socks` 装到 `/usr/local/bin/`，`tun2socks --version` 自检；GitHub 下载本身可先经宿主 `--proxy http://<gw>:7890`。选 `/usr/local/bin` 三重有据：① tun2socks **官方推荐位置**——官方 wiki *Install-from-Source* 的 Build 段原文即 `make tun2socks && sudo cp ./build/tun2socks /usr/local/bin`；② 下面 systemd unit 的 `ExecStart` **写死**了这个路径；③ 它在 root（`sudo` / 服务）默认 `PATH` 内。tun2socks 建 TUN + 改路由本就要 root，把二进制留在用户目录（`~/.local/bin` 等）对 root 服务没意义——直接装系统位置，别在用户目录中转。
+
+> ⚠️ **`go install github.com/xjasonlyu/tun2socks/v2@latest` 是另一条路、落点不同**：按 Go 工具链默认装到 `$(go env GOPATH)/bin`（默认 `~/go/bin`），既非系统级位置、也不是 unit 写死的 `/usr/local/bin`。走这条装完还得再 `sudo install ~/go/bin/tun2socks /usr/local/bin/tun2socks`（或建 symlink），否则 service 找不到二进制——**装 service 时这个落点差异务必核对**。
 
 **跑（要 root / `CAP_NET_ADMIN`——建 TUN + 改路由是特权操作；非免密 sudo 无法非交互代跑）**，核心三步：
 
@@ -169,7 +171,7 @@ ip route replace default dev tun0                                   # 默认路�
 安装（`<skill>` = 本 skill 目录，如 `~/.agents/skills/network`；只需二进制 + unit，无脚本）：
 
 ```bash
-sudo install -m0755 ~/.local/bin/tun2socks           /usr/local/bin/tun2socks   # 官方推荐位置即 /usr/local/bin
+# 二进制须已在 /usr/local/bin/tun2socks（见上「装」；unit ExecStart 写死此路径，go install 落 ~/go/bin 的先补装到位）
 sudo install -m0644 <skill>/assets/tun2socks.service /etc/systemd/system/tun2socks.service
 sudo systemctl daemon-reload && sudo systemctl enable --now tun2socks
 # 验证 systemctl status tun2socks；ip route show default(=tun0)；curl -so/dev/null -w '%{http_code}' https://www.google.com/generate_204(=204)
