@@ -1058,3 +1058,65 @@ CSS 和 JS 在 bundle 里都是模板字符串字面量。源码层每个反斜�
 ### 离线复刻参考实现
 
 `dredge-up` skill（`skills/.curated/dredge-up/`）已经基于上述逆向做了一份**离线**复刻——从 `events.jsonl` 重建时间线、复刻同款 entry DOM、复用 share 抽出的 CSS/JS，并加了 agent 总结注入。要做"离线把会话存档成 HTML"这件事直接用它，不要重新逆向。
+
+## `web_fetch` 的 SSRF 守卫为何拦 fake-ip（及定点放行补丁）
+
+### 现象
+
+Mihomo 开 `enhanced-mode: fake-ip` 时，`web_fetch` 抓**任何**外网域名都报：
+
+```
+WebFetchBlockedUrlError: ... resolves to blocked address 198.18.x.x.
+URLs must not target loopback, private, or link-local addresses.
+```
+
+不是网络不通——是 `web_fetch` **发请求前的一道安全预检**撞上了 fake-ip。对照组：同环境 `curl` 抓同一 URL 正常（`curl` 没这道检查、且会把域名交给代理或经 TUN 走 fake-ip）。
+
+### 机制：SSRF 守卫在联网前先判黑
+
+SSRF（Server-Side Request Forgery，服务端请求伪造——诱导服务端去请求它本不该碰的内网 / 云元数据地址如 `169.254.169.254`、`127.x`、内网面板）。`web_fetch` 的防线是：**先用系统 DNS 解析目标主机名，再把每个解析到的 IP 逐个判黑，命中就在发请求前抛错**。
+
+```js
+// app.js（符号名随版本变，锚点用稳定字面量 .networkIsBlockedIp / .hookResolveAndValidateUrl /
+//         错误文案 "resolves to blocked address" / env "COPILOT_WEB_FETCH_ALLOW_LOCALHOST"）
+async function kNe(t,e={}){                        // resolve + validate
+  let r=new URL(t); ...                            // 只放行 http/https
+  let a = isIP(host)? [...] : await dns.lookup(host,{all:!0});  // ← 系统 DNS → fake-ip 拿到 198.18.x
+  if(e.allowLocalhost && a.every(是127/::1)) return a;
+  for(let {address:l} of a)
+    if(g4n(l)) throw new Error(`... resolves to blocked address ${l}. URLs must not target ...`);
+}
+function g4n(t){ return w.networkIsBlockedIp(t) }  // ← native 判黑；198.18.0.0/15 属 RFC2544 保留段 → true
+```
+
+fake-ip 模式下 Mihomo 给每个域名都回 `198.18.x.x`（RFC2544 基准测试保留段），**必落黑名单** → 每个外网域名都被拒。**这是 fake-ip 专属坑**：切 `redir-host`（回真实公网 IP）就不触发，没有这个问题。fake-ip 原理见 `network` skill 的 mihomo fake-ip 章节。
+
+### 没有可用的配置开关
+
+唯一相关 env 是 `COPILOT_WEB_FETCH_ALLOW_LOCALHOST=1`，但 `kNe` 里它**只放行 `127.x` / `::1`**，fake-ip 段不在其列；也没有 `allowPrivate` 之类。所以想让 fake-ip 下的 `web_fetch` 可用，**只能改源码**（用户明确要的就是改源码，不是"用 curl 绕过"——curl 是并行手段，不能让 `web_fetch` 本身可用）。
+
+### 关键：判黑逻辑正在从 JS 迁往 native（移动靶）
+
+同一个检查在版本间**换过形态**，patch 前必须先辨形：
+
+| 形态 | 版本（实测） | JS 里长什么样 | 可 patch 点 |
+|---|---|---|---|
+| **A · JS 判黑** | ~1.0.66-0 | `function <g>(<t>){return <w>.networkIsBlockedIp(<t>)}`，被 resolve+validate helper（`kNe`）调用 | 直接包 `networkIsBlockedIp` |
+| **B · native 判黑** | 1.0.66-1→-2 起，含 1.0.69-x | helper（`smt`）只剩 `await <E>.hookResolveAndValidateUrl(...)`，**JS 里已无 `networkIsBlockedIp`、连 `node:dns` 都不 import** | 只能重写 `smt` 自己解析 |
+
+GitHub 把整套"解析 + 判黑"搬进 Rust 绑定了。后果：**每次 `copilot update` 都可能让 patch 失效**，甚至需要重新逆向定位。（本 skill 的经验：1.0.66→1.0.69 期间 CLI 自更新 4 个版本，旧 patch 全部落空。）
+
+### 补丁思路（定点放行，最小爆炸半径）
+
+只放行 fake-ip 池 `198.18.0.0/15`（`198.18.x` / `198.19.x`，本就没有合法内网服务），其余仍交给原判黑——`127/10/192.168/169.254/::1/云元数据`照旧全拦。比"让判黑恒 `false`"安全得多。两形态分别：
+
+- **形态 A**：把 `networkIsBlockedIp(t)` 包成 `/^198\.1[89]\./.test(t)?false:<原调用>`。
+- **形态 B**：重写 `smt`——自己 `await import("node:dns/promises")` 解析主机名，**全部**解析成 fake-ip 时直接返回地址（绕过 native）、否则回落 `await <E>.hookResolveAndValidateUrl(...)`（保留真实内网防护）。
+
+工程约束（照搬 `app.js` patch 的通用套路，另见本仓 `software` skill 的 `patch-copilot-cli-retry.sh`）：
+
+- **锚点用稳定字面量**（`.networkIsBlockedIp` / `.hookResolveAndValidateUrl`），用 `\w+` 捕获每版不同的混淆名；别硬编码符号名。
+- **幂等 marker** + **备份**原文件；patch 后 `node --check`，语法坏了自动回滚。
+- **扫所有 pkg cache 版本目录**（`~/.cache/copilot/pkg/<platform>/<version>/app.js`，SEA 安装；npm 安装见「安装方式与看源码」）。
+- **只对新启动的会话生效**——运行中的 `copilot` 已把 `app.js` 载入内存；`copilot update` 拉新版本后**须重跑** patch（新版本目录未打）。
+- 验证：patch 后**开新会话**让它 `web_fetch` 任意外网 URL；若错误从 "blocked address" 变成连接 / 代理类错误，说明判黑已绕过、但底层 fetch 对 pinned fake-ip 的出站路径有问题（查 `proxyEnv` / `pinnedAddresses` 与 TUN 直连）。

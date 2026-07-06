@@ -327,6 +327,25 @@ external-ui-url: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-
 
   这样从 `http://<host>:9090/ui/` 打开就自动连同源的 `http://<host>:9090` 控制面，不必每次手填 backend（secret 仍需在面板里填一次）。
 
+### 4.2 TUN 模式下别用 `POST /restart`（Windows 会静默丢 TUN）
+
+REST API 有个 `POST /restart`：让 mihomo **重启自己、用原启动参数重载配置**。但在 **Windows + TUN** 下它有硬伤——调用返回 `{"status":"ok"}`，核心却死了、不再起来（`:9090` 监听直接消失），得手动拉起。**改 `external-controller` / `secret` / `external-ui` 这类只有重启才生效的项时最容易踩**（想省一次手动重启 → 用 `/restart` → 反而把核心整没了）。
+
+**先排除一个错误归因：不是权限问题。** Windows 上重启是 `exec.Command(exe, args).Start()` + `os.Exit(0)`（spawn 新子进程、父进程退出），子进程经 `CreateProcess` **继承父进程的管理员 token**（代码没设 `SysProcAttr` 去降权），UAC 不参与。对比 Unix 走 `syscall.Exec`（execve，原地替换、同 PID）——两条路本质不同，但**都不掉权**。
+
+**真因是 Wintun 适配器的 PnP 删除竞态：**
+
+1. 重启前 `executor.Shutdown()` → 关 TUN → `WintunCloseAdapter()` **请求删除**网卡设备。Windows 的 PnP 设备删除是**异步**的：函数立刻返回，内核还没删完。
+2. 新子进程紧接着 `tun.New()` → `WintunCreateAdapter()` 撞 `ERROR_ALREADY_EXISTS`（"Cannot create a file when that file already exists"），fallback `OpenAdapter()` 也失败（设备在删除中间态）。
+3. 这个失败 **<1 秒**返回，正好命中 `tunNew()`（`listener/sing_tun/server_windows.go`）的**快失败早退分支——不重试**（只有 ≥1s 的超时才重试 3 次）。
+4. 于是 TUN 静默禁用（`ReCreateTun` 的 defer 把 `tunConf.Enable=false`，**不 crash**），核心沦为没有 TUN 的裸代理：网卡消失、透明路由停摆，用户看着就是"核心死了"。
+
+> 叠加坑：`Shutdown()` **只关 TUN、不关控制器端口**（`:9090` 要等老进程 `os.Exit` 才释放）。而子进程是在老进程退出**前**就 spawn 的——若你同时又改了控制器绑定（`127.0.0.1` → `0.0.0.0`），子进程去 bind 时老进程还占着端口 → 撞端口 → `:9090` 彻底起不来。这解释了为什么"改 controller + `/restart`"会让控制器整个消失，而不只是 TUN 没了。
+
+**源码锚点**（`MetaCubeX/mihomo`，真实源码在 `Alpha`/`Meta` 分支）：`hub/route/restart.go` 的 `restartExecutable`（`runtime.GOOS==="windows"` 分支 spawn+`os.Exit`，else 走 `syscall.Exec`）；`MetaCubeX/sing-tun` 的 `tun_windows.go` `NativeTun.Close → adapter.Close → WintunCloseAdapter`；`server_windows.go` `tunNew` 的 `<1*time.Second` 不重试。相关 [PR #709](https://github.com/MetaCubeX/mihomo/pull/709)（"call shutdown() before restart"）是修 **Linux iptables 重复规则**、与 Windows TUN 无关；issue 区**没有**记录这个 Windows+TUN 失败模式。
+
+**教训 / 做法**：TUN 模式**别用 `/restart`**，改成**外部 kill → 等一下（让 Wintun 适配器删干净、端口释放）→ 按原启动参数重新拉起**（或重启对应服务）。要在 Windows 上脚本化这套 kill+relaunch、且 mihomo 高权限跑需要 UAC 提权时，`Start-Process -Verb RunAs` + 落盘取结果的手法见 `software` skill 的 Windows/WSL 提权章节。
+
 ## 5. TUN 路由的边界
 
 几条容易踩、值得先知道的事实：
@@ -488,6 +507,8 @@ dns:
 要点：`dns-hijack any:53` 堵住泄漏闸门；`fake-ip` 给快且准的分流；`nameserver` 用 **DoH/DoT** 让“上游解析”这步也加密、并配合 `respect-rules` 走代理出去——这样 ISP 既看不到你的明文查询，也截不到上游往哪查。`fake-ip-filter` 里的 `skipper`（源码 `component/fakeip/skipper.go`）让排除的域名走真解析，避免坏掉 ping、局域网设备、按 IP 比对的软件。
 
 > **注·与 WSL 的边界**：这个 `198.18.0.1/16` 是宿主自己的 fake-ip 段（TUN 默认网关 IP 也取自此值）。**WSL 内自建 TUN（tun2socks）要避开 `198.18.x`**，否则和宿主 fake-ip / TUN 网关撞——见 [wsl.md](wsl.md)「WSL 内自建 TUN 透明代理」。
+
+> **注·对 agent 工具的副作用**：fake-ip 会让某些**自己解析 DNS + 做 SSRF 判黑**的 agent 工具误伤——典型是 GitHub Copilot CLI 的 `web_fetch`：它抓任何域名都先解析成 `198.18.x`，而这段属 RFC 保留段、被判为"blocked address"直接拒（换 `redir-host` 就没事）。绕过要改源码（定点放行 `198.18.0.0/15`），机制与补丁思路见 `harness` skill 的 `web_fetch` SSRF 章节。
 
 ### 7.5 验证与排查：browserleaks/dns 原理 + 可脚本化自测
 
