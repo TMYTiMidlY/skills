@@ -810,10 +810,19 @@ grep -L 'tmy-retry-patch' ~/.cache/copilot/pkg/linux-x64/*/app.js
 ### 机制（与 effort 完全对称，别被「改 settings 就够」骗了）
 
 - **context tier 和 effort 同构**：`--context <tier>`（会话级不落盘）> `settings.json` 的 `contextTier`（合法持久键，值 `default`/`long_context`；`inherit` 只给子代理）> 内置默认（⚠️ 这条优先级只在无头 `-p` 成立；交互 TUI 无视 `--context` 开关，见下条）。`long_context`（分层定价的大窗口档，如 gpt-5.x 的 1.1M）**只在该模型 `billing.token_prices` 里带 `long_context` 时才存在**——不支持的模型只有 `default` 一档，写了也没有第二档。
-- **⚠️ 交互 TUI 无视 `--context` 开关，只认 `settings.json` 的 `contextTier`**（实测 1.0.69-1，opus-4.8）：`copilot --context long_context` 进交互 → `/context` 仍 264k；同一开关进无头 `-p` → resolved 窗口 264k→**1M**、prompt 200k→**936k**。源码：CLI action 里 `gn=t.context??l.contextTier` 确实把开关并进了 `contextTier:gn` 传给各 session builder，无头 `createSession({…contextTier:e.contextTier…})` 直接用（认开关）；但**交互 App 有个挂载 effect 只从盘重灌** tier——`(0,bd.useEffect)(()=>{…let De=await rn.load(l)||{};V(De.contextTier)…},[l,r])`（`V`=tier state 的 setter，`[H,V]=useState(SN.EMPTY)`；守卫 `if(r?.getContextTier?.()!==void 0)return`，交互启动时 `r` 没带 tier 故落空 → 走 `rn.load(settings).contextTier`）。**所以交互启动要长上下文＝改 `settings.json` `contextTier: long_context`，别指望 `--context` 开关。**
+- **⚠️ 交互 TUI 无视 `--context` 开关，只认 `settings.json` 的 `contextTier`**（实测 1.0.69-1，opus-4.8；数字见下方四象限表）。源码：CLI action 里 `gn=t.context??l.contextTier` 确实把开关并进了 `contextTier:gn` 传给各 session builder，无头 `createSession({…contextTier:e.contextTier…})` 直接用（认开关）；但**交互 App 有个挂载 effect 只从盘重灌** tier——`(0,bd.useEffect)(()=>{…let De=await rn.load(l)||{};V(De.contextTier)…},[l,r])`（`V`=tier state 的 setter，`[H,V]=useState(SN.EMPTY)`；守卫 `if(r?.getContextTier?.()!==void 0)return`，交互启动时 `r` 没带 tier 故落空 → 走 `rn.load(settings).contextTier`）。**所以交互启动要长上下文＝改 `settings.json` `contextTier: long_context`，别指望 `--context` 开关。**
 - **完整修复 = 两件套**：① `settings.json` `contextTier: long_context`（管交互启动即长上下文）＋ ② 下面的 bundle 补丁（管 typed `/model` 切换后不掉档）。缺 ② 时实测：settings 设了 long_context、启动 1M，但 typed `/model gpt-5.4` 再 `/model claude-opus-4.8` 切回 → `/context` 从 1M 掉回 264k，且 `settings.json` 的 `contextTier` 被**物理删掉**（就是下面那句 `contextTier=void 0` 落盘）。补丁后同一测试：切回仍 1M、settings 不被抹。
 - **坑与 effort 一模一样**：打字版 `/model <id>` 执行时 `<state>.contextTier=void 0` **落盘清空** settings（连 `effortLevel` 一起清），且 native `me.setModel` 用 3 参调 `RG`（第 4 参 = 新 tier 缺省）→ **同时把本会话内存 state 重置回 default**。所以「先用无参 `/model` 选择器选好 long_context」扛不住之后任何一次 typed `/model` 切模型。**想让 typed `/model` 默认 long_context，纯改 settings 无效、必须 hack**——和 effort 一个道理。曾错误地以为「effort 要 hack、context tier 改 settings 就行」，是假的不对称，别再犯。
 - stock 下只有无参 `/model` 两步选择器能设 tier（picker 路径给 `RG` 传满 4 参）；typed `/model <id>` 走清空路径。
+
+**实测四象限（opus-4.8，1.0.69-1；上下文窗口取 `/context` 面板，prompt 上限取 resolved `max_prompt_tokens`）**：
+
+| 场景 | 上下文窗口 | prompt 上限 |
+|---|---|---|
+| 无头 `-p` ＋ `--context default` | 264k | 200k |
+| 无头 `-p` ＋ `--context long_context` | **1,000,000** ✓ | 936,000 |
+| 交互 TUI ＋ `--context long_context` | 264k ✗ | 200k |
+| 交互 TUI ＋ settings `contextTier=long_context`（不带开关） | **1,000,000** ✓ | 936,000 |
 
 ### hack：typed `/model` 后落到 long_context（带模型能力守卫）
 
@@ -856,11 +865,11 @@ model && model.billing && model.billing.token_prices
 
 **实测结论**：支持的模型（gpt-5.4 / 5.5 / opus-4.8）→ typed `/model` 后 footer 显 `(1M context)`/`(1.1M context)` + settings 落 `long_context`；不支持的（gpt-5-mini）→ 守卫返回 default、不崩。opus-4.8 实测切走再切回，`/context` 从补丁前的 264k 变 **1000k**、`settings.json` `contextTier` 不再被抹。
 
-**脚本**：`software/scripts/patch-copilot-cli-longcontext.py`（幂等；扫版本目录；逐档 `node --check`；**两处锚点都命中才写**，否则整档回滚；pre-1.0.68 无 `modelsIsTieredTokenPrices` 自动跳过；node 自动探测 fnm/nvm/volta/PATH）。规矩全同《重试策略 patch》：备份 `app.js.pre-longcontext.bak`、marker `tmy-lc-default`、**auto-update 后要重跑**：
+**脚本**：`harness/scripts/patch-copilot-cli-longcontext.py`（幂等；扫版本目录；逐档 `node --check`；**两处锚点都命中才写**，否则整档回滚；pre-1.0.68 无 `modelsIsTieredTokenPrices` 自动跳过；node 自动探测 fnm/nvm/volta/PATH）。规矩全同《重试策略 patch》：备份 `app.js.pre-longcontext.bak`、marker `tmy-lc-default`、**auto-update 后要重跑**：
 
 ```bash
 grep -L tmy-lc-default ~/.cache/copilot/pkg/linux-x64/*/app.js   # 列出没打的（空=都打了）
-python3 <skills>/software/scripts/patch-copilot-cli-longcontext.py --apply
+python3 <skills>/harness/scripts/patch-copilot-cli-longcontext.py --apply
 ```
 
 **各版本代码分布 & 清理**：1.0.66 / 1.0.67 无 `long_context` 特性（跳过）；1.0.68 / 1.0.69-0 / 1.0.69-1 有。PATCH#2 那个「3 参重置调用」的**函数名逐版本变**（`RG`@1.0.69-1、`u$`@1.0.68、`p$`@1.0.69-0），所以锚点**不能硬编函数名**——用 `<fn>(<id>,void 0,{…contextTier…})`（3 参形式，picker 的 4 参调用天然被排除）。**无自动清理机制**：每次 patch 各版本目录留一份 `app.js.pre-longcontext.bak`，auto-update 只往新版本目录堆，旧备份/旧版本目录都不自动回收，要手动清（loader 只跑最高版本，旧版本目录留着无害）。
