@@ -805,6 +805,55 @@ grep -L 'tmy-retry-patch' ~/.cache/copilot/pkg/linux-x64/*/app.js
 - **验证**：`node --check` 打过补丁的 `app.js` + `~/.local/bin/copilot --version` 能跑；`grep -l tmy-max-effort ~/.cache/copilot/pkg/linux-x64/*/app.js`；开**新**会话看 picker `(default)` 是否已在顶档（当前已运行的会话不受影响）。
 - **局限**：只改 `bfe` 覆盖 picker 标签 + 启动/`zC` 解析。若实测**会话内** typed `/model` 仍回落 medium（native `setModel` 读的是配置对象那份 `defaultReasoningEffort`，不经 `bfe`），再把源码里 `defaultReasoningEffort:<src>?.defaultReasoningEffort` 那 1~2 处 copy 站点也改成取 `supportedReasoningEfforts` 最高档即可。
 
+## 上下文档位（context tier）：让 typed `/model` 默认 long_context
+
+### 机制（与 effort 完全对称，别被「改 settings 就够」骗了）
+
+- **context tier 和 effort 同构**：`--context <tier>`（会话级不落盘）> `settings.json` 的 `contextTier`（合法持久键，值 `default`/`long_context`；`inherit` 只给子代理）> 内置默认。`long_context`（分层定价的大窗口档，如 gpt-5.x 的 1.1M）**只在该模型 `billing.token_prices` 里带 `long_context` 时才存在**——不支持的模型只有 `default` 一档，写了也没有第二档。
+- **坑与 effort 一模一样**：打字版 `/model <id>` 执行时 `<state>.contextTier=void 0` **落盘清空** settings（连 `effortLevel` 一起清），且 native `me.setModel` 用 3 参调 `RG`（第 4 参 = 新 tier 缺省）→ **同时把本会话内存 state 重置回 default**。所以「先用无参 `/model` 选择器选好 long_context」扛不住之后任何一次 typed `/model` 切模型。**想让 typed `/model` 默认 long_context，纯改 settings 无效、必须 hack**——和 effort 一个道理。曾错误地以为「effort 要 hack、context tier 改 settings 就行」，是假的不对称，别再犯。
+- stock 下只有无参 `/model` 两步选择器能设 tier（picker 路径给 `RG` 传满 4 参）；typed `/model <id>` 走清空路径。
+
+### hack：typed `/model` 后落到 long_context（带模型能力守卫）
+
+**apply / 备份 / 幂等 marker / 扫所有版本目录 / auto-update 后重跑，规矩全同《重试策略 patch》**——marker `tmy-lc-default`、备份 `app.js.pre-longcontext.bak`。脚手架（扫版本目录 + 备份 + `node --check` + 写回）与 retry/effort 补丁同构，下面只列**两处锚点 + 守卫**这些逆向出的、无法自行重建的部分。两处都用 `[\w$]+` 匹配标识符（minify 会造含 `$` 的名，`\w` 不含 `$`——effort hack 那条硬编 `\w` 的教训）。
+
+**⚠️ 特性前置守卫（第一大坑，务必先做）**：`long_context` 分层定价是 **1.0.68+** 才有的特性，靠 native `v.modelsIsTieredTokenPrices` 判定。老版本（1.0.66 / 1.0.67）**根本没有这个 native 函数**——注入引用它的守卫会**运行时崩溃**，而 `node --check` **查不出**（语法合法、只是跑到时 undefined）。所以打补丁前必须 `if(!src.includes("modelsIsTieredTokenPrices")) skip`。这坑真实踩过：放松锚点后 6 个版本**全匹配 + node --check 全过**，看着全成功，实际老版本一敲 `/model` 就炸。
+
+**PATCH#1 持久化**（typed `/model` 落盘点，别再清空 tier）：把 `<state>.contextTier=void 0` 改成 `=(<守卫>?"long_context":void 0)`。锚点用反向引用锁死这一段、并从中拿到 model 变量：
+
+```js
+// 锚点（\1=state 对象, \2=目标 model id 变量）：
+/([\w$]+)\.model=([\w$]+)===([\w$]+)\?void 0:\2,\1\.effortLevel=void 0,\1\.contextTier=void 0/
+// 模型对象经该锚点前方就近的 .find(p=>p.id===\2) 捕获，喂给守卫；只把末尾 `\1.contextTier=void 0` 换成守卫三目。
+```
+
+**PATCH#2 本会话**（`me.setModel` 的 switch 调用，别再重置回 default）：给 `RG(U,void 0,{…contextTier…})` **补上第 4 参** = 守卫 IIFE（从模型列表 `list.find(m=>m.id===U)` 取模型算 tier），把 stock 的「第 4 参缺省 → 重置 default」改成「支持则 long_context」。
+
+```js
+// 锚点定位 setModel 及其模型列表 list，再在其后就近那次 4 参不足的 RG 调用补参：
+/setModel:async\(([\w$]+),([\w$]+)\)=>\{let ([\w$]+)=([\w$]+)\?\.type==="success"\?\4\.list:void 0;/
+// 补的第 4 参：(()=>{let _m=list.find(x=>x&&x.id===U);...return <守卫>?"long_context":void 0})()
+```
+
+**守卫表达式**（两处共用，照抄 native 能力判定 `H7n`，不支持的模型返回 `void 0` → 回落 default 不崩）：
+
+```js
+model && model.billing && model.billing.token_prices
+  && v.modelsIsTieredTokenPrices(JSON.stringify(model.billing.token_prices))
+  && "long_context" in model.billing.token_prices && model.billing.token_prices.long_context
+```
+
+### 用真 PTY 实测 TUI hack（可复用手法）
+
+改 bundle 后光 `node --check` + `--version` 不够——得验 typed `/model` 真的落到 long_context。这类「要驱动交互式 TUI、按键、读屏幕」的验证，用 Python stdlib **`pty.fork()`** 起真 PTY（`pexpect` 没装也不必装）：
+
+- 子进程 `os.execvp("copilot",…)` 拿到的是**真控制终端**（非 mock）；`ioctl(fd, TIOCSWINSZ, struct.pack("HHHH",行,列,0,0))` 设窗口、`TERM=xterm-256color`。
+- master fd：`select.select([fd])` 读 = 看屏幕；`os.write(fd,ch)` = 敲键盘（`\r` 提交、`\x03` 退出）。
+- **逐字符输入（~60ms/字符）**：一次性灌整行会和 TUI 自动补全竞争、把命令截断——这坑踩过。
+- 验证：#1 从磁盘读 `settings.json` 看 `contextTier`；#2 正则剥 ANSI 后 grep 稳定串（`Model changed from`、footer 的 `1.1M context`）。**换一个和当前不同、且支持 long_context 的模型**（如 gpt-5.4）强制真切换，别用同款——切了等于没切，区分不出「hack 没生效」vs「本就同档」；`-p "/model"` 一次性喂会走另一条「Already using」路径（不在 app.js 里），也测不到。
+
+**实测结论**：支持的模型（gpt-5.4 / 5.5）→ typed `/model` 后 footer 显 1.1M context + settings 落 `long_context`；不支持的（gpt-5-mini）→ 守卫返回 default、不崩。已打 1.0.68 / 1.0.69-0 / 1.0.69-1，1.0.66 / 1.0.67 按前置守卫正确跳过。
+
 ## 运行中发消息：steer（即时插话）vs queue（排队）
 
 > 源码偏移基线 `@github/copilot@1.0.62` 的 `app.js`（与本文件其余章节的 1.0.41 基线不同，偏移仅供参考）。
