@@ -1,8 +1,17 @@
 # Mihomo 代理：配置与泄漏控制
 
 > 本文把 Mihomo 的**配置用法**和**泄漏控制（DNS / WebRTC）**结合着讲，目标是读完能自己搭一套“不漏、分流准、能排障”的代理，并理解每个开关到底在做什么。全文分两部分：前半是**配置与使用**，后半是**泄漏控制**。WSL ↔ Windows ↔ 远端的网络管道是另一回事——WSL 出站怎么进 Mihomo、portproxy/wslrelay 入站见 [wsl.md](wsl.md)，RDP / serve-web 等远程接入见 [remote.md](remote.md)。
->
-> **源码出处**：下文凡是讲到内部行为，都对照官方仓库 **`MetaCubeX/mihomo`** 的 **`Meta` 分支**（稳定线；开发线是 `Alpha`）。⚠️ 这个仓库的**默认分支就是 `main`、装的是一个同名的 Honkai: Star Rail Python 包，不是代理内核**——这是维护者**故意的伪装**，不是仓库被劫持。背景：2023-11-02 Clash 内核 `Dreamacro/clash`（Go 核心引擎，mihomo 即由它 fork 而来）与最流行的 GUI 客户端 Clash for Windows（`Fndroid/clash_for_windows_pkg`，另一作者 Fndroid）在**同一天各自删库**（实测二者今均为**纯 404** 而非 451 DMCA 下架页，GitHub 官方 `github/dmca` 存档亦零命中，加之作者当日公开自宣停更删库——故是**作者自行删库、非版权/DMCA 处置**；Wayback 最后可用快照止于 2023-11-02。停更主因作者仅称“不可抗力”；社区普遍推测系其**推特自曝的个人信息被顺藤定位、遭约谈“请喝茶”**，援引线索包括推特照片暴露的所在城市（湖南/长沙）、部分车牌+车型、购物/充电记录、京东订单截图等，但**官方从未证实**，各版本均属社区推测。参见中国数字时代存档 `chinadigitaltimes.net/chinese/701751`），此后 Clash 系普遍把仓库门面伪装成无关项目以规避审查/下架/爬虫扫描，mihomo 这里就是把默认分支和仓库元数据设成一个真实存在的星铁 pydantic 包（实测 `gh api` 与 GitHub MCP 双通道一致：`default_branch=main`、`language:Python`、`topics:[honkai-star-rail,…]`，而 3.2 万 star / `wiki.metacubex.one` 主页仍是内核的、`Meta`/`Alpha` 等内核分支原封未动——只换门面、核心没动，所以是伪装不是劫持）。所以 `git clone` 不带分支会落到 `main`、拿到一个 `pyproject.toml`；要 Go 源码（`module github.com/metacubex/mihomo`）得 `git clone -b Meta`。已经 clone 停在 `main` 时，直接 `git checkout Meta`（或 `git switch Meta`）即可——单 remote + 全量 refspec 下 Git 的 DWIM 会自动基于 `origin/Meta` 建同名跟踪分支（实测 exit 0）。
+
+**源码基准与 clone**：下文凡讲到内部行为，都对照官方仓库 `MetaCubeX/mihomo` 的 **`Meta` 分支**（稳定线；开发线是 `Alpha`）。要 Go 源码（`module github.com/metacubex/mihomo`）：`git clone -b Meta`；已经 clone 停在默认的 `main` 上，直接 `git checkout Meta`（或 `git switch Meta`）即可——单 remote + 全量 refspec 下 Git 的 DWIM 会自动基于 `origin/Meta` 建同名跟踪分支（实测 exit 0）。
+
+> **⚠️ 为什么 clone 出来像个星铁 Python 包（是伪装，不是仓库被劫持）**
+> 这仓库**默认分支就是 `main`、装的是一个同名的 Honkai: Star Rail Python 包（`pyproject.toml`），不是代理内核**——`git clone` 不带分支就落到 `main`。这是维护者**故意的伪装**：把默认分支和仓库元数据设成一个真实存在的星铁 pydantic 包，以规避审查 / 下架 / 爬虫扫描。实测 `gh api` 与 GitHub MCP 双通道一致：`default_branch=main`、`language:Python`、`topics:[honkai-star-rail,…]`，而 3.2 万 star、`wiki.metacubex.one` 主页仍是内核的、`Meta`/`Alpha` 等内核分支原封未动——**只换门面、核心没动，所以是伪装不是劫持**。
+
+> **背景：Clash 系为何在 2023-11-02 集体删库伪装**
+> 2023-11-02，Clash 内核 `Dreamacro/clash`（Go 核心引擎，mihomo 即由它 fork 而来）与最流行的 GUI 客户端 Clash for Windows（`Fndroid/clash_for_windows_pkg`，作者 Fndroid）在**同一天各自删库**；此后 Clash 系普遍把仓库门面伪装成无关项目以规避审查 / 下架 / 爬虫扫描。
+> - **是作者自行删库、非版权 / DMCA 处置**：实测二者今均为**纯 404** 而非 451 DMCA 下架页，GitHub 官方 `github/dmca` 存档亦零命中，加之作者当日公开自宣停更删库。
+> - **Wayback 取证**：Wayback（Wayback Machine，互联网档案馆 Internet Archive 运营的“网页时光机”`web.archive.org`，定期抓取并永久保存网页快照、可回看某 URL 过去某时点的样子，原页删了也能看）显示，这两个仓库最后一张能正常打开的快照都止于 **2023-11-02**——把删库时点钉在那天。
+> - **停更原因**：作者仅称“不可抗力”；社区普遍推测系其**推特自曝的个人信息被顺藤定位、遭约谈“请喝茶”**，援引线索包括推特照片暴露的所在城市（湖南/长沙）、部分车牌 + 车型、购物 / 充电记录、京东订单截图等，但**官方从未证实**，各版本均属社区推测。参见中国数字时代存档 `chinadigitaltimes.net/chinese/701751`。
 
 ---
 
@@ -111,7 +120,8 @@ CLI 跑起来要**终端一直挂着**，关了就停；要常驻就做成 servi
   allow-lan: true        # 总开关：关(默认)→ 只听 127.0.0.1，外面进不来；开 → 才允许超出回环
   bind-address: '*'      # 仅 allow-lan 开时才读：* = 所有网卡(0.0.0.0)，填具体 IP = 只听那张网卡
   ```
-  两者是「开关 + 过滤器」不是两种等效写法：**开不开 LAN 看 `allow-lan`，开了之后听哪儿才看 `bind-address`**。源码 `listener/listener.go` 的 `genAddr(host, port, allowLan)`：`allow-lan` 关时直接返回 `127.0.0.1:port`（无视 `bind-address`），开时 `bind-address=*` → `:port`（全听）、否则 `host:port`。所以单写 `bind-address` 而不开 `allow-lan` 没用，照样只听回环。要对外时**别绑某个具体虚拟网卡地址**——网卡重连/地址变化/启动顺序变了，就会间歇连不上代理端口。
+  两者是「开关 + 过滤器」不是两种等效写法：**开不开 LAN 看 `allow-lan`，开了之后听哪儿才看 `bind-address`**。所以单写 `bind-address` 而不开 `allow-lan` 没用，照样只听回环。要对外时**别绑某个具体虚拟网卡地址**——网卡重连/地址变化/启动顺序变了，就会间歇连不上代理端口。
+  > **源码** `listener/listener.go` 的 `genAddr(host, port, allowLan)`：`allow-lan` 关时直接返回 `127.0.0.1:port`（无视 `bind-address`），开时 `bind-address=*` → `:port`（全听）、否则 `host:port`。
 
 - **TUN（透明接管）**：创建一张虚拟网卡，把**整机路由**劫进 mihomo，应用无感。适合“全局接管 + 想按域名分流 + 防 DNS 泄漏”。TUN 怎么配见第二部分（它和 DNS 强相关）。
 
@@ -129,7 +139,8 @@ TCP from client → mixed-port / TUN
 
 几个直接能用的判断：
 
-- **`mode: rule` 下的兜底是规则表最后一条 `MATCH`，不是 GLOBAL**。规则**从上往下、首条命中即止**（源码 `tunnel/tunnel.go` 的 `match()`，循环里 `return` 首个命中的 rule；一条都没命中才落到 `DIRECT`）。最后那条 `MATCH,<某组>` 把“前面规则都没命中的流量”兜走——订阅里这个组常被命名为 `🐟 漏网之鱼`。`GLOBAL` 是另一个东西：内置的“装了所有节点和分组”的选择器，**只有切到 `mode: global` 时才用它接管一切**（源码 `case Global: proxy = proxies["GLOBAL"]`）。所以 rule 模式下改 GLOBAL 没用——要改就找命中目标的那条 rule、定位到它指向的组。
+- **`mode: rule` 下的兜底是规则表最后一条 `MATCH`，不是 GLOBAL**。规则**从上往下、首条命中即止**；最后那条 `MATCH,<某组>` 把“前面规则都没命中的流量”兜走——订阅里这个组常被命名为 `🐟 漏网之鱼`。`GLOBAL` 是另一个东西：内置的“装了所有节点和分组”的选择器，**只有切到 `mode: global` 时才用它接管一切**。所以 rule 模式下改 GLOBAL 没用——要改就找命中目标的那条 rule、定位到它指向的组。
+  > **源码**：`tunnel/tunnel.go` 的 `match()` 循环里 `return` 首个命中的 rule、一条都没命中才落到 `DIRECT`；`mode: global` 时才走 `case Global: proxy = proxies["GLOBAL"]`。
 - **切节点常常要改两层（嵌套 Selector）**。真实订阅里常是“分类组 → 主选择器 → 真实节点”两层嵌套：分类组（如 `☁️ 云服务`）的 `.now` 指向主选择器（如 `🚀 节点选择`），主选择器再指向真实节点。关键约束在源码 `adapter/outboundgroup/selector.go` 的 `Set()`：**一个 Selector 只能被切到它自己 `.all` 里有的名字**，否则报 `proxy not exist`。
   ```go
   func (s *Selector) Set(name string) error {
@@ -235,7 +246,8 @@ curl -s -o /dev/null --max-time 45 --proxy $P \
   - **拉取流程** `provider.go` 的 `NewProxiesParser`：HTTP 拉取（`header` 自定义请求头 / `proxy` 借某代理去拉 / `size-limit` / `age-secret-key` 解密）→ YAML 解析（失败回退 `ConvertsV2Ray`，兼容机场那种 base64 / `vmess://` 订阅）→ exclude/filter 过滤 → 去重 → `override.Apply` 覆写 → `ParseProxy`。
 - 另有 **rule-provider**（`rules/provider/`）远程规则集，也算“远程覆写”，但覆的是**规则**不是节点。
 
-**“自己就是内核，覆写之后给谁？”**——别被“覆写”这词带成“改完转交下游”。节点级 override 没有下游：覆写对象是**从订阅 URL 拉下来的那份原始节点清单**（机场给的、源头你改不动），覆写发生在“**外部订阅数据 → 内核内部节点对象**”这个**装载/入口边界**上——内核在把别人给的数据收进自己肚子前先按你的 `override`/`filter` 清洗一遍，然后**内核自用**（供 proxy-group 选择、被规则命中后建连接）。字段名 `override` 指的是“覆盖每个节点原本的字段值 / 补上它没有的字段”，不含“转交”义。对照才清楚：**配置级**覆写才是“外部工具改好整份配置 → 喂给内核，内核是下游”；**节点级 override** 是“内核在入口把拉进来的订阅节点清洗一遍，没有外部下游”——你直觉里那个“给谁”在这一层不存在。
+> **旁注·“覆写之后给谁”？——内核自用、没有下游**
+> 别被“覆写”这词带成“改完转交下游”。节点级 override 没有下游：覆写对象是**从订阅 URL 拉下来的那份原始节点清单**（机场给的、源头你改不动），覆写发生在“**外部订阅数据 → 内核内部节点对象**”这个**装载/入口边界**上——内核在把别人给的数据收进自己肚子前先按你的 `override`/`filter` 清洗一遍，然后**内核自用**（供 proxy-group 选择、被规则命中后建连接）。字段名 `override` 指的是“覆盖每个节点原本的字段值 / 补上它没有的字段”，不含“转交”义。对照才清楚：**配置级**覆写才是“外部工具改好整份配置 → 喂给内核，内核是下游”；**节点级 override** 是“内核在入口把拉进来的订阅节点清洗一遍，没有外部下游”——你直觉里那个“给谁”在这一层不存在。
 
 一句话：**节点级（proxy-provider 的 `override` + `filter`）有且完整；整份配置级订阅覆写内核不管，交给外部管理程序 / 订阅转换器。**
 
@@ -317,10 +329,14 @@ external-ui-url: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-
 
 几条容易踩、值得先知道的事实：
 
-- **`IP-CIDR,...,DIRECT` 不等于绕过 TUN**。它只是“流量进了 TUN 后，mihomo 选 `DIRECT` 这个 outbound”；`/connections` 里仍会看到 `inboundName: DEFAULT-TUN`、`chains:[DIRECT,...]`。真要某个目的地完全不进 TUN，是另一回事。（源码：TUN 入站固定打标 `listener/sing_tun/server.go` 的 `inbound.WithInName("DEFAULT-TUN")`；而 `rules/common/ipcidr.go` 的 `IPCIDR.Match()` 只返回出站 adapter 名，决定 outbound、不碰 inbound 拦截。）
-- **规则顺序决定命中**：宽泛的 `RULE-SET,cn-ip`/`private-ip` 放在显式 `IP-CIDR` 前会先命中特例地址。需要特例策略就把特例规则提前——但提前命中 `DIRECT` 仍不是 TUN bypass。（源码 `tunnel/tunnel.go` 的 `match()` 从上往下首条命中即 `return`。）
-- **`route-exclude-address` 不是稳定通用方案**：它只让 mihomo 不接管这些目的地址，**不保证** Windows 自动补出可用的物理网卡路由；排除异地组网依赖的公网 IP 后，可能把组网本身断开。需要对照时 `route print <peer-ip>` 看实际路由。（源码 `listener/sing_tun/server.go` 的 `RouteExcludeAddress`/`Inet4RouteExcludeAddress` 传给 tun 栈，作用是把这些地址从 TUN 的 auto-route 里排除；OS 有没有可用物理路由是系统路由表的事，mihomo 不补。）
-- **`route-exclude-address`（TUN 层）与 `IP-CIDR,...,DIRECT`（规则层）是两道机制、作用在不同路径，可并用也可能覆盖不齐**：前者管“被路由进 TUN 的裸包”（宿主自身、或经 NAT 转发进来的路由流量——直接不接管、不进引擎）；后者管“已进 mihomo 引擎的流量”（TUN 抓进来的、或下游以 socks/http 递进来的请求——判 `DIRECT`）。所以**对把流量当 socks 请求交给 mixed-port 的下游客户端（如 WSL tun2socks→7890），`route-exclude-address` 完全不生效**（那是路由层的事，socks 请求早已绕过路由），只有 `DIRECT` 规则兜得住；反之宿主自身到组网的裸路由流量靠 route-exclude 不进 TUN。二者覆盖常不一致：如 `route-exclude-address:[10.144.0.0/16]` 只覆盖 `10.144.x`，而规则 `IP-CIDR,10.144.18.0/24,DIRECT`+`IP-CIDR,10.100.158.0/24,DIRECT` 还覆盖 `10.100.158.x`——于是 `10.100.158.x` 缺 route-exclude 那层、会被 TUN 抓进引擎再由规则放直连，`10.144.x` 则两层都在。
+- **`IP-CIDR,...,DIRECT` 不等于绕过 TUN**：它只是“流量进了 TUN 后，mihomo 选 `DIRECT` 这个 outbound”；`/connections` 里仍会看到 `inboundName: DEFAULT-TUN`、`chains:[DIRECT,...]`。真要某个目的地完全不进 TUN，是另一回事。
+  > **源码**：TUN 入站固定打标 `listener/sing_tun/server.go` 的 `inbound.WithInName("DEFAULT-TUN")`；而 `rules/common/ipcidr.go` 的 `IPCIDR.Match()` 只返回出站 adapter 名，决定 outbound、不碰 inbound 拦截。
+- **规则顺序决定命中**：宽泛的 `RULE-SET,cn-ip`/`private-ip` 放在显式 `IP-CIDR` 前会先命中特例地址。需要特例策略就把特例规则提前——但提前命中 `DIRECT` 仍不是 TUN bypass。
+  > **源码**：`tunnel/tunnel.go` 的 `match()` 从上往下首条命中即 `return`。
+- **`route-exclude-address` 不是稳定通用方案**：它只让 mihomo 不接管这些目的地址，**不保证** Windows 自动补出可用的物理网卡路由；排除异地组网依赖的公网 IP 后，可能把组网本身断开。需要对照时 `route print <peer-ip>` 看实际路由。
+  > **源码**：`listener/sing_tun/server.go` 的 `RouteExcludeAddress`/`Inet4RouteExcludeAddress` 传给 tun 栈，作用是把这些地址从 TUN 的 auto-route 里排除；OS 有没有可用物理路由是系统路由表的事，mihomo 不补。
+- **`route-exclude-address`（TUN 层）与 `IP-CIDR,...,DIRECT`（规则层）是两道机制、作用在不同路径，可并用也可能覆盖不齐**：前者管“被路由进 TUN 的裸包”（宿主自身、或经 NAT 转发进来的路由流量——直接不接管、不进引擎）；后者管“已进 mihomo 引擎的流量”（TUN 抓进来的、或下游以 socks/http 递进来的请求——判 `DIRECT`）。所以**对把流量当 socks 请求交给 mixed-port 的下游客户端（如 WSL tun2socks→7890），`route-exclude-address` 完全不生效**（那是路由层的事，socks 请求早已绕过路由），只有 `DIRECT` 规则兜得住；反之宿主自身到组网的裸路由流量靠 route-exclude 不进 TUN。
+  > **两层覆盖常不一致的例子**：`route-exclude-address:[10.144.0.0/16]` 只覆盖 `10.144.x`，而规则 `IP-CIDR,10.144.18.0/24,DIRECT`+`IP-CIDR,10.100.158.0/24,DIRECT` 还覆盖 `10.100.158.x`——于是 `10.100.158.x` 缺 route-exclude 那层、会被 TUN 抓进引擎再由规则放直连，`10.144.x` 则两层都在。
 
 排障先分清“远端节点不通”还是“本机 TUN/入口没接管”：
 
@@ -333,7 +349,7 @@ curl.exe -v -I --max-time 12 --proxy http://127.0.0.1:7890 <test-url> # 显式�
 
 ### 5.1 WSL ssh 借道宿主 mihomo（没开 TUN 时才需要）
 
-**宿主 mihomo 开了 TUN 时，WSL 里直连即被透明接管**——TUN 把整机路由（含 WSL NAT 出站流量）劫进 mihomo，连解析成 fake-ip 的自建域名也直接通，WSL 内 ssh / curl 无需任何代理配置。只有“没开 TUN、或目标没被 TUN/规则覆盖、直连出不去”时，才需要让 WSL 流量**显式借道**宿主 mihomo：HTTP 类工具设 `HTTPS_PROXY`，ssh 走 SOCKS 配 `ProxyCommand`，且 NAT 下宿主在 WSL 网段的网关 IP 每次启动可能变、得动态取。具体 `ProxyCommand` / 动态网关 / 代理环境变量配方见 [wsl.md](wsl.md)「WSL NAT 下出站走 Mihomo」；Mirror 模式下 WSL 与宿主共享 `127.0.0.1`，可直接 `127.0.0.1:7890`、不必取网关。
+**宿主 mihomo 开了 TUN 时，WSL 里直连即被透明接管**——TUN 把整机路由（含 WSL NAT 出站流量）劫进 mihomo，连解析成 fake-ip 的自建域名也直接通，WSL 内 ssh / curl 无需任何代理配置。只有“没开 TUN、或目标没被 TUN/规则覆盖、直连出不去”时，才需要让 WSL 流量**显式借道**宿主 mihomo：HTTP 类工具设 `HTTPS_PROXY`，ssh 走 SOCKS 配 `ProxyCommand`，且 NAT 下宿主在 WSL 网段的网关 IP 每次启动可能变、得动态取。具体 `ProxyCommand` / 动态网关 / 代理环境变量配方（方案 A），以及 WSL 内自建 TUN 透明代理 tun2socks（方案 B），见 [wsl.md](wsl.md)「WSL NAT 下出站走 Mihomo」；Mirror 模式下 WSL 与宿主共享 `127.0.0.1`，可直接 `127.0.0.1:7890`、不必取网关。
 
 ## 6. 从源码构建（Windows）
 
@@ -469,6 +485,8 @@ dns:
 
 要点：`dns-hijack any:53` 堵住泄漏闸门；`fake-ip` 给快且准的分流；`nameserver` 用 **DoH/DoT** 让“上游解析”这步也加密、并配合 `respect-rules` 走代理出去——这样 ISP 既看不到你的明文查询，也截不到上游往哪查。`fake-ip-filter` 里的 `skipper`（源码 `component/fakeip/skipper.go`）让排除的域名走真解析，避免坏掉 ping、局域网设备、按 IP 比对的软件。
 
+> **注·与 WSL 的边界**：这个 `198.18.0.1/16` 是宿主自己的 fake-ip 段（TUN 默认网关 IP 也取自此值）。**WSL 内自建 TUN（tun2socks）要避开 `198.18.x`**，否则和宿主 fake-ip / TUN 网关撞——见 [wsl.md](wsl.md)「WSL 内自建 TUN 透明代理」。
+
 ### 7.5 验证与排查：browserleaks/dns 原理 + 可脚本化自测
 
 **`browserleaks.com/dns` 凭什么知道你 DNS 泄漏？** 它把自己设成了“被查域名的权威总台”：
@@ -579,13 +597,13 @@ await pc.setLocalDescription(await pc.createOffer())   // 等几秒收集完
 
 # 附录：实测封锁记录（field observations，归因多未坐实）
 
-> 真实跑出来的封锁现象集中放这里，和前面的配置/原理分开。涉及的两台 VPS 的机器规格 / IP / 延迟测试，以及**各自的被墙时间线与换 IP 操作和费用**，都在 `vps-maintenance` skill 的「历史服务器信息」里（A=RackNerd、B=LisaHost）。样本都很小，归因一律标“未坐实”，只作下次对照。
+> **本附录只放“梯子 / 技术侧”**：被墙**现象** + **协议 / 技术归因**（未坐实）+ **对照实验与缓解**。每台机器的**规格 / IP / 延迟 / 被墙时间线 / 换 IP 操作与费用**属运营事实，见 `vps-maintenance` skill 的 `vps-quality`「历史服务器信息」（A=RackNerd、B=LisaHost）。样本都很小，归因一律标“未坐实”，只作下次对照。
 
 ## A. 落地 IP 被大陆精准屏蔽（RackNerd，长期跑 Hysteria2，2026-06-08）
 
 RackNerd（海外 VPS）的 Hysteria2 主节点跑一段时间后，某天起从**大陆任何出口**对这台 IP 的任何端口（22/443/ICMP）全 timeout，而**同 /24 邻居 IP 正常**、境外多地探测全通、VPS 本机服务健康——形态像“大陆精准屏蔽这一个 IP”。
 
-可能原因（未验证）：QUIC over UDP 单 IP 持续大流量是 GFW 主动探测的特征之一；落地 IP 注册了公开域名长期暴露；也可能是机房 IP 段整体波及、与协议无关。
+> **可能原因（未验证）**：QUIC over UDP 单 IP 持续大流量是 GFW 主动探测的特征之一；落地 IP 注册了公开域名长期暴露；也可能是机房 IP 段整体波及、与协议无关。
 
 **后续（2026-06-27 更新）**：没迁协议、没换机器，只**付费给这台 VPS 换了一个 IP**（换 IP、Hysteria2 照跑）。换 IP 后短期内（截至更新日）未再复现被墙，至今仍在日常使用该 Hysteria2 节点。→ 单 IP 换干净就恢复、协议没动也没事，**更像“那个具体 IP 被点名”而非“Hysteria2/QUIC 协议特征触发”**；但样本只一次、观察窗口短，归因仍未坐实。（这台机器的规格 / IP / 延迟明细见 `vps-maintenance` skill 的「历史服务器信息」。）
 
@@ -593,7 +611,7 @@ RackNerd（海外 VPS）的 Hysteria2 主节点跑一段时间后，某天起从
 
 LisaHost（海外住宅 IP VPS）上**长期稳定使用**的 vless(+ws+TLS) 节点，于 2026-06-25 起被墙。值得注意：这是 **TCP 系 vless、不是 QUIC/Hysteria2**，且已长期暴露使用——说明封锁不限于 QUIC/UDP 那一类特征，长期暴露的 TCP+TLS 节点同样会中招。
 
-归因未坐实：长期固定的域名 / 落地 IP / vless+ws-over-TLS 的流量指纹长期暴露都可能是诱因。
+> **归因（未坐实）**：长期固定的域名 / 落地 IP / vless+ws-over-TLS 的流量指纹长期暴露都可能是诱因。
 
 ## 通用对照实验与缓解
 

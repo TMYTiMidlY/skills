@@ -1,6 +1,6 @@
 # WSL ↔ Windows 网络管道
 
-WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT 网络、WSL 出站怎么进宿主 Mihomo、WSL/Docker 服务入站（portproxy + wslrelay）。Mihomo/Clash 内核本身的配置与泄漏控制见 [mihomo.md](mihomo.md)；远程桌面 / VS Code serve-web 等远程接入见 [remote.md](remote.md)；独立 systemd 版 Hysteria2 服务端见 [hysteria2.md](hysteria2.md)。
+WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT 网络、WSL 出站怎么进宿主 Mihomo、WSL/Docker 服务入站（portproxy + wslrelay）。**分工**：本文只管「WSL 流量怎么进出宿主那个 Mihomo」这条管道；**Mihomo 内核自己怎么跑**（DNS 语义 / `fake-ip-range` 取值 / TUN 路由规则 / REST / 协议选型）都在 [mihomo.md](mihomo.md)，下文引用会指到具体小节。远程桌面 / VS Code serve-web 等远程接入见 [remote.md](remote.md)；独立 systemd 版 Hysteria2 服务端见 [hysteria2.md](hysteria2.md)。
 
 ## WSL Mirror 模式网络
 
@@ -69,7 +69,7 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 ## WSL NAT 下出站走 Mihomo
 
-> Mihomo / Clash 本身的配置、REST API、节点/协议选型、TUN 路由规则见 [mihomo.md](mihomo.md)；本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。
+> 本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。**内核侧**：DNS 模式（fake-ip / redir-host / normal）见 [mihomo.md](mihomo.md) §7、TUN 路由规则（IP-CIDR / route-exclude）见 §5、REST / 节点 / 协议选型见 §3·§4。
 
 在无法使用 WSL Mirror / mirrored networking、必须继续使用 WSL NAT 时，不要假设 Windows 宿主能走 Mihomo TUN 就等于 WSL 裸 TCP 也会被接管。更稳的做法是：WSL 内的 HTTP 类工具显式走 Windows 宿主 `mixed-port`，SSH 等不读代理环境变量的工具单独配置 `ProxyCommand`。
 
@@ -156,7 +156,7 @@ ip addr add 198.19.0.1/24 dev tun0; ip link set tun0 up
 ip route replace default dev tun0                                   # 默认路由改走tun → 全流量透明进mihomo
 ```
 
-> **TUN 设备地址得自己 `ip addr add`（tun2socks 不给默认值）。** 官方 Examples 示例用的是 `198.18.0.1/15`——整个 RFC2544 基准段（`198.18.0.0/15`，含 `198.18.x` + `198.19.x`），选它是因为这段非真实互联网、不会撞公网目标。**本文故意偏离、改用 `198.19.0.1/24`**：官方那个 `/15` 把 `198.18.x` 也纳进来，而本机宿主已占用 `198.18.x`——mihomo 默认 `fake-ip-range: 198.18.0.1/16`（只含 198.18.x）+ 官方 wiki 注明「tun 默认 IPv4 地址也取自此值」，即宿主 fake-ip 段与其 TUN 网关都落在 `198.18.x`，直接套官方 `/15` 会和宿主撞。改用 `198.19.0.1/24` 既仍在安全的 RFC2544 段内、又避开 `198.18.x`，也不撞 mesh `10.x` / WSL NAT `172.28.x` / docker `172.17–172.31`。它是**合理选择、非唯一解**（任何不与 fake-ip / mesh / docker 冲突的保留段都行）；`198.19` 在默认 `/16` 下**不是** fake-ip，⚠️ 仅当你手动把 `fake-ip-range` 改成 `/15`（才会含 198.19）时需另换。
+> **TUN 设备地址得自己 `ip addr add`（tun2socks 不给默认值）。** 官方 Examples 示例用的是 `198.18.0.1/15`——整个 RFC2544 基准段（`198.18.0.0/15`，含 `198.18.x` + `198.19.x`），选它是因为这段非真实互联网、不会撞公网目标。**本文故意偏离、改用 `198.19.0.1/24`**：官方那个 `/15` 把 `198.18.x` 也纳进来，而本机宿主已占用 `198.18.x`——mihomo 默认 `fake-ip-range: 198.18.0.1/16`（只含 198.18.x，定义见 [mihomo.md](mihomo.md) §7.4）+ 官方 wiki 注明「tun 默认 IPv4 地址也取自此值」，即宿主 fake-ip 段与其 TUN 网关都落在 `198.18.x`，直接套官方 `/15` 会和宿主撞。改用 `198.19.0.1/24` 既仍在安全的 RFC2544 段内、又避开 `198.18.x`，也不撞 mesh `10.x` / WSL NAT `172.28.x` / docker `172.17–172.31`。它是**合理选择、非唯一解**（任何不与 fake-ip / mesh / docker 冲突的保留段都行）；`198.19` 在默认 `/16` 下**不是** fake-ip，⚠️ 仅当你手动把 `fake-ip-range` 改成 `/15`（才会含 198.19）时需另换。
 
 到宿主网关 `$GW` 本身仍走 eth0 的 `/20` 子网路由（比 `default` 更具体、不会被吞进 tun），加上 `-interface eth0` 绑定出站，两重保证 socks 连接不绕回 tun 死循环。首测务必包一层 `trap 'ip route del default dev tun0; ip link del tun0' EXIT INT TERM` 自动回滚——配错也不会把 WSL 网络卡死。验证：不带任何 `*_proxy` 跑 `curl https://www.google.com/generate_204` 得 `204` 即生效。
 
@@ -303,7 +303,8 @@ curl.exe --noproxy * -v --max-time 5 "http://[::1]:<port>/"
 1. **显式 v4 监听地址**（首选，零代价）：
    - Docker / docker-compose：**推荐写 `ports: ["127.0.0.1:9000:9000"]`**，不要 bare `"9000:9000"`（bare 让 docker-proxy 选 dual-stack v6 socket，触发 #14154）。显式写 v4 host IP `127.0.0.1` 即纯 v4，不踩坑。
    - 服务直接 listen：**推荐 listen `127.0.0.1`**，不要用 `::`。Python `http.server` 默认 v4，Go `net.Listen("tcp", ":N")` 默认 dual-stack v6，要写 `net.Listen("tcp4", "127.0.0.1:N")`。
-   - **Java / JVM 服务**（Neo4j / Elasticsearch / Kafka / Spark 等）：JVM 默认开 dual-stack v6，**即使配置文件写 `listen_address=0.0.0.0` 也会落到 `*:N` 形态**（socket 是 AF_INET6 + V6ONLY=0，恰好是 #14154 触发点）。fix 是加 JVM flag `-Djava.net.preferIPv4Stack=true` 强制纯 v4 socket。**Neo4j 5.x apt 包实测**：编辑 `/etc/neo4j/neo4j.conf`，把 `#server.bolt.listen_address=:7687` 取消注释改成 `server.bolt.listen_address=0.0.0.0:7687`，再追加一行 `server.jvm.additional=-Djava.net.preferIPv4Stack=true`，`systemctl restart neo4j` 之后 `ss -tlnp` 从 `*:7687` 变 `0.0.0.0:7687`，wslrelay 看到纯 v4 listener 才会在 Windows 端补 `127.0.0.1:7687` 的 v4 listener，portproxy `connectaddress=127.0.0.1` 这条才不会 RST。**单改 `listen_address=0.0.0.0` 一行不够**，必须同时给 JVM 加 preferIPv4Stack=true。（listen 用 `127.0.0.1` 或 `0.0.0.0` 都是纯 v4、等效；上面是当时实测的 `0.0.0.0` 原值，关键是 `preferIPv4Stack`。）
+   - **Java / JVM 服务**（Neo4j / Elasticsearch / Kafka / Spark 等）：JVM 默认开 dual-stack v6，**即使配置文件写 `listen_address=0.0.0.0` 也会落到 `*:N` 形态**（socket 是 AF_INET6 + V6ONLY=0，恰好是 #14154 触发点）。fix 是加 JVM flag `-Djava.net.preferIPv4Stack=true` 强制纯 v4 socket。
+     > **Neo4j 5.x apt 包实测**：编辑 `/etc/neo4j/neo4j.conf`，把 `#server.bolt.listen_address=:7687` 取消注释改成 `server.bolt.listen_address=0.0.0.0:7687`，再追加一行 `server.jvm.additional=-Djava.net.preferIPv4Stack=true`，`systemctl restart neo4j` 之后 `ss -tlnp` 从 `*:7687` 变 `0.0.0.0:7687`，wslrelay 看到纯 v4 listener 才会在 Windows 端补 `127.0.0.1:7687` 的 v4 listener，portproxy `connectaddress=127.0.0.1` 这条才不会 RST。**单改 `listen_address=0.0.0.0` 一行不够**，必须同时给 JVM 加 preferIPv4Stack=true。（listen 用 `127.0.0.1` 或 `0.0.0.0` 都是纯 v4、等效；上面是当时实测的 `0.0.0.0` 原值，关键是 `preferIPv4Stack`。）
 2. **portproxy `connectaddress` 指 WSL eth0 IP**（跳过 wslrelay 走 NAT）——**不推荐**：eth0 IP 随 WSL 重启变化、不稳；优先第 1 条（服务监听 `127.0.0.1` + `connectaddress=127.0.0.1`）。
 3. **portproxy 改用 `v4tov6` 转 `::1`**：理论可行，但实测在不少 WSL 版本上 wslrelay 的 `[::1]` listener 也 RST，所以不一定通。作为快速试探可用，长期不推荐。
 4. **切 `networkingMode=mirrored`**（Win11 22H2+）：彻底没 wslrelay。代价是重排所有 portproxy + 评估对 EasyTier wintun 路由优先级的影响。
