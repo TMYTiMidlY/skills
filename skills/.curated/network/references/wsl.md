@@ -45,7 +45,7 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 ## WSL / Docker 服务暴露（入站：portproxy + wslrelay）
 
-> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。
+> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。注意 **WSL 出站访问 mesh（`10.144.x`）本来就通、无需 portproxy**（NAT 下出站全交给宿主，宿主已有 mesh 路由）；portproxy 只解决**入站**（让 mesh / 远端访问 WSL 内服务）。要连入站也免掉逐服务配 portproxy，只有切 mirrored 模式。
 
 WSL NAT 下，要把 WSL 内服务暴露给 Windows / EasyTier / 远端反代，需要 Windows `netsh interface portproxy` 做 TCP 转发：它把 Windows 宿主某个监听地址和端口转到 WSL 内服务。`portproxy` **不支持 UDP**。
 
