@@ -17,7 +17,7 @@ Mihomo / Clash 内核本身的客户端运维：默认配置位置与热重载�
 
 ## WSL ↔ Windows 网络管道
 
-WSL2 与 Windows 宿主、远端之间的互通与排障：WSL Mirror 模式网络（含 Clash/Mihomo 代理与 TUN 对 WSL 路由的影响、Docker Desktop 与 `wsl --shutdown` 的关系）、WSL NAT 出站怎么进 Windows 宿主 Mihomo（fake-ip / 网关动态取 / `ProxyCommand`）、WSL/Docker 服务入站（`netsh portproxy` + wslrelay 的 IPv6 dual-stack #14154 坑：纯 v4 监听才不 RST；全双工大流量 wslrelay 死锁 #10688）见 [references/wsl.md](references/wsl.md)。
+WSL2 与 Windows 宿主、远端之间的互通与排障：WSL Mirror 模式网络（含 Clash/Mihomo 代理与 TUN 对 WSL 路由的影响、Docker Desktop 与 `wsl --shutdown` 的关系）、WSL NAT 出站怎么进 Windows 宿主 Mihomo（独立栈不被 TUN 透明接管、网关动态取、`*_proxy`/`ProxyCommand` 逐工具设代理 vs tun2socks 自建 TUN 透明接管、ssh 两方案与 `UNKNOWN port 65535` 坑）、WSL/Docker 服务入站（`netsh portproxy` + wslrelay 的 IPv6 dual-stack #14154 坑：纯 v4 监听才不 RST；全双工大流量 wslrelay 死锁 #10688）见 [references/wsl.md](references/wsl.md)。
 
 ## Hysteria2 服务端（独立 systemd）
 

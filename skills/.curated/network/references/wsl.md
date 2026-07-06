@@ -67,7 +67,7 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 - Docker Desktop WSL2 backend: Docker Desktop uses a `docker-desktop` WSL distribution for the Docker engine.
 - Docker Resource Saver on WSL: Resource Saver does not stop the whole WSL VM because it is shared by all WSL distributions.
 
-## WSL NAT 下出站走 Mihomo / fake-ip
+## WSL NAT 下出站走 Mihomo
 
 > Mihomo / Clash 本身的配置、REST API、节点/协议选型、TUN 路由规则见 [mihomo.md](mihomo.md)；本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。
 
@@ -77,8 +77,10 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 - Windows PowerShell `Test-NetConnection <ip> -Port <port>` 成功，`InterfaceAlias` 显示 `Meta`。
 - WSL 里 `curl`、`ssh`、`nc` 对同一目标超时，卡在 TCP connect 阶段，还没到 TLS/SSH 握手。
-- WSL DNS 解析域名得到 `198.18.x.x`，说明 Mihomo `fake-ip` 已生效；但 WSL 到这些 fake-ip 的 TCP 流量可能没有稳定进入 TUN 映射。
-- 同一域名或目标有时成功、有时超时，通常是 fake-ip/TUN 映射链路不稳定，不要直接判断为远端服务故障。
+- 根因与 DNS `enhanced-mode` 无关：WSL 是独立网络栈，`ip route` 里没有宿主 mihomo 的 TUN 路由（无 `0.0.0.0/2 via 198.18.x`），裸流量不被透明接管，只按默认路由丢给 NAT 网关。三种模式症状都是超时，差别只在“直连为什么失败”的最后一跳：
+  - `fake-ip`：WSL 解析得到 `198.18.x.x` 占位 IP，只在宿主 TUN 内有意义，WSL 裸连它无人应答。
+  - `redir-host` / `normal`：WSL 解析得到**真实 IP**，裸连真实（常被墙的）IP 同样超时。
+- 别凭“是否 198.18.x”判断，也别一律归到“fake-ip 映射不稳”——两种模式殊途同归，都是 WSL 出站没走宿主代理，不是远端服务故障。DNS 模式取值见 [mihomo.md](mihomo.md) §7。
 
 快速判断：
 
@@ -137,9 +139,40 @@ Host <name>
   ProxyCommand nc -x <wsl-gateway-ip>:7890 -X 5 %h %p
 ```
 
+### WSL 内自建 TUN 透明代理（tun2socks）
+
+上面是**方案 A**：逐工具显式指代理（`*_proxy` 环境变量 + ssh `ProxyCommand`）。**方案 B** 用 [`xjasonlyu/tun2socks`](https://github.com/xjasonlyu/tun2socks)（开源 Go 单文件）在 WSL 内建一块 TUN 网卡，把**全部**出站裸流量透明导进宿主 mihomo，免逐工具设代理。它**只补“透明网卡”这一层**，分流 / 选节点仍交给宿主已有的 mihomo——所以 WSL 内**不必再开第二个完整 mihomo**（除非要 WSL 独立订阅 / 规则）。
+
+**装（不用 sudo）**：下载对应 arch 的二进制（`uname -m` → amd64 / arm64）到 `~/.local/bin/`，`tun2socks --version` 自检；GitHub 下载本身可先经宿主 `--proxy http://<gw>:7890`。
+
+**跑（要 root / `CAP_NET_ADMIN`——建 TUN + 改路由是特权操作；非免密 sudo 无法非交互代跑）**，核心三步：
+
+```bash
+GW=$(ip route show default | awk '{print $3}')                     # 宿主网关(NAT下会变,动态取)
+tun2socks -device tun0 -proxy socks5://$GW:7890 -interface eth0 &   # -interface eth0: 出站socket绑真实网卡,防绕回tun
+ip addr add 198.19.0.1/24 dev tun0; ip link set tun0 up
+ip route replace default dev tun0                                   # 默认路由改走tun → 全流量透明进mihomo
+```
+
+> TUN 设备地址 `198.19.0.1/24` 是特意选的：落在 RFC2544 基准段 `198.18.0.0/15`（不撞真实互联网，也不撞 mesh `10.x` / WSL NAT `172.28.x` / docker `172.17–172.31`），并**避开宿主占用的 `198.18.x`**——mihomo 默认 `fake-ip-range: 198.18.0.1/16` 只含 198.18.x，官方 wiki 注明「tun 默认 IPv4 地址也取自此值」，所以宿主 fake-ip 段与宿主 TUN 网关都在 198.18.x。因此 `198.19` 在默认 `/16` 下**不是** fake-ip；⚠️ 仅当你手动把 `fake-ip-range` 改成 `/15`（才会含 198.19）时需另换非路由段。
+
+到宿主网关 `$GW` 本身仍走 eth0 的 `/20` 子网路由（比 `default` 更具体、不会被吞进 tun），加上 `-interface eth0` 绑定出站，两重保证 socks 连接不绕回 tun 死循环。首测务必包一层 `trap 'ip route del default dev tun0; ip link del tun0' EXIT INT TERM` 自动回滚——配错也不会把 WSL 网络卡死。验证：不带任何 `*_proxy` 跑 `curl https://www.google.com/generate_204` 得 `204` 即生效。稳定后转 systemd 服务即持久。
+
+**副作用 / 坑**：
+
+- 默认路由变成 `default dev tun0`（**无 `via`**）→ 任何 `ip route show default | awk '{print $3}'` 取网关的脚本会把 `tun0` 当成网关 IP 而坏（见下面 ssh）。健壮写法用 `ip route get 1.1.1.1`。
+- **mesh（`10.144.x` / `10.100.x`）出站不受影响**：包被 tun0 吞进 mihomo 后，靠宿主 mihomo 的 `IP-CIDR,10.x,DIRECT` 规则兜底仍直连可达（实测通）。想让 mesh 彻底不经 mihomo，加排除路由 `ip route add 10.0.0.0/8 via $GW dev eth0`。
+- 只治**出站**；入站（mesh → WSL 服务）的 portproxy 一条不少（见下节），要连入站一起免掉只有切 mirrored。
+
+**ssh 在两种方案下的差异**：
+
+- **方案 A（ProxyCommand）**：上面 sshconfig 里 `ProxyCommand nc -x <gw>:7890 ...` 让 ssh 走宿主 mihomo；动态取网关版常写 `gw=$(ip route show default | awk '{print $3}')`。
+- **方案 B（tun2socks）**：tun0 已透明接管，ssh 直连即被捞进宿主 mihomo，**必须删 / 注释掉 `ProxyCommand`**——两者并存会打架。
+- **典型翻车**：tun2socks 开着又留着动态取网关的 `ProxyCommand` → `ssh -T git@github.com` 报 `Connection closed by UNKNOWN port 65535`。根因：默认路由变 `default dev tun0`（无 `via`），`awk '{print $3}'` 取出 `tun0` 当网关，执行 `nc -x tun0:7890` 解析不了主机名秒退。`UNKNOWN port 65535` 是 ProxyCommand 管道拿不到对端 `getpeername` 的通用指纹，任何 ProxyCommand 子进程异常退出都长这样，不特指本 bug。修法：删 ProxyCommand（走方案 B），或把取网关改成 `ip route get 1.1.1.1`（走方案 A）。
+
 ## WSL / Docker 服务暴露（入站：portproxy + wslrelay）
 
-> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。WSL 出站流量走 Mihomo 的部分在上面的 [WSL NAT 下出站走 Mihomo / fake-ip](#wsl-nat-下出站走-mihomo--fake-ip)，两者互不相干。
+> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。反方向的 WSL 出站走 Mihomo 见上面的 [WSL NAT 下出站走 Mihomo](#wsl-nat-下出站走-mihomo)。注意 **WSL 出站访问 mesh（`10.144.x`）本来就通、无需 portproxy**（NAT 下出站全交给宿主，宿主已有 mesh 路由）；portproxy 只解决**入站**（让 mesh / 远端访问 WSL 内服务）。要连入站也免掉逐服务配 portproxy，只有切 mirrored 模式。
 
 WSL NAT 下，要把 WSL 内服务暴露给 Windows / EasyTier / 远端反代，需要 Windows `netsh interface portproxy` 做 TCP 转发：它把 Windows 宿主某个监听地址和端口转到 WSL 内服务。`portproxy` 不负责让 WSL 出站走 Mihomo，也**不支持 UDP**。
 
