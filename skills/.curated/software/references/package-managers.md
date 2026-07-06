@@ -118,7 +118,7 @@ choco list --local-only  ;  winget list          ;  scoop list
 - **中心 registry** `registry.npmjs.org`，按名字下载。
 - **项目本地** `node_modules/` + 全局 `-g`；`package.json` 声明依赖、`package-lock.json` 锁定精确版本树（[docs](https://docs.npmjs.com/cli/v10/configuring-npm/package-lock-json)）。
 - **允许依赖树里多版本共存**：A 依赖 `lodash@3`、B 依赖 `lodash@4`，npm 靠嵌套/去重让两份并存——这正是 apt 全局单版本**做不到**的事，是"语言级隔离"的典型。
-- 变体：**pnpm**（全局内容寻址 store + 硬链接，省磁盘、装得快）、**yarn**。
+- 变体：**pnpm**（全局 content-addressable store + 项目内 `node_modules/.pnpm` 虚拟 store，硬链接省磁盘、符号链接防幽灵依赖，详见表下说明）、**yarn**。
 - 常用：`npm install` / `npm install -g <pkg>` / `npm update` / `npm uninstall` / `npx <pkg>`（临时跑不留全局）。
 
 **npm / pnpm / yarn / bun 四家对照**（都读 `package.json`、都连 npm registry，差别在装法与速度）：
@@ -126,13 +126,26 @@ choco list --local-only  ;  winget list          ;  scoop list
 | | **npm** | **pnpm** | **yarn** | **bun** |
 | --- | --- | --- | --- | --- |
 | 出身 | Node 官方自带 | 第三方（[pnpm.io](https://pnpm.io/)） | Meta 起（Yarn Berry v2+） | Bun 运行时自带（[bun.sh](https://bun.sh/)） |
-| `node_modules` 布局 | 扁平化、可能重复 | **全局 store + 硬/符号链接**，严格无幽灵依赖 | Berry 默认 PnP（无 `node_modules`，`.pnp.cjs` 索引） | 扁平、兼容 npm 布局 |
-| lockfile | `package-lock.json` | `pnpm-lock.yaml` | `yarn.lock` | `bun.lock`(文本, 1.2+) / 旧 `bun.lockb`(二进制) |
+| `node_modules` 布局 | 扁平化提升、可能重复且有幽灵依赖 | **顶层全是符号链接 → `node_modules/.pnpm/` 虚拟 store**（内容再硬链到全局 CAS），无幽灵依赖 | Berry 默认 PnP（无 `node_modules`、`.pnp.cjs` 索引）；v1/可选是扁平 | 扁平、兼容 npm 布局 |
+| lockfile | `package-lock.json` | `pnpm-lock.yaml` | `yarn.lock` | `bun.lock`(文本, 1.2+ 默认) / 旧 `bun.lockb`(二进制) |
 | 速度 | 基准 | 快、省盘 | 快（PnP 更快） | **最快**（Zig 写，含自带 runtime/打包/测试） |
 | 定位 | 稳、无脑兼容 | monorepo/省盘首选 | 大厂/PnP 生态 | 一体化工具链，追新 |
 
+- **pnpm 的两层结构**（用户常问的"那个特殊目录"）：全局有一个 **content-addressable store**（CAS，默认 `~/.local/share/pnpm/store`），同一版本的文件全机器只存一份；项目里 `node_modules/.pnpm/` 是**虚拟 store**，每个依赖摊平放在 `.pnpm/<name>@<version>/node_modules/<name>`（文件从全局 CAS **硬链接**过来，不占额外空间）；项目顶层 `node_modules/` 里只有**符号链接**指向 `.pnpm/` 中对应目录——**只有 `package.json` 里声明过的依赖才在顶层可见**，所以能挡住"用了没声明的包"（幽灵依赖 / phantom dependency）。这正是 pnpm 既省盘（硬链）又严格（符号链接隔离）的来源，官方图解见 [pnpm.io/symlinked-node-modules-structure](https://pnpm.io/symlinked-node-modules-structure) 与 [pnpm.io/motivation](https://pnpm.io/motivation)。
 - 四家的库都来自同一个 `registry.npmjs.org`，**换的是客户端不是源**；`package.json` 通用，切换成本主要在 lockfile 与 `node_modules` 策略。
 - `corepack`（Node 自带）能按项目 `package.json` 的 `"packageManager"` 字段自动切到对应的 pnpm/yarn 版本，避免"本机装的版本和项目要求不一致"。
+
+**bun 为何两极分化**（追新者力捧、生产派谨慎——快速迭代中，早期批评不少已过时，评价要看版本/日期）：
+
+- **爱它的理由（真实优势）**：① `bun install` 官方基准比 npm 快 ~25–30×、比 yarn ~18×（[v1.0](https://bun.sh/blog/bun-v1.0)/[v1.1 博客](https://bun.sh/blog/bun-v1.1)，注：跑分带 `--ignore-scripts`、有缓存，冷装差距会缩小，但装包快这点外部验证较多）；② **一体化**——一个二进制顶替 node + npm/yarn/pnpm + esbuild/webpack + jest/vitest，原生跑 TS/JSX、ESM/CJS 混用、`.env` 开箱即用，省掉大半工具链配置；③ 启动比 Node 快 ~4×，脚本/测试循环体感好。
+- **不信任它的理由（争议点，标注是否仍成立）**：
+  - **Node 兼容性仍有坑**（🟡 **仍成立、持续改善**）：`async_hooks`/`cluster`/`worker_threads` 等部分实现；用 V8 C++ API 的原生扩展（node-canvas 等）不保证能跑；`node:v8` 序列化用 JSC wire format 而非 V8 格式（跨进程行为差异）。官方 [Node 兼容文档](https://bun.sh/docs/runtime/nodejs-compat)、[v1.2 博客](https://bun.sh/blog/bun-v1.2)。
+  - **Windows 迟到 ~2.5 年**（✅ **已修复**）：2021-10 建 issue、直到 2024-04 的 [v1.1](https://bun.sh/blog/bun-v1.1) 才原生支持 Windows（此前只能 WSL）——是早期 Linux-first 的历史印记（[oven-sh/bun#43](https://github.com/oven-sh/bun/issues/43)）。
+  - **生产内存/崩溃**（🟡 **部分仍成立**）：容器里从 Node 迁到 Bun 后内存飙到 OOM 的报告（[#17723](https://github.com/oven-sh/bun/issues/17723)，2025-02 至今仍开放）；根因之一是 JSC 的 GC 定时器没跟事件循环集成、Linux 上 GC 信号 `SIGUSR1` 撞用户程序，均在 [v1.2.2](https://bun.sh/blog/bun-v1.2.2) 修（空闲内存降 10–30%），但迁移前仍需实测。
+  - **`bun.lockb` 二进制 lockfile**（✅ **已修复**）：早期用不可 diff/review 的二进制锁，PR 看不到依赖变更、Dependabot 两年不支持（[dependabot#6528](https://github.com/dependabot/dependabot-core/issues/6528)，577👍，2023-01→2025-02）；[v1.2](https://bun.sh/blog/bun-v1.2)（2025-01）起新项目默认改文本 `bun.lock`（旧项目要主动迁移）。
+  - **JSC ≠ V8**（🟡 **根本性、长期存在**）：Bun 用 JavaScriptCore（Safari 引擎）、Node 用 V8（Chrome 引擎），GC 策略与值表示根本不同，V8 C++ API 要 Bun 自己仿一层"假 V8"，注定补不全。
+  - **成熟度/社区**（🟡 **仍成立**）：v1.0 到 2023-09 才发布、团队约 14 人（[Roadmap#159](https://github.com/oven-sh/bun/issues/159)），生产验证时间远短于 Node 十余年积累；官方跑分多为自测、运行时数据独立复现有限。
+- **中肯定位**：**开发环境**的极速 npm 替代 + TS 脚本 runner 已经很能打；**核心生产服务**建议先小规模灰度、盯版本，别仓促全量迁移。（时间线核对至 2026-07，bun 迭代快，用前请复核最新版本文档。）
 
 ### pip（Python / PyPI）
 
