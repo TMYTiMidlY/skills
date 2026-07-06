@@ -268,6 +268,30 @@ example.com {
 - `snippet` 用 `(name)` 定义，用 `import name` 引用。
 - 想让错误页真正走到 `handle_errors`，要用 `error` 触发，而不是 `respond`。
 
+### `reverse_proxy` 注入请求头给上游（给后端补凭据）
+
+`reverse_proxy` 里的 `header_up` 能改**发往上游**的请求头（注入 / 覆盖 / 删除）。一个常用模式：**后端自己需要一份凭据，但你不想让用户手填**——在边缘用 caddy-security 认证放行用户后，reverse_proxy 顺手把后端要的头注入进去，用户端全程无感、也不接触这份凭据。
+
+```caddyfile
+https://panel.example.com {
+    authorize with app_admin          # 边缘先鉴权（前提，见 caddy-security 章节）
+    reverse_proxy 10.x.x.x:<port> {
+        header_up Authorization "Bearer <backend-secret>"   # 给上游注入它要的头
+    }
+}
+```
+
+典型场景（都是"边缘鉴权 + 注入后端凭据"）：
+
+- **要 token 的控制台**：后端 REST/API 设了 secret，就注入 `Authorization: Bearer <secret>`。比如把 mihomo 控制器暴露成公网面板——见 `network` skill 的 mihomo Web 面板章节。
+- **认 cookie / 头的 web 服务**：后端要一个登录 cookie / 头才放行，就注入对应的 `Cookie` / 自定义头。比如 zellij Web——见 `software` skill 的 zellij 章节。
+
+要点：
+
+- **方向别混**：`header_up` 是改**发往上游**的头（本节，给后端补凭据）；caddy-security 的 `inject headers with claims` 是把**登录者身份** claim 注入给下游后端（`X-Token-*`，见下文），两者无关。
+- **边缘鉴权是前提**：注入 = 把后端凭据托管在 Caddy 侧，**任何过了边缘 `authorize` 的人都自动带着这份凭据访问后端**。所以那道边缘鉴权不能省，注入的凭据强度也不再是后端的独立防线。
+- **凭据用占位符 / `{env.*}`**，别把真实 secret 写死进版本库。
+
 ### 基础反代常见坑
 
 - **一个服务一个端口** 往往比“全塞到 `443` 的不同子路径”更省心。  
