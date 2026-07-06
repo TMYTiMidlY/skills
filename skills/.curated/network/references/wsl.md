@@ -191,7 +191,16 @@ sudo systemctl daemon-reload && sudo systemctl enable --now tun2socks
 
 ## WSL / Docker 服务暴露（入站：portproxy + wslrelay）
 
-> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。反方向的 WSL 出站走 Mihomo 见上面的 [WSL NAT 下出站走 Mihomo](#wsl-nat-下出站走-mihomo)。注意 **WSL 出站访问 mesh（`10.144.x`）本来就通、无需 portproxy**（NAT 下出站全交给宿主，宿主已有 mesh 路由）；portproxy 只解决**入站**（让 mesh / 远端访问 WSL 内服务）。要连入站也免掉逐服务配 portproxy，只有切 mirrored 模式。
+> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。反方向的 WSL 出站走 Mihomo 见上面的 [WSL NAT 下出站走 Mihomo](#wsl-nat-下出站走-mihomo)。注意 **WSL 出站访问 mesh（`10.144.x`）本来就通、无需 portproxy**（NAT 下出站全交给宿主，宿主已有 mesh 路由）；portproxy 只解决**入站**（让 mesh / 远端访问 WSL 内服务）。要**少 / 免**逐服务配 portproxy，见下面「少 / 免逐服务 portproxy 的两条路」。
+
+### 少 / 免逐服务 portproxy 的两条路（A mirrored / B 单反代兜底）
+
+`netsh portproxy` 无端口段 / 通配，一端口一条规则——服务一多就是几十条 toil（本机实测曾积到 23 条）。比"每服务一条"更省的两条路：
+
+- **A. mirrored 网络模式**（`.wslconfig` 加 `networkingMode=mirrored`，Win11 22H2 / build 22621+）：WSL 共享宿主网络栈，WSL 服务监听 `0.0.0.0:N` 即被宿主各 IP（含 EasyTier mesh IP）的 `:N` 直达，**portproxy 一条不用、也没 wslrelay / #14154**。代价是一次性迁移：`wsl --shutdown`、删掉现有 portproxy、**重估 EasyTier wintun 路由优先级**（mirrored 最大的不确定点）、Docker Desktop 会重启一次。要"以后永久零转发配置"选这条。
+- **B. WSL 内单反代兜底 + 1 条 portproxy**（保持 NAT、不碰 EasyTier）：WSL 里跑一个反代（Caddy / nginx / Traefik）监听单个端口，**只配 1 条** portproxy（`宿主 mesh-IP:443 → 127.0.0.1:<反代端口>`），反代按 Host / 子域 / 路径分流到各 WSL 服务。**新增服务 = 加一段反代 site 配置 + reload，`netsh` 一条不加**；#14154 的纯 v4 坑只剩那 1 个端口要管。链路：远端 Caddy → 宿主 mesh IP:443 →（1 条 portproxy）→ WSL 反代 → 各服务。想保持 NAT 现状、避免动 EasyTier 选这条；**已在 WSL 跑反代（如 Caddy）时几乎零成本**。
+
+取舍：**A** 是终极零配置但要停机 + 担 EasyTier 重估风险；**B** 不停机、不碰 EasyTier，把 N 条 portproxy 收敛成 1 条、新服务只动反代配置。另有 **C**（定时脚本扫 `ss -tln` 自动同步 netsh 规则）只是把手动 toil 自动化、治标不治本，#14154 仍每服务要防，一般不推荐。
 
 WSL NAT 下，要把 WSL 内服务暴露给 Windows / EasyTier / 远端反代，需要 Windows `netsh interface portproxy` 做 TCP 转发：它把 Windows 宿主某个监听地址和端口转到 WSL 内服务。`portproxy` 不负责让 WSL 出站走 Mihomo，也**不支持 UDP**。
 
