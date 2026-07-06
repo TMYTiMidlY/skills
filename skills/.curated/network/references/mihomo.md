@@ -2,7 +2,7 @@
 
 > 本文把 Mihomo 的**配置用法**和**泄漏控制（DNS / WebRTC）**结合着讲，目标是读完能自己搭一套“不漏、分流准、能排障”的代理，并理解每个开关到底在做什么。全文分两部分：前半是**配置与使用**，后半是**泄漏控制**。WSL ↔ Windows ↔ 远端的网络管道是另一回事——WSL 出站怎么进 Mihomo、portproxy/wslrelay 入站见 [wsl.md](wsl.md)，RDP / serve-web 等远程接入见 [remote.md](remote.md)。
 >
-> **源码出处**：下文凡是讲到内部行为，都对照官方仓库 **`MetaCubeX/mihomo`** 的 **`Meta` 分支**（稳定线；开发线是 `Alpha`）。⚠️ 这个仓库的**默认分支就是 `main`、装的是一个同名的 Honkai: Star Rail Python 包，不是代理内核**——这是维护者**故意的伪装**，不是仓库被劫持。背景：2023-11-02 Clash 内核 `Dreamacro/clash`（Go 核心引擎，mihomo 即由它 fork 而来）与最流行的 GUI 客户端 Clash for Windows（`Fndroid/clash_for_windows_pkg`，另一作者 Fndroid）在**同一天各自删库**（实测二者今均为 404，Wayback 最后可用快照都止于 2023-11-02；作者称“不可抗力”，社区普遍认为遭约谈“请喝茶”，未见官方确认——非 DMCA 版权下架），此后 Clash 系普遍把仓库门面伪装成无关项目以规避审查/下架/爬虫扫描，mihomo 这里就是把默认分支和仓库元数据设成一个真实存在的星铁 pydantic 包（实测 `gh api` 与 GitHub MCP 双通道一致：`default_branch=main`、`language:Python`、`topics:[honkai-star-rail,…]`，而 3.2 万 star / `wiki.metacubex.one` 主页仍是内核的、`Meta`/`Alpha` 等内核分支原封未动——只换门面、核心没动，所以是伪装不是劫持）。所以 `git clone` 不带分支会落到 `main`、拿到一个 `pyproject.toml`；要 Go 源码（`module github.com/metacubex/mihomo`）得 `git clone -b Meta`。已经 clone 停在 `main` 时，直接 `git checkout Meta`（或 `git switch Meta`）即可——单 remote + 全量 refspec 下 Git 的 DWIM 会自动基于 `origin/Meta` 建同名跟踪分支（实测 exit 0）。
+> **源码出处**：下文凡是讲到内部行为，都对照官方仓库 **`MetaCubeX/mihomo`** 的 **`Meta` 分支**（稳定线；开发线是 `Alpha`）。⚠️ 这个仓库的**默认分支就是 `main`、装的是一个同名的 Honkai: Star Rail Python 包，不是代理内核**——这是维护者**故意的伪装**，不是仓库被劫持。背景：2023-11-02 Clash 内核 `Dreamacro/clash`（Go 核心引擎，mihomo 即由它 fork 而来）与最流行的 GUI 客户端 Clash for Windows（`Fndroid/clash_for_windows_pkg`，另一作者 Fndroid）在**同一天各自删库**（实测二者今均为**纯 404** 而非 451 DMCA 下架页，GitHub 官方 `github/dmca` 存档亦零命中，加之作者当日公开自宣停更删库——故是**作者自行删库、非版权/DMCA 处置**；Wayback 最后可用快照止于 2023-11-02。停更主因作者仅称“不可抗力”；社区普遍推测系其**推特自曝的个人信息被顺藤定位、遭约谈“请喝茶”**，援引线索包括推特照片暴露的所在城市（湖南/长沙）、部分车牌+车型、购物/充电记录、京东订单截图等，但**官方从未证实**，各版本均属社区推测。参见中国数字时代存档 `chinadigitaltimes.net/chinese/701751`），此后 Clash 系普遍把仓库门面伪装成无关项目以规避审查/下架/爬虫扫描，mihomo 这里就是把默认分支和仓库元数据设成一个真实存在的星铁 pydantic 包（实测 `gh api` 与 GitHub MCP 双通道一致：`default_branch=main`、`language:Python`、`topics:[honkai-star-rail,…]`，而 3.2 万 star / `wiki.metacubex.one` 主页仍是内核的、`Meta`/`Alpha` 等内核分支原封未动——只换门面、核心没动，所以是伪装不是劫持）。所以 `git clone` 不带分支会落到 `main`、拿到一个 `pyproject.toml`；要 Go 源码（`module github.com/metacubex/mihomo`）得 `git clone -b Meta`。已经 clone 停在 `main` 时，直接 `git checkout Meta`（或 `git switch Meta`）即可——单 remote + 全量 refspec 下 Git 的 DWIM 会自动基于 `origin/Meta` 建同名跟踪分支（实测 exit 0）。
 
 ---
 
@@ -246,15 +246,21 @@ external-controller: 127.0.0.1:9090
 secret: ''
 ```
 
+> **`secret` 非空 = 所有 REST 调用要带 `Authorization: Bearer <secret>`**（websocket 方式访问的流式端点如 `/logs`、`/traffic` 改用 URL 参数 `?token=<secret>`）。缺失或不匹配一律 HTTP 401 `{"message":"Unauthorized"}`——见 [`authentication` 中间件源码](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/server.go#L336)（`safeEqual` 常数时间比较 token）。所以裸 `curl http://127.0.0.1:9090/` 回 `{"message":"Unauthorized"}` 只说明**这个实例设了 secret**、不代表 mihomo 挂了——加 `-H "Authorization: Bearer <secret>"` 即通。绑回环自用可留 `secret: ''` 免认证。**真实 secret 不入库，占位即可。**
+
 常用端点（适合脚本/AI 监控，CLI 默认不写日志文件，靠这些 API 看运行态）：
 
 ```bash
+curl http://127.0.0.1:9090/            # {"hello":"mihomo"} —— 确认这个端口是不是 mihomo 的最快探针
+curl http://127.0.0.1:9090/version      # {"meta":true,"version":"v1.19.x"} —— meta 内核标志 + 版本
 curl http://127.0.0.1:9090/configs      # 运行态通用配置(tun/端口/日志级别)；不显示配置文件路径
 curl http://127.0.0.1:9090/proxies      # 节点组、testUrl、当前选择(.now)、健康
 curl http://127.0.0.1:9090/connections  # 每条连接命中的规则/链路/网络/端口
 curl --max-time 3 "http://127.0.0.1:9090/logs?format=structured&level=info"
 curl --max-time 3 http://127.0.0.1:9090/traffic
 ```
+
+> **源码实证：没有任何端点回吐"当前配置文件路径"**（链接 pin 到 `MetaCubeX/mihomo` 的 `Alpha` 分支 commit [`24b6de71`](https://github.com/MetaCubeX/mihomo/tree/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c)——真实源码在 `Alpha`/`Meta` 等分支，`main` 只有 release/CI 元数据、连 `hub/route/` 都没有）。[全表路由注册](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/server.go#L105)共 18 个（`/ /logs /traffic /memory /version /configs /proxies /group /rules /connections /providers/* /cache /dns /storage /restart /upgrade /ui` + doh），其中 `C.Path.Config()` 只出现一次——在 [`updateConfigs`（`PUT /configs`）](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/configs.go#L415)里当热重载的**默认输入**（请求没带 `path` 时兜底），从不写进任何响应。`GET /configs` 返回的是 [`executor.GetGeneral()`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/executor/executor.go#L129)：纯运行态设置（端口/tun/mode/log/geo/keepalive…），无路径字段。内核**自己知道**路径（[`constant/path.go` 的 `Path.Config()`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L75)），只是不经 API 暴露。**要定位 active 配置只能看进程 `-d`/`-f` 启动参数**（Windows 上 mihomo 可能高权限跑、需 UAC 提权才读得到命令行），或按 §2.2 规则 + `/configs` 与 `/proxies` 运行态内容比对推断。
 
 **热重载**（配置在安全路径内时用 `path`）：
 
@@ -314,6 +320,7 @@ external-ui-url: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-
 - **`IP-CIDR,...,DIRECT` 不等于绕过 TUN**。它只是“流量进了 TUN 后，mihomo 选 `DIRECT` 这个 outbound”；`/connections` 里仍会看到 `inboundName: DEFAULT-TUN`、`chains:[DIRECT,...]`。真要某个目的地完全不进 TUN，是另一回事。（源码：TUN 入站固定打标 `listener/sing_tun/server.go` 的 `inbound.WithInName("DEFAULT-TUN")`；而 `rules/common/ipcidr.go` 的 `IPCIDR.Match()` 只返回出站 adapter 名，决定 outbound、不碰 inbound 拦截。）
 - **规则顺序决定命中**：宽泛的 `RULE-SET,cn-ip`/`private-ip` 放在显式 `IP-CIDR` 前会先命中特例地址。需要特例策略就把特例规则提前——但提前命中 `DIRECT` 仍不是 TUN bypass。（源码 `tunnel/tunnel.go` 的 `match()` 从上往下首条命中即 `return`。）
 - **`route-exclude-address` 不是稳定通用方案**：它只让 mihomo 不接管这些目的地址，**不保证** Windows 自动补出可用的物理网卡路由；排除异地组网依赖的公网 IP 后，可能把组网本身断开。需要对照时 `route print <peer-ip>` 看实际路由。（源码 `listener/sing_tun/server.go` 的 `RouteExcludeAddress`/`Inet4RouteExcludeAddress` 传给 tun 栈，作用是把这些地址从 TUN 的 auto-route 里排除；OS 有没有可用物理路由是系统路由表的事，mihomo 不补。）
+- **`route-exclude-address`（TUN 层）与 `IP-CIDR,...,DIRECT`（规则层）是两道机制、作用在不同路径，可并用也可能覆盖不齐**：前者管“被路由进 TUN 的裸包”（宿主自身、或经 NAT 转发进来的路由流量——直接不接管、不进引擎）；后者管“已进 mihomo 引擎的流量”（TUN 抓进来的、或下游以 socks/http 递进来的请求——判 `DIRECT`）。所以**对把流量当 socks 请求交给 mixed-port 的下游客户端（如 WSL tun2socks→7890），`route-exclude-address` 完全不生效**（那是路由层的事，socks 请求早已绕过路由），只有 `DIRECT` 规则兜得住；反之宿主自身到组网的裸路由流量靠 route-exclude 不进 TUN。二者覆盖常不一致：如 `route-exclude-address:[10.144.0.0/16]` 只覆盖 `10.144.x`，而规则 `IP-CIDR,10.144.18.0/24,DIRECT`+`IP-CIDR,10.100.158.0/24,DIRECT` 还覆盖 `10.100.158.x`——于是 `10.100.158.x` 缺 route-exclude 那层、会被 TUN 抓进引擎再由规则放直连，`10.144.x` 则两层都在。
 
 排障先分清“远端节点不通”还是“本机 TUN/入口没接管”：
 
@@ -326,7 +333,7 @@ curl.exe -v -I --max-time 12 --proxy http://127.0.0.1:7890 <test-url> # 显式�
 
 ### 5.1 WSL ssh 借道宿主 mihomo（没开 TUN 时才需要）
 
-**宿主 mihomo 开了 TUN 时，WSL 里直连即被透明接管**——TUN 把整机路由（含 WSL NAT 出站流量）劫进 mihomo，连解析成 fake-ip 的自建域名也直接通，WSL 内 ssh / curl 无需任何代理配置。只有“没开 TUN、或目标没被 TUN/规则覆盖、直连出不去”时，才需要让 WSL 流量**显式借道**宿主 mihomo：HTTP 类工具设 `HTTPS_PROXY`，ssh 走 SOCKS 配 `ProxyCommand`，且 NAT 下宿主在 WSL 网段的网关 IP 每次启动可能变、得动态取。具体 `ProxyCommand` / 动态网关 / 代理环境变量配方见 [wsl.md](wsl.md)「WSL NAT 下出站走 Mihomo / fake-ip」；Mirror 模式下 WSL 与宿主共享 `127.0.0.1`，可直接 `127.0.0.1:7890`、不必取网关。
+**宿主 mihomo 开了 TUN 时，WSL 里直连即被透明接管**——TUN 把整机路由（含 WSL NAT 出站流量）劫进 mihomo，连解析成 fake-ip 的自建域名也直接通，WSL 内 ssh / curl 无需任何代理配置。只有“没开 TUN、或目标没被 TUN/规则覆盖、直连出不去”时，才需要让 WSL 流量**显式借道**宿主 mihomo：HTTP 类工具设 `HTTPS_PROXY`，ssh 走 SOCKS 配 `ProxyCommand`，且 NAT 下宿主在 WSL 网段的网关 IP 每次启动可能变、得动态取。具体 `ProxyCommand` / 动态网关 / 代理环境变量配方见 [wsl.md](wsl.md)「WSL NAT 下出站走 Mihomo」；Mirror 模式下 WSL 与宿主共享 `127.0.0.1`，可直接 `127.0.0.1:7890`、不必取网关。
 
 ## 6. 从源码构建（Windows）
 
