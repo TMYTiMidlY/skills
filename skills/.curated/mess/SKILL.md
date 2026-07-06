@@ -31,5 +31,9 @@ description: 记录排查过的疑难杂症和踩坑经历。当用户遇到类�
   - 关键词：`总是断网`、`WSL 内 EasyTier 节律性搞坏整网`、`挪宿主机解决`、`ping 网关 100% 丢包但能上网`、`CoPP 控制平面限速`、`ICMP rate limit`、`ping 网关不是断网指标`、`WSL2 mirrored networking`、`分源 IP 绑定测试`、`TcpClient Bind 源地址`、`strong host model`、`ping -I / curl --interface 分链路`、`断窗时长恒定 ~5 分钟`、`EasyTier peer removed 反推通断`
 - **WSL user systemd 的 session bus 突然消失，`systemctl --user` 连不上；临时 bus + manager reexec 可恢复，但会中断 running user services** → [references/bug-fix.md](references/bug-fix.md)
   - 关键词：`systemctl --user`、`Failed to connect to bus`、`/run/user/1000/bus`、`DBUS_SESSION_BUS_ADDRESS`、`dbus-daemon --session`、`kill -RTMIN+25`、`daemon-reexec`、`systemd --user`、`running user services 断开`
+- **Docker 内置 DNS（127.0.0.11）对存续已久的网络失效，新建网络正常（forgejo/dmp/qatlas-postgres 三个项目同时中招，根因未坐实）** → [references/bug-fix.md](references/bug-fix.md)
+  - 关键词：`Docker 内置 DNS`、`127.0.0.11`、`no such host`、`hostname resolving error`、`lookup db`、`getent hosts` 解析失败但 IP 直连通、`docker network create` 新网络正常、存量网络 DNS 损坏、`docker compose down/up` 重建网络修复、`tried to kill container, but did not receive an exit event`、`docker kill` 被 bash 工具拦截、Forgejo 500 内部错误、Docker Desktop WSL2 睡眠唤醒
+- **Postgres 崩溃恢复卡在 checkpoint「像是死了」，其实是 NAS iSCSI LUN 上的 fsync 巨慢（不是真卡死，诊断方法本身有局限）** → [references/nas.md](references/nas.md)
+  - 关键词：`Postgres checkpoint 卡住`、`end-of-recovery checkpoint`、`Ds 状态`、`不可中断磁盘睡眠`、`docker stats BlockIO 不变`、`iSCSI LUN`、`NAS-backed 存储`、`WAL fsync 慢`、`wsl --mount`、`崩溃恢复耗时长`、`checkpoint complete sync=727s`、`误判为死锁`、`pg_isready`、`大表 + 慢速存储 checkpoint 正常耗时`
 
 > Copilot CLI 相关的调研笔记已迁移到 `harness` skill（包括 bash 工具 env 黑名单、`COPILOT_ALLOW_ALL` vs `--yolo`、`/rewind` 非 git 拒绝、Walk-Up（向上查找）机制总览、Custom Instructions（AGENTS.md / `.github/instructions` 嵌套查找）、Safety Net 双 bug、项目级 hook 不向上查、`.mcp.json` 上溯停在 git root、`.mcp.json` headers `${VAR}` 不展开、Skills 发现、`GIT_CONFIG_COUNT` 注入 credential helper、`gh repo fork` SSH 身份错配、Copilot SDK 与 session export 等）。

@@ -647,3 +647,45 @@ ls -l /run/user/1000/bus
 - 真正让旧 manager 接入 bus 的关键是 manager reexec（本次用 `SIGRTMIN+25`），但它可能让 running user services 中断。
 
 关键词：`systemctl --user`、`Failed to connect to bus`、`/run/user/1000/bus`、`DBUS_SESSION_BUS_ADDRESS`、`dbus-daemon --session`、`kill -RTMIN+25`、`daemon-reexec`、`systemd --user`、`running user services 断开`
+
+## Docker 内置 DNS（127.0.0.11）对存续已久的网络失效，新建网络正常（forgejo/dmp/qatlas-postgres 三个项目同时中招）
+
+> 2026-07-05 | Docker Desktop 29.4.2 on WSL2（1810 = `10.144.18.10`，hostname `DESKTOP-DM39O79`）| 涉及 `forgejo_forgejo`、`dmp_default`、`qatlas-postgres_default` 三个 compose 网络
+
+> 记录原则：根因**没有坐实**，只确认了"是什么"和"怎么修"，如实标注。
+
+### 症状
+
+- 公网入口 `timigit.app.chenzhaoyun.com`（Caddy 反代到内网 `http://10.144.18.10:3000` 的自建 Forgejo）返回 HTTP 500，页面是 Forgejo 自己吐出的"服务器内部错误"（不是 Caddy 502，说明请求已到达应用层，不是反代或证书问题）。
+- `docker logs forgejo` 报：
+  ```
+  failed to connect to `user=forgejo database=forgejo`: hostname resolving error: lookup db on 127.0.0.11:53: no such host
+  ```
+- 容器内 `getent hosts db` 解析失败；但 `docker exec forgejo nc -zv 172.20.0.2 5432`（同一 Postgres 容器的实际 IP）**直连是通的**——数据库本身健康，稳定跑了 5 周没问题，纯粹是"给个 compose 服务名解析不出来"。
+
+### 排查关键转折
+
+- 第一反应容易误判成"Postgres 挂了"或"网络路由/防火墙坏了"，但 IP 直连成功已经排除这两种可能，问题被精确限定在 DNS 这一层（Docker 每个 bridge 网络自带的内置 DNS `127.0.0.11`）。
+- 顺手查了同一台机器上另外两个不相关项目的网络（`dmp_default`、`qatlas-postgres_default`），**同样解析不出各自的 compose 服务名**——说明不是 forgejo 自己配置错了，而是这台机器上"服役较久的网络"整体性地方 DNS 出了问题。
+- 关键对照实验：`docker network create dns-test-scratch` 建一个全新网络，挂一次性容器测 DNS，**完全正常**。→ 证明不是 Docker Desktop 整体宕掉，是"存量网络"的内置 DNS 状态损坏，新建网络不受影响。这一步是从"盲猜重启大法"转向"精确定位"的关键。
+
+### 根因
+
+只确认到"存量网络的内置 DNS 状态损坏、新建网络正常"这一层，**没有坐实"为什么会损坏"**。翻了 `dmesg`（当晚无相关内核错误）和 Windows 事件日志找过侧面证据：这台 WSL2 本身 37 天没重启过；但 Windows 宿主过去 14 天里**几乎每晚 21-23 点有一次疑似睡眠/唤醒事件**（`Microsoft-Windows-Kernel-General` Id=1），包括故障当晚 21:07 那次——离用户报告 500 错误就差几小时。"Docker Desktop 在 WSL2 睡眠/唤醒后，存量网络的内置 DNS 状态损坏、新建网络不受影响"是社区里的已知模式，能合理解释现象，但没有 Docker Desktop 自己的崩溃/重启日志、也没有"DNS 从好变坏"的精确时间戳能一锤定音，**只能算最可能的假说，不是实锤结论**。
+
+### 解决
+
+```bash
+cd <项目目录> && docker compose down && docker compose up -d
+```
+重建该项目的 network 即可，对 forgejo、dmp 两个项目一次性有效。数据不受影响（用的是 bind mount `./data:/data`，不是具名 volume，`down` 默认不删数据）。
+
+`qatlas-postgres` 那次 `docker compose down` 连续两次卡在 daemon 级错误 `tried to kill container, but did not receive an exit event`（容器本身仍 running/healthy，没有数据风险），改用 `docker rm -f <name>` 强制移除后再 `docker compose up -d` 解决——这个停止失败究竟是否与本次 DNS 故障同源，没有确凿证据，值得下次复现时留意（也可能是另一件事：见下一条 iSCSI fsync 案例）。
+
+### 教训
+
+- **诊断三件套**：`getent hosts <目标>` 解析失败 + 同目标 IP 直连成功（排除路由/防火墙）+ 全新网络 DNS 正常（排除 Docker Desktop 全局宕机）→ 精确定位到"个别存量网络的内置 DNS 状态损坏"，而不是病急乱投医式地重启整个 Docker Desktop 或宿主机。
+- 修复动作本身很轻（`down/up` 重建网络），但**遇到停不掉的容器不要用 `docker kill <name>`**——Copilot CLI 的 bash 工具安全策略会把它当成裸 `kill` 命令拦截（"must specify at least one numeric PID"），需要改用 `docker rm -f <name>`（内部等效于强制 SIGKILL 后移除）。
+- 一台机器上一次性检查"是不是所有存量网络都中招"很值——本次三个项目一起中招，如果只查 forgejo 一个，会漏掉 dmp/qatlas-postgres 也需要顺手修。
+
+关键词：`Docker 内置 DNS`、`127.0.0.11`、`no such host`、`hostname resolving error`、`lookup db`、`getent hosts` 解析失败但 IP 直连通、`docker network create` 新网络正常、存量网络 DNS 损坏、`docker compose down/up` 重建网络修复、`tried to kill container, but did not receive an exit event`、`docker kill` 被 bash 工具拦截、Forgejo 500 内部错误、Docker Desktop WSL2 睡眠唤醒
