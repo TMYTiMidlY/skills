@@ -45,7 +45,7 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 ## WSL / Docker 服务暴露（入站：portproxy + wslrelay）
 
-> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。注意 **WSL 出站访问 mesh（`10.144.x`）本来就通、无需 portproxy**（NAT 下出站全交给宿主，宿主已有 mesh 路由）；portproxy 只解决**入站**（让 mesh / 远端访问 WSL 内服务）。要**少 / 免**逐服务配 portproxy，见下面「少 / 免逐服务 portproxy 的两条路」。
+> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。注意 **WSL 出站访问 mesh（`10.144.x`）本来就通、无需 portproxy**（NAT 下出站全交给宿主，宿主已有 mesh 路由）；portproxy 只解决**入站**（让 mesh / 远端访问 WSL 内服务）。要**少 / 免**逐服务配 portproxy，见下面[「少 / 免逐服务 portproxy 的两条路」](#少--免逐服务-portproxy-的两条路a-mirrored--b-单反代兜底)。
 
 ### 少 / 免逐服务 portproxy 的两条路（A mirrored / B 单反代兜底）
 
@@ -108,7 +108,7 @@ netsh interface portproxy show all
 
 - `netsh portproxy` 由 Windows `iphlpsvc` 承载，只是个通用 TCP 转发表，**不知道 WSL 存在**；它需要 connectaddress 那端有人接，正好 `127.0.0.1` 那端是 wslrelay 在 listen。
 - `wslrelay.exe` 是 WSL2 NAT 模式的 localhost forwarding 实现，**只在 Windows host 的 `127.0.0.1` / `[::1]` 上 listen**，不会 listen 任意 host IP（如 EasyTier 的 `<Windows机 mesh IP>`）。
-- `.wslconfig` 里 `hostAddressLoopback=true` 容易让人误以为是“让 host IP 也能 forward 进 WSL”——**不是**。它的方向是反的：让 WSL 进程能通过 host IP 访问 host loopback service。见下面实测。
+- `.wslconfig` 里 `hostAddressLoopback=true` 容易让人误以为是“让 host IP 也能 forward 进 WSL”——**不是**。它的方向是反的：让 WSL 进程能通过 host IP 访问 host loopback service。见下面[实测](#实测删掉-portproxy靠-wslrelay-单独扛行不行结论不行)。
 
 #### 实测：删掉 portproxy、靠 wslrelay 单独扛行不行（结论：不行）
 

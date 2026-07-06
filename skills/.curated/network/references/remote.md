@@ -38,7 +38,7 @@ Windows portproxy -> 127.0.0.1:<port>
 WSL localhost forwarding -> WSL 内服务
 ```
 
-`portproxy` 配置细节见 [wsl.md](wsl.md)「WSL / Docker 服务暴露（入站：portproxy + wslrelay）」一节；`portproxy` 不会自动唤醒 WSL，建议留一个 WSL 窗口 / 会话挂着，避免发行版被停掉后远端反代直接 502。
+`portproxy` 配置细节见 [wsl.md](wsl.md#wsl--docker-服务暴露入站portproxy--wslrelay)「WSL / Docker 服务暴露（入站：portproxy + wslrelay）」一节；`portproxy` 不会自动唤醒 WSL，建议留一个 WSL 窗口 / 会话挂着，避免发行版被停掉后远端反代直接 502。
 
 排障常用查询：
 
