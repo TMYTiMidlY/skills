@@ -164,7 +164,7 @@ curl.exe --noproxy * -v --max-time 5 "http://[::1]:<port>/"
 4. **切 `networkingMode=mirrored`**（Win11 22H2+）：彻底没 wslrelay。代价是重排所有 portproxy + 评估对 EasyTier wintun 路由优先级的影响。
 5. **WSL 内补 socat v4 relay**：`socat TCP4-LISTEN:<port>,reuseaddr,fork,bind=0.0.0.0 TCP:[::1]:<port>`，让 wslrelay 看到的是纯 v4 listener。多一跳进程，仅作 fallback。
 
-#### 全双工大流量下 wslrelay 死锁（#10688）
+### 全双工大流量下 wslrelay 死锁（#10688）
 
 [microsoft/WSL#10688](https://github.com/microsoft/WSL/issues/10688)（open，与上面 #14154 不同）：WSL 本地转发（Linux 侧转发进程 + `wslrelay.exe`）用**单个阻塞线程同时拷贝一条连接的两个方向**（半双工逻辑）；双向同时大流量时两端缓冲填满、relay 卡在 `write()` 上不再读另一边 → 永久死锁。诊断特征（`ss -tn`，卡死的 socket 对收发队列堆住、流量永久冻结）：
 
@@ -191,7 +191,7 @@ ESTAB  3176712  0          127.0.0.1:<relay>      127.0.0.1:<svc>
 
 历史背景与 issue：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) (open)、[#10688](https://github.com/microsoft/WSL/issues/10688) (open，wslrelay 全双工 hang)；类似 v4/v6 困扰在 WSL repo 里有十几个独立 issue，labels 多数 `network`。
 
-#### EasyTier + 远端 Caddy 的入站稳定方案
+### EasyTier + 远端 Caddy 的入站稳定方案
 
 WSL NAT + Windows EasyTier + 远端 Caddy 的简单稳定方案：
 
