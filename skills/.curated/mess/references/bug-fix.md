@@ -650,18 +650,18 @@ ls -l /run/user/1000/bus
 
 ## Docker 内置 DNS（127.0.0.11）对存续已久的网络失效，新建网络正常（forgejo/dmp/qatlas-postgres 三个项目同时中招）
 
-> 2026-07-05 | Docker Desktop 29.4.2 on WSL2（1810 = `10.144.18.10`，hostname `DESKTOP-DM39O79`）| 涉及 `forgejo_forgejo`、`dmp_default`、`qatlas-postgres_default` 三个 compose 网络
+> 2026-07-05 | Docker Desktop 29.4.2 on WSL2（1810 = `10.144.18.10`）| 涉及 `forgejo_forgejo`、`dmp_default`、`qatlas-postgres_default` 三个 compose 网络
 
 > 记录原则：根因**没有坐实**，只确认了"是什么"和"怎么修"，如实标注。
 
 ### 症状
 
-- 公网入口 `timigit.app.chenzhaoyun.com`（Caddy 反代到内网 `http://10.144.18.10:3000` 的自建 Forgejo）返回 HTTP 500，页面是 Forgejo 自己吐出的"服务器内部错误"（不是 Caddy 502，说明请求已到达应用层，不是反代或证书问题）。
+- 自建 Forgejo 的公网 web 入口返回 HTTP 500（Caddy 反代到内网 `http://10.144.18.10:3000`），页面是 Forgejo 自己吐出的"服务器内部错误"（不是 Caddy 502，说明请求已到达应用层，不是反代或证书问题）。
 - `docker logs forgejo` 报：
   ```
   failed to connect to `user=forgejo database=forgejo`: hostname resolving error: lookup db on 127.0.0.11:53: no such host
   ```
-- 容器内 `getent hosts db` 解析失败；但 `docker exec forgejo nc -zv 172.20.0.2 5432`（同一 Postgres 容器的实际 IP）**直连是通的**——数据库本身健康，稳定跑了 5 周没问题，纯粹是"给个 compose 服务名解析不出来"。
+- 容器内 `getent hosts db` 解析失败；但 `docker exec forgejo nc -zv <db 容器 IP，如 172.x.x.x> 5432`（同一 Postgres 容器在这个 bridge 网络里的实际 IP，`docker inspect <db 容器> --format '{{.NetworkSettings.Networks.forgejo_forgejo.IPAddress}}'` 可查）**直连是通的**——数据库本身健康，稳定跑了 5 周没问题，纯粹是"给个 compose 服务名解析不出来"。
 
 ### 排查关键转折
 
@@ -680,7 +680,7 @@ cd <项目目录> && docker compose down && docker compose up -d
 ```
 重建该项目的 network 即可，对 forgejo、dmp 两个项目一次性有效。数据不受影响（用的是 bind mount `./data:/data`，不是具名 volume，`down` 默认不删数据）。
 
-`qatlas-postgres` 那次 `docker compose down` 连续两次卡在 daemon 级错误 `tried to kill container, but did not receive an exit event`（容器本身仍 running/healthy，没有数据风险），改用 `docker rm -f <name>` 强制移除后再 `docker compose up -d` 解决——这个停止失败究竟是否与本次 DNS 故障同源，没有确凿证据，值得下次复现时留意（也可能是另一件事：见下一条 iSCSI fsync 案例）。
+`qatlas-postgres` 那次 `docker compose down` 连续两次卡在 daemon 级错误 `tried to kill container, but did not receive an exit event`（容器本身仍 running/healthy，没有数据风险），改用 `docker rm -f <name>` 强制移除后再 `docker compose up -d` 解决——这个停止失败究竟是否与本次 DNS 故障同源，没有确凿证据，值得下次复现时留意（也可能是另一件事：见 [`nas.md`](nas.md) 的 iSCSI fsync 案例）。
 
 ### 教训
 

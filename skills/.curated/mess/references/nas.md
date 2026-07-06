@@ -59,7 +59,7 @@ failed to initialize logging driver: database is blocked
 
 ### 症状
 
-- 因为处理另一件事（见上一条 Docker 内置 DNS 案例）被迫 `docker rm -f` 强制移除了这个 Postgres 容器，重建后触发崩溃恢复：WAL redo 阶段正常（约56秒，LSN 持续增长，日志有真实进度），之后进入 `checkpoint starting: end-of-recovery immediate wait`。
+- 因为处理另一件事（见 [`bug-fix.md`](bug-fix.md) 的 Docker 内置 DNS 案例）被迫 `docker rm -f` 强制移除了这个 Postgres 容器，重建后触发崩溃恢复：WAL redo 阶段正常（约56秒，LSN 持续增长，日志有真实进度），之后进入 `checkpoint starting: end-of-recovery immediate wait`。
 - 这一步之后看起来彻底不动了：
   - `docker top qatlas-postgres` 显示 checkpointer 进程长期处于 **`Ds`**（不可中断磁盘睡眠）状态，CPU 恒为 `0.00%`。
   - `docker stats` 的 **BlockIO 字节计数器**在相隔 20 秒、90 秒、10 分钟、直到最终 **21+ 分钟**的多次复测中，数值分毫不变（`153MB / 176kB` 恒定）。
@@ -84,7 +84,7 @@ failed to initialize logging driver: database is blocked
 
 ### 解决 / 结果
 
-什么都没做，纯等待。容器最终变回 `healthy`，`pg_isready` 确认 accepting connections，容器内 DNS（`getent hosts qatlas-postgres`）也恢复正常（说明它和上一条 Docker DNS 故障其实是同时叠加、但彼此独立的两件事）。
+什么都没做，纯等待。容器最终变回 `healthy`，`pg_isready` 确认 accepting connections，容器内 DNS（`getent hosts qatlas-postgres`）也恢复正常（说明它和 [`bug-fix.md`](bug-fix.md) 的 Docker DNS 故障其实是同时叠加、但彼此独立的两件事）。
 
 ### 教训
 
