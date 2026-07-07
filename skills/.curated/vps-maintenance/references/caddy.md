@@ -473,6 +473,33 @@ caddy-security 的 GitHub OAuth 由三种东西拼起来，先理清它们的关
 
 **想要更长的免登期**：把两个 lifetime 一起调长（如 30 天 `2592000` / 90 天 `7776000`，两者设一样）。代价：JWT 无状态，调长 = 撤销窗口变长（过期前无法 server-side 失效，强行作废只能换 `JWT_SHARED_KEY`，但那会让**所有人**一起掉线）。
 
+### 改权限不即时生效 · 无法单独踢人（无状态 JWT 的运维后果）
+
+上一节的"无状态"在**改权限 / 踢人**时会踩到两个后果，单列出来。
+
+**① 角色是登录那刻"烤"进 token 的，改配置不回头重算。** `transform user` 只在登录/重签时算一次角色、写进 JWT；业务站的 `authorize` 端**只验签 + 读 claims，从不重新评估角色**。所以你改了 `transform user` 映射或 `allow roles`，**手里还攥着旧 token 的人不受影响**，得等其 `exp` 过期、下次重签才拿到新角色。
+
+**时序陷阱**（最常见的"配置明明放行了他、却还是被拒"）：给某用户新加了放行角色，他仍 `403`——因为他的 token 是你**改配置之前**签发的，里面根本没有新角色。诊断信号是 `authorize` 日志里：
+
+```
+reason: user role is valid, but not allowed by access list
+```
+
+（= token 有效、角色字段**有值**，但和 `allow roles` 没交集。）拿**该用户最后一次 `Successful login` 时间 vs Caddyfile 改动时间**一比：login 早于改配置，就是这个坑。修法：让他**登出重登**（或等旧 token `exp` 过期）刷出带新角色的 token，配置不用再动。
+
+**② 两条失败路径决定用户"懵不懵"**（回链「指令速查」的 `set auth url` / `set forbidden url`）：
+
+| 情形 | 走向 | 结果 |
+|---|---|---|
+| 无 token / token 过期 | `set auth url` → 跳 portal | 顺带**重签、拿到新角色**，自愈 |
+| 有旧 token 但角色不够 | `set forbidden url` → 静态 forbidden 页 | **不重登、角色永远刷不了**，用户只看到"突然没权限" |
+
+**"线上改权限、老用户被闷在 403 且不知道要重登"的根因就在第二行**——他有 token，走 forbidden 分支，不会被送去重登。缓解办法：把 forbidden 页写成"权限已变更，点此重新登录"的引导（链到 portal `/logout` 再 `/login`），别只丢一个死的 403。
+
+**③ 让改权限尽快生效：调短 token lifetime。** 既然只能等 `exp`，就把 `crypto default token lifetime` 压到分钟~小时级，改权限后最多等一个 lifetime 就自动重签生效。这跟上一节「想要更长免登期」是**同一个旋钮的两个方向**：长 = 少打扰、撤销/改权限慢；短 = 改权限快生效、略勤重签（GitHub session 还在时重签无感）。
+
+**④ 想"单独把某个人踢下线"——无状态做不到。** 服务端不存 session，没有"某人的在线记录"可删；让某个旧 token 立刻失效的唯一服务端手段是换 `JWT_SHARED_KEY`，而那是核弹——**所有子站所有人一起掉线重登**。真要"精确踢单人 / 改权限即时全局生效"，只能引入服务端可变状态：吊销名单（denylist，每次验签后再查一次黑名单）、token introspection（每次回签发方问"还有效吗"），或换 Authelia / Authentik / Keycloak 这类**有 session** 的方案。代价是放弃无状态的"本地验签、无共享存储、多站解耦"三大优势，改造量大。**小圈子授权通常不值当——短 lifetime 已能覆盖绝大多数"改权限要尽快生效"的诉求。**
+
 ### portal 页面：`/portal` / `/whoami` / 登录后落点
 
 portal（`authenticate with <portal>` 那个站点）按 path 分发（`go-authcrunch/pkg/authn/respond_http.go:36-73`）：
@@ -1128,6 +1155,7 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 | 大量 WS / 长连接僵尸、内存缓涨、疑似拖累 reload | hijack 裸管道无超时、客户端静默死 | 本节「WebSocket / 长连接泄漏」 |
 | 登录后无限 302 / `ERR_TOO_MANY_REDIRECTS` | 签发 / 读取方 caddy-security 版本不同 → cookie 名对不上 | 本节「跨版本 cookie 名陷阱」 |
 | 能登、能跳回来，但一个角色都没有 → 403 / 无限跳 | 改了 provider `realm` 没同步 `transform user match realm` | 「callback URL 与字段映射」改 realm 的连带 |
+| 某用户能登、也有角色，改过权限后却仍 403（`role is valid, but not allowed by access list`） | 旧 token 角色早于配置变更，`authorize` 不重算、只等 `exp` | 「改权限不即时生效 · 无法单独踢人」 |
 | 证书签不出 / ACME 反复失败 / 垃圾子域名狂签 | DNS 没指过来，或 on-demand `ask` 太宽 | 本节「reload 卡住」第 3 条 + 「`on_demand_tls`」节 |
 | docs-share viewer 渲染 / 下载 / 缓存异常 | viewer 壳子 / Markdeep / SigV4 细节 | docs-share「这套方案踩过的坑」 |
 | 大陆 Aliyun ECS 未备案 SNI 被封 | 备案 / SNI 封锁 | [icp-filing.md](icp-filing.md) |
