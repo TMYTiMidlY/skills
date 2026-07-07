@@ -1,6 +1,6 @@
 # Copilot CLI 运行时笔记
 
-Copilot CLI 本体行为的逆向与排障笔记：进程模型、bash 工具的环境变量处理、权限与目录信任、TUI 与终端、Git 认证、app.js 运行时补丁（重试 / 默认档位 / web_fetch）、运行中插话（steer），以及会话存储与 `/share html` 导出。
+Copilot CLI 本体行为的逆向与排障笔记：进程模型、bash 工具的环境变量处理、权限与目录信任、TUI 与终端、Git 认证、运行中插话（steer），以及会话存储与 `/share html` 导出。**改 bundle 的补丁（重试 / 默认档位 / web_fetch）连同一键脚本独立成篇见 [copilot-patch.md](copilot-patch.md)。**
 
 大部分章节附 `app.js` 源码摘录与字节偏移；偏移**仅供参考**，混淆后的符号（`xj` / `_R` / `Nhe` / `bBt` / `sN` / `cKr` …）是 esbuild 产物的稳定特征，会随版本变化但用关键字面量（`COPILOT_RUN_APP` / `COPILOT_ALLOW_ALL` / `GITHUB_PERSONAL_ACCESS_TOKEN` / `safe.bareRepository` / `AGENTS.md` / `.mcp.json` …）能在新版本里重新定位。源码定位基线为 `@github/copilot@1.0.41` 的 `app.js`（esbuild 混淆产物）；部分较新章节用 1.0.64-1 / 1.0.66-1 复核。
 
@@ -68,7 +68,7 @@ wc -l "$D/app.js"   # 1.0.64-1 是 6403 行
 
 ### 运行时到底跑哪份 app.js（打补丁改这份）
 
-**不管 npm 还是 SEA 安装，运行时最终跑的都是 `~/.cache/copilot/pkg/<platform>/<version>/app.js`，`<version>` = 盘上最高版本。本文「app.js 运行时补丁」节的所有补丁都改这一份。** 上面 npm 的 `node_modules/.../app.js` 只是 npm 发的种子、SEA 的 ELF 只是内嵌资源载体——真正执行的都是 loader 自更新后解包/下载进 pkg cache 的那份。两台实测佐证（同一 session 里做的）：
+**不管 npm 还是 SEA 安装，运行时最终跑的都是 `~/.cache/copilot/pkg/<platform>/<version>/app.js`，`<version>` = 盘上最高版本。所有 bundle 补丁（见 [copilot-patch.md](copilot-patch.md)）都改这一份。** 上面 npm 的 `node_modules/.../app.js` 只是 npm 发的种子、SEA 的 ELF 只是内嵌资源载体——真正执行的都是 loader 自更新后解包/下载进 pkg cache 的那份。两台实测佐证（同一 session 里做的）：
 
 - **SEA 装**（本机）：`file ~/.local/bin/copilot` 是 ELF 二进制、**没有** `node_modules/@github/copilot`；跑 pkg cache 最高版。
 - **npm 装**（AgWorkstation）：launcher symlink→`npm-loader.js`，`node_modules` 里 app.js 是 `1.0.41`（**未打补丁**），但 `copilot --version`=`1.0.69-2`、且 `/model` 长上下文修复**只有在 pkg cache 的 `app.js` 打补丁后才生效** → 证明跑的不是 node_modules 那份。（`index.js` loader 里能看到 `pkg` / `prefer-version` 版本选择逻辑。）
@@ -728,111 +728,9 @@ ssh -T git@github.com                       # → "Hi <wrong-account>!" 一目�
 ---
 ## app.js 运行时补丁（bundle patch）
 
-Copilot CLI 闭源、只发 minified bundle（见「安装方式与看源码」）。有几处行为**没有任何 settings / flag / env 能改**，只能直接改 `app.js` 打补丁。下面几个补丁——**重试策略**、**默认档位（effort ＋ context tier）**——共用同一套工程套路，先讲通用套路，各补丁只列「改什么 + 怎么定位 + 守卫 + 验证」。
-
-> ⚠️ **这些补丁本质是逆向产物、会随版本腐坏。** 下文一律**描述改动意图 + 用稳定字面量定位**，不给死正则、不附脚本——读到这份文档的 agent 应当自己 `view` 当前版本的 `app.js`、按描述定位、当场写出适配当前 bundle 的替换。别照抄任何具体混淆符号名。
-
-### 通用套路（每个 app.js 补丁都照这套来）
-
-1. **只改 `app.js`**（CLI 实际跑的那份），不动 `sdk/index.js`（programmatic SDK，CLI 不走它）。安装位置定位见「安装方式与看源码」。
-2. **锚点选稳定字面量**：env 名 / 错误文案 / 配置键 / native 函数名（如 `retryPolicy`、`modelsIsTieredTokenPrices`、`networkIsBlockedIp`）这类跨版本不变的串。minified 符号名（函数名 / 变量名）每版都变，**只能用正则反向引用捕获、绝不硬编**；含 `$` 的混淆名要用 `[\w$]` 而非 `\w` 匹配。
-3. **先 dry-run 数命中数**：写回前确认锚点在当前 bundle 里命中次数 = 预期（通常 1）。命中 0 或多于预期就停下重新逆向，别硬写。
-4. **特性存在性守卫**：补丁若引用某个 native 能力，先确认该字面量在 bundle 里存在；老版本没有该特性时**直接跳过**——注入引用不存在符号的代码会**运行时崩**，而 `node --check` 只查语法、查不出来。
-5. **幂等 marker + 备份**：每个改动点带一个自定义 marker 注释（如 `/*tmy-xxx*/`），已含 marker 的文件跳过；写回前把原文件备份到同目录（如 `app.js.<name>.bak`），回滚直接 `cp` 回来。
-6. **写回后 `node --check`**：语法坏了立刻用备份回滚。
-7. **扫所有版本目录**：pkg cache 有多个版本目录（`$COPILOT_CACHE_HOME/pkg`、`$XDG_CACHE_HOME/copilot/pkg`、macOS `~/Library/Caches/copilot/pkg`、`$COPILOT_HOME/pkg`、`~/.copilot/pkg`；平台子目录形如 `linux-x64/<version>/app.js`），逐个打。
-8. **只对新会话生效**：运行中的 `copilot` 已把 `app.js` 载入内存，补丁要**开新会话**才生效。
-9. **auto-update 后要重跑**：CLI 默认 `autoUpdate: true`，后台拉的新版本目录是干净的。判断哪些没打过：`grep -L '<marker>' ~/.cache/copilot/pkg/*/*/app.js`（列空＝都打过了）。旧备份 / 旧版本目录不自动回收，loader 只跑最高版本、留着无害，要清手动清。
+「重试太少 / 默认档位（effort ＋ context tier）回落」这几处 **stock 无配置可改、只能改 minified bundle** 的行为，连同**一键补丁脚本** `scripts/patch-copilot-cli.py`（幂等、自动备份、`node --check` 失败回滚、逐 patch 独立），已独立成篇 → **[copilot-patch.md](copilot-patch.md)**。先跑脚本 `dry-run`，全绿就不用手改；某个 patch 失效会单独报出，再按该文对应节手动逆向。
 
 ---
-
-### 重试策略：transient API error 重试太少
-
-#### 症状与根因
-
-Copilot CLI 在网络抖动 / HTTP/2 GOAWAY / 模型上游瞬时不可用时，会以以下错误中断当前 turn：
-
-```
-✗ Execution failed: Error: Failed to get response from the AI model;
-  retried 5 times (total retry wait time: 6.00 seconds)
-  Last error: CAPIError: Connection error.
-```
-
-5 次重试一共才等了 6 秒，对真实的网络问题完全不够 —— 跟 [github/copilot-cli#2421](https://github.com/github/copilot-cli/issues/2421) 等一堆 issue 是同一类。CLI 内部默认（`app.js` 里的 `initDefaultOptions`）：
-
-- `retryPolicy.maxRetries = 5`
-- 非-API 错误（连接挂、HTTP/2 GOAWAY 这类拿不到 HTTP 响应的）每次重试间隔 = `Ke.retryAfter * (0.8 + Math.random() * 0.4)`，retryAfter 可能不到 1 秒。
-
-并且**没有任何 `settings.json` / CLI flag / 环境变量**能改这两个值 —— 实测过完整的 `cli-config-dir-reference` 和 `cli-command-reference`，只有 `--timeout`（作用于工具调用，不是模型 API 请求）和 `continueOnAutoMode`（rate-limit 时切 auto 模式，跟连接错误无关）。要改只能 patch 二进制。
-
-#### 改什么
-
-两处，效果是把「~6 秒就放弃」延到「≥40 秒才放弃」，够吃掉常见网络抖动，又不至于卡到夸张：
-
-1. **重试次数**：默认 `maxRetries = 5` → 改成 `10`。锚点用 `retryPolicy` + `maxRetries` 这条独特路径（形如 `maxRetries:<混淆名>?.retryPolicy?.maxRetries??5`）定位那个字面量 `5`。
-2. **非-API 错误（连接挂 / GOAWAY 这类）的每次退避加下限**：默认单次等待 = `retryAfter * (0.8 + random()*0.4)`，可能不到 1 秒；给结果套一个 `Math.max(…, 4)` 的 4 秒下限。锚点用 `.8+Math.random()*.4` 这段字面量定位，周围的混淆变量名用反向引用捕获。
-
-其余照《通用套路》：marker、备份、`node --check`、扫版本目录、auto-update 重跑。
-
-#### 验证
-
-`grep -l '<marker>' ~/.cache/copilot/pkg/*/*/app.js` 确认已打；开新会话，遇到瞬断时应重试更久才放弃。
-
-> 同款思路适用于任何想调 Copilot CLI 内部常量的场景（如 `defaultRetryAfterSeconds` / `maxRetryAfterSeconds` 等 rate-limit 配置）。锚点选**字面量唯一的 minified 片段**（带 `retryPolicy?.` 这种独特路径），别选纯数字（容易撞）。
-
-### 默认档位：effort ＋ context tier
-
-**这俩是同一类问题**：typed `/model <id>` 切模型时，用**同一行**把 `effortLevel` 和 `contextTier` 一起清空（`<state>.effortLevel=void 0,<state>.contextTier=void 0`，落盘 + 本会话内存都清）→ 两个档位一起回落该模型「默认档」。想让它们默认停在想要的档（effort→模型支持的最高档、context→`long_context`），纯改 settings 都扛不住 typed `/model`，只能打 bundle 补丁。（曾错误以为「effort 要 hack、context 改 settings 就够」，是假的不对称——两者机制同构，别再犯。）
-
-#### 机制（两档位同构）
-
-- **优先级（都一样）**：命令行开关（`--effort <none/low/medium/high/xhigh/max>`＝`--reasoning-effort`；`--context <default/long_context>`，均会话级不落盘）> `settings.json`（`effortLevel` / `contextTier`，合法持久键；`contextTier` 的 `inherit` 只给子代理）> 内置默认。model 另有 `COPILOT_MODEL` env，但 **effort / context 都没有对应 env**。持久默认只在全局 `~/.copilot/settings.json`（无目录级 settings，`$COPILOT_HOME` 可整体挪位）；TUI 里选档写回这里，故「上次选择」＝「默认」。
-- **每个模型的「默认档」来自 bundle 静态解析、用户不可配**：
-  - *effort*：静态表（源标签 `"sweagent-capi"`）的 `clientOptions.defaultReasoningEffort`，按 model→family→vendor 匹配、缺省硬回落 `"medium"`，再过 native 用该模型 `supportedReasoningEfforts` 校验。这既是 picker `(default)` 标签来源，也是 typed `/model` 回落目标。
-  - *context*：`long_context`（分层定价大窗口档，如 gpt-5.x 的 1.1M）**只在该模型 `billing.token_prices` 带 `long_context` 时才存在**；不支持的模型只有 `default` 一档。
-- **两处被 typed `/model` 清空 / 重置**（补丁的靶）：
-  - **清空点**：typed `/model <id>` 执行时那行 `effortLevel=void 0,contextTier=void 0`（落盘清空 settings + 本会话内存）。
-  - **setModel 重置**：native `setModel` 的 switch 调用少传 tier 参 → 把本会话内存 state 重置回 default。
-  - 所以「先用无参 `/model` 两步选择器选好档」扛不住之后任何一次 typed `/model` 切模型（picker 路径传满参、不清；typed 路径走清空）。
-- **⚠️ 交互 TUI 无视 `--context` 开关，只认 `settings.json` 的 `contextTier`**（实测；无头 `-p` 才认开关）。根因：交互 App 有个挂载 effect 只从盘重灌 tier（启动时 runtime 没带 tier → 落到 `settings.contextTier`）。**所以交互启动要长上下文＝改 `settings.json` `contextTier: long_context`，别指望 `--context`。**
-- **context 的完整修复 = 两件套**：① `settings.json` `contextTier: long_context`（管交互启动即长上下文）＋ ② 下面的清空点 / setModel 补丁（管 typed `/model` 切换后不掉档）。缺 ② 实测：启动 1M，但 typed `/model` 切走再切回 → `/context` 从 1M 掉回 264k，且 `settings.json` 的 `contextTier` 被物理删掉。
-
-**实测四象限（opus-4.8；上下文窗口取 `/context` 面板，prompt 上限取 resolved `max_prompt_tokens`）**：
-
-| 场景 | 上下文窗口 | prompt 上限 |
-|---|---|---|
-| 无头 `-p` ＋ `--context default` | 264k | 200k |
-| 无头 `-p` ＋ `--context long_context` | **1,000,000** ✓ | 936,000 |
-| 交互 TUI ＋ `--context long_context` | 264k ✗ | 200k |
-| 交互 TUI ＋ settings `contextTier=long_context`（不带开关） | **1,000,000** ✓ | 936,000 |
-
-#### 改什么（两个作用面，effort / context 同理）
-
-档位有**两个作用面**，一个 hack 要不要两面都打，看你要覆盖到哪：
-
-- **作用面 A「默认解析」**（管 picker `(default)` 标签 + 启动 / 解析回落）：改那个读「每个模型默认档」的解析函数，让它返回**该模型支持的最高档**而非静态默认。
-  - *effort*：解析函数用 `sweagent-capi` + `defaultReasoningEffort??"medium"` 这段独特字面量定位；改成遍历该模型 `supportedReasoningEfforts` 取最高（`max>xhigh>high>medium>low`），取不到回落原逻辑。
-  - *context*：同理让默认解析在模型支持时取 `long_context`。
-- **作用面 B「typed `/model` 清空 + setModel 重置」**（管切模型后不掉档，**这一面 effort/context 共享同一处代码**）：
-  - **清空点**：用稳定属性名串 `effortLevel=void 0,contextTier=void 0` 定位（前方就近的 `.find(id===<model 变量>)` 能拿到模型对象喂守卫）；把末尾对应的 `=void 0` 改成「守卫通过则设目标档、否则 `void 0`」。
-  - **setModel**：用 `setModel:async` + 其后就近那次「少传 tier 参」的调用定位，补上第 4 参 = 从模型列表算出的目标档。
-- **守卫（不支持的模型必须回落、不能崩）**：
-  - *effort*：取 `supportedReasoningEfforts` 里最高档，空则回落默认。
-  - *context*：照抄 native 能力判定——`model.billing.token_prices` 存在且 `modelsIsTieredTokenPrices(...)` 为真且含 `long_context`，否则回落 `default`。
-  - **⚠️ 特性前置守卫**（《通用套路》第 4 条的实例，务必先做）：`long_context` 分层定价是较新特性、靠 native `modelsIsTieredTokenPrices` 判定；老版本没有这个 native 函数，注入引用它的守卫会**运行时崩**、而 `node --check` 查不出。所以打 context 补丁前必须先确认 bundle 里有 `modelsIsTieredTokenPrices` 字面量，没有就跳过。（真踩过：放松锚点后多版本全匹配 + `node --check` 全过，老版本一敲 `/model` 就炸。）
-- **现状与取舍**：文档里 effort 只打了作用面 A、context 只打了作用面 B；要「切模型也不掉 effort」就得把 effort 也打作用面 B（清空点 / setModel），反之要「picker 默认就显长上下文」就得把 context 也打作用面 A。两面锚点都在同一小段代码附近，一次逆向能一起定位。
-- 符号名逐版本变（清空点的 state 变量、setModel 及其调用的函数名、解析函数名都会改），一律**反向引用捕获 + `[\w$]+` 匹配**（minify 会造含 `$` 的名，`\w` 不含 `$`）；其余照《通用套路》：dry-run 数命中、marker、备份、`node --check`、扫版本目录、auto-update 重跑。
-
-#### 验证：用真 PTY 驱动交互式 TUI
-
-改 bundle 后光 `node --check` + `--version` 不够——得验 typed `/model` 真落到目标档。这类「要驱动交互式 TUI、按键、读屏幕」的验证，用 Python stdlib **`pty.fork()`** 起真 PTY（不必装 `pexpect`）：
-
-- 子进程 `os.execvp("copilot",…)` 拿到**真控制终端**；`ioctl(fd, TIOCSWINSZ, …)` 设窗口、`TERM=xterm-256color`。
-- master fd：`select.select([fd])` 读＝看屏幕；`os.write(fd,ch)` ＝敲键盘（`\r` 提交、`\x03` 退出）。
-- **逐字符输入（~60ms/字符）**：一次性灌整行会和 TUI 自动补全竞争、截断命令——踩过。
-- 断言：从磁盘读 `settings.json` 看 `contextTier` / `effortLevel`；正则剥 ANSI 后 grep 稳定串（`Model changed from`、footer 的 `1.1M context`）。**必须换一个和当前不同、且支持目标档的模型**（如 gpt-5.4）强制真切换——切同款＝没切，区分不出「hack 没生效」vs「本就同档」；`-p "/model"` 一次性喂会走另一条「Already using」路径（不在 app.js 里），测不到。
-
-**实测结论**：支持的模型（gpt-5.4 / 5.5 / opus-4.8）→ typed `/model` 后 footer 显 `(1M context)`/`(1.1M context)` + settings 落 `long_context`；不支持的（gpt-5-mini）→ 守卫回落 default、不崩。opus-4.8 切走再切回，`/context` 从补丁前 264k 变 **1000k**、`settings.json` `contextTier` 不再被抹。
 
 ## 运行中发消息：steer（即时插话）vs queue（排队）
 
