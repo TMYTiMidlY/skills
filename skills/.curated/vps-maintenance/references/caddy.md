@@ -475,30 +475,28 @@ caddy-security 的 GitHub OAuth 由三种东西拼起来，先理清它们的关
 
 ### 改权限不即时生效 · 无法单独踢人（无状态 JWT 的运维后果）
 
-上一节的"无状态"在**改权限 / 踢人**时会踩到两个后果，单列出来。
+**事故还原**：你在 Caddyfile 里给某用户新加了放行角色（改 `transform user` / `allow roles`），reload 生效，本以为他能进了——可他刷新页面还是 `403`。于是你想"把他踢下线、逼他重登，不就拿到新角色了？"结果发现：**单个用户根本踢不下线**。为什么改了权限他还被拒、为什么踢不了人，根子都在上一节的"无状态"。
 
-**① 角色是登录那刻"烤"进 token 的，改配置不回头重算。** `transform user` 只在登录/重签时算一次角色、写进 JWT；业务站的 `authorize` 端**只验签 + 读 claims，从不重新评估角色**。所以你改了 `transform user` 映射或 `allow roles`，**手里还攥着旧 token 的人不受影响**，得等其 `exp` 过期、下次重签才拿到新角色。
-
-**时序陷阱**（最常见的"配置明明放行了他、却还是被拒"）：给某用户新加了放行角色，他仍 `403`——因为他的 token 是你**改配置之前**签发的，里面根本没有新角色。诊断信号是 `authorize` 日志里：
+**改了权限他仍被拒 = 角色烤进了旧 token。** `transform user` 只在登录那刻算一次角色写进 JWT，`authorize` 端**只验签读 claims、从不重算**。他攥着改配置**之前**签发的旧 token，里面没有新角色，得等 `exp` 过期重签才更新。诊断信号（`authorize` 日志）：
 
 ```
 reason: user role is valid, but not allowed by access list
 ```
 
-（= token 有效、角色字段**有值**，但和 `allow roles` 没交集。）拿**该用户最后一次 `Successful login` 时间 vs Caddyfile 改动时间**一比：login 早于改配置，就是这个坑。修法：让他**登出重登**（或等旧 token `exp` 过期）刷出带新角色的 token，配置不用再动。
+（token 有效、角色**有值**，但和 `allow roles` 没交集。）对照他最后一次 `Successful login` 时间 vs Caddyfile 改动时间，login 更早就是这个坑。**修法：让他登出重登**（或等 `exp` 过期），配置不用再动。
 
-**② 两条失败路径决定用户"懵不懵"**（回链「指令速查」的 `set auth url` / `set forbidden url`）：
+**他为什么不会自己重登** —— 授权失败分两条路（回链「指令速查」）：
 
 | 情形 | 走向 | 结果 |
 |---|---|---|
-| 无 token / token 过期 | `set auth url` → 跳 portal | 顺带**重签、拿到新角色**，自愈 |
-| 有旧 token 但角色不够 | `set forbidden url` → 静态 forbidden 页 | **不重登、角色永远刷不了**，用户只看到"突然没权限" |
+| 无 token / 已过期 | `set auth url` → 跳 portal | 顺带重签、拿到新角色，自愈 |
+| 有旧 token 但角色不够 | `set forbidden url` → 静态页 | 不重登、角色永远刷不了，只看到"突然没权限" |
 
-**"线上改权限、老用户被闷在 403 且不知道要重登"的根因就在第二行**——他有 token，走 forbidden 分支，不会被送去重登。缓解办法：把 forbidden 页写成"权限已变更，点此重新登录"的引导（链到 portal `/logout` 再 `/login`），别只丢一个死的 403。
+"线上改权限、老用户被闷在 403 且不自知"就是第二行——他有 token、走 forbidden 分支，不会被送去重登。缓解：把 forbidden 页写成"权限已变更，点此重新登录"的引导，别只丢个死 403。
 
-**③ 让改权限尽快生效：调短 token lifetime。** 既然只能等 `exp`，就把 `crypto default token lifetime` 压到分钟~小时级，改权限后最多等一个 lifetime 就自动重签生效。这跟上一节「想要更长免登期」是**同一个旋钮的两个方向**：长 = 少打扰、撤销/改权限慢；短 = 改权限快生效、略勤重签（GitHub session 还在时重签无感）。
+**为什么踢不了单人。** 无状态服务端不存 session，没有"某人在线记录"可删；唯一能立刻作废旧 token 的服务端手段是换 `JWT_SHARED_KEY`，但那会让**所有人一起掉线**。要精确踢单人只能引入服务端状态（吊销名单 / token introspection，或换 Authelia、Authentik、Keycloak 这类有 session 的方案），代价是丢掉无状态的本地验签、无共享存储、多站解耦，改造大。
 
-**④ 想"单独把某个人踢下线"——无状态做不到。** 服务端不存 session，没有"某人的在线记录"可删；让某个旧 token 立刻失效的唯一服务端手段是换 `JWT_SHARED_KEY`，而那是核弹——**所有子站所有人一起掉线重登**。真要"精确踢单人 / 改权限即时全局生效"，只能引入服务端可变状态：吊销名单（denylist，每次验签后再查一次黑名单）、token introspection（每次回签发方问"还有效吗"），或换 Authelia / Authentik / Keycloak 这类**有 session** 的方案。代价是放弃无状态的"本地验签、无共享存储、多站解耦"三大优势，改造量大。**小圈子授权通常不值当——短 lifetime 已能覆盖绝大多数"改权限要尽快生效"的诉求。**
+**务实解：调短 token lifetime**（分钟~小时级），改权限后最多等一个 lifetime 就自动重签生效——与上一节「想要更长免登期」是同一旋钮的两个方向。小圈子这样够用，不必上有状态。
 
 ### portal 页面：`/portal` / `/whoami` / 登录后落点
 
