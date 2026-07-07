@@ -45,10 +45,65 @@ sudo systemctl reload caddy
 
 - **改 Caddyfile 用 `reload`**；**换二进制或改 systemd 环境变量用 `restart`**。
 - **底层机制：`reload` / 配置读写都走 Caddy 的 admin（管理 / 控制）API**——一个 REST endpoint，**默认 `localhost:2019`**（可用 `CADDY_ADMIN` 环境变量或配置里的 `admin` 块改；配置里的地址优先于默认）。`caddy reload` 本质就是 `POST /load`（阻塞到加载完成 / 失败、失败自动回滚旧配置、零停机）；另有 `GET /config/`（导出实时配置）、`POST /stop`、`GET /debug/pprof/`（运行态 goroutine dump，排查泄漏 / 卡死用，见后文「WebSocket / 长连接反代的连接泄漏与 `stream_timeout`」节）。所以 `curl localhost:2019/...` 是在跑 Caddy 的**那台机**上访问它自己的控制口，不需要 sudo。
-- **失败的 `reload` 可能让 systemd 卡在 `reloading`**，下一次 `reload` 也会跟着失败；遇到这种情况直接 `sudo systemctl restart caddy`。
+- **`reload` 可能永久挂起 / 卡死**：命令行不返回，但 caddy 主进程仍在跑、旧配置继续服务、网站不掉（不是宕机）。第一手是 `sudo systemctl restart caddy` 解卡，机制诊断与多条解法见下节「`systemctl reload caddy` 卡住 / 永久挂起：诊断与解法」。
 - **`systemctl reload caddy` 退出非零 ≠ reload 失败**：caddy 关旧 admin endpoint 时常有 10s timeout 让 systemctl 退出 1，但配置其实已加载。脚本里用 exit code 触发回滚会误把好配置覆盖回旧的；要判断真失败请看 `curl` 实测或 `journalctl -u caddy` 有无 `loading new config` 之类成功标志。
 - **`caddy validate` 读不到 systemd 注入的环境变量**。无论是 `sudo` shell 下的 env placeholder，还是 `systemctl edit caddy` 里的 `Environment=...`，`validate` 都是命令行直接启动的，不会经过 systemd。  
   如果 Caddyfile 里用了 `{env.XYZ}`，先在当前 shell 里手动 `export` 一遍即可；值随便填，`validate` 只检查占位符能否解析。
+
+## `systemctl reload caddy` 卡住 / 永久挂起：诊断与解法
+
+**现象**：`sudo systemctl reload caddy`（或裸 `caddy reload`）**永久挂起、命令行不返回**；但 **caddy 主进程一直在跑、旧配置继续服务、网站不掉**——不是宕机，只是新配置迟迟加载不上、终端卡死。systemd 到点（`TimeoutStartUSec`，实测 90s）打一条 `Reload operation timed out. Killing reload process.`（`journalctl -u caddy` 可见，可能反复出现）；多数情况得手动 `sudo systemctl restart caddy` 才能解卡并让新配置真正生效。
+
+> 区分：本节讲**卡住不返回**。若 reload **秒回但报错**，多半是配置语法错（`caddy validate` 能查），不属本节；至于**退出非零但其实已加载**，见上节标准流程那条。
+
+### 机制：reload 全程持一把全局配置锁
+
+`caddy reload` = 往 admin API `POST /load`（见上节 admin API 那条）。服务端 `changeConfig()` **全程持 `rawCfgMu` 这把全局锁**（`Lock()` 后 `defer Unlock()`），锁内顺序：provision 新配置 → 逐个 `app.Start()`（起新 server / TLS / PKI…）→ `unsyncedStop()` 停旧 app。**这一整套里任意一步卡住，锁就一直不放**，于是：
+
+- `POST /load` 不返回 → `systemctl reload` 挂死；
+- **`GET /config/` 也拿不到锁、跟着挂**；
+- 而 `GET /debug/pprof/...` **不碰这把锁 → 秒回**。
+
+**这组「`/config/` 挂 + `pprof` 秒回」就是「reload 被锁死」的确诊指纹**（锁机制已从源码坐实：`caddy.go` 的 `changeConfig` 全程持 `rawCfgMu`）。
+
+至于卡在锁内哪一步，源码排除了两个想当然的嫌疑：reload 时 http app 的 `Stop()` 只等「旧 server 停止接受新连接」就返回、**不等**长连接排空（排空丢给后台 goroutine 跑）；TLS app 的 `Start()` 走 `ManageAsync`、**不同步**等签证。所以「旧连接没排完」和「新域名签不出」**都不会直接**卡住 reload 主链路——真正卡点得靠现场 pprof dump 定位（certmagic 内部锁、PKI、`finishSettingUp` 等仍有嫌疑，**暂未逐一坐实，待现场验证**）。
+
+### 解法（先救活 → 再防复发）
+
+1. **救一个已卡死的 reload：直接 `sudo systemctl restart caddy`**。restart 是「停旧起新」、有界（本机实测 1~5s，其间旧配置在服务、切换瞬间断一下连接），能解锁并把新配置真正加载上。**卡住时的第一手就是它**。
+
+2. **别让终端 / systemd 无限等：给 reload 套 `timeout`**。
+   - 手动：`sudo timeout 60 caddy reload --config /etc/caddy/Caddyfile --force` —— 60s 没完就返回非零，你拿回控制权。
+   - systemd 层（让 `systemctl reload` 自身有界、不再无限卡在 `reloading`）：
+     ```bash
+     sudo systemctl edit caddy
+     ```
+     ```ini
+     [Service]
+     TimeoutStartSec=60
+     ExecReload=
+     ExecReload=/usr/bin/timeout 60 /usr/bin/caddy reload --config /etc/caddy/Caddyfile --force
+     ```
+     （`ExecReload=` 先清空再重设，是 systemd 覆盖既有指令的固定写法；改完 `sudo systemctl daemon-reload`。）
+   - **注意 `timeout` 只截断「客户端 / systemd 这一侧」**：`caddy reload` 客户端被 kill，**服务端那次 `POST /load` 可能仍在锁里跑**——锁没放，下一次 reload 照样卡。所以 timeout 是「止血、给你信号」，**真正清干净还得靠第 1 条 restart**。
+
+3. **掐掉最常见的诱因：ACME / on-demand 签证风暴**。历史卡死窗口里高频出现「给某域名反复签证失败」（`challenge failed` 打转）和「给垃圾子域名狂签」（`o69iay0p...` / `notexists...` 撞 Let's Encrypt `too many subdomain labels` 退避，最长 30 天重试）。签证虽走后台、不直接卡 reload 主链路，但会持续占 certmagic 的锁 / obtain 池，与卡死高度同时段出现。两条收敛：
+   - **域名 DNS 没解析到本机前，别把它写进 Caddyfile**——托管证书签不出会一直在后台重试打转。
+   - **收严 `on_demand_tls` 的 `ask` 端点**（见「`on_demand_tls`：陌生 SNI 的按需签证」节），别让任意子域名都能触发签证。
+
+4. **给长连接泄漏封顶（同源的加重项）：`grace_period` + `stream_timeout`**。见「WebSocket / 长连接反代的连接泄漏与 `stream_timeout`」节——其中**全局 `grace_period` 给「旧 server 后台排空」设硬上界**（不设=默认 0=永久等，频繁 reload 会攒一堆永不退出的排空 goroutine）。诚实标注：`grace_period` 治的是**泄漏累积**，源码看它并不会让「已卡死的 reload 立刻返回」（reload 时 `Stop()` 本就不等排空）；但泄漏与卡死同源（都跟长连接 + 那把全局锁纠缠），值得一起上。
+
+5. **现场确诊卡在哪：admin API + pprof**。趁还卡着时（本机、免 sudo）：
+   ```bash
+   # /config/ 挂住/超时 = 锁被占死（坐实是「reload 锁死」而非别的）
+   curl -s --max-time 3 http://127.0.0.1:2019/config/ -o /dev/null -w '%{http_code} %{time_total}s\n'
+   # pprof 秒回；把全量 goroutine 栈抓下来看谁卡在锁里
+   curl -s "http://127.0.0.1:2019/debug/pprof/goroutine?debug=2" > /tmp/caddy-goroutine.txt
+   grep -nE 'changeConfig|rawCfgMu|ManageSync|tls.obtain|Shutdown|io\.Copy|streaming\.go' /tmp/caddy-goroutine.txt
+   ```
+   抓到当次卡点栈，才能把上面第 3 / 4 条从「嫌疑」钉成「这次就是它」。
+
+6. **大改 / 加新域名，宁可 `restart` 不 `reload`**。reload 要在一把全局锁里同时收尾旧配置、起新配置，配置越大越容易卡；换二进制、改 systemd 环境变量本来就必须 restart。有界的 restart 比「可能挂死的 reload」省心。
 
 ## 基础反代：先选站点模式
 
@@ -345,7 +400,7 @@ https://panel.example.com {
 - **空闲流**（copier 卡在 `waitRead` 等后端）：客户端的死会被 TCP keepalive / 重连时的 RST 探到，**能自愈**（观测到数小时内清掉）。
 - **后端在推的流**（copier 卡在 `waitWrite` 写死客户端）：mkdocs livereload 心跳 / 终端输出这类**服务端主动推**的连接，写入先塞满 TCP 发送缓冲，之后对着黑洞死等重传——**能拖 ~40h**（`tcp_retries2` 默认的满重传窗口）。这才是真正危险、会累积的那种。
 
-**危害边界**：goroutine 泄漏本身**不影响** Caddy 正常服务（Go 扛几万并发，几十条僵尸只占点内存）。但**大批同时半死**——典型是作为上游出口的代理节点被墙，一瞬切断所有经它回程的客户端——会攒出成百上千条；且疑似与某次 `caddy reload` 卡死相关（`/config/` 挂起而 `pprof` 秒回 ＝ 配置锁被占死），此因果**机制未完全坐实**，但**重启即清**。
+**危害边界**：goroutine 泄漏本身**不影响** Caddy 正常服务（Go 扛几万并发，几十条僵尸只占点内存）。但**大批同时半死**——典型是作为上游出口的代理节点被墙，一瞬切断所有经它回程的客户端——会攒出成百上千条；且与 `caddy reload` 卡死**同源纠缠**（那次 `/config/` 挂起而 `pprof` 秒回 ＝ 配置锁 `rawCfgMu` 被占死，**锁机制已坐实**，详见「`systemctl reload caddy` 卡住 / 永久挂起：诊断与解法」节），但**重启即清**。
 
 **诊断**（admin API，本地无需 sudo）：
 
@@ -384,6 +439,15 @@ reverse_proxy http://127.0.0.1:8082 {
 **取舍**：
 
 - `stream_timeout` **按龄一刀切**，到点连**活着的**长连接也砍——但 zellij / code-server 客户端会自动重连、服务端会话还在，代价可接受。文档类（livereload）给 `3h` 都够；终端类给 `24h` 更友好；图省事全 `24h`。
+- **全局 `grace_period` 给「旧 server 后台排空」设硬上界**（reload / 退出时旧 server 等活跃连接关闭的最长时长）。不设时默认 `0` = **永久等**（源码 `modules/caddyhttp/app.go` 就是这么写的，还专门警告「频繁 reload + 长 / 无限 grace period 会耗尽资源」）——于是每次 reload 都可能攒下一批永不退出的排空 goroutine。设个有界值即可：
+  ```caddyfile
+  {
+      servers {
+          grace_period 10s
+      }
+  }
+  ```
+  它和 `stream_timeout` 层次不同、互补：`grace_period` 管「reload 时旧 server 整体排空的截止」，`stream_timeout` 管「单条流自身的最大存活」。平时靠 `stream_timeout` 防单条泄漏，reload 时靠 `grace_period` 兜底不让旧 server 赖着。**注意 `grace_period` 治泄漏累积，不等于让已卡死的 reload 立刻返回**（详见 reload 卡死节）。
 - 更外科手术的补充（可选、**系统级**）：调小 `net.ipv4.tcp_retries2`（如 `8`，≈100s），让"对端不 ACK 的写"在内核层几分钟就失败——**只杀真死连接、不动活连接**，精准打 `waitWrite` 那种。代价：影响本机所有 TCP，非 Caddy 局部。
 - ~~`stream_close_delay`~~ 治的是 reload 时避免重连风暴（延迟关流），**方向相反、不治泄漏**，别混用。
 
@@ -1198,6 +1262,7 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 - 基础站点优先顺序：**域名模式 > IP 模式**
 - 功能叠加顺序：**先反代，再错误页，再认证**
 - `reload` 只适合改 Caddyfile；**换二进制或改环境变量用 `restart`**
+- **`reload` 永久卡住 / 挂起**（终端不返回、服务仍在）：第一手 `systemctl restart caddy` 解卡；治本 = `timeout` 包住 reload + 收严 on-demand 签证 + `grace_period`/`stream_timeout` 封顶泄漏，详见「`systemctl reload caddy` 卡住 / 永久挂起」节
 - `tls internal` 场景下，**客户端只导 root CA**
 - **共享端口（`:443`）上的域名站点别写 `bind`**：会独占该 `IP:443`、劫持整段端口流量 → 其它域名 200 空 body 白屏；偏偏本机回环自查正常，极隐蔽。只有独占端口的站点才可以 bind。
 - `caddy-security`：
