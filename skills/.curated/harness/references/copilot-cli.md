@@ -43,7 +43,7 @@ $ which copilot
     └── app.js          (主逻辑，esbuild bundle)
 ```
 
-直接 `view` / 字符串切片 `node_modules/@github/copilot/app.js` 即可，没有解包步骤。
+直接 `view` / 字符串切片 `node_modules/@github/copilot/app.js` 即可读到一份源码，没有解包步骤。**但这份是 npm 包自带的「种子」版本、往往是旧版**（实测 AgWorkstation 这里 `package.json` 写 `1.0.41`，而 `copilot --version` 却报 `1.0.69-2`）——**它不是运行时真正跑的那份，更不是打补丁该改的那份**（改了没用）。运行时/打补丁到底改哪份，见下面「运行时到底跑哪份 app.js」。
 
 ### 二进制发行版（SEA）：读自解包的 cache
 
@@ -65,6 +65,17 @@ wc -l "$D/app.js"   # 1.0.64-1 是 6403 行
 ```
 
 > macOS 走 `~/Library/Caches/copilot/pkg/...`；也可被 `COPILOT_CACHE_HOME` / `XDG_CACHE_HOME` / `COPILOT_HOME` 改写。
+
+### 运行时到底跑哪份 app.js（打补丁改这份）
+
+**不管 npm 还是 SEA 安装，运行时最终跑的都是 `~/.cache/copilot/pkg/<platform>/<version>/app.js`，`<version>` = 盘上最高版本。三个 patch（retry / effort / long-context）都改这一份。** 上面 npm 的 `node_modules/.../app.js` 只是 npm 发的种子、SEA 的 ELF 只是内嵌资源载体——真正执行的都是 loader 自更新后解包/下载进 pkg cache 的那份。两台实测佐证（同一 session 里做的）：
+
+- **SEA 装**（本机）：`file ~/.local/bin/copilot` 是 ELF 二进制、**没有** `node_modules/@github/copilot`；跑 pkg cache 最高版。
+- **npm 装**（AgWorkstation）：launcher symlink→`npm-loader.js`，`node_modules` 里 app.js 是 `1.0.41`（**未打补丁**），但 `copilot --version`=`1.0.69-2`、且 `/model` 长上下文修复**只有在 pkg cache 的 `app.js` 打补丁后才生效** → 证明跑的不是 node_modules 那份。（`index.js` loader 里能看到 `pkg` / `prefer-version` 版本选择逻辑。）
+
+所以三个 patch 脚本一律只扫 pkg cache 根（`$COPILOT_CACHE_HOME/pkg`、`$XDG_CACHE_HOME/copilot/pkg`、`~/Library/Caches/copilot/pkg`、`$COPILOT_HOME/pkg`、`~/.copilot/pkg`）、**不碰 node_modules**。
+
+**版本选择的时机（`copilot --version` 与 live 会话对不上就是这个原因）**：`<最高版本>` 只在**新进程 spawn 时**定；**已经在跑的会话停在它启动时那一版**，auto-update 只是把新版本下到 pkg cache 并弹 `Update available / 运行 /update`，**不热切**当前进程。实测：live 会话 footer 是 `1.0.69-1`（已打补丁、`/model` 正常保住 1M/1.1M），而同机新起的 `copilot --version` 报 `1.0.69-2`（干净未打）——两者都对，只是一个是运行中进程、一个是新进程。=> auto-update 后要对**新版本目录**重跑补丁；但**当前会话不受影响**，得等 `/update` 或重开才落到新版本。
 
 ### 按字面量抠源码片段
 
@@ -767,7 +778,7 @@ grep -oE 'maxRetries:e\?\.retryPolicy\?\.maxRetries\?\?[0-9]+[^,]{0,30}' \
 
 ### Auto-update 后需要重跑
 
-CLI 默认 `autoUpdate: true`（`~/.copilot/settings.json`），后台拉新版本到一个新的 `~/.cache/copilot/pkg/linux-x64/<new-version>/`，loader 自动切到最高版本。**新版本目录里的 `app.js` 是干净的**，需要再跑一次脚本。
+CLI 默认 `autoUpdate: true`（`~/.copilot/settings.json`），后台拉新版本到一个新的 `~/.cache/copilot/pkg/linux-x64/<new-version>/`，loader 在**下次新进程启动时**切到最高版本（已运行的会话不热切，只弹 `Update available`；机制见上「运行时到底跑哪份 app.js」）。**新版本目录里的 `app.js` 是干净的**，需要再跑一次脚本。
 
 判断要不要重跑：
 
