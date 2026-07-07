@@ -44,66 +44,8 @@ sudo systemctl reload caddy
 注意：
 
 - **改 Caddyfile 用 `reload`**；**换二进制或改 systemd 环境变量用 `restart`**。
-- **底层机制：`reload` / 配置读写都走 Caddy 的 admin（管理 / 控制）API**——一个 REST endpoint，**默认 `localhost:2019`**（可用 `CADDY_ADMIN` 环境变量或配置里的 `admin` 块改；配置里的地址优先于默认）。`caddy reload` 本质就是 `POST /load`（阻塞到加载完成 / 失败、失败自动回滚旧配置、零停机）；另有 `GET /config/`（导出实时配置）、`POST /stop`、`GET /debug/pprof/`（运行态 goroutine dump，排查泄漏 / 卡死用，见后文「WebSocket / 长连接反代的连接泄漏与 `stream_timeout`」节）。所以 `curl localhost:2019/...` 是在跑 Caddy 的**那台机**上访问它自己的控制口，不需要 sudo。
-- **`reload` 可能永久挂起 / 卡死**：命令行不返回，但 caddy 主进程仍在跑、旧配置继续服务、网站不掉（不是宕机）。第一手是 `sudo systemctl restart caddy` 解卡，机制诊断与多条解法见下节「`systemctl reload caddy` 卡住 / 永久挂起：诊断与解法」。
-- **`systemctl reload caddy` 退出非零 ≠ reload 失败**：caddy 关旧 admin endpoint 时常有 10s timeout 让 systemctl 退出 1，但配置其实已加载。脚本里用 exit code 触发回滚会误把好配置覆盖回旧的；要判断真失败请看 `curl` 实测或 `journalctl -u caddy` 有无 `loading new config` 之类成功标志。
-- **`caddy validate` 读不到 systemd 注入的环境变量**。无论是 `sudo` shell 下的 env placeholder，还是 `systemctl edit caddy` 里的 `Environment=...`，`validate` 都是命令行直接启动的，不会经过 systemd。  
-  如果 Caddyfile 里用了 `{env.XYZ}`，先在当前 shell 里手动 `export` 一遍即可；值随便填，`validate` 只检查占位符能否解析。
-
-## `systemctl reload caddy` 卡住 / 永久挂起：诊断与解法
-
-**现象**：`sudo systemctl reload caddy`（或裸 `caddy reload`）**永久挂起、命令行不返回**；但 **caddy 主进程一直在跑、旧配置继续服务、网站不掉**——不是宕机，只是新配置迟迟加载不上、终端卡死。systemd 到点（`TimeoutStartUSec`，实测 90s）打一条 `Reload operation timed out. Killing reload process.`（`journalctl -u caddy` 可见，可能反复出现）；多数情况得手动 `sudo systemctl restart caddy` 才能解卡并让新配置真正生效。
-
-> 区分：本节讲**卡住不返回**。若 reload **秒回但报错**，多半是配置语法错（`caddy validate` 能查），不属本节；至于**退出非零但其实已加载**，见上节标准流程那条。
-
-### 机制：reload 全程持一把全局配置锁
-
-`caddy reload` = 往 admin API `POST /load`（见上节 admin API 那条）。服务端 `changeConfig()` **全程持 `rawCfgMu` 这把全局锁**（`Lock()` 后 `defer Unlock()`），锁内顺序：provision 新配置 → 逐个 `app.Start()`（起新 server / TLS / PKI…）→ `unsyncedStop()` 停旧 app。**这一整套里任意一步卡住，锁就一直不放**，于是：
-
-- `POST /load` 不返回 → `systemctl reload` 挂死；
-- **`GET /config/` 也拿不到锁、跟着挂**；
-- 而 `GET /debug/pprof/...` **不碰这把锁 → 秒回**。
-
-**这组「`/config/` 挂 + `pprof` 秒回」就是「reload 被锁死」的确诊指纹**（锁机制已从源码坐实：`caddy.go` 的 `changeConfig` 全程持 `rawCfgMu`）。
-
-至于卡在锁内哪一步，源码排除了两个想当然的嫌疑：reload 时 http app 的 `Stop()` 只等「旧 server 停止接受新连接」就返回、**不等**长连接排空（排空丢给后台 goroutine 跑）；TLS app 的 `Start()` 走 `ManageAsync`、**不同步**等签证。所以「旧连接没排完」和「新域名签不出」**都不会直接**卡住 reload 主链路——真正卡点得靠现场 pprof dump 定位（certmagic 内部锁、PKI、`finishSettingUp` 等仍有嫌疑，**暂未逐一坐实，待现场验证**）。
-
-### 解法（先救活 → 再防复发）
-
-1. **救一个已卡死的 reload：直接 `sudo systemctl restart caddy`**。restart 是「停旧起新」、有界（本机实测 1~5s，其间旧配置在服务、切换瞬间断一下连接），能解锁并把新配置真正加载上。**卡住时的第一手就是它**。
-
-2. **别让终端 / systemd 无限等：给 reload 套 `timeout`**。
-   - 手动：`sudo timeout 60 caddy reload --config /etc/caddy/Caddyfile --force` —— 60s 没完就返回非零，你拿回控制权。
-   - systemd 层（让 `systemctl reload` 自身有界、不再无限卡在 `reloading`）：
-     ```bash
-     sudo systemctl edit caddy
-     ```
-     ```ini
-     [Service]
-     TimeoutStartSec=60
-     ExecReload=
-     ExecReload=/usr/bin/timeout 60 /usr/bin/caddy reload --config /etc/caddy/Caddyfile --force
-     ```
-     （`ExecReload=` 先清空再重设，是 systemd 覆盖既有指令的固定写法；改完 `sudo systemctl daemon-reload`。）
-   - **注意 `timeout` 只截断「客户端 / systemd 这一侧」**：`caddy reload` 客户端被 kill，**服务端那次 `POST /load` 可能仍在锁里跑**——锁没放，下一次 reload 照样卡。所以 timeout 是「止血、给你信号」，**真正清干净还得靠第 1 条 restart**。
-
-3. **掐掉最常见的诱因：ACME / on-demand 签证风暴**。历史卡死窗口里高频出现「给某域名反复签证失败」（`challenge failed` 打转）和「给垃圾子域名狂签」（`o69iay0p...` / `notexists...` 撞 Let's Encrypt `too many subdomain labels` 退避，最长 30 天重试）。签证虽走后台、不直接卡 reload 主链路，但会持续占 certmagic 的锁 / obtain 池，与卡死高度同时段出现。两条收敛：
-   - **域名 DNS 没解析到本机前，别把它写进 Caddyfile**——托管证书签不出会一直在后台重试打转。
-   - **收严 `on_demand_tls` 的 `ask` 端点**（见「`on_demand_tls`：陌生 SNI 的按需签证」节），别让任意子域名都能触发签证。
-
-4. **给长连接泄漏封顶（同源的加重项）：`grace_period` + `stream_timeout`**。见「WebSocket / 长连接反代的连接泄漏与 `stream_timeout`」节——其中**全局 `grace_period` 给「旧 server 后台排空」设硬上界**（不设=默认 0=永久等，频繁 reload 会攒一堆永不退出的排空 goroutine）。诚实标注：`grace_period` 治的是**泄漏累积**，源码看它并不会让「已卡死的 reload 立刻返回」（reload 时 `Stop()` 本就不等排空）；但泄漏与卡死同源（都跟长连接 + 那把全局锁纠缠），值得一起上。
-
-5. **现场确诊卡在哪：admin API + pprof**。趁还卡着时（本机、免 sudo）：
-   ```bash
-   # /config/ 挂住/超时 = 锁被占死（坐实是「reload 锁死」而非别的）
-   curl -s --max-time 3 http://127.0.0.1:2019/config/ -o /dev/null -w '%{http_code} %{time_total}s\n'
-   # pprof 秒回；把全量 goroutine 栈抓下来看谁卡在锁里
-   curl -s "http://127.0.0.1:2019/debug/pprof/goroutine?debug=2" > /tmp/caddy-goroutine.txt
-   grep -nE 'changeConfig|rawCfgMu|ManageSync|tls.obtain|Shutdown|io\.Copy|streaming\.go' /tmp/caddy-goroutine.txt
-   ```
-   抓到当次卡点栈，才能把上面第 3 / 4 条从「嫌疑」钉成「这次就是它」。
-
-6. **大改 / 加新域名，宁可 `restart` 不 `reload`**。reload 要在一把全局锁里同时收尾旧配置、起新配置，配置越大越容易卡；换二进制、改 systemd 环境变量本来就必须 restart。有界的 restart 比「可能挂死的 reload」省心。
+- **`reload` 走 Caddy 的 admin（管理 / 控制）API**：本质是 `POST /load`（**默认 `localhost:2019`**，阻塞到加载完成 / 失败、失败自动回滚旧配置、零停机）。`curl localhost:2019/...` 是在本机访问它自己的控制口、免 sudo；admin API 全貌与 `pprof` 诊断见文末「排障与诊断 · 通用诊断入口」。
+- **reload 出问题**（永久挂起 / 退出码非零 / `validate` 报 `{env.*}` / 域名白屏 / 登录死循环…）统一见文末「排障与诊断」节。
 
 ## 基础反代：先选站点模式
 
@@ -353,16 +295,7 @@ https://panel.example.com {
 - **一个服务一个端口** 往往比“全塞到 `443` 的不同子路径”更省心。  
   尤其用了 `caddy-security` 之后，像 `/assets/*` 这类静态资源路径容易和后端自己的 `/assets/*` 打架。
 
-- **本机端口已经被其他进程占用**（常见：Docker 绑在 `127.0.0.1:port`）时，给该站点显式 `bind` 外网 IP，而不是默认 `0.0.0.0`。否则整个 `reload` 会因为 `address already in use` 失败。示例：
-
-  ```caddyfile
-  example.com {
-      bind <eth0 ip> <tun0 ip>
-      reverse_proxy 127.0.0.1:8000
-  }
-  ```
-
-  ⚠️ 这招**只对"独占端口"的站点安全**。在被多个域名共享的端口（典型 `:443`）上给单个站点加 `bind`，会把整段端口的流量劫持过去、其它域名集体白屏——机制与诊断见下一节。
+- **端口被占 / 想限定监听网卡 → 用 `bind`**：`bind` 的分组机制、独占端口 vs 共享端口的正反用法见下一节；`address already in use`（常见 Docker 占了 `127.0.0.1:port`）的诊断修复、以及共享端口误加 `bind` 导致的域名白屏，见文末「排障与诊断」。
 
 - **公网端口别忘了放行安全组/防火墙**。  
   中国大陆 Aliyun ECS 的未备案 SNI 封锁与“IP 直连 + `tls internal`”绕过方案另见 [icp-filing.md](icp-filing.md)。
@@ -380,78 +313,16 @@ https://panel.example.com {
 **于是分两种端口场景，结果完全相反**：
 
 - **独占端口（一个端口只挂一个站点）→ `bind` 安全、有用。**
-  典型是每个后端各占一个非标端口（`:8082`、`:9000`…）。这个端口本来就它一个站点，拆成独立 server 也没人跟它抢。`bind` 在这里是正面用途：限定只在公网 NIC + mesh NIC 上监听（不监听不该听的地址），或避开 Docker 已占的 `127.0.0.1:port`（见上节 `address already in use`）。**IP 模式天然是"每服务一个独占端口"，所以这种 bind 在 IP 模式下随便用。**
+  典型是每个后端各占一个非标端口（`:8082`、`:9000`…）。这个端口本来就它一个站点，拆成独立 server 也没人跟它抢。`bind` 在这里是正面用途：限定只在公网 NIC + mesh NIC 上监听（不监听不该听的地址），或避开 Docker 已占的 `127.0.0.1:port`（`address already in use` 的修复见文末「排障与诊断」）。**IP 模式天然是"每服务一个独占端口"，所以这种 bind 在 IP 模式下随便用。**
 
 - **共享端口（一个端口靠 SNI/Host 给多个站点分流，典型 `:443`）→ `bind` 会劫持整段端口。** ⚠️
-  `:443` 上挂着一堆域名（`a.example.com`、`b.example.com`、auth portal…），默认都 listen `:443`，合并进同一个 server 靠 SNI 分流——这是对的。**此时只要给其中一个站点加 `bind 1.2.3.4`**，它就独占 `1.2.3.4:443`，按"具体 IP 优先"截走**所有**经 `1.2.3.4` 进来的 `:443` 流量；可它的路由表里只有自己一个域名，对别的域名一律不匹配 → Caddy 兜底回 **200 + 空 body** → 浏览器**白屏**。
+  `:443` 上挂着一堆域名（`a.example.com`、`b.example.com`、auth portal…），默认都 listen `:443`，合并进同一个 server 靠 SNI 分流——这是对的。**此时只要给其中一个站点加 `bind 1.2.3.4`**，它就独占 `1.2.3.4:443`，按"具体 IP 优先"截走**所有**经 `1.2.3.4` 进来的 `:443` 流量；可它的路由表里只有自己一个域名，对别的域名一律不匹配 → 同端口其它域名集体故障。**这个故障的现象（`200` + 空 body 白屏、本机自查却正常）、诊断与修复见文末「排障与诊断 · 共享端口 `bind` 劫持白屏」。**
 
 **规矩**：
 
 - **共享端口（尤其 `:443`）上的域名站点一律不写 `bind`**——公网域名本来就该在所有网卡监听，让它们全部合并进通配 `:443` server 靠 SNI 分流。
 - 若确实要给所有站点统一限定网卡，用**全局** `default_bind <IP>...`（写在 global options 里、对所有站点生效）——这样所有站点 listen 地址仍然一致、照样合并、不拆 server；**别**在单个 `:443` 站点上局部 bind（局部 `bind` 会**覆盖** `default_bind`，那个站点又被拆出去——所以这是硬性前提，不是风格建议）。
   - *源码核对（v2.11.2）*：`default_bind` 是全局选项，注册于 `caddyconfig/httpcaddyfile/options.go`（`RegisterGlobalOption("default_bind", …)`）；应用逻辑在 `caddyconfig/httpcaddyfile/addresses.go` 的 `listenersForServerBlockAddress`，优先级为「站点自带 `bind` > 全局 `default_bind` > 通配 `:PORT`」。监听地址拼成 `<bindHost>:<port>` 后，由同文件 `consolidateAddrMappings` 按地址字符串分组决定合并/拆分（上面「机制三连」第 2 条即出自这里）。
-
-### WebSocket / 长连接反代的连接泄漏与 `stream_timeout`
-
-`reverse_proxy` 代理 WebSocket 时会 **hijack** 掉连接、退化成一条双向 `io.Copy` 的裸管道（后端↔客户端各一个 copier goroutine）。这条管道**默认不设任何读写超时**（`stream_timeout` 默认无）。当客户端**不告而别**——手机休眠 / 标签切后台 / NAT 空闲驱逐 / **上游代理节点被墙**，没有 FIN/RST——Caddy 察觉不到，copier 永不返回，连接与 goroutine **泄漏**。
-
-**两种泄漏、命运不同（实测对照）**：
-
-- **空闲流**（copier 卡在 `waitRead` 等后端）：客户端的死会被 TCP keepalive / 重连时的 RST 探到，**能自愈**（观测到数小时内清掉）。
-- **后端在推的流**（copier 卡在 `waitWrite` 写死客户端）：mkdocs livereload 心跳 / 终端输出这类**服务端主动推**的连接，写入先塞满 TCP 发送缓冲，之后对着黑洞死等重传——**能拖 ~40h**（`tcp_retries2` 默认的满重传窗口）。这才是真正危险、会累积的那种。
-
-**危害边界**：goroutine 泄漏本身**不影响** Caddy 正常服务（Go 扛几万并发，几十条僵尸只占点内存）。但**大批同时半死**——典型是作为上游出口的代理节点被墙，一瞬切断所有经它回程的客户端——会攒出成百上千条；且与 `caddy reload` 卡死**同源纠缠**（那次 `/config/` 挂起而 `pprof` 秒回 ＝ 配置锁 `rawCfgMu` 被占死，**锁机制已坐实**，详见「`systemctl reload caddy` 卡住 / 永久挂起：诊断与解法」节），但**重启即清**。
-
-**诊断**（admin API，本地无需 sudo）：
-
-```bash
-# DOWN 复制器（后端→客户端）数量；UP 用 streaming.go:648
-curl -s http://127.0.0.1:2019/debug/pprof/goroutine?debug=1 | grep -c streaming.go:642
-# 卡死者完整栈：找 copyFromBackend(streaming.go:642) + crypto/tls.(*Conn).Write → waitWrite
-curl -s "http://127.0.0.1:2019/debug/pprof/goroutine?debug=2" | grep -A25 'streaming.go:642'
-```
-
-对照实验坐实机制：开一个走 WS 的标签→静默掐断其路径（防火墙 DROP / 飞行模式，**不能**干净关，那会发 FIN/RST）→ 对应 copier 赖着不走；而**干净关闭**标签→copier 秒回收。同一连接只差"死法"，静默死=漏、干净关=收。
-
-**修复：给带 WS 的 `reverse_proxy` 加 `stream_timeout`**（到点强制关闭流，卡死 copier 被迫返回 → 泄漏有上界）。`stream_timeout` **只对流式 / hijack 连接生效**，普通 HTTP 请求不受影响，所以加在共享 snippet 上对非 WS 站点也无害。
-
-snippet 形态（一改覆盖所有用它的 vhost）：
-
-```caddyfile
-(app_org) {
-    authorize with app_org
-    reverse_proxy {args[0]} {
-        stream_timeout 24h
-    }
-    import error_pages
-}
-```
-
-裸 `reverse_proxy` 形态（zellij / code-server / paseo 逐个加）：
-
-```caddyfile
-reverse_proxy http://127.0.0.1:8082 {
-    header_up Cookie "******"
-    stream_timeout 24h
-}
-```
-
-**取舍**：
-
-- `stream_timeout` **按龄一刀切**，到点连**活着的**长连接也砍——但 zellij / code-server 客户端会自动重连、服务端会话还在，代价可接受。文档类（livereload）给 `3h` 都够；终端类给 `24h` 更友好；图省事全 `24h`。
-- **全局 `grace_period` 给「旧 server 后台排空」设硬上界**（reload / 退出时旧 server 等活跃连接关闭的最长时长）。不设时默认 `0` = **永久等**（源码 `modules/caddyhttp/app.go` 就是这么写的，还专门警告「频繁 reload + 长 / 无限 grace period 会耗尽资源」）——于是每次 reload 都可能攒下一批永不退出的排空 goroutine。设个有界值即可：
-  ```caddyfile
-  {
-      servers {
-          grace_period 10s
-      }
-  }
-  ```
-  它和 `stream_timeout` 层次不同、互补：`grace_period` 管「reload 时旧 server 整体排空的截止」，`stream_timeout` 管「单条流自身的最大存活」。平时靠 `stream_timeout` 防单条泄漏，reload 时靠 `grace_period` 兜底不让旧 server 赖着。**注意 `grace_period` 治泄漏累积，不等于让已卡死的 reload 立刻返回**（详见 reload 卡死节）。
-- 更外科手术的补充（可选、**系统级**）：调小 `net.ipv4.tcp_retries2`（如 `8`，≈100s），让"对端不 ACK 的写"在内核层几分钟就失败——**只杀真死连接、不动活连接**，精准打 `waitWrite` 那种。代价：影响本机所有 TCP，非 Caddy 局部。
-- ~~`stream_close_delay`~~ 治的是 reload 时避免重连风暴（延迟关流），**方向相反、不治泄漏**，别混用。
-
-> 触发这次排查的真实事件：2026-06-25 作为上游出口的 vless+ws 节点被墙，大批经它回程的 WS 客户端同时半死。
 
 ## 安装带插件的 Caddy 二进制
 
@@ -463,7 +334,7 @@ APT 安装的系统自带 Caddy **不包含** `caddy-security` 这类第三方�
 
 > 已经装过一个插件、后面还想加另一个插件时，不是再叠一层，而是**重新下载一个同时包含两者的新二进制**。
 >
-> **下载时优先取页面默认的最新 stable 版本**（caddy 本体和插件都取最新）。多台机共用同一套 `caddy-security` 时（尤其跨主机的 portal↔gatekeeper 分离部署），**各台的 caddy-security 版本要尽量一致**——否则会踩下文「caddy-security 跨版本 cookie 名陷阱」。
+> **下载时优先取页面默认的最新 stable 版本**（caddy 本体和插件都取最新）。多台机共用同一套 `caddy-security` 时（尤其跨主机的 portal↔gatekeeper 分离部署），**各台的 caddy-security 版本要尽量一致**——否则会踩文末「排障与诊断 · 跨版本 cookie 名陷阱」。
 
 ### 下载（不带版本参数 = 始终最新 stable）
 
@@ -478,7 +349,7 @@ chmod +x caddy.new
 - **没带 `-A "Mozilla/5.0"` User-Agent 会被拒**（返回 ~22 字节的 `Contact: ...` 文本，不是二进制）。
 - 不带版本参数时该 API **默认给最新 stable**（caddy 本体 + 各插件都最新）。
 
-> ⚠️ **自定义二进制不会自动更新**。`dpkg-divert` 之后 APT 只更 `caddy.default`，**`caddy.custom` 冻结在你上次下载的版本**——这就是版本会悄悄落后、多机出现版本 skew 的根源（见下文「跨版本 cookie 名陷阱」）。想升级**只能手动重新下载**；多机共用 portal 时要把各台一起升、保持版本一致。
+> ⚠️ **自定义二进制不会自动更新**。`dpkg-divert` 之后 APT 只更 `caddy.default`，**`caddy.custom` 冻结在你上次下载的版本**——这就是版本会悄悄落后、多机出现版本 skew 的根源（见文末「排障与诊断 · 跨版本 cookie 名陷阱」）。想升级**只能手动重新下载**；多机共用 portal 时要把各台一起升、保持版本一致。
 
 ### 首次安装（`caddy.custom` 还不存在）
 
@@ -513,7 +384,7 @@ sudo systemctl restart caddy
 caddy list-modules --versions | grep -i security
 ```
 
-升级 `caddy-security` **大版本**前务必看下文「跨版本 cookie 名陷阱」：默认 cookie 名变过，**升级会让所有现存会话失效（全员重登）**，且共用同一 portal 的各机要一起升、否则签发/读取的 cookie 名对不上会登录死循环。
+升级 `caddy-security` **大版本**前务必看文末「排障与诊断 · 跨版本 cookie 名陷阱」：默认 cookie 名变过，**升级会让所有现存会话失效（全员重登）**，且共用同一 portal 的各机要一起升、否则签发/读取的 cookie 名对不上会登录死循环。
 
 ## `caddy-security`：GitHub OAuth 认证
 
@@ -615,23 +486,6 @@ portal（`authenticate with <portal>` 那个站点）按 path 分发（`go-authc
 
 - **登录成功默认落 `/portal`**（除非带了可信 `redirect_url` cookie）：`pkg/authn/handle_http_login.go:347-379`（`redirectLocation==""` 时 → `BaseURL + /portal`）。
 - **`/whoami` 显示的是 `usr.AsMap()`（直接读 JWT claims / 内部 user map）**：`pkg/authn/handle_http_whoami.go:42-43` + `pkg/user/user.go:136-139`。它**不经过** authorization policy、**不读** `set user identity` / `inject headers`——所以删那些 policy 指令**不影响 whoami 显示**（whoami 上的 `sub/email/name` 直接来自 JWT claims）。
-
-### ⚠️ 跨版本 cookie 名陷阱（多机共用 portal 必看）
-
-`caddy-security` 在版本演进中**改过 access token 的默认 cookie 名**：旧版（实测 `v1.1.49`）默认 `access_token`；新版（`v1.1.61`+）默认 `AUTHP_ACCESS_TOKEN`（= 前缀 `AUTHP` + `ACCESS_TOKEN`，源码 `go-authcrunch/pkg/authn/cookie/cookie_config.go`：`DefaultCookieNamePrefix="AUTHP"` + `DefaultAccessTokenCookieName="ACCESS_TOKEN"`）。
-
-**坑**：当**签发方**（`authentication portal`）和**读取方**（`authorization policy` / gatekeeper）跑在**不同版本**时——典型是跨主机部署（一台只跑 portal，另一台只跑 `authorize`）——两边默认 cookie 名对不上：portal 发 `access_token`，gatekeeper 默认找 `AUTHP_ACCESS_TOKEN`，**永远找不到 token → 登录后无限 302 回 login → 浏览器 `ERR_TOO_MANY_REDIRECTS`**。同一台机（portal+gatekeeper 同版本）天然自洽、不触发，所以极隐蔽，容易误判成网络 / JWT key 问题。
-
-**诊断**（Caddy admin API，默认 `http://localhost:2019/config/`）：
-
-- **读取方实际找哪个 cookie**：reload 时全局开 `debug`，捞 `journalctl -u caddy` 里 `msg="Configured gatekeeper"` 那条的 `auth_cookies` 字段（= gatekeeper 真正会读的 cookie 名集合）。
-- **浏览器实际带哪个 cookie**：全局加 `servers { log_credentials }` 临时取消 Cookie 脱敏，再看请求 `Cookie` 头里 JWT（`eyJ...`）挂在哪个名下。**抓完务必撤掉**，别把 JWT 长期写进 journal。
-- **portal 签发名**：`curl -s localhost:2019/config/` 看 `authentication_portals[].cookie_config.access_token_cookie_name`（新版 resolve 成 `AUTHP_ACCESS_TOKEN`；旧版为 `null` → 回退到 `crypto_key_configs[].token_name`，即 `access_token`）。
-
-**两种修法**：
-
-1. **各机版本对齐**（根治）：所有共用同一 portal 的机器升到同一 `caddy-security` 版本，默认名自然统一。**注意连锁后果**：升级会改变签发的 cookie 名 → **所有现存会话失效、全员重登**；且**所有 gatekeeper 要同步**（要么都用新默认 `AUTHP_ACCESS_TOKEN` 删掉显式 pin，要么都改成新名）——否则刚对齐又会对不上。
-2. **显式 pin cookie 名**（局部、抗版本漂移）：在 authorization policy 里写 `set access_token cookie name <portal 实际签发的名>`。要稳就多名全收：`set access_token cookie name AUTHP_ACCESS_TOKEN access_token jwt_access_token`（新旧默认 + query 默认一锅端）。**注意**：省略该指令 ≠ 安全默认——新版 gatekeeper 省略时默认只找 `AUTHP_ACCESS_TOKEN`，跨版本读旧 portal 的 `access_token` 必炸。
 
 ### 先理解 cookie 作用域
 
@@ -1256,6 +1110,213 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 - **不要让 `:9001`（RustFS console）暴露到公网**——Caddy 反代只对 `:9000`（S3 API）做。
 - **不要绕过 forgejo / rclone sync 直接 mc cp 写桶**——下次 sync `--remove` 会把它抹掉，除非你**确实**在做“对齐桶到 main HEAD” 这种 hot-fix（见 `~/TiMidlY-projects/docs-share/.github/copilot-instructions.md` 的 rerun 覆盖事故说明）。
 - **不要对早 sha 的 forgejo Actions run 做 rerun**——`rclone sync --remove` 会按那个 sha 的 tree mirror，覆盖更新 commit 的产物。要重新对齐桶用：rerun **当前 HEAD 对应那条 run**，或 push 一个空 commit。
+
+## 排障与诊断
+
+> 本节把散在各章的**故障排查**集中到一处。先用「诊断总表」按症状定位，再翻对应小节；通用工具（admin API / pprof）在「通用诊断入口」统一讲。各故障对应的**概念与正常配置**仍在其所属章节（`bind` 分组、cookie 作用域、`on_demand_tls`…），本节只讲**现象 + 诊断 + 修复**并回链。
+
+### 诊断总表：症状 → 根因 → 去哪看
+
+| 症状 | 最可能根因 | 详见 |
+|---|---|---|
+| `systemctl reload` 永久不返回、但服务仍在跑 | reload 在全局配置锁 `rawCfgMu` 里卡住 | 本节「reload 卡住 / 永久挂起」 |
+| `systemctl reload` 秒退但退出码非零 | 关旧 admin endpoint 的 10s timeout，配置其实已加载 | 本节「reload 退出非零 ≠ 失败」 |
+| `caddy validate` 报 `{env.X}` 解析失败 | validate 不经 systemd、读不到注入的环境变量 | 本节「validate 读不到 systemd 环境变量」 |
+| 一批域名集体白屏（`200` + 空 body），本机自查却正常 | 共享端口（`:443`）某站点误加 `bind`，劫持整段端口 | 本节「共享端口 `bind` 劫持白屏」 |
+| `reload` 报 `address already in use` | 端口被别的进程（常见 Docker `127.0.0.1:port`）占了 | 本节「`address already in use`」 |
+| 大量 WS / 长连接僵尸、内存缓涨、疑似拖累 reload | hijack 裸管道无超时、客户端静默死 | 本节「WebSocket / 长连接泄漏」 |
+| 登录后无限 302 / `ERR_TOO_MANY_REDIRECTS` | 签发 / 读取方 caddy-security 版本不同 → cookie 名对不上 | 本节「跨版本 cookie 名陷阱」 |
+| 能登、能跳回来，但一个角色都没有 → 403 / 无限跳 | 改了 provider `realm` 没同步 `transform user match realm` | 「callback URL 与字段映射」改 realm 的连带 |
+| 证书签不出 / ACME 反复失败 / 垃圾子域名狂签 | DNS 没指过来，或 on-demand `ask` 太宽 | 本节「reload 卡住」第 3 条 + 「`on_demand_tls`」节 |
+| docs-share viewer 渲染 / 下载 / 缓存异常 | viewer 壳子 / Markdeep / SigV4 细节 | docs-share「这套方案踩过的坑」 |
+| 大陆 Aliyun ECS 未备案 SNI 被封 | 备案 / SNI 封锁 | [icp-filing.md](icp-filing.md) |
+
+### 通用诊断入口：admin API 与 pprof
+
+**`reload` / 配置读写都走 Caddy 的 admin（管理 / 控制）API**——一个 REST endpoint，**默认 `localhost:2019`**（可用 `CADDY_ADMIN` 环境变量或配置里的 `admin` 块改；配置里的地址优先于默认）。`caddy reload` 本质就是 `POST /load`（阻塞到加载完成 / 失败、失败自动回滚旧配置、零停机）；另有 `GET /config/`（导出实时配置）、`POST /stop`、`GET /debug/pprof/`（运行态 goroutine dump）。**`curl localhost:2019/...` 是在跑 Caddy 的那台机上访问它自己的控制口，不需要 sudo。**
+
+一个关键差异贯穿下面多个排查：**`GET /config/` 要抢配置锁 `rawCfgMu`，而 `GET /debug/pprof/...` 不碰这把锁**。所以「`/config/` 挂住 + `pprof` 秒回」= 配置锁被占死，是 reload / 长连接类卡死的**通用指纹**。
+
+```bash
+# /config/ 是否被锁死（挂住 / 超时 = 锁被占）
+curl -s --max-time 3 http://127.0.0.1:2019/config/ -o /dev/null -w '%{http_code} %{time_total}s\n'
+# 全量 goroutine 栈（pprof 不抢锁、恒秒回），抓下来看谁卡在锁里
+curl -s "http://127.0.0.1:2019/debug/pprof/goroutine?debug=2" > /tmp/caddy-goroutine.txt
+grep -nE 'changeConfig|rawCfgMu|ManageSync|tls.obtain|Shutdown|io\.Copy|streaming\.go' /tmp/caddy-goroutine.txt
+```
+
+### `systemctl reload caddy` 卡住 / 永久挂起
+
+**现象**：`sudo systemctl reload caddy`（或裸 `caddy reload`）**永久挂起、命令行不返回**；但 **caddy 主进程一直在跑、旧配置继续服务、网站不掉**——不是宕机，只是新配置迟迟加载不上、终端卡死。systemd 到点（`TimeoutStartUSec`，实测 90s）打一条 `Reload operation timed out. Killing reload process.`（`journalctl -u caddy` 可见，可能反复出现）；多数情况得手动 `sudo systemctl restart caddy` 才能解卡并让新配置真正生效。
+
+#### 机制：reload 全程持一把全局配置锁
+
+`caddy reload` = 往 admin API `POST /load`（见「通用诊断入口」）。服务端 `changeConfig()` **全程持 `rawCfgMu` 这把全局锁**（`Lock()` 后 `defer Unlock()`），锁内顺序：provision 新配置 → 逐个 `app.Start()`（起新 server / TLS / PKI…）→ `unsyncedStop()` 停旧 app。**这一整套里任意一步卡住，锁就一直不放**，于是 `POST /load` 不返回 → `systemctl reload` 挂死，`GET /config/` 也拿不到锁跟着挂，而 `GET /debug/pprof/...` 不碰锁照样秒回——这组「`/config/` 挂 + `pprof` 秒回」就是「reload 被锁死」的确诊指纹（锁机制已从源码坐实：`caddy.go` 的 `changeConfig` 全程持 `rawCfgMu`）。
+
+至于卡在锁内哪一步，源码排除了两个想当然的嫌疑：reload 时 http app 的 `Stop()` 只等「旧 server 停止接受新连接」就返回、**不等**长连接排空（排空丢给后台 goroutine 跑）；TLS app 的 `Start()` 走 `ManageAsync`、**不同步**等签证。所以「旧连接没排完」和「新域名签不出」**都不会直接**卡住 reload 主链路——真正卡点得靠现场 pprof dump 定位（certmagic 内部锁、PKI、`finishSettingUp` 等仍有嫌疑，**暂未逐一坐实，待现场验证**）。
+
+#### 解法（先救活 → 再防复发）
+
+1. **救一个已卡死的 reload：直接 `sudo systemctl restart caddy`**。restart 是「停旧起新」、有界（本机实测 1~5s，其间旧配置在服务、切换瞬间断一下连接），能解锁并把新配置真正加载上。**卡住时的第一手就是它**。
+
+2. **别让终端 / systemd 无限等：给 reload 套 `timeout`**。
+   - 手动：`sudo timeout 60 caddy reload --config /etc/caddy/Caddyfile --force` —— 60s 没完就返回非零，你拿回控制权。
+   - systemd 层（让 `systemctl reload` 自身有界、不再无限卡在 `reloading`）：
+     ```bash
+     sudo systemctl edit caddy
+     ```
+     ```ini
+     [Service]
+     TimeoutStartSec=60
+     ExecReload=
+     ExecReload=/usr/bin/timeout 60 /usr/bin/caddy reload --config /etc/caddy/Caddyfile --force
+     ```
+     （`ExecReload=` 先清空再重设，是 systemd 覆盖既有指令的固定写法；改完 `sudo systemctl daemon-reload`。）
+   - **注意 `timeout` 只截断「客户端 / systemd 这一侧」**：`caddy reload` 客户端被 kill，**服务端那次 `POST /load` 可能仍在锁里跑**——锁没放，下一次 reload 照样卡。所以 timeout 是「止血、给你信号」，**真正清干净还得靠第 1 条 restart**。
+
+3. **掐掉最常见的诱因：ACME / on-demand 签证风暴**。历史卡死窗口里高频出现「给某域名反复签证失败」（`challenge failed` 打转）和「给垃圾子域名狂签」（`o69iay0p...` / `notexists...` 撞 Let's Encrypt `too many subdomain labels` 退避，最长 30 天重试）。签证虽走后台、不直接卡 reload 主链路，但会持续占 certmagic 的锁 / obtain 池，与卡死高度同时段出现。两条收敛：
+   - **域名 DNS 没解析到本机前，别把它写进 Caddyfile**——托管证书签不出会一直在后台重试打转。
+   - **收严 `on_demand_tls` 的 `ask` 端点**（见「`on_demand_tls`：陌生 SNI 的按需签证」节），别让任意子域名都能触发签证。
+
+4. **现场确诊卡在哪**：趁还卡着时，用「通用诊断入口」的 `/config/` + pprof 两条命令抓当次卡点栈，才能把上面第 3 条那类嫌疑从「嫌疑」钉成「这次就是它」。
+
+5. **大改 / 加新域名，宁可 `restart` 不 `reload`**。reload 要在一把全局锁里同时收尾旧配置、起新配置，配置越大越容易卡；换二进制、改 systemd 环境变量本来就必须 restart。有界的 restart 比「可能挂死的 reload」省心。
+
+### `reload` 退出非零 ≠ 失败
+
+**`systemctl reload caddy` 退出非零 ≠ reload 失败**：caddy 关旧 admin endpoint 时常有 10s timeout 让 systemctl 退出 1，但配置其实已加载。脚本里用 exit code 触发回滚会误把好配置覆盖回旧的；要判断真失败请看 `curl` 实测或 `journalctl -u caddy` 有无 `loading new config` 之类成功标志。
+
+> 与上一节区分：这里是**秒退 + 退出码非零、配置已生效**；上一节是**永久不返回、配置没加载上**。别把前者误判成 reload 失败去回滚。
+
+### `caddy validate` 读不到 systemd 注入的环境变量
+
+**`caddy validate` 读不到 systemd 注入的环境变量**。无论是 `sudo` shell 下的 env placeholder，还是 `systemctl edit caddy` 里的 `Environment=...`，`validate` 都是命令行直接启动的，不会经过 systemd。
+
+如果 Caddyfile 里用了 `{env.XYZ}`，先在当前 shell 里手动 `export`（或命令前置）一遍即可；值随便填，`validate` 只检查占位符能否解析。例如带 caddy-security 的配置：
+
+```bash
+GITHUB_CLIENT_ID=x GITHUB_CLIENT_SECRET=x \
+JWT_SHARED_KEY=0000000000000000000000000000000000000000000000000000000000000000 \
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+### 共享端口 `bind` 劫持白屏
+
+**现象**：`:443` 上挂着的一批域名**集体白屏**——浏览器拿到 **`200` 但 body 为空**；偏偏在服务器本机 `curl` 自查往往正常，极隐蔽。
+
+**根因**：给共享端口（`:443`）上**某一个**站点加了 `bind 1.2.3.4`。按 bind 的分组机制（完整机制见「`bind` 与 listener 分组」节），它会独占 `1.2.3.4:443`、按「具体 IP 优先于通配」截走**所有**经 `1.2.3.4` 进来的 `:443` 流量；可这个被拆出去的独立 server 路由表里只有它自己一个域名，对别的域名一律不匹配 → Caddy 兜底回 **200 + 空 body** → 白屏。本机 `curl` 常走回环 / 别的地址、不命中那个 bind，所以自查正常、更难发现。
+
+**诊断**：
+
+```bash
+# 受影响域名是不是 200 + 0 字节
+curl -s -o /dev/null -w '%{http_code} %{size_download}B\n' https://受影响域名/
+```
+
+再翻 Caddyfile / `curl -s localhost:2019/config/`，找**共享 `:443` 的站点里有没有谁写了 `bind`**。
+
+**修复**：
+
+- 把那个站点的 `bind` **删掉**——公网域名本就该在所有网卡监听、合并进通配 `:443` server 靠 SNI 分流。
+- 若确实要给所有站点统一限定网卡，改用**全局** `default_bind <IP>...`（写在 global options，对所有站点生效、listen 地址仍一致、不拆 server）；**别**在单个 `:443` 站点上局部 bind。
+
+### `address already in use`
+
+**现象**：`reload` / `restart` 失败，报 `address already in use`。
+
+**根因**：该端口已被别的进程占用，最常见是 **Docker 把某服务绑在了 `127.0.0.1:port`**，而 Caddy 站点默认监听通配 `0.0.0.0:port`（含 `127.0.0.1`）冲突。
+
+**修复**：给该站点显式 `bind` 外网 IP（而不是默认通配），避开被占的回环地址：
+
+```caddyfile
+example.com {
+    bind <eth0 ip> <tun0 ip>
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+这属于「独占端口用 `bind`」的正当用法（为什么独占端口 bind 安全、共享端口 bind 危险，见「`bind` 与 listener 分组」节）。
+
+### WebSocket / 长连接反代的连接泄漏与 `stream_timeout`
+
+`reverse_proxy` 代理 WebSocket 时会 **hijack** 掉连接、退化成一条双向 `io.Copy` 的裸管道（后端↔客户端各一个 copier goroutine）。这条管道**默认不设任何读写超时**（`stream_timeout` 默认无）。当客户端**不告而别**——手机休眠 / 标签切后台 / NAT 空闲驱逐 / **上游代理节点被墙**，没有 FIN/RST——Caddy 察觉不到，copier 永不返回，连接与 goroutine **泄漏**。
+
+**两种泄漏、命运不同（实测对照）**：
+
+- **空闲流**（copier 卡在 `waitRead` 等后端）：客户端的死会被 TCP keepalive / 重连时的 RST 探到，**能自愈**（观测到数小时内清掉）。
+- **后端在推的流**（copier 卡在 `waitWrite` 写死客户端）：mkdocs livereload 心跳 / 终端输出这类**服务端主动推**的连接，写入先塞满 TCP 发送缓冲，之后对着黑洞死等重传——**能拖 ~40h**（`tcp_retries2` 默认的满重传窗口）。这才是真正危险、会累积的那种。
+
+**危害边界**：goroutine 泄漏本身**不影响** Caddy 正常服务（Go 扛几万并发，几十条僵尸只占点内存），且**重启即清**。真正麻烦的是**大批同时半死**——典型是作为上游出口的代理节点被墙，一瞬切断所有经它回程的客户端——会攒出成百上千条。（曾疑似与某次 `caddy reload` 卡死相关，但源码看 reload 时 `Stop()` 并不等长连接排空、不会因此挂住，此因果**未坐实**；reload 卡死另见本节「`systemctl reload caddy` 卡住 / 永久挂起」。）
+
+**诊断**（admin API，本地无需 sudo；通用命令见「通用诊断入口」）：
+
+```bash
+# DOWN 复制器（后端→客户端）数量；UP 用 streaming.go:648
+curl -s http://127.0.0.1:2019/debug/pprof/goroutine?debug=1 | grep -c streaming.go:642
+# 卡死者完整栈：找 copyFromBackend(streaming.go:642) + crypto/tls.(*Conn).Write → waitWrite
+curl -s "http://127.0.0.1:2019/debug/pprof/goroutine?debug=2" | grep -A25 'streaming.go:642'
+```
+
+对照实验坐实机制：开一个走 WS 的标签→静默掐断其路径（防火墙 DROP / 飞行模式，**不能**干净关，那会发 FIN/RST）→ 对应 copier 赖着不走；而**干净关闭**标签→copier 秒回收。同一连接只差"死法"，静默死=漏、干净关=收。
+
+**修复：给带 WS 的 `reverse_proxy` 加 `stream_timeout`**（到点强制关闭流，卡死 copier 被迫返回 → 泄漏有上界）。`stream_timeout` **只对流式 / hijack 连接生效**，普通 HTTP 请求不受影响，所以加在共享 snippet 上对非 WS 站点也无害。
+
+snippet 形态（一改覆盖所有用它的 vhost）：
+
+```caddyfile
+(app_org) {
+    authorize with app_org
+    reverse_proxy {args[0]} {
+        stream_timeout 24h
+    }
+    import error_pages
+}
+```
+
+裸 `reverse_proxy` 形态（zellij / code-server / paseo 逐个加）：
+
+```caddyfile
+reverse_proxy http://127.0.0.1:8082 {
+    header_up Cookie "******"
+    stream_timeout 24h
+}
+```
+
+**取舍**：
+
+- `stream_timeout` **按龄一刀切**，到点连**活着的**长连接也砍——但 zellij / code-server 客户端会自动重连、服务端会话还在，代价可接受。文档类（livereload）给 `3h` 都够；终端类给 `24h` 更友好；图省事全 `24h`。
+- **全局 `grace_period` 给「旧 server 后台排空」设硬上界**（reload / 退出时旧 server 等活跃连接关闭的最长时长）。不设时默认 `0` = **永久等**（源码 `modules/caddyhttp/app.go` 就是这么写的，还专门警告「频繁 reload + 长 / 无限 grace period 会耗尽资源」）——于是每次 reload 都可能攒下一批永不退出的排空 goroutine。设个有界值即可：
+  ```caddyfile
+  {
+      servers {
+          grace_period 10s
+      }
+  }
+  ```
+  它和 `stream_timeout` 层次不同、互补：`grace_period` 管「reload 时旧 server 整体排空的截止」，`stream_timeout` 管「单条流自身的最大存活」。平时靠 `stream_timeout` 防单条泄漏，reload 时靠 `grace_period` 兜底不让旧 server 赖着。**注意 `grace_period` 治泄漏累积，不等于让已卡死的 reload 立刻返回**（详见本节「`systemctl reload caddy` 卡住 / 永久挂起」）。
+- 更外科手术的补充（可选、**系统级**）：调小 `net.ipv4.tcp_retries2`（如 `8`，≈100s），让"对端不 ACK 的写"在内核层几分钟就失败——**只杀真死连接、不动活连接**，精准打 `waitWrite` 那种。代价：影响本机所有 TCP，非 Caddy 局部。
+- ~~`stream_close_delay`~~ 治的是 reload 时避免重连风暴（延迟关流），**方向相反、不治泄漏**，别混用。
+
+> 触发这次排查的真实事件：2026-06-25 作为上游出口的 vless+ws 节点被墙，大批经它回程的 WS 客户端同时半死。
+
+### 跨版本 cookie 名陷阱：登录后无限跳 / `ERR_TOO_MANY_REDIRECTS`
+
+> 前置概念（cookie 的 `Domain` 作用域、域名模式必写 / IP 模式必不写 `cookie domain`）见 caddy-security 章节「先理解 cookie 作用域」。本节讲的是**多机 / 跨版本**下 cookie **名字**对不上导致的登录死循环。
+
+`caddy-security` 在版本演进中**改过 access token 的默认 cookie 名**：旧版（实测 `v1.1.49`）默认 `access_token`；新版（`v1.1.61`+）默认 `AUTHP_ACCESS_TOKEN`（= 前缀 `AUTHP` + `ACCESS_TOKEN`，源码 `go-authcrunch/pkg/authn/cookie/cookie_config.go`：`DefaultCookieNamePrefix="AUTHP"` + `DefaultAccessTokenCookieName="ACCESS_TOKEN"`）。
+
+**坑**：当**签发方**（`authentication portal`）和**读取方**（`authorization policy` / gatekeeper）跑在**不同版本**时——典型是跨主机部署（一台只跑 portal，另一台只跑 `authorize`）——两边默认 cookie 名对不上：portal 发 `access_token`，gatekeeper 默认找 `AUTHP_ACCESS_TOKEN`，**永远找不到 token → 登录后无限 302 回 login → 浏览器 `ERR_TOO_MANY_REDIRECTS`**。同一台机（portal+gatekeeper 同版本）天然自洽、不触发，所以极隐蔽，容易误判成网络 / JWT key 问题。
+
+**诊断**（Caddy admin API，默认 `http://localhost:2019/config/`）：
+
+- **读取方实际找哪个 cookie**：reload 时全局开 `debug`，捞 `journalctl -u caddy` 里 `msg="Configured gatekeeper"` 那条的 `auth_cookies` 字段（= gatekeeper 真正会读的 cookie 名集合）。
+- **浏览器实际带哪个 cookie**：全局加 `servers { log_credentials }` 临时取消 Cookie 脱敏，再看请求 `Cookie` 头里 JWT（`eyJ...`）挂在哪个名下。**抓完务必撤掉**，别把 JWT 长期写进 journal。
+- **portal 签发名**：`curl -s localhost:2019/config/` 看 `authentication_portals[].cookie_config.access_token_cookie_name`（新版 resolve 成 `AUTHP_ACCESS_TOKEN`；旧版为 `null` → 回退到 `crypto_key_configs[].token_name`，即 `access_token`）。
+
+**两种修法**：
+
+1. **各机版本对齐**（根治）：所有共用同一 portal 的机器升到同一 `caddy-security` 版本，默认名自然统一。**注意连锁后果**：升级会改变签发的 cookie 名 → **所有现存会话失效、全员重登**；且**所有 gatekeeper 要同步**（要么都用新默认 `AUTHP_ACCESS_TOKEN` 删掉显式 pin，要么都改成新名）——否则刚对齐又会对不上。
+2. **显式 pin cookie 名**（局部、抗版本漂移）：在 authorization policy 里写 `set access_token cookie name <portal 实际签发的名>`。要稳就多名全收：`set access_token cookie name AUTHP_ACCESS_TOKEN access_token jwt_access_token`（新旧默认 + query 默认一锅端）。**注意**：省略该指令 ≠ 安全默认——新版 gatekeeper 省略时默认只找 `AUTHP_ACCESS_TOKEN`，跨版本读旧 portal 的 `access_token` 必炸。
 
 ## 实用备忘
 
