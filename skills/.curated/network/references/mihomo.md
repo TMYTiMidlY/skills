@@ -354,6 +354,35 @@ REST API 有个 `POST /restart`：让 mihomo **重启自己、用原启动参数
 
 **教训 / 做法**：TUN 模式**别用 `/restart`**，改成**外部 kill → 等一下（让 Wintun 适配器删干净、端口释放）→ 按原启动参数重新拉起**（或重启对应服务）。要在 Windows 上脚本化这套 kill+relaunch、且 mihomo 高权限跑需要 UAC 提权时，`Start-Process -Verb RunAs` + 落盘取结果的手法见 `software` skill 的 Windows/WSL 提权章节。
 
+### 6.3 排障 playbook：某些域名打不开、别的正常 → 大概率命中「死节点」
+
+**现象**：`curl google.com` 通、但 `curl 某域名` 不通（502 / 连接超时 / SSH `banner exchange timeout`）；同一个代理、同一台机器，就这批域名坏。**别急着判远端服务器故障**——最常见的真因是：这批域名被某条规则单独导进一个 Selector 组，而该组当前**钉死**在一个已挂的节点上（节点被墙 / 落地 IP 被封 / 上游死了）。google 走的是另一个自动挑活节点的组，所以没事。
+
+**为什么会"我没动过却突然坏"**：规则和节点选择一直没变（选择器的当前选择记在 mihomo 的 `cache.db`，重启也扛）。变的是**那个节点的落地 IP 被墙了**——服务器和你都没动，是这条出口的路被掐了。
+
+**诊断链**（全程用 REST API + DoH，几条命令定位；`<域>` 换成打不开的域名）：
+
+```bash
+# 1) 该域名命中哪条规则、导进哪个组
+curl -s -H "Authorization: Bearer <secret>" http://127.0.0.1:9090/rules \
+  | python3 -c "import sys,json;[print(r) for r in json.load(sys.stdin)['rules'] if '<域根>' in json.dumps(r)]"
+# 2) 那个组当前选中(now)哪个节点、候选(all)有哪些
+curl -s -H "Authorization: Bearer <secret>" "http://127.0.0.1:9090/proxies/<组名URL编码>" \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);print('now=',d['now'],'| all=',d['all'],'| last=',d.get('history',[])[-1:])"
+# 3) 实测这个节点还活不活（/delay 对真实目标；delay=0 或 Timeout = 死）
+curl -s -H "Authorization: Bearer <secret>" \
+  "http://127.0.0.1:9090/proxies/<节点URL编码>/delay?url=http%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=5000"
+# 4) DoH 拿域名真实公网 IP（绕过 fake-ip），验证服务器本身还在
+curl -s --proxy socks5h://<gw>:7890 "https://1.1.1.1/dns-query?name=<域>&type=A" -H "accept: application/dns-json"
+# 5) 用健康节点直连「真实 IP:端口」抓 banner，确认是"节点死"不是"服务器死"
+#    （连 IP 绕过域名规则，走默认健康组）
+sleep 9 | nc -x <gw>:7890 -X 5 <真实IP> 22    # 期望立刻回 SSH-2.0-...；回得来=服务器活、是节点的锅
+```
+
+**判决**：若组 `now` 那个节点 `/delay` 超时/为 0、而候选里别的节点 delay 正常、且真实 IP 直连能拿到 banner → **服务器没事，是选择器钉的节点死了**。修复：把该 Selector 切到活节点（`PUT /proxies/<组>` body `{"name":"<活节点>"}`，见 §6 的改节点示例；只影响新连接、可随时切回）。**注意别切 DIRECT**——若该域名的落地 IP 已被墙，直连反而不通。
+
+**要点提炼**：① "入口通 ≠ 出口节点活"（`HTTPS_PROXY` 只决定进 mihomo，出口由 rule+group 链决定，见 §3.2）；② fake-ip 下裸连报 502/超时先查 TUN/节点、别怪远端；③ 选择器当前选择在 `cache.db`、config 改默认项不一定生效（要在面板/API 里切）。
+
 ## 7. TUN 路由的边界
 
 几条容易踩、值得先知道的事实：
