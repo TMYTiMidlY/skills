@@ -1120,6 +1120,7 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 | 症状 | 最可能根因 | 详见 |
 |---|---|---|
 | `systemctl reload` 永久不返回、但服务仍在跑 | reload 在全局配置锁 `rawCfgMu` 里卡住 | 本节「reload 卡住 / 永久挂起」 |
+| `systemctl reload` 秒退 exit 0，但 `is-active` 卡 `reloading`（小时/天级） | 历史上有次 reload 卡在锁里没解，caddy 从没发过 `sd_notify READY=1`；之后每次 reload 都被吞 | 本节「reload 卡住 / 永久挂起」变体现象 |
 | `systemctl reload` 秒退但退出码非零 | 关旧 admin endpoint 的 10s timeout，配置其实已加载 | 本节「reload 退出非零 ≠ 失败」 |
 | `caddy validate` 报 `{env.X}` 解析失败 | validate 不经 systemd、读不到注入的环境变量 | 本节「validate 读不到 systemd 环境变量」 |
 | 一批域名集体白屏（`200` + 空 body），本机自查却正常 | 共享端口（`:443`）某站点误加 `bind`，劫持整段端口 | 本节「共享端口 `bind` 劫持白屏」 |
@@ -1149,7 +1150,9 @@ grep -nE 'changeConfig|rawCfgMu|ManageSync|tls.obtain|Shutdown|io\.Copy|streamin
 
 **现象**：`sudo systemctl reload caddy`（或裸 `caddy reload`）**永久挂起、命令行不返回**；但 **caddy 主进程一直在跑、旧配置继续服务、网站不掉**——不是宕机，只是新配置迟迟加载不上、终端卡死。systemd 到点（`TimeoutStartUSec`，实测 90s）打一条 `Reload operation timed out. Killing reload process.`（`journalctl -u caddy` 可见，可能反复出现）；多数情况得手动 `sudo systemctl restart caddy` 才能解卡并让新配置真正生效。
 
-> 三岔分诊：**永久不返回、配置迟迟没加载上** = 本节；**秒回就报错**（不是挂住）= 多半配置语法错，`caddy validate` 能查、改对再 reload，不属本节；**秒退但退出码非零** = 配置其实已加载，见本节「`reload` 退出非零 ≠ 失败」。
+**变体现象（更隐蔽，历史卡死没清干净）**：`sudo systemctl reload caddy` **秒退 exit 0**，但 `systemctl is-active caddy` 显示 `reloading` 而不是 `active`，`systemctl show caddy -p ActiveEnterTimestamp` 显示 reloading 状态已挂了**小时甚至天级**——不是本次 reload 造成的、是历史遗留。服务在跑旧配置、`curl` 拿不到本次改动，**每次改动都像被吞了**。触发链：前一次 reload 卡在锁里之后，caddy 从没发过 `sd_notify READY=1`，systemd 就把服务标成 `reloading` 定住；之后每次 `systemctl reload` 表面秒退 exit 0（systemd 层认为服务本来就在 reloading），但下发到 caddy 端的 `POST /load` 还是抢不到下面机制节讲的那把 `rawCfgMu` 全局锁，配置根本吃不进去。修复同下节解法第 1 条：`sudo systemctl restart caddy`。
+
+> 四岔分诊：**永久不返回、配置迟迟没加载上** = 本节主分支；**秒退 exit 0 + `is-active` 卡 `reloading`** = 本节变体（历史卡死没清）；**秒回就报错**（不是挂住）= 多半配置语法错，`caddy validate` 能查、改对再 reload，不属本节；**秒退但退出码非零** = 配置其实已加载，见本节「`reload` 退出非零 ≠ 失败」。
 
 #### 机制：reload 全程持一把全局配置锁
 
