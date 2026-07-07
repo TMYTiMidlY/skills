@@ -335,6 +335,59 @@ https://panel.example.com {
 - 若确实要给所有站点统一限定网卡，用**全局** `default_bind <IP>...`（写在 global options 里、对所有站点生效）——这样所有站点 listen 地址仍然一致、照样合并、不拆 server；**别**在单个 `:443` 站点上局部 bind（局部 `bind` 会**覆盖** `default_bind`，那个站点又被拆出去——所以这是硬性前提，不是风格建议）。
   - *源码核对（v2.11.2）*：`default_bind` 是全局选项，注册于 `caddyconfig/httpcaddyfile/options.go`（`RegisterGlobalOption("default_bind", …)`）；应用逻辑在 `caddyconfig/httpcaddyfile/addresses.go` 的 `listenersForServerBlockAddress`，优先级为「站点自带 `bind` > 全局 `default_bind` > 通配 `:PORT`」。监听地址拼成 `<bindHost>:<port>` 后，由同文件 `consolidateAddrMappings` 按地址字符串分组决定合并/拆分（上面「机制三连」第 2 条即出自这里）。
 
+### WebSocket / 长连接反代的连接泄漏与 `stream_timeout`
+
+`reverse_proxy` 代理 WebSocket 时会 **hijack** 掉连接、退化成一条双向 `io.Copy` 的裸管道（后端↔客户端各一个 copier goroutine）。这条管道**默认不设任何读写超时**（`stream_timeout` 默认无）。当客户端**不告而别**——手机休眠 / 标签切后台 / NAT 空闲驱逐 / **上游代理节点被墙**，没有 FIN/RST——Caddy 察觉不到，copier 永不返回，连接与 goroutine **泄漏**。
+
+**两种泄漏、命运不同（实测对照）**：
+
+- **空闲流**（copier 卡在 `waitRead` 等后端）：客户端的死会被 TCP keepalive / 重连时的 RST 探到，**能自愈**（观测到数小时内清掉）。
+- **后端在推的流**（copier 卡在 `waitWrite` 写死客户端）：mkdocs livereload 心跳 / 终端输出这类**服务端主动推**的连接，写入先塞满 TCP 发送缓冲，之后对着黑洞死等重传——**能拖 ~40h**（`tcp_retries2` 默认的满重传窗口）。这才是真正危险、会累积的那种。
+
+**危害边界**：goroutine 泄漏本身**不影响** Caddy 正常服务（Go 扛几万并发，几十条僵尸只占点内存）。但**大批同时半死**——典型是作为上游出口的代理节点被墙，一瞬切断所有经它回程的客户端——会攒出成百上千条；且疑似与某次 `caddy reload` 卡死相关（`/config/` 挂起而 `pprof` 秒回 ＝ 配置锁被占死），此因果**机制未完全坐实**，但**重启即清**。
+
+**诊断**（admin API，本地无需 sudo）：
+
+```bash
+# DOWN 复制器（后端→客户端）数量；UP 用 streaming.go:648
+curl -s http://127.0.0.1:2019/debug/pprof/goroutine?debug=1 | grep -c streaming.go:642
+# 卡死者完整栈：找 copyFromBackend(streaming.go:642) + crypto/tls.(*Conn).Write → waitWrite
+curl -s "http://127.0.0.1:2019/debug/pprof/goroutine?debug=2" | grep -A25 'streaming.go:642'
+```
+
+对照实验坐实机制：开一个走 WS 的标签→静默掐断其路径（防火墙 DROP / 飞行模式，**不能**干净关，那会发 FIN/RST）→ 对应 copier 赖着不走；而**干净关闭**标签→copier 秒回收。同一连接只差"死法"，静默死=漏、干净关=收。
+
+**修复：给带 WS 的 `reverse_proxy` 加 `stream_timeout`**（到点强制关闭流，卡死 copier 被迫返回 → 泄漏有上界）。`stream_timeout` **只对流式 / hijack 连接生效**，普通 HTTP 请求不受影响，所以加在共享 snippet 上对非 WS 站点也无害。
+
+snippet 形态（一改覆盖所有用它的 vhost）：
+
+```caddyfile
+(app_org) {
+    authorize with app_org
+    reverse_proxy {args[0]} {
+        stream_timeout 24h
+    }
+    import error_pages
+}
+```
+
+裸 `reverse_proxy` 形态（zellij / code-server / paseo 逐个加）：
+
+```caddyfile
+reverse_proxy http://127.0.0.1:8082 {
+    header_up Cookie "******"
+    stream_timeout 24h
+}
+```
+
+**取舍**：
+
+- `stream_timeout` **按龄一刀切**，到点连**活着的**长连接也砍——但 zellij / code-server 客户端会自动重连、服务端会话还在，代价可接受。文档类（livereload）给 `3h` 都够；终端类给 `24h` 更友好；图省事全 `24h`。
+- 更外科手术的补充（可选、**系统级**）：调小 `net.ipv4.tcp_retries2`（如 `8`，≈100s），让"对端不 ACK 的写"在内核层几分钟就失败——**只杀真死连接、不动活连接**，精准打 `waitWrite` 那种。代价：影响本机所有 TCP，非 Caddy 局部。
+- ~~`stream_close_delay`~~ 治的是 reload 时避免重连风暴（延迟关流），**方向相反、不治泄漏**，别混用。
+
+> **现状（备用方案，尚未应用）**：本 skill 对应的生产 Caddy 还没上 `stream_timeout`。带 WS 的站点：qsu2 / qatlas-docs / qtime（mkdocs livereload，走 `app_org` snippet）、zellij ×4 与 code-server ×2、paseo relay（裸 `reverse_proxy`）。触发这次排查的真实事件：2026-06-25 作为上游出口的 vless+ws 节点被墙，大批经它回程的 WS 客户端同时半死。
+
 ## 安装带插件的 Caddy 二进制
 
 APT 安装的系统自带 Caddy **不包含** `caddy-security` 这类第三方扩展。需要插件时，做法是：
