@@ -64,6 +64,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 - **走面板**：入站里新增 Hysteria2 类型 inbound，要处理三件事——① 监听 **UDP** 端口；② 证书来源（可复用上面 option 20 签的证书，或 Caddy 证书的 root-owned 副本，理由同独立版的 cert 权限坑）；③ 密码 + `obfs(salamander)`。好处是和现有 VLESS 节点统一在一个面板管、共享客户端 / 流量统计。
 - **走独立 systemd**（隔离、独立升级、不碰面板）：搭法见 [hysteria2.md](hysteria2.md)。
 
+> 实战里 Hysteria2 常和 vless 同机：**Hysteria2 占 UDP 443、vless+ws 经 Caddy 占 TCP 443，同号不冲突**（RackNerd 就是这么跑的，见下方「真实部署实例」）。
+
 > 客户端怎么配 / 验证 Brutal（`up`/`down` 与服务端 `ignoreClientBandwidth` 协商）见 [mihomo.md](mihomo.md)。
 
 ### 共性：端口放行
@@ -81,6 +83,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 原「主节点：VLESS + WS + TLS」就是这套：3x-ui 建 VLESS inbound → transport 选 **ws**（设一个隐蔽 `path`）→ **security 关掉（none）**（TLS 交给 Caddy）→ Caddy 站点里把该 `path` `reverse_proxy` 到 inbound 的本地端口。
 
 > Caddyfile 的 `reverse_proxy`、WebSocket 长连接反代、站点模式与证书细节**不在这里固化**，见 `vps-maintenance` skill 的 caddy.md。这里只讲 3x-ui 一侧：inbound 走明文 ws + 隐蔽 path，监听 `127.0.0.1:<port>`（只给 Caddy 连，不对外）。
+
+实测这条 **Caddy→xray 多一跳** 的链路，同落地下吞吐约为**直连 Hysteria2 的一半**（QUIC 拥塞控制 + 少一跳；见下方「真实部署实例」与 [mihomo.md](mihomo.md) 的实测吞吐表）。
 
 ### 反代后要修「真实客户端 IP」
 
@@ -119,3 +123,18 @@ fallback（Xray 内建、纯 TCP 层按握手特征分流）与 Caddy 反代（H
 | 同 443 多协议 | 单 inbound 各占端口 | Caddy 按 path/SNI 分，或用 Xray fallback |
 
 经验默认：想省事 / 无域名 → **方案一的 REALITY**；已经有 Caddy 站点、想把节点藏进正常网站 → **方案二**；Hysteria2 无论哪套都走 UDP 直连，作差异化备用（见 [hysteria2.md](hysteria2.md)）。
+
+---
+
+## 真实部署实例（RackNerd / LisaHost）
+
+这两套方案不是二选一的教科书，实战里**常在同一台机器上并存**——TCP 443 与 UDP 443 各占各的、互不冲突：
+
+- **RackNerd（海外 VPS）**：同机跑两个节点——**vless+ws+TLS 经 Caddy 占 TCP 443**（方案二，Caddy→xray 多一跳）+ **Hysteria2 占 UDP 443 直连**（方案一 C）。实测同落地下 **Hysteria2 吞吐 ≈ 2× vless+ws**（少一跳反代 + QUIC 拥塞控制），jitter 也小一半；数据见 [mihomo.md](mihomo.md) 的实测吞吐表。
+- **LisaHost（美国 4837 双 ISP 家宽住宅原生 IP）**：跑 **vless+ws+TLS**（方案二）。住宅 IP 隐蔽性更好，但**长期固定域名 / IP 暴露照样被墙**（见下）。
+
+> 两台的**机器规格 / IP / 延迟 / 换 IP 操作与费用**（运营事实）见 `vps-maintenance` skill 的 vps-quality「历史服务器信息」（A=RackNerd、B=LisaHost）；**被墙现象 + 协议归因（未坐实）+ 缓解**见 [mihomo.md](mihomo.md) 附录「实测封锁记录」。这里只提炼与选型相关的两条真实教训。
+
+**教训一：隐蔽性挡不住「长期暴露」。** LisaHost 那个 vless+ws+TLS 是 **TCP+TLS、藏在正常 TLS 流量里**（方案二本该最隐蔽），却在长期稳定使用后于 2026-06-25 被墙；RackNerd 的 Hysteria2（UDP 直连）也在 2026-06-08 被单 IP 精准屏蔽。→ 封锁不挑 QUIC/UDP，**长期固定的域名 + 落地 IP 暴露**本身就是诱因，方案二的「藏在真站后」只降主动探测命中率，压不住长期暴露。
+
+**教训二：换 IP 比迁协议更快见效。** 两次都是**换落地 IP** 恢复的（RackNerd 面板自助 $3、LisaHost 工单 ¥60），协议没动、至今仍用。→ 被针对时先换 IP（快、便宜）；要更彻底再换域名，或把 vless 迁到 **REALITY**（免证书 + 借真站握手，比 vless+ws+TLS 的固定域名指纹更难长期锁定，见方案一 A）。个人自用的 Hysteria2 服务端别配 `bandwidth`/`ignoreClientBandwidth`（留给客户端 `up`/`down` 驱动 Brutal，见 [mihomo.md](mihomo.md)）。
