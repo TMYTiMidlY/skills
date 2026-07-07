@@ -1149,6 +1149,8 @@ grep -nE 'changeConfig|rawCfgMu|ManageSync|tls.obtain|Shutdown|io\.Copy|streamin
 
 **现象**：`sudo systemctl reload caddy`（或裸 `caddy reload`）**永久挂起、命令行不返回**；但 **caddy 主进程一直在跑、旧配置继续服务、网站不掉**——不是宕机，只是新配置迟迟加载不上、终端卡死。systemd 到点（`TimeoutStartUSec`，实测 90s）打一条 `Reload operation timed out. Killing reload process.`（`journalctl -u caddy` 可见，可能反复出现）；多数情况得手动 `sudo systemctl restart caddy` 才能解卡并让新配置真正生效。
 
+> 三岔分诊：**永久不返回、配置迟迟没加载上** = 本节；**秒回就报错**（不是挂住）= 多半配置语法错，`caddy validate` 能查、改对再 reload，不属本节；**秒退但退出码非零** = 配置其实已加载，见本节「`reload` 退出非零 ≠ 失败」。
+
 #### 机制：reload 全程持一把全局配置锁
 
 `caddy reload` = 往 admin API `POST /load`（见「通用诊断入口」）。服务端 `changeConfig()` **全程持 `rawCfgMu` 这把全局锁**（`Lock()` 后 `defer Unlock()`），锁内顺序：provision 新配置 → 逐个 `app.Start()`（起新 server / TLS / PKI…）→ `unsyncedStop()` 停旧 app。**这一整套里任意一步卡住，锁就一直不放**，于是 `POST /load` 不返回 → `systemctl reload` 挂死，`GET /config/` 也拿不到锁跟着挂，而 `GET /debug/pprof/...` 不碰锁照样秒回——这组「`/config/` 挂 + `pprof` 秒回」就是「reload 被锁死」的确诊指纹（锁机制已从源码坐实：`caddy.go` 的 `changeConfig` 全程持 `rawCfgMu`）。
