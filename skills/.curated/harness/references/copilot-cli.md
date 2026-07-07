@@ -75,7 +75,7 @@ wc -l "$D/app.js"   # 1.0.64-1 是 6403 行
 
 所以三个 patch 脚本一律只扫 pkg cache 根（`$COPILOT_CACHE_HOME/pkg`、`$XDG_CACHE_HOME/copilot/pkg`、`~/Library/Caches/copilot/pkg`、`$COPILOT_HOME/pkg`、`~/.copilot/pkg`）、**不碰 node_modules**。
 
-**版本选择的时机（`copilot --version` 与 live 会话对不上就是这个原因）**：`<最高版本>` 只在**新进程 spawn 时**定；**已经在跑的会话停在它启动时那一版**，auto-update 只是把新版本下到 pkg cache 并弹 `Update available / 运行 /update`，**不热切**当前进程。实测：live 会话 footer 是 `1.0.69-1`（已打补丁、`/model` 正常保住 1M/1.1M），而同机新起的 `copilot --version` 报 `1.0.69-2`（干净未打）——两者都对，只是一个是运行中进程、一个是新进程。=> auto-update 后要对**新版本目录**重跑补丁；但**当前会话不受影响**，得等 `/update` 或重开才落到新版本。
+**版本选择的时机（`copilot --version` 与 live 会话对不上就是这个原因）**：`<最高版本>` 只在**新进程 spawn 时**定；**已经在跑的会话停在它启动时那一版**，auto-update 只是把新版本下到 pkg cache 并弹 `Update available / 运行 /update`，**不热切**当前进程。实测表明：运行中会话与同机新起进程可以停在不同版本（一个已打补丁、一个干净未打）。=> auto-update 后要对**新版本目录**重跑补丁；但**当前会话不受影响**，得等 `/update` 或重开才落到新版本。
 
 ### 按字面量抠源码片段
 
