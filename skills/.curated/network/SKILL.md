@@ -1,11 +1,11 @@
 ---
 name: network
-description: 本机/客户端的网络与代理配置、泄漏控制，以及 WSL ↔ Windows ↔ 远端的网络管道与远程接入。涵盖 Mihomo/Clash 客户端（配置目录与热重载、REST API 运行态排障、规则与节点组、协议选型与性能、Hysteria2 Brutal/拥塞控制、TUN 路由、DNS/WebRTC 泄漏原理与浏览器实测）、远程桌面/VS Code serve-web、WSL Mirror/NAT 网络（portproxy/wslrelay 入站、出站走宿主 Mihomo、EasyTier 组网）、独立 systemd 版 Hysteria2 服务端、EasyTier Windows 客户端。遇到代理不通/漏真实 IP/分流不准、WSL↔Windows 互通、远程接入、组网这类问题来这里。服务端经 3x-ui 面板的配置在 vps-maintenance skill。
+description: 本机/客户端的网络与代理配置、泄漏控制，以及 WSL ↔ Windows ↔ 远端的网络管道与远程接入。涵盖 Mihomo/Clash 客户端（配置目录与热重载、REST API 运行态排障、规则与节点组、协议选型与性能、Hysteria2 Brutal/拥塞控制、TUN 路由、DNS/WebRTC 泄漏原理与浏览器实测）、远程桌面/VS Code serve-web、WSL Mirror/NAT 网络（portproxy/wslrelay 入站、出站走宿主 Mihomo、EasyTier 组网）、独立 systemd 版 Hysteria2 服务端、3x-ui 面板服务端节点落地（REALITY/面板证书直连端口、结合 Caddy 反代两套官方方案）、EasyTier Windows 客户端。遇到代理不通/漏真实 IP/分流不准、WSL↔Windows 互通、远程接入、组网这类问题来这里。自建梯子服务端（3x-ui 面板节点落地）也在本 skill；Caddy 反代写法本身与网络质量检测在 vps-maintenance skill。
 ---
 
 # Network
 
-本机 / 客户端的网络与代理配置、泄漏控制，以及 WSL ↔ Windows ↔ 远端的网络管道与远程接入。服务端落地（3x-ui 面板、Caddy、质量检测）由 `vps-maintenance` skill 覆盖。
+本机 / 客户端的网络与代理配置、泄漏控制，以及 WSL ↔ Windows ↔ 远端的网络管道与远程接入。3x-ui 面板服务端节点落地也在本 skill；Caddy 反代写法本身与网络质量检测由 `vps-maintenance` skill 覆盖。
 
 ## Mihomo / Clash 客户端与泄漏控制
 
@@ -19,9 +19,13 @@ Mihomo / Clash 内核本身的客户端运维：默认配置位置与热重载�
 
 WSL2 与 Windows 宿主、远端之间的互通与排障：WSL Mirror 模式网络（含 Clash/Mihomo 代理与 TUN 对 WSL 路由的影响、Docker Desktop 与 `wsl --shutdown` 的关系）、WSL NAT 出站怎么进 Windows 宿主 Mihomo（独立栈不被 TUN 透明接管、网关动态取、`*_proxy`/`ProxyCommand` 逐工具设代理 vs tun2socks 自建 TUN 透明接管、ssh 两方案与 `UNKNOWN port 65535` 坑）、WSL/Docker 服务入站（`netsh portproxy` + wslrelay 的 IPv6 dual-stack #14154 坑：纯 v4 监听才不 RST；全双工大流量 wslrelay 死锁 #10688）见 [references/wsl.md](references/wsl.md)。
 
+## 3x-ui 面板（服务端节点落地）
+
+3x-ui/Xray 面板的服务端节点配置——两套官方部署形态：**直接接管对外端口**（inbound 自占端口 + 自管 TLS/握手：VLESS+REALITY 免证书 / 面板 acme 自管证书 / Hysteria2 UDP 直连）与**结合 Caddy**（Caddy 独占 443 管证书、inbound 退化成明文 WS/gRPC 上游、藏在真实站点后，含反代后取真实客户端 IP 与 Xray fallback 替代）；面板→Xray 生效流水线、安装基面、A vs B 取舍速查见 [references/3x-ui.md](references/3x-ui.md)。说法关联 3x-ui 与 Xray-core 官方文档 / 源码。客户端节点配置 / 协议选型 / 泄漏排查见上面的 mihomo.md。
+
 ## Hysteria2 服务端（独立 systemd）
 
-独立 systemd 版 Hysteria2 服务端搭建（官方脚本安装、复用 Caddy 证书的 root-owned 副本、放行 UDP 端口）见 [references/hysteria2.md](references/hysteria2.md)。想经 3x-ui 面板加 Hysteria2 inbound（而非独立服务）、以及带宽/丢包质量测试，见 `vps-maintenance` skill；客户端怎么配 / 验证 Brutal 见上面的 mihomo.md。
+独立 systemd 版 Hysteria2 服务端搭建（官方脚本安装、复用 Caddy 证书的 root-owned 副本、放行 UDP 端口）见 [references/hysteria2.md](references/hysteria2.md)。想经 3x-ui 面板加 Hysteria2 inbound（而非独立服务）见 [references/3x-ui.md](references/3x-ui.md)；带宽/丢包质量测试见 `vps-maintenance` skill；客户端怎么配 / 验证 Brutal 见上面的 mihomo.md。
 
 ## EasyTier 客户端（Windows）
 
