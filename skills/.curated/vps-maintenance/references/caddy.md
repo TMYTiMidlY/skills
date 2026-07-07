@@ -386,7 +386,7 @@ reverse_proxy http://127.0.0.1:8082 {
 - 更外科手术的补充（可选、**系统级**）：调小 `net.ipv4.tcp_retries2`（如 `8`，≈100s），让"对端不 ACK 的写"在内核层几分钟就失败——**只杀真死连接、不动活连接**，精准打 `waitWrite` 那种。代价：影响本机所有 TCP，非 Caddy 局部。
 - ~~`stream_close_delay`~~ 治的是 reload 时避免重连风暴（延迟关流），**方向相反、不治泄漏**，别混用。
 
-> **现状（备用方案，尚未应用）**：本 skill 对应的生产 Caddy 还没上 `stream_timeout`。带 WS 的站点：qsu2 / qatlas-docs / qtime（mkdocs livereload，走 `app_org` snippet）、zellij ×4 与 code-server ×2、paseo relay（裸 `reverse_proxy`）。触发这次排查的真实事件：2026-06-25 作为上游出口的 vless+ws 节点被墙，大批经它回程的 WS 客户端同时半死。
+> 触发这次排查的真实事件：2026-06-25 作为上游出口的 vless+ws 节点被墙，大批经它回程的 WS 客户端同时半死。
 
 ## 安装带插件的 Caddy 二进制
 
