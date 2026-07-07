@@ -24,12 +24,15 @@ pkg cache 里运行时真正跑的 app.js（见 harness/references/copilot-patch
 用法：  patch-copilot-cli.py            # dry-run，只报告命中/skip，不写
         patch-copilot-cli.py --apply   # 落盘（自动备份 + node --check + 失败回滚）
         patch-copilot-cli.py --revert   # 从备份恢复所有版本目录的 app.js
+        （任意模式可加 --latest-only：只处理每个平台版本号最高的那份，即 loader 实际会跑的那份，
+          不碰旧版本目录。想精确「只改在跑的这版」时用它。）
 auto-update 后新版本目录是干净的，重跑一次即可（幂等）。
 """
 import os, re, sys, glob, shutil, subprocess
 
 APPLY  = "--apply"  in sys.argv
 REVERT = "--revert" in sys.argv
+LATEST_ONLY = "--latest-only" in sys.argv
 BACKUP_SUFFIX = ".tmy-patch.bak"
 
 # ------- 版本目录发现（对齐 CLI 自己的 pkg cache 查找顺序） -------
@@ -53,6 +56,23 @@ def app_js_files():
         files.update(glob.glob(root + "/*/*/app.js"))  # <platform>/<version>/app.js
         files.update(glob.glob(root + "/*/app.js"))
     return sorted(files)
+
+def _vkey(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v))
+
+def latest_only(files):
+    """每个平台目录只留版本号最高的那份 app.js（loader 实际会跑的那份）。"""
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for f in files:
+        platform = os.path.dirname(os.path.dirname(f))  # .../pkg/<platform>
+        ver = os.path.basename(os.path.dirname(f))       # <version>
+        groups[platform].append((ver, f))
+    out = []
+    for _, lst in groups.items():
+        lst.sort(key=lambda vf: _vkey(vf[0]))
+        out.append(lst[-1][1])
+    return sorted(out)
 
 def find_node():
     n = shutil.which("node")
@@ -200,9 +220,12 @@ def process(path, node):
 
 def main():
     files = app_js_files()
+    if LATEST_ONLY:
+        files = latest_only(files)
     node = find_node()
     mode = "REVERT" if REVERT else ("APPLY" if APPLY else "DRY-RUN")
-    print(f"mode={mode}  node={node or '(none)'}  found {len(files)} app.js\n")
+    tag = " (latest-only)" if LATEST_ONLY else ""
+    print(f"mode={mode}{tag}  node={node or '(none)'}  found {len(files)} app.js\n")
     if not files:
         print("no app.js found under pkg cache roots."); return
     if REVERT:
