@@ -45,7 +45,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 
 1. **协议** 选 `vless`，**监听端口**填对外端口（如 `443`），监听地址留空（占所有网卡）。
 2. **传输** `tcp`，**安全** 选 `reality`。
-3. 点 reality 的 **`Get New Cert` / 生成密钥** → 面板生成 x25519 **公钥 / 私钥对**（私钥进 inbound，公钥给客户端）。
+3. 点 reality 配置里的 **生成密钥 / Get Keys** 按钮 → 面板生成 x25519 **公钥 / 私钥对**（私钥进 inbound，公钥给客户端；对应源码 `curveID: X25519`）。
 4. **Dest（回落目标）** 填真实站 `www.microsoft.com:443`，**SNI / serverNames** 填 `www.microsoft.com`（选一个你 VPS 出口能正常访问、支持 TLS1.3 + H2 的站）。
 5. **shortId** 点生成（随机），可留多个。
 6. **添加客户端**（UUID 面板自动生成）。
@@ -148,7 +148,7 @@ proxy.example.com {
 		}
 	}
 
-	# 订阅：3x-ui 内置订阅服务（面板「订阅设置」里开，示例端口 2096）
+	# 订阅：3x-ui 内置订阅服务（面板「订阅设置」里开；端口 2096、路径 /sub/ 就是 3x-ui 默认值）
 	handle /sub/* {
 		reverse_proxy 127.0.0.1:2096
 	}
@@ -170,7 +170,7 @@ proxy.example.com {
 逐块解读：
 
 - **`handle /websocket*` + `@ws` 匹配 `Connection: Upgrade` / `Upgrade: websocket`**：只有真正的 WS 升级请求才反代进 xray；有人直接 `GET /websocket` 探测 → 落 `respond 403`，把节点藏在「一个普通网站」后面。这个 path 必须和第 1 步 inbound 的 `wsSettings.path` **完全一致**。
-- **`/sub/*` → 3x-ui 内置订阅服务**：面板「订阅设置」里开启并设监听端口（示例 `2096`），客户端订阅地址就是 `https://proxy.example.com/sub/<subId>`。
+- **`/sub/*` → 3x-ui 内置订阅服务**：面板「订阅设置」里开启（端口 `2096`、路径 `/sub/` 是 3x-ui 默认值，`internal/web/service/setting.go` 里 `subPort`/`subPath` 的默认），客户端订阅地址就是 `https://proxy.example.com/sub/<subId>`。
 - **根路径 → 面板**：面板和节点**共用一个域名**，面板挂在根路径、用 `authorize with admin`（caddy-security）挡住。没装 caddy-security 就把这段换成 `basic_auth`、或干脆别经 Caddy 暴露面板（留 `127.0.0.1:54324` 走 SSH 隧道进）。`authorize` / caddy-security 细节见 `vps-maintenance` skill 的 caddy.md。
 
 ### 第 3 步：reload + 验证
@@ -205,7 +205,7 @@ curl -sI https://proxy.example.com/ | head -3
 
 如果只是想「一个 443 上同时挂代理 + 一个幌子网站 / 多协议」，Xray 自带 **fallback** 就够，不一定要 Caddy：
 
-> `Xray-core/proxy/vless/inbound/config.proto`：VLESS inbound 的 `fallbacks` 是一组 `Fallback{ name(SNI), alpn, path, dest, xver }`。带 TLS 的 VLESS inbound 占 443，未命中的 TLS / HTTP 握手按 SNI / ALPN / path **回落到 `dest`**（一个真实 web 服务或另一个协议的本地监听）。README 说的「VLESS and Trojan on a single port (443)」就是靠它。
+> `Xray-core/proxy/vless/inbound/config.proto`：VLESS inbound 的 `fallbacks` 是一组 `Fallback{ name(SNI), alpn, path, type, dest, xver }`。带 TLS 的 VLESS inbound 占 443，未命中的 TLS / HTTP 握手按 SNI / ALPN / path **回落到 `dest`**（一个真实 web 服务或另一个协议的本地监听）。README 说的「VLESS and Trojan on a single port (443)」就是靠它。
 
 fallback（Xray 内建、纯 TCP 层按握手特征分流）与 Caddy 反代（HTTP 层、能顺带做认证 / 多站点 / 自动证书）是两条路：只想省一个端口用 fallback；想藏在完整网站后 + 蹭 Caddy 证书生态、面板也要暴露，用 Caddy（RackNerd 走的就是 Caddy 这条）。
 
