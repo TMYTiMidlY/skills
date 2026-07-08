@@ -1184,7 +1184,7 @@ grep -nE 'changeConfig|rawCfgMu|ManageSync|tls.obtain|Shutdown|io\.Copy|streamin
 
 `caddy reload` = 往 admin API `POST /load`（见「通用诊断入口」）。服务端 `changeConfig()` **全程持 `rawCfgMu` 这把全局锁**（`Lock()` 后 `defer Unlock()`），锁内顺序：provision 新配置 → 逐个 `app.Start()`（起新 server / TLS / PKI…）→ `unsyncedStop()` 停旧 app。**这一整套里任意一步卡住，锁就一直不放**，于是 `POST /load` 不返回 → `systemctl reload` 挂死，`GET /config/` 也拿不到锁跟着挂，而 `GET /debug/pprof/...` 不碰锁照样秒回——这组「`/config/` 挂 + `pprof` 秒回」就是「reload 被锁死」的确诊指纹（锁机制已从源码坐实：`caddy.go` 的 `changeConfig` 全程持 `rawCfgMu`）。
 
-至于卡在锁内哪一步，源码排除了两个想当然的嫌疑：reload 时 http app 的 `Stop()` 只等「旧 server 停止接受新连接」就返回、**不等**长连接排空（排空丢给后台 goroutine 跑）；TLS app 的 `Start()` 走 `ManageAsync`、**不同步**等签证。所以「旧连接没排完」和「新域名签不出」**都不会直接**卡住 reload 主链路——真正卡点得靠现场 pprof dump 定位（certmagic 内部锁、PKI、`finishSettingUp` 等仍有嫌疑，**暂未逐一坐实，待现场验证**）。
+至于卡在锁内哪一步，源码排除了两个想当然的嫌疑：reload 时 http app 的 `Stop()` 只等「旧 server 停止接受新连接」（`startedShutdown.Wait()`）就返回、**不等**长连接排空——排空的 `finishedShutdown.Wait()` 外面套了 `if caddy.Exiting()`，**只有整进程退出时才等**，reload 时 `Exiting()==false` 直接跳过、排空丢给后台 goroutine（`modules/caddyhttp/app.go:790-801`；`Exiting()` 定义见 `caddy.go:845`，仅 `exitProcess` 会置真——所以 reload 绝不会因排空而挂）；TLS app 的 `Start()` 走 `ManageAsync`、**不同步**等签证。所以「旧连接没排完」和「新域名签不出」**都不会直接**卡住 reload 主链路——真正卡点得靠现场 pprof dump 定位（certmagic 内部锁、PKI、`finishSettingUp` 等仍有嫌疑，**暂未逐一坐实，待现场验证**）。
 
 #### 解法（先救活 → 再防复发）
 
@@ -1215,7 +1215,7 @@ grep -nE 'changeConfig|rawCfgMu|ManageSync|tls.obtain|Shutdown|io\.Copy|streamin
 
 ### `reload` 退出非零 ≠ 失败
 
-**`systemctl reload caddy` 退出非零 ≠ reload 失败**：caddy 关旧 admin endpoint 时常有 10s timeout 让 systemctl 退出 1，但配置其实已加载。脚本里用 exit code 触发回滚会误把好配置覆盖回旧的；要判断真失败请看 `curl` 实测或 `journalctl -u caddy` 有无 `loading new config` 之类成功标志。
+**`systemctl reload caddy` 退出非零 ≠ reload 失败**：caddy **异步**关旧 admin endpoint（`admin.go:382-394` 的 goroutine），其中 `stopAdminServer` 硬编码 `timeout := 10 * time.Second`（`admin.go:739-742`）；旧端点没在 10s 内关掉就打 `shutting down admin server: 10s timeout` 让 systemctl 退出 1，但新配置其实已加载。脚本里用 exit code 触发回滚会误把好配置覆盖回旧的；要判断真失败请看 `curl` 实测或 `journalctl -u caddy` 有无 `loading new config` 之类成功标志。
 
 > 与上一节区分：这里是**秒退 + 退出码非零、配置已生效**；上一节是**永久不返回、配置没加载上**。别把前者误判成 reload 失败去回滚。
 
