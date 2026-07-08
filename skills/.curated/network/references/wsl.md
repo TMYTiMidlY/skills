@@ -71,16 +71,22 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 > 本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。**内核侧**：DNS 模式（fake-ip / redir-host / normal）见 [mihomo.md §10](mihomo.md#10-dns-泄漏原理与-mihomo-配置)、TUN 路由规则（IP-CIDR / route-exclude）见 [§7](mihomo.md#7-tun-路由的边界)、REST 控制见 [§6](mihomo.md#6-运行态控制rest-api-与-web-面板)、节点 / 协议选型见 [§3](mihomo.md#3-流量链路入口规则与节点组)·[§4](mihomo.md#4-协议性能与客户端配置)。
 
-在无法使用 WSL Mirror / mirrored networking、必须继续使用 WSL NAT 时，不要假设 Windows 宿主能走 Mihomo TUN 就等于 WSL 裸 TCP 也会被接管。更稳的做法是：WSL 内的 HTTP 类工具显式走 Windows 宿主 `mixed-port`，SSH 等不读代理环境变量的工具单独配置 `ProxyCommand`。
+在无法使用 WSL Mirror / mirrored networking、必须继续用 WSL NAT 时，一个反直觉但已坐实的事实：**宿主 mihomo TUN 开着且 `auto-route: true` 时，WSL NAT 的裸出站流量会被宿主 TUN 透明接管、经宿主 mihomo 代理出去——fake-ip / redir-host / normal 三种 DNS 模式都通**（与 mihomo.md [§7.1](mihomo.md#71-wsl-ssh-借道宿主-mihomo没开-tun-时才需要) 一致）。所以默认**无需**在 WSL 里逐工具配代理；只有落到下面"未接管"条件时才要。
+
+**为什么 WSL 看不到 Meta 却仍被接管**：NAT 模式下 WSL 是独立 VM，`ip addr` 只有自己的 `eth0`、`ip route` 里也没有 `0.0.0.0/2 via 198.18.x`——但这只说明"WSL 侧看不到宿主 TUN"，**不等于"流量逃出了 mihomo"**。接管发生在**宿主侧**：WSL 裸包经宿主 NAT 后被重新投回宿主自己的路由表，而 `auto-route` 在宿主装了 `0.0.0.0/1`+`128.0.0.0/1`（metric 0、最高优先级）指向 Meta 的路由，于是所有被宿主路由 / 转发的包（含 WSL NAT 来的）都落进 Meta → mihomo 代理。fake-ip 同样通：回给 WSL 的假 IP 与 fake-ip 池、TUN 同属这一个宿主 mihomo，闭环自洽。
+
+**决定因子是 `auto-route`、不是 `strict-route`**（源码 + 本机 live A/B 双向坐实，2026-07，mihomo v1.19.24 / sing-tun v0.4.17）：
+- `auto-route` = 装上面那套指向 TUN 的路由 + tun 网卡 `ForwardingEnabled` + metric 0 → **它才决定"宿主转发流量进不进 TUN"**。
+- Windows 上 `strict-route` = 只加 WFP 防火墙过滤器（挡 IPv6 + 挡明文 DNS `:53`），**通用 IPv4 拦截在 sing-tun 源码 `tun_windows.go` 里是注释掉的**，对"WSL IPv4 能不能被接管"零影响。live A/B 把 strict-route `false→true→false` 切三遍，WSL 裸连出口 IP 恒 = 宿主代理节点、外网域名恒 200。
+- 附带实测：strict-route 的 `:53` block 也**不影响 WSL DNS**——WSL 的 `10.255.255.254` 是 Hyper-V 虚拟化 DNS 通道、不是物理 `:53` 出站，绕开了那条 WFP 规则。
+
+> **怎么验证的（2026-07 本机实测，方法+证据）**：停 tun2socks（剥掉 WSL 侧 TUN，裸流量改走 `eth0`→NAT→宿主）→ 经宿主已提权 mihomo 的 REST `PATCH /configs` 做**两段式**切 strict-route（`{"enable":false}`→等 ~12s 让 Wintun/Meta 适配器 PnP 删净→`{"enable":true,"strict-route":<v>}`，以绕开 mihomo.md [§6.2](mihomo.md#62-tun-模式下别用-post-restartwindows-会静默丢-tun) 的 Wintun close+立刻重建竞态）→ strict-route 切 `false→true→false` 三态，每态在 WSL 剥 `*_proxy` 环境变量后裸连 `curl --noproxy '*' https://1.1.1.1/cdn-cgi/trace`（**raw-IP、无 DNS**，读回出口公网 IP）。**结果**：三态出口 IP 恒等于宿主代理节点、外网域名恒 200 ⇒ strict-route 不改变接管。源码侧：sing-tun v0.4.17 `tun_windows.go`（strict-route 分支只加 WFP，IPv4 block 被注释掉）；mihomo `listener/config/tun.go` 的 `Equal()` 会 diff `StrictRoute` → 触发 `ReCreateTun`（故切它必然重建 TUN、在 Windows 上撞竞态，须两段式）。踩坑：`strict-route` 用 `json:",omitempty"` 序列化，值为 `false` 时 `GET /configs` **省略该字段**（读到 `None`≠字段缺失），别据此误判"没切成功"。
+
+**什么时候 WSL 裸连才真不通、需要显式配代理**：宿主 TUN 没开、或 `auto-route: false`、或目标落在 `route-exclude-address`（本机如 `10.144.0.0/16`）、或 TUN 启动失败（`enable=false`，见 mihomo.md [§6.2](mihomo.md#62-tun-模式下别用-post-restartwindows-会静默丢-tun) 的 Wintun 竞态）。只有这些"未接管"情形才会出现下面的现象，此时用方案 A/B 兜底。（旧版本文档曾把"WSL 裸连不通"一律归给 fake-ip 占位 IP 或"裸流量不经 mihomo"，已被上述实验推翻；旧现象的确切触发条件应在这几个里、未逐一坐实。）
 
 **现象**：Windows PowerShell `Test-NetConnection <ip> -Port <port>` 成功（`InterfaceAlias` 显示 `Meta`），但 WSL 里 `curl` / `ssh` / `nc` 对同一目标超时，卡在 TCP connect 阶段、还没到 TLS/SSH 握手。
 
-**根因**（与 DNS `enhanced-mode` 无关，也与目标墙不墙无关）：**NAT 模式下** WSL 是独立 VM——`ip addr` 里只有自己的 `eth0`，**根本看不到宿主的 Meta / TUN 网卡**，自然用不了宿主 mihomo 的透明接管（`ip route` 里也没有 `0.0.0.0/2 via 198.18.x`）。出站裸流量只按默认路由丢给 NAT 网关、从宿主物理网卡直出，**全程不经宿主 mihomo**（mirrored 模式共享宿主栈、或 WSL 内自建 tun2socks，才补上这层）。两种 DNS 模式差别只在 WSL 拿到什么地址：
-
-- `fake-ip`：WSL 拿到 `198.18.x` 占位 IP——宿主 TUN 内部才有意义的地址，WSL 侧没有对应网卡 / 路由，裸连无人应答。
-- `redir-host` / `normal`：WSL 拿到**真实 IP**，但裸流量同样不经 mihomo，需要代理才通的目标照样到不了。
-
-别凭“是否 198.18.x”判断，也别一律归到“fake-ip 映射不稳”——两种模式殊途同归，都是 WSL 出站没走宿主代理，不是远端服务故障。DNS 模式取值见 [mihomo.md §10](mihomo.md#10-dns-泄漏原理与-mihomo-配置)。
+排障先分清是"宿主根本没接管这段流量"（上面那几种未接管条件）还是"远端节点 / DNS 出问题"——别一上来就归咎远端服务故障。DNS 模式取值见 [mihomo.md §10](mihomo.md#10-dns-泄漏原理与-mihomo-配置)。
 
 快速判断：
 
@@ -145,7 +151,7 @@ Host <name>
 
 上面是**方案 A**：逐工具显式指代理（`*_proxy` 环境变量 + ssh `ProxyCommand`）。**方案 B** 用 [`xjasonlyu/tun2socks`](https://github.com/xjasonlyu/tun2socks)（开源 Go 单文件）在 WSL 内建一块 TUN 网卡，把**全部**出站裸流量透明导进宿主 mihomo，免逐工具设代理。它**只补“透明网卡”这一层**，分流 / 选节点仍交给宿主已有的 mihomo——所以 WSL 内**不必再开第二个完整 mihomo**（除非要 WSL 独立订阅 / 规则）。
 
-**为什么需要方案 B（初衷）**：方案 A 只覆盖**读 `*_proxy` 的工具**（curl / git / pip…）。有一类工具不读任何代理环境变量、自己解析 DNS、把解析到的 IP **钉死直连**——典型是 **agent 内置抓取工具（如 Copilot CLI 的 `web_fetch`）**。它在 WSL NAT 下必失败：① `fake-ip` 解析到 `198.18.x` 撞其 SSRF 保留地址闸，连都不连；② 宿主改 `redir-host` 让它拿到真实 IP，但 NAT 模式下 WSL 裸流量又不被宿主 TUN 稳定接管（见上节），真实（被墙）IP 裸连照样超时。既设不了代理、又走不了宿主 TUN，方案 A 对它无效——只有方案 B 在 WSL 内建 TUN、把裸流量透明导进宿主 mihomo 才救得回。
+**为什么需要方案 B（初衷）**：方案 A 只覆盖**读 `*_proxy` 的工具**（curl / git / pip…）。有一类工具不读任何代理环境变量、自己解析 DNS、把解析到的 IP **钉死直连**——典型是 **agent 内置抓取工具（如 Copilot CLI 的 `web_fetch`）**，方案 A 对它无效。它在 `fake-ip` 下解析到 `198.18.x`、撞自身 SSRF 保留地址闸、连都不连（这是 **app 层**的事、与宿主 TUN 接不接管无关）——第一解法其实是让它拿**真实 IP**（宿主切 `redir-host` / `normal`）：按上节坐实，真实 IP 的 WSL 裸流量会被**宿主 TUN(`auto-route`) 接管、代理出去**，多数情况到这儿就通了。方案 B 的价值在**解耦兜底**——把 WSL 默认路由钉到自建 `tun0`→宿主 mixed-port，让可达性**不依赖**"宿主 TUN 恰好开着、`auto-route` 开着、目标又没被 `route-exclude`"这一串前提；也是那几种"未接管"情形（宿主 TUN 关 / `auto-route` 关 / 目标被 `route-exclude`）下唯一的透明兜底（本机就长期开着它）。它**只补"透明网卡"这一层**，分流 / 选节点仍交给宿主 mihomo。
 
 **装（`/usr/local/bin`，要 sudo）**：取对应 arch 的二进制（`uname -m` → amd64 / arm64），`sudo install -m0755 <binary> /usr/local/bin/tun2socks` 装到 `/usr/local/bin/`，`tun2socks --version` 自检；GitHub 下载本身可先经宿主 `--proxy http://<gw>:7890`。选 `/usr/local/bin` 三重有据：① tun2socks **官方推荐位置**——官方 wiki *Install-from-Source* 的 Build 段原文即 `make tun2socks && sudo cp ./build/tun2socks /usr/local/bin`；② 下面 systemd unit 的 `ExecStart` **写死**了这个路径；③ 它在 root（`sudo` / 服务）默认 `PATH` 内。tun2socks 建 TUN + 改路由本就要 root，把二进制留在用户目录（`~/.local/bin` 等）对 root 服务没意义——直接装系统位置，别在用户目录中转。
 

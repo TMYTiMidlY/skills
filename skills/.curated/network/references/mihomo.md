@@ -407,7 +407,7 @@ curl.exe -v -I --max-time 12 --proxy http://127.0.0.1:7890 <test-url> # 显式�
 
 ### 7.1 WSL ssh 借道宿主 mihomo（没开 TUN 时才需要）
 
-**宿主 mihomo 开了 TUN 时，WSL 里直连即被透明接管**——TUN 把整机路由（含 WSL NAT 出站流量）劫进 mihomo，连解析成 fake-ip 的自建域名也直接通，WSL 内 ssh / curl 无需任何代理配置。只有“没开 TUN、或目标没被 TUN/规则覆盖、直连出不去”时，才需要让 WSL 流量**显式借道**宿主 mihomo：HTTP 类工具设 `HTTPS_PROXY`，ssh 走 SOCKS 配 `ProxyCommand`，且 NAT 下宿主在 WSL 网段的网关 IP 每次启动可能变、得动态取。具体 `ProxyCommand` / 动态网关 / 代理环境变量配方（方案 A），以及 WSL 内自建 TUN 透明代理 tun2socks（方案 B），见 [wsl.md](wsl.md#wsl-nat-下出站走-mihomo)「WSL NAT 下出站走 Mihomo」；Mirror 模式下 WSL 与宿主共享 `127.0.0.1`，可直接 `127.0.0.1:7890`、不必取网关。
+**宿主 mihomo 开了 TUN（且 `auto-route: true`）时，WSL 里直连即被透明接管**——是 `auto-route` 在**宿主**装了指向 TUN 的 `0.0.0.0/1`+`128.0.0.0/1`（metric 0）路由，把整机路由（含经 NAT 转发出去的 WSL 出站流量）劫进 mihomo，连解析成 fake-ip 的自建域名也直接通，WSL 内 ssh / curl 无需任何代理配置。（**决定因子是 `auto-route`、不是 `strict-route`**——Windows 上 `strict-route` 只加 WFP 防火墙规则挡 IPv6/明文 DNS 泄漏，对 IPv4 接管零影响；源码 + 本机 live A/B 双向坐实，连同"未接管"条件见 [wsl.md「WSL NAT 下出站走 Mihomo」](wsl.md#wsl-nat-下出站走-mihomo)。）只有“没开 TUN、或 `auto-route` 关、或目标没被 TUN/规则覆盖、直连出不去”时，才需要让 WSL 流量**显式借道**宿主 mihomo：HTTP 类工具设 `HTTPS_PROXY`，ssh 走 SOCKS 配 `ProxyCommand`，且 NAT 下宿主在 WSL 网段的网关 IP 每次启动可能变、得动态取。具体 `ProxyCommand` / 动态网关 / 代理环境变量配方（方案 A），以及 WSL 内自建 TUN 透明代理 tun2socks（方案 B），见 [wsl.md](wsl.md#wsl-nat-下出站走-mihomo)「WSL NAT 下出站走 Mihomo」；Mirror 模式下 WSL 与宿主共享 `127.0.0.1`，可直接 `127.0.0.1:7890`、不必取网关。
 
 ## 8. 从源码构建（Windows）
 
