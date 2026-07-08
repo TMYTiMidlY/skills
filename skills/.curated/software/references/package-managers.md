@@ -145,8 +145,20 @@ choco list --local-only  ;  winget list          ;  scoop list
   - **`bun.lockb` 二进制 lockfile**（✅ **已修复**）：早期用不可 diff/review 的二进制锁，PR 看不到依赖变更、Dependabot 两年不支持（[dependabot#6528](https://github.com/dependabot/dependabot-core/issues/6528)，577👍，2023-01→2025-02）；[v1.2](https://bun.sh/blog/bun-v1.2)（2025-01）起新项目默认改文本 `bun.lock`（旧项目要主动迁移）。
   - **JSC ≠ V8**（🟡 **根本性、长期存在**）：Bun 用 JavaScriptCore（Safari 引擎）、Node 用 V8（Chrome 引擎），GC 策略与值表示根本不同，V8 C++ API 要 Bun 自己仿一层"假 V8"，注定补不全。
   - **成熟度/社区**（🟡 **仍成立**）：v1.0 到 2023-09 才发布、团队约 14 人（[Roadmap#159](https://github.com/oven-sh/bun/issues/159)），生产验证时间远短于 Node 十余年积累；官方跑分多为自测、运行时数据独立复现有限。
-  - **背景变化：2025-12-02 Anthropic 收购 Bun**（[官方公告](https://www.anthropic.com/news/anthropic-acquires-bun-as-claude-code-reaches-usd1b-milestone)，随 Claude Code 达 $1B 里程碑；HN 2192pt）——Bun 团队并入 Anthropic、作为 Claude Code 的打包/运行基座。此前"小团队、前途未卜"的顾虑因此缓解；但 JSC≠V8、Node 兼容等**技术性**差异不受收购影响、依旧成立。
+  - **背景变化：2025-12-02 Anthropic 收购 Bun**（[官方公告](https://www.anthropic.com/news/anthropic-acquires-bun-as-claude-code-reaches-usd1b-milestone)，随 Claude Code 达 $1B 里程碑；HN 最高热帖 2192pt，指向 Bun 官方博客，Anthropic 官网那条另有 99pt）——Bun 团队并入 Anthropic、作为 Claude Code 的打包/运行基座。此前"小团队、前途未卜"的顾虑因此缓解；但 JSC≠V8、Node 兼容等**技术性**差异不受收购影响、依旧成立。
 - **中肯定位**：**开发环境**的极速 npm 替代 + TS 脚本 runner 已经很能打；**核心生产服务**建议先小规模灰度、盯版本，别仓促全量迁移。（时间线核对至 2026-07，bun 迭代快，用前请复核最新版本文档。）
+
+**四家客户端采用度快照**（npm registry 周下载量，2026-07；**看趋势别抠绝对值**）：
+
+| 客户端 | 周下载量 |
+| --- | --- |
+| **pnpm** | ~117 M |
+| npm | ~15 M |
+| yarn | ~8.3 M |
+| bun | ~2.4 M |
+
+- **带系统性偏差**：`npm` 随 Node 自带、`bun` 主要靠官方脚本 / brew 装，二者"从 registry 下载"的次数天然偏少、低估真实使用；`pnpm` / `yarn` 更多在项目和 **CI**（持续集成，自动化构建 / 测试流水线，每跑一次常重拉一遍依赖）里从 registry 装、偏多。所以**"pnpm 遥遥领先、yarn 明显走低"这个大小趋势可信，但别拿绝对值一对一比高低**（yarn 走低也印证了上文对 Yarn Classic 掉队的判断）。
+- **Hacker News 风向**：pnpm 口碑正面（`disk space efficient`、防供应链攻击的新设置）、bun 高热看好（v1.0、Zig 写的 runtime）、yarn 几乎没有独立高热帖（话题多是"从 yarn 迁到 pnpm"）；另一类高赞是对 node/npm 依赖链复杂度的疲劳吐槽（`Why does every package+module system become a Rube Goldberg machine`）。
 
 ### pip（Python / PyPI）
 
@@ -214,55 +226,34 @@ irm https://…/install.ps1 -OutFile a.ps1      # 或先落地再跑（能先审
 
 ---
 
-## 八、把包管理器当"跨平台二进制安装器"：壳包 + 平台子包（三大 coding agent 实测）
+## 八、当 npm 被当成"跨平台二进制安装器"：壳包 + 平台子包
 
-前七节的"包"多是某语言的库。但有一类工具反过来——**它本体是预编译原生二进制（Rust/Zig/Go/Bun 编译产物），却借 npm（或 Homebrew/winget）当跨平台安装器**。此时 npm 不是"运行时依赖管理器"，而是被当成"最普及、且自带 os/cpu/libc 分发能力的下载器"。esbuild、swc、@biomejs/biome、turbo 都是这个模式；OpenAI Codex、Claude Code、GitHub Copilot CLI 三个 coding agent 也是——所以"npm 包只是个壳"这个直觉是对的。
+前面几节讲的"包"多半是某门语言的库。但有一类工具反过来——**它本体是一块预编译好的原生程序（native binary，直接由 CPU 执行的机器码，不需要先装 Node 之类的运行时才能跑），却借 npm（或 Homebrew / winget）来当"跨平台安装器"。** 此时 npm 扮演的不是"运行时依赖管理器"，而是被当成一个"最普及、还自带按平台配货能力的下载器"。
 
-### 机制：几 KB 的壳 + 一组平台专属 `optionalDependencies`
+**为什么原生程序也要发到 npm 上？** 因为 npm 是 JS 开发者**最顺手的安装入口**，而且它天生支持"**按你的操作系统 / CPU 架构自动挑对应版本**"。所以很多其实用别的语言写的原生工具都借 npm 分发：打包器 **esbuild**、编译器 **swc**、代码检查器 **@biomejs/biome**、构建工具 **turbo**……都是这个套路。最典型的当代例子，是 OpenAI Codex、Claude Code、GitHub Copilot 三个 AI coding agent（具体普查见本节末尾指针）。
 
-- 主包（`npm i -g` 装的那个）只是 **launcher 壳**，几 KB~百 KB，`dependencies` 基本为空。
-- 它挂一组 **`optionalDependencies`**，每个子包用 `os`/`cpu`/`libc` 字段标平台；npm 安装时**只有匹配当前平台的那个子包会被下载**（不匹配的 optional 依赖装失败也不报错，这正是 optional 的用途），几百 MB 的原生二进制在子包里。壳的 `bin` 启动时把执行转交给本地那个平台二进制。
+### 机制：空盒子 + 一张按机型自动配货的清单
 
-registry 实测（`npm view`，codex 0.142.4 / claude-code 2.1.195 / copilot 1.0.65）：
+一句话：**你装的主包，是个几 KB 的"空盒子 + 一张配货单"；真正几百 MB 的原生程序被列在配货单上，由 npm 按你的机型只挑一个下载下来。**
 
-| | 壳包 `bin` | 壳包体积 | 平台二进制子包（linux-x64） | 子包分发形态 |
-| --- | --- | --- | --- | --- |
-| `@openai/codex` | `bin/codex.js` | **9.5 KB** | `@openai/codex@<ver>-linux-x64`，**279 MB** | 同名包的**版本变体**，`optionalDependencies` 里用 npm alias 引 |
-| `@anthropic-ai/claude-code` | `bin/claude.exe` | 154 KB | `@anthropic-ai/claude-code-linux-x64`，**245 MB** | 独立命名子包 |
-| `@github/copilot` | `npm-loader.js` | 12.7 KB | `@github/copilot-linux-x64`，**276 MB** | 独立命名子包（另依赖 `detect-libc`） |
+- **空盒子（launcher，启动器外壳）**：`npm install -g` 装的主包往往只有几 KB 到几百 KB，几乎不带普通依赖。它唯一的活儿，是被调用时转手去启动本机那个真正的大程序。
+- **配货单（`optionalDependencies`，可选依赖）**：主包里列着一组"平台专属子包"，每个子包用 `os`（操作系统）、`cpu`（CPU 架构）、`libc`（C 运行时，见下）三个字段标明"我给哪种机器用"。安装时 npm **只下载与你这台机器匹配的那一个**子包，其余的因平台对不上被**静默跳过**——"可选依赖"装不上不报错，正是干这个用的。那块几百 MB 的原生程序，就藏在被选中的子包里。
 
-- **最硬的证据是 `libc` 分叉**：三家都为 Linux 同时发 `glibc` 与 `musl` 两套子包（`…-linux-x64` vs `…-linux-x64-musl` / `…-linuxmusl-x64`，实测 `libc=["glibc"]` vs `libc=["musl"]`）。纯 JS 到处能跑、根本不必区分 C 运行时；**专门为 musl 单独发一份，只可能是嵌了原生运行时的二进制**。壳 ~10 KB vs 子包 ~250–280 MB 的体量差也印证这点。
-- codex 核心是 **Rust**（Release 产物名 `codex-x86_64-unknown-linux-musl` 是 Rust target triple）。claude-code 的壳 `bin` 在所有平台都叫 `claude.exe`——这是 **Bun `--compile` 单文件可执行**的命名印记。（不确定项：copilot 具体用 Bun 还是 Node SEA 未逐一验证，但"壳 + 平台原生子包"结构一致。）
+### 怎么判断"某个 npm 包其实装的是原生二进制"
 
-### 三大 coding agent 安装方案全景（官方 README 实测）
+两条一眼可辨的线索：
 
-厂商现在**主推 curl 脚本 / Homebrew / winget 直接拉原生二进制**，npm 降为兜底：
+- **体量差**：壳只有几 KB，被拉下来的子包却是几百 MB。真身若是纯 JS，几 KB 到几 MB 足矣；几百 MB 基本只可能是编译好的原生程序。
+- **libc 分叉**：看它是否为 Linux **同时**发了 `glibc` 和 `musl` 两套子包。**libc 是 Linux 最底层的 C 标准库**——主流发行版（Ubuntu / Debian…）用 `glibc`，轻量的 Alpine 用 `musl`，二者不通用（子包上会标 `libc=["glibc"]` 或 `["musl"]`）。**关键推理**：纯 JS 在哪种 libc 上都照跑、根本不用区分；**会专门分 libc，说明装的是挑 C 运行时的原生二进制。**
+  - ⚠️ 但**反过来不成立**：一个原生工具若是**静态链接**的（把用到的 C 库都打进自己肚子里、不再依赖系统 libc），它可以只发**一个** musl 版就通吃 glibc / musl 两种系统。所以"没分叉"不代表"不是原生"——Codex 就是这种，只发一个静态 musl 二进制。
 
-| | curl 脚本（首推） | Homebrew | winget | npm（兜底） |
-| --- | --- | --- | --- | --- |
-| **Codex** | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh`（Win：`irm https://chatgpt.com/codex/install.ps1\|iex`） | `brew install --cask codex` | — | `npm i -g @openai/codex` |
-| **Claude Code** | `curl -fsSL https://claude.ai/install.sh \| bash`（Win：`irm https://claude.ai/install.ps1\|iex`） | `brew install --cask claude-code` | `winget install Anthropic.ClaudeCode` | `npm i -g @anthropic-ai/claude-code`（**README 标 deprecated**） |
-| **Copilot CLI** | `curl -fsSL https://gh.io/copilot-install \| bash`（支持 `PREFIX`/`VERSION` 环境变量） | `brew install copilot-cli` | `winget install GitHub.Copilot` | `npm i -g @github/copilot` |
+> **这套"壳包 + 平台二进制"模式最典型的当代样本，就是 Codex / Claude Code / Copilot 三个 coding agent。** 它们各自用什么工具链编（Rust / Bun `--compile` / Node SEA）、四种安装入口的完整对照、npm "软弃用"到什么程度、以及采用度数据，属于 coding-agent 话题，普查见 **harness skill 的 [install.md](../../harness/references/install.md)**。
 
-三家也都在 GitHub Releases 直挂各平台二进制供手动下载。
+### 和第七节（`curl | sh`）的关系
 
-- **"软弃用（soft deprecation）"**：Claude Code 的 README 原文 *"Installation via npm is deprecated"*，但这是**文档层引导**——registry 上并**没有**打 deprecated 标记（实测 `npm view @anthropic-ai/claude-code deprecated` 为空），npm 包照常发布、`npm i -g` 照装照用、无警告。目的是引导迁移又不砸掉存量的海量教程/CI 脚本（它 npm 周下载量仍上千万）。
-- **与第七节的关系**：第七节的一般建议是"能进包管理器就优先走包管理器、少用 `curl|sh`"。这里看似相反、其实是它的**边界情形**：当工具本身就是**自带更新机制的自包含原生二进制**时，厂商反而更推 curl 脚本/brew（一步到位、还不用先装 Node），npm 退化成"给 Node 用户的兼容入口"。
-- **因果链（解一个常见困惑："既然 Bun 编译成单文件、为何又弃用 npm"）**：正因为用 Bun `--compile` 把它编成**不依赖 Node 的自包含单文件**，才**有底气**砍掉 Node 专属的 npm 渠道——单文件化是因、弱化 npm 渠道是果，二者顺承不矛盾。"Bun"在这里身兼两角：`bun build`（**打包器**：多文件 TS → 单个 JS）与 `bun build --compile`（**编译器**：把那段 JS 连同 Bun 运行时塞进一个原生可执行文件）；npm 自始至终只是"快递盒"、不是发动机。旁证：2026-03 Claude Code 源码"泄露"正是 npm 包误附了 source map、把内嵌 JS 还原出来（[复盘](https://alex000kim.com/posts/2026-03-31-claude-code-source-leak/)）——**外壳原生 + 芯子 JS** 本就并存，不矛盾。
+第七节的通则是"能进包管理器就优先包管理器、少用脚本直装"。这类工具看着像反例，其实是那条通则的**边界情形**：当一个工具本身就是"自带升级、又不依赖任何运行时的独立原生程序"时，用官方 `curl` 脚本 / brew 一步装好反而最省事（还免去先装 Node），npm 于是退化成"照顾 Node 老用户的兼容入口"。
 
-### 采用度 / 社区风向（客观数据，2026-07）
-
-npm registry 周下载量（`api.npmjs.org/downloads`，**带系统性偏差**，见下）：
-
-| 客户端 | 周下载量 | | coding agent | 周下载量 |
-| --- | --- | --- | --- | --- |
-| **pnpm** | ~114 M | | `@openai/codex` | ~13.4 M |
-| npm | ~14.9 M | | `@anthropic-ai/claude-code` | ~10.8 M |
-| yarn | ~9.2 M | | `@github/copilot` | ~0.92 M |
-| bun | ~2.7 M | | | |
-
-- **偏差提醒（别直接拿绝对值比高低）**：`npm` 随 Node 自带、`bun` 主要靠官方脚本/brew 装 → 二者 registry 下载量**严重低估**真实使用；`pnpm/yarn` 更依赖从 registry 装（尤其 CI）→ 偏高。看**趋势**（pnpm 强势领先、yarn 明显掉队）可信，绝对值别当真。这条正好佐证第五节对 yarn"掉队"、bun"追新"的定性。
-- Hacker News 风向：pnpm 口碑正面（`disk space efficient`、防供应链攻击的新设置）、bun 高热看好（v1.0、Zig runtime）、yarn 几无独立高热帖（话题多是"从 yarn 迁到 pnpm"）；另一类高赞是对 node/npm 依赖链复杂度的疲劳吐槽（`Why does every package+module system become a Rube Goldberg machine`）——这正是这些 agent 转原生二进制的动因之一。
+这类工具往往会在文档里把 npm 标为"已弃用（deprecated）"来引导迁移，但常常只是**软弃用（soft deprecation）**——registry 层并没有真打弃用标记、`npm i -g` 照装照用不弹警告，只为不砸掉海量还写着 `npm i -g` 的老教程和 CI 脚本。（Claude Code 就是活例，连同三家的体积普查、工具链、采用度详见 harness [install.md](../../harness/references/install.md)。）
 
 ---
 

@@ -30,6 +30,7 @@ agent runtime / harness（运行壳）相关问题看这里：一个 coding agen
 - [Coding-agent SDK：Copilot / Claude / Codex 横向对照](references/sdk.md)：agent SDK vs API SDK 区分、CLI 子进程 / SDK client / extension host / JSON-RPC / HTTP 取舍、三家官方 agent SDK 与官方 API SDK 各自的语言覆盖 / 开放度 / API 形状 / 内联文档源码，`CopilotClient`、`RuntimeConnection`、`joinSession()`、client-vs-extension 区分，以及把 agent SDK 包成多用户 web 服务的服务端集成模式。
 - [Agent Skills 官方结构与目录规范](references/agent-skills.md)：可移植 skill bundle 格式——`SKILL.md`（唯一硬要求）+ `scripts/`（执行、只回结果）/ `references/`（按需读进上下文）/ `assets/`（静态资源，不整体进上下文）的分野，及「是 `assets/` 复数、不是 `asset/`」等约定与边界。
 - [Worktree 支持横向对照](references/worktree.md)：Copilot CLI / Codex / Claude Code 三家谁有原生 git worktree 工具、谁只是"感知"、谁完全没有——`--worktree`/`EnterWorktree`/`isolation: worktree`/`/batch`（Claude Code 官方文档逐字核实）、Codex 的 worktree 探测与 `multi_agents` 共享 cwd（读源码 file:line 核实）、以及 obra/superpowers `using-git-worktrees` skill 的跨宿主兜底三段式。
+- [三家安装与分发形态](references/install.md)：Codex / Claude Code / Copilot CLI 的"壳包 + 平台二进制子包"打包普查——各家壳包 `bin`/体积、平台子包命名与个数（Codex 6 个无 musl vs 另两家 8 个含 musl）、真身工具链（Codex=Rust / Claude=Bun `--compile` / Copilot=Node SEA，含下载二进制实测判据）、libc 分叉判据与"静态 musl 单二进制通吃"反例、curl/brew/winget/npm 四路安装方案（照官方 README 核对）、npm "软弃用"（README 标 deprecated 但 registry 无标记、照装照用）与"编成单文件⇒才敢弃 npm"的因果、source-map 泄露旁证、agent 侧采用度快照（周下载量名次周周变）。通用打包模式本身见 software 的 [package-managers.md 第八节](../software/references/package-managers.md)。
 
 ## Claude Code / Codex 横向对照
 
@@ -42,3 +43,5 @@ SDK 语言覆盖与官方文档已记于上面的 SDK 横向对照。Claude / Co
 ## 边界
 
 一般的本地软件运维仍归 `software` skill。本 skill 只管 coding agent 的 runtime / harness 内部机制，以及跨厂商 SDK / 接入形态的对照。
+
+- **安装 / 分发的划分**：通用的"包管理器 / npm 壳包 + 平台二进制"打包模式属包管理器话题，在 `software` 的 [package-managers.md 第八节](../software/references/package-managers.md)；**三家 coding agent 具体怎么打包 / 安装 / 用什么工具链编**（Codex / Claude / Copilot 普查）在本 skill 的 [install.md](references/install.md)。
