@@ -58,7 +58,17 @@ def app_js_files():
     return sorted(files)
 
 def _vkey(v):
-    return tuple(int(x) for x in re.findall(r"\d+", v))
+    """SemVer 优先级排序键：正式版 > 它的预发布版（`1.0.69` > `1.0.69-2`），数字预发布
+    标识按数值比。sorted()[-1] == 最高版本，与 CLI loader 选版一致。
+    ⚠️ 不能简单抠所有数字组元组：那样 `1.0.69-2`→(1,0,69,2) 会被判得比 `1.0.69`→(1,0,69)
+    高，正好和 loader 相反（踩过：正式版落地后 --latest-only 补错目录、漏了真正在跑的那份）。"""
+    rel, _, pre = v.strip().partition("-")
+    rel_key = tuple(int(x) for x in re.findall(r"\d+", rel))
+    if not pre:                       # 无预发布段：同一正式版里排最高
+        return (rel_key, 1, ())
+    # 数字标识按数值、优先级低于字母数字标识；字段多者优先级高（元组比较天然满足）
+    pre_key = tuple((0, int(i), "") if i.isdigit() else (1, 0, i) for i in pre.split("."))
+    return (rel_key, 0, pre_key)
 
 def latest_only(files):
     """每个平台目录只留版本号最高的那份 app.js（loader 实际会跑的那份）。"""

@@ -29,7 +29,7 @@ python3 <skills>/harness/scripts/patch-copilot-cli.py --revert   # 从 .tmy-patc
 
 **跑成功（全 `apply` 或 `already`）就不用往下读**。**开新会话才生效**（运行中的 `copilot` 已把 `app.js` 载进内存）；`copilot update` 拉的新版本目录是干净的，**重跑一次**即可（幂等）。
 
-**实测（本机 5 个版本目录 1.0.67→1.0.69-2）**：当前实际运行的 **1.0.69-2 四个 patch 全命中、`--apply` 后 `node --check` 干净、每处替换语义正确、每 marker 唯一**。旧版本目录 loader 不跑，锚点形态不同会各自 `SKIP`（如 1.0.67 无 `long_context` 特性→`tiers` 跳过），不影响当前版本。
+**实测（两台机器各 5 个版本目录 1.0.68→1.0.69）**：auto-update 后 pkg cache 里**正式版 `1.0.69` 与预发布版 `1.0.69-2` 并存**，loader 跑的是正式版 `1.0.69`（SemVer：release > prerelease，`copilot --version` 报 `1.0.69` 印证）——四个 patch 对它全命中、`--apply` 后 `node --check` 干净、每处替换语义正确、每 marker 唯一。旧版本目录 loader 不跑，锚点形态不同会各自 `SKIP`（如更早版本无 `long_context` 特性→`tiers` 跳过），不影响当前版本。⚠️ **别用位序数字比版本**：`1.0.69-2` 的数字元组 `(1,0,69,2)` 会被误判得比 `1.0.69` 的 `(1,0,69)` 高、和 loader 相反；脚本 `_vkey` 已按 SemVer 优先级排（正式版 > 其预发布），`--latest-only` 才和 loader 选的是同一份。这也是「auto-update 后要重跑」的典型场景：新掉的正式版目录是干净的，把上一版打好的补丁架空了。
 
 **跑失败时**：脚本会打印是哪个 patch、什么原因（`anchor count=0` / 特性缺失 / 找不到模型对象）。按 patch 名到下面对应节，用「稳定锚点」重新 `view` 当前 `app.js` 定位、据「改什么」重写替换。**每次只修失效的那一个**。
 
