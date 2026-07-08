@@ -125,7 +125,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 
 ### 第 2 步：Caddy 站点反代到这个 inbound
 
-下面这份**结构照搬 3x-ui 官方推荐的 Caddy 配置**，只按 RackNerd 现网做了几处调整（面板认证用 caddy-security 而非 basic_auth、多一个订阅 `/sub/` 路由、并**删掉官方 header 块顶部那两行 `header_up Authorization/Content-Type`**——实测它们在 Caddy v2.11.2 里根本解析不过（`header_up` 是 `reverse_proxy` 的子指令、不能放进 `header {}`；`caddy adapt` 直接报 `Unexpected next token after '{'`），**照抄官方全文会导致 Caddy 启动失败**，删掉才是对的）：
+下面这份**结构照搬 3x-ui 官方推荐的 Caddy 配置**，只按 RackNerd 现网做了几处调整（面板认证用 caddy-security 而非 basic_auth、多一个订阅 `/sub/` 路由、并**删掉官方 header 块顶部那两行 `header_up Authorization/Content-Type`**——它们是官方那段配置的 bug，照抄会导致 Caddy 启动失败，两层错的实测见下方逐块解读后的注）：
 
 > 官方推荐配置：[3x-ui Wiki → Configuration → Reverse Proxy → Caddy](https://github.com/MHSanaei/3x-ui/wiki/Configuration#reverse-proxy)（`3x-ui-wiki/Configuration.md`，本地已 clone）。官方原文开头就是 `encode gzip` + `tls { protocols tls1.3 }`（官方明确注明**必须强制 TLS 1.3**），WebSocket 匹配也用同一套 `@websockets { header Connection *Upgrade*; header Upgrade websocket }` + 命中放行、否则 `respond "Forbidden" 403`。所以这两行不是我们自己加的——**是官方写法，保留即与官方一致**。
 
@@ -179,8 +179,14 @@ proxy.example.com {
 - **`handle /websocket*` + `@ws` 匹配 `Connection: Upgrade` / `Upgrade: websocket`**：官方同款（官方示例里叫 `route /api/v1*` + `@websockets`，只是 path 名不同）。只有真正的 WS 升级请求才反代进 xray；有人直接 `GET` 探测 → 落 `respond 403`，把节点藏在「一个普通网站」后。**这个 path 随便起，但必须和第 1 步 inbound 的 `wsSettings.path` 完全一致**。
 - **`/sub/*` → 3x-ui 内置订阅服务**（官方 Caddy 示例没带、但 nginx 示例带了这一段）：面板「订阅设置」里开启（端口 `2096`、路径 `/sub/` 是 3x-ui 默认值，[`internal/web/service/setting.go`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/internal/web/service/setting.go#L86-L87) 里 `subPort`/`subPath` 的默认），客户端订阅地址就是 `https://proxy.example.com/sub/<subId>`。
 - **根路径 → 面板**（官方用 `route /admin*` + `basic_auth`）：面板和节点**共用一个域名**。这里换成 `authorize with admin`（caddy-security）是 RackNerd 的现网做法；**没装 caddy-security 就照官方用 `basic_auth`**，或干脆别经 Caddy 暴露面板（留 `127.0.0.1:54324` 走 SSH 隧道进）。`authorize` / caddy-security 细节见 `vps-maintenance` skill 的 caddy.md。
-- **`header {...}` 安全头**：HSTS / nosniff / SAMEORIGIN / `-Server` 全是官方推荐同款。
+- **`header {...}` 安全头**：HSTS / nosniff / SAMEORIGIN / `-Server` / `-X-Powered-By` 全是官方推荐同款。**但官方原版这个块顶部还有两行 `header_up Authorization/Content-Type`——那是 bug，必须删**（见下注）。
 - 差异小结：**协议骨架（gzip、tls1.3、@websockets 匹配、安全头）与官方逐字一致**；只有「面板认证方式」和「多一个订阅路由」按现网需要改过，功能等价。
+
+> **注：为什么删掉官方那两行 `header_up`**（Caddy v2.11.4 实测、`caddy adapt` 坐实，两层错叠加）：
+> 1. **语法层**：官方原样 `header_up Authorization { >Authorization }` 里的 `{ >X }` 触发「块开括号 `{` 后同行不能再有 token」——`caddy adapt` 直接报 `Unexpected next token after '{'`，**照抄官方全文，Caddy 会拒绝启动**。
+> 2. **语义层**（就算把花括号改成合法 placeholder）：`header_up` 是 `reverse_proxy` 的子指令（全仓只在 `caddyhttp/reverseproxy/caddyfile.go` 注册），放进 `header {}` 会被当成**一个名叫 `Header_up` 的响应头字段**——`caddy adapt` 产物形如 `response.set.Header_up`，**等于给客户端加了个垃圾响应头，根本不转发 `Authorization`/`Content-Type`**。真要转发请求头得写进 `reverse_proxy {}`；何况 reverse_proxy 默认就透传请求头、本来也多余。
+>
+> 结论：这两行是官方那段（Wiki 里署名 @Gill-Bates 贡献）的 bug，删掉既必需又正确。
 
 ### 第 3 步：reload + 验证
 
