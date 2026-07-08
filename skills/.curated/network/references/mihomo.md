@@ -263,14 +263,16 @@ curl -s -o /dev/null --max-time 45 --proxy $P \
 
 ## 6. 运行态控制：REST API 与 Web 面板
 
+控制面 = REST API（本节）+ 可选 Web Dashboard（[§6.1](#61-web-面板external-ui--ui-路径)）。它是“遥控器”：**只查运行态、改运行态（切节点 / 模式 / 热重载 / 改单项），既不碰也不回吐配置文件**。配置里开：
+
 ```yaml
-external-controller: 127.0.0.1:9090
-secret: ''
+external-controller: 127.0.0.1:9090   # 绑回环自用；要被 mesh/LAN 访问才绑 0.0.0.0（那时必设 secret）
+secret: ''                            # 非空 = 所有 REST 调用都要带 token
 ```
 
 > **`secret` 非空 = 所有 REST 调用要带 `Authorization: Bearer <secret>`**（websocket 方式访问的流式端点如 `/logs`、`/traffic` 改用 URL 参数 `?token=<secret>`）。缺失或不匹配一律 HTTP 401 `{"message":"Unauthorized"}`——见 [`authentication` 中间件源码](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/server.go#L336)（`safeEqual` 常数时间比较 token）。所以裸 `curl http://127.0.0.1:9090/` 回 `{"message":"Unauthorized"}` 只说明**这个实例设了 secret**、不代表 mihomo 挂了——加 `-H "Authorization: Bearer <secret>"` 即通。绑回环自用可留 `secret: ''` 免认证。**真实 secret 不入库，占位即可。**
 
-常用端点（适合脚本/AI 监控，CLI 默认不写日志文件，靠这些 API 看运行态）：
+**读运行态**——常用端点（适合脚本/AI 监控，CLI 默认不写日志文件，靠这些 API 看运行态）：
 
 ```bash
 curl http://127.0.0.1:9090/            # {"hello":"mihomo"} —— 确认这个端口是不是 mihomo 的最快探针
@@ -284,7 +286,9 @@ curl --max-time 3 http://127.0.0.1:9090/traffic
 
 > **源码实证：没有任何端点回吐"当前配置文件路径"**（链接 pin 到 `MetaCubeX/mihomo` 的 `Alpha` 分支 commit [`24b6de71`](https://github.com/MetaCubeX/mihomo/tree/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c)——真实源码在 `Alpha`/`Meta` 等分支，`main` 只有 release/CI 元数据、连 `hub/route/` 都没有）。[全表路由注册](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/server.go#L105)共 18 个（`/ /logs /traffic /memory /version /configs /proxies /group /rules /connections /providers/* /cache /dns /storage /restart /upgrade /ui` + doh），其中 `C.Path.Config()` 只出现一次——在 [`updateConfigs`（`PUT /configs`）](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/configs.go#L415)里当热重载的**默认输入**（请求没带 `path` 时兜底），从不写进任何响应。`GET /configs` 返回的是 [`executor.GetGeneral()`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/executor/executor.go#L129)：纯运行态设置（端口/tun/mode/log/geo/keepalive…），无路径字段。内核**自己知道**路径（[`constant/path.go` 的 `Path.Config()`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L75)），只是不经 API 暴露。**要定位 active 配置只能看进程 `-d`/`-f` 启动参数**（Windows 上 mihomo 可能高权限跑、需 UAC 提权才读得到命令行），或按 [§2.2](#22-配置目录是运行时算出来的不是安装决定的) 规则 + `/configs` 与 `/proxies` 运行态内容比对推断。
 
-**热重载**（配置在安全路径内时用 `path`）：
+**改运行态**——三种改法：`PUT /configs`（换整份配置）、`PATCH /configs`（改单项运行态）、`PUT /proxies/<组>`（切节点）。
+
+**① 整份热重载 `PUT /configs`**（配置在安全路径内时用 `path`）：
 
 ```powershell
 $body = @{ path = "$env:USERPROFILE\.config\mihomo\config.yaml" } | ConvertTo-Json -Compress
@@ -293,7 +297,7 @@ Invoke-WebRequest -Uri 'http://127.0.0.1:9090/configs?force=true' -Method Put -C
 
 配置不在安全路径内会报 `path is not subpath of home directory or SAFE_PATHS`——临时可用 `payload` 提交完整 YAML，但日常应直接维护默认位置的 `config.yaml`。
 
-**运行时增量改配置（`PATCH /configs`，不止 TUN）**：与 `PUT`（整份热重载）不同，`PATCH /configs` **只改你 body 里带的字段、其余保留**（base = 当前运行态）——`mode`、各端口、`log-level`、`ipv6`、`tun` 各参数等都能改：
+**② 增量改单项 `PATCH /configs`**：只改你 body 里带的字段、其余保留（base = 当前运行态）。`mode` / 端口 / `log-level` / `ipv6` 这类改一行就行；`tun` 也能这么改，但它**特殊**（改 tun 要重建网卡、有额外坑，见下）：
 
 ```bash
 # 只切模式，其它不动
@@ -311,7 +315,7 @@ curl -H "Authorization: Bearer <secret>" -X PATCH http://127.0.0.1:9090/configs 
 3. **（Windows）改任何 `tun` 参数都触发 `ReCreateTun` = close + 立刻重建 → 撞 Wintun 竞态 → TUN 静默掉**（见 [§6.2](#62-tun-模式下别用-post-restartwindows-会静默丢-tun)）。所以切 tun 参数要**两段式**：先 `{"tun":{"enable":false}}` 关掉 → 等 ~12s 让 Meta 适配器 PnP 删净 → 再 `{"tun":{"enable":true, ...目标...}}` 建新的（此时不再撞）。
 4. **读回坑**：`strict-route:false`（及其它零值 bool）因 `json:",omitempty"`，`GET /configs` 会**省略该字段**——读到 `None`/缺失 ≠ 没生效。
 
-**改节点 / 测延迟**（group 名常含 emoji/中文，URL path 必须 `EscapeDataString`）：
+**③ 改节点 / 测延迟 `PUT /proxies/<组>`**（group 名常含 emoji/中文，URL path 必须 `EscapeDataString`）：
 
 ```powershell
 $enc = [uri]::EscapeDataString("🚀 节点选择")
