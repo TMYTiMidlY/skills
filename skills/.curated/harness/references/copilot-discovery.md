@@ -485,13 +485,15 @@ let z = l ? Promise.resolve(void 0) : eB(t, true, r, u, {...});
 }
 ```
 
-区别：Copilot 要求 `version: 1`、camelCase `preToolUse`、没有 `matcher`、命令字段叫 `bash` 且在顶层。
+区别（也是校验失败的根因）：Copilot 单条 hook 要求**命令字段（`bash`/`command`/`exec`）在条目顶层**；Claude 格式把命令埋进嵌套 `hooks:[…]`，顶层只剩 `matcher` → 过不了校验。注：大驼峰 `PreToolUse` 与 `matcher` 本身 Copilot 都容忍——1.0.65 源码里有 `Fde` 把 PascalCase 归一化成 camelCase、hook schema 里 `matcher` 也是 optional；真正致命的只有"顶层缺命令字段"（refine `_B` 要求 `bash`/`command`/`exec` 三选一）。
 
 作者的另一个仓库 `kenryu42/claude-code-safety-net/.github/hooks/safety-net.json` 才是正确格式，但那是项目级示例，没打进 plugin。
 
-**2. [copilot-cli#2540](https://github.com/github/copilot-cli/issues/2540) 未修 bug**
+**2. [copilot-cli#2540](https://github.com/github/copilot-cli/issues/2540)（仍 open）+ 格式不对，双重失效**
 
-从 marketplace / git 装的 plugin 里 `hooks/*.json` 完全不会被 Copilot 加载执行。issue 评论确认：**手动**把 hook 文件复制到项目 `.github/hooks/` 才会触发。
+issue 报的是 **1.0.18**：从 marketplace / git 装的 plugin 里 `hooks/*.json` 完全不触发。但 **1.0.65 的 `app.js` 已经有 plugin hook 加载器**（函数 `Mpe`/`izn`/`rzn`：先读 `plugin.json` 的 `hooks` 字段，否则回退读 `<plugin>/hooks.json`、`<plugin>/hooks/hooks.json`），所以"根本不加载"对新版已不准确。
+
+真正卡住的是**格式**：`copilot-safety-net` plugin 自带的 `hooks/hooks.json` 是 Claude 格式（命令埋在嵌套 `hooks:[…]`），过不了 Copilot 的 hook schema 校验（见上，refine `_B` 要求顶层有命令字段），加载后 log `Invalid hooks config for plugin …`。**净效果两版一样**：plugin 都不保护；只是失败模式从"不加载"（1.0.18）变成"加载后校验失败"（1.0.65）。以上是 1.0.65 源码级证据，未在 live 装 plugin 跑运行时复核。结论仍然是：**别靠 plugin，手动写项目级 hook**。
 
 #### 解决
 
@@ -576,24 +578,27 @@ direnv 本身不能改 copilot 找 hook 的路径（copilot 是独立进程读�
 
 #### 场景
 
-父目录 `.safety-net.json` 写了自定义规则（例如禁止所有 `gh` 子命令、要求用 GitHub MCP server 代替）。但子目录是独立 git repo，Copilot 的 cwd 在子仓库里时 safety-net 只从 **cwd** 读 `.safety-net.json`，不向上遍历——规则不生效。
+父目录写了自定义规则（例如禁止所有 `gh` 子命令、要求用 GitHub MCP server 代替），放在父目录 project scope 的 `.cc-safety-net/rules/`。但子目录是独立 git repo，Copilot 的 cwd 在子仓库里时 safety-net 只从 **cwd** 的 `.cc-safety-net/rules/` 读，不向上遍历——规则不生效。
 
 #### 根因
 
-`cc-safety-net` 加载自定义规则的搜索路径只有两个，**不做父目录遍历**：
+`cc-safety-net`（v1.0.6+，rulebook 布局）加载自定义规则的搜索路径只有两个，**不做父目录遍历**：
 
-1. **User scope**：`~/.cc-safety-net/config.json`（始终加载）
-2. **Project scope**：`$CWD/.safety-net.json`（仅当前目录）
+1. **User scope**：`~/.cc-safety-net/rules/rule.json`（+ 各 rulebook 在 `~/.cc-safety-net/rules/<名>/rulebook.json`）；始终加载
+2. **Project scope**：`$CWD/.cc-safety-net/rules/rule.json`（+ `$CWD/.cc-safety-net/rules/<名>/rulebook.json`）；仅当前目录
 
 同名 rule project scope 优先覆盖 user scope，其余合并。
 
+> **旧布局已废弃**：`~/.cc-safety-net/config.json`（user）/ `$CWD/.safety-net.json`（project）**运行时不再加载**，只触发迁移提示、命令 fail-closed（保持 blocked）直到迁移。用 `npx -y cc-safety-net rule migrate` 转成上面的 rulebook 布局。
+
 #### 解决
 
-跨项目通用的规则放 user scope：
+跨项目通用的规则放 user scope（rulebook 布局，写进 `~/.cc-safety-net/rules/`）。从旧的 `~/.cc-safety-net/config.json` 迁移、或查看编写指南：
 
 ```bash
-mkdir -p ~/.cc-safety-net
-# 把规则写入 ~/.cc-safety-net/config.json
+npx -y cc-safety-net rule migrate     # 旧 config.json / .safety-net.json → rulebook
+npx -y cc-safety-net rule doc         # rulebook 编写指南
+npx -y cc-safety-net rule list        # 看已激活的 rulebook
 ```
 
 实际生效范围 = "user scope 规则在全局可见" × "hook 只在装了 `.github/hooks/safety-net.json` 的项目里激活"。所以规则虽然全局定义，但**只在装了 hook 的项目及其子目录内拦截**。
@@ -602,13 +607,14 @@ mkdir -p ~/.cc-safety-net
 
 ```bash
 cd <project-with-hook>
-npx -y cc-safety-net --verify-config       # 应显示 user config 里的规则
-npx -y cc-safety-net explain "gh repo view"  # 应显示 BLOCKED
+npx -y cc-safety-net rule verify              # 校验 rule 配置文件（旧的 --verify-config 已移除）
+npx -y cc-safety-net rule list                # 列出生效的 rulebook
+npx -y cc-safety-net explain "gh repo view"   # 应显示 blocked
 ```
 
 #### 教训
 
-- **想跨子仓库生效的规则放 user scope**，不要靠 symlink `.safety-net.json`——那是 project scope，只作用于 cwd。
+- **想跨子仓库生效的规则放 user scope**，不要靠 symlink 分发 project 规则目录（`.cc-safety-net/rules/`）——那是 project scope，只作用于 cwd。
 - **hook 文件仍然需要 symlink**（`.github/hooks/safety-net.json`），因为 Copilot 只从 git root 的 `.github/hooks/` 读 hook。见上一节。
 - 区分"规则定义在哪"和"hook 在哪激活"：前者决定规则内容，后者决定拦截是否发生。
 
