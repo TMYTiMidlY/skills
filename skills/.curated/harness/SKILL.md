@@ -29,6 +29,7 @@ agent runtime / harness（运行壳）相关问题看这里：一个 coding agen
 - [Copilot CLI 配置发现](references/copilot-discovery.md)：walk-up（向上查找）机制、Custom Instructions（指令文件）、Hooks、MCP 配置、Skills 发现。
 - [Coding-agent SDK：Copilot / Claude / Codex 横向对照](references/sdk.md)：agent SDK vs API SDK 区分、CLI 子进程 / SDK client / extension host / JSON-RPC / HTTP 取舍、三家官方 agent SDK 与官方 API SDK 各自的语言覆盖 / 开放度 / API 形状 / 内联文档源码，`CopilotClient`、`RuntimeConnection`、`joinSession()`、client-vs-extension 区分，以及把 agent SDK 包成多用户 web 服务的服务端集成模式。
 - [Agent Skills 官方结构与目录规范](references/agent-skills.md)：可移植 skill bundle 格式——`SKILL.md`（唯一硬要求）+ `scripts/`（执行、只回结果）/ `references/`（按需读进上下文）/ `assets/`（静态资源，不整体进上下文）的分野，及「是 `assets/` 复数、不是 `asset/`」等约定与边界。
+- [Worktree 支持横向对照](references/worktree.md)：Copilot CLI / Codex / Claude Code 三家谁有原生 git worktree 工具、谁只是"感知"、谁完全没有——`--worktree`/`EnterWorktree`/`isolation: worktree`/`/batch`（Claude Code 官方文档逐字核实）、Codex 的 worktree 探测与 `multi_agents` 共享 cwd（读源码 file:line 核实）、以及 obra/superpowers `using-git-worktrees` skill 的跨宿主兜底三段式。
 
 ## Claude Code / Codex 横向对照
 
@@ -36,6 +37,7 @@ SDK 语言覆盖与官方文档已记于上面的 SDK 横向对照。Claude / Co
 
 - **Claude Code**：与 Copilot 一样闭源、minified 分发，行为靠逆向；会话存档在 `~/.claude/projects/*.jsonl`。
 - **Codex**：`openai/codex` 真开源（Apache-2.0），优先引官方源码与发布文档，而非本地逆向；会话存档在 `~/.codex/sessions/`。
+- 三家原生 worktree / 并行隔离支持的详细对照见 [worktree.md](references/worktree.md)。
 
 ## 边界
 
