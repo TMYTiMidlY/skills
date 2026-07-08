@@ -293,6 +293,24 @@ Invoke-WebRequest -Uri 'http://127.0.0.1:9090/configs?force=true' -Method Put -C
 
 配置不在安全路径内会报 `path is not subpath of home directory or SAFE_PATHS`——临时可用 `payload` 提交完整 YAML，但日常应直接维护默认位置的 `config.yaml`。
 
+**运行时增量改配置（`PATCH /configs`，不止 TUN）**：与 `PUT`（整份热重载）不同，`PATCH /configs` **只改你 body 里带的字段、其余保留**（base = 当前运行态）——`mode`、各端口、`log-level`、`ipv6`、`tun` 各参数等都能改：
+
+```bash
+# 只切模式，其它不动
+curl -H "Authorization: Bearer <secret>" -X PATCH http://127.0.0.1:9090/configs -d '{"mode":"global"}'
+# 改 TUN：base=当前 tun，只覆盖你传的字段（auto-route/dns-hijack/inet4/route-exclude 等都保留）
+curl -H "Authorization: Bearer <secret>" -X PATCH http://127.0.0.1:9090/configs -d '{"tun":{"enable":true,"strict-route":false}}'
+```
+
+> **源码**：`hub/route/configs.go` 的 `patchConfigs`——各段 base 取当前运行态（如 tun 的 base=`listener.LastTunConf`），只覆盖请求里出现的字段。
+
+**改 `tun` 段的四个额外坑**（改 `mode`/端口那些一般没这些）：
+
+1. `tun.enable` 是**非指针 bool**——一旦发 `tun` 对象就**必须带 `"enable":true`**，漏了会被当 `false`、直接把 TUN 关掉。
+2. **`enable` OFF→ON = 新建 TUN/Wintun 设备，要 mihomo 进程本身有管理员 / root 权限**。注意提权的是**核心进程**、**不是**调 9090 的 curl（调用方只要 `secret`、不要 admin）。所以：**只要那个带 TUN 的 mihomo 本来是提权跑的（正常都是），就能用 9090 把 TUN 关了再开**；若核心没提权，`enable:true` 会**静默失败**、`GET /configs` 读回 `enable=false`。这也是"驱动已提权的核心原地重建 TUN"能行、而"kill 核心再从普通上下文裸起"不行（新进程拿不到 TUN 提权、还撞下面的竞态，本机实测 4/4 次 TUN 起不来）的根因。
+3. **（Windows）改任何 `tun` 参数都触发 `ReCreateTun` = close + 立刻重建 → 撞 Wintun 竞态 → TUN 静默掉**（见 [§6.2](#62-tun-模式下别用-post-restartwindows-会静默丢-tun)）。所以切 tun 参数要**两段式**：先 `{"tun":{"enable":false}}` 关掉 → 等 ~12s 让 Meta 适配器 PnP 删净 → 再 `{"tun":{"enable":true, ...目标...}}` 建新的（此时不再撞）。
+4. **读回坑**：`strict-route:false`（及其它零值 bool）因 `json:",omitempty"`，`GET /configs` 会**省略该字段**——读到 `None`/缺失 ≠ 没生效。
+
 **改节点 / 测延迟**（group 名常含 emoji/中文，URL path 必须 `EscapeDataString`）：
 
 ```powershell
