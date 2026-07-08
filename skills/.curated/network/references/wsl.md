@@ -71,7 +71,7 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 > 本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。**内核侧**：DNS 模式（fake-ip / redir-host / normal）见 [mihomo.md §10](mihomo.md#10-dns-泄漏原理与-mihomo-配置)、TUN 路由规则（IP-CIDR / route-exclude）见 [§7](mihomo.md#7-tun-路由的边界)、REST 控制见 [§6](mihomo.md#6-运行态控制rest-api-与-web-面板)、节点 / 协议选型见 [§3](mihomo.md#3-流量链路入口规则与节点组)·[§4](mihomo.md#4-协议性能与客户端配置)。
 
-在无法使用 WSL Mirror / mirrored networking、必须继续用 WSL NAT 时：**宿主 mihomo TUN 开着且 `auto-route: true` 时，WSL NAT 的裸出站流量会被宿主 TUN 透明接管、经宿主 mihomo 代理出去（fake-ip / redir-host / normal 三种 DNS 模式都通）——但（NAT 实测坑）这层接管不持久**：宿主 TUN 挂久了会**停止**接管 WSL 转发流量（路由还在、宿主自己上网也正常，但 WSL 裸包进了 TUN 被黑洞丢弃、超时），得**重建宿主 TUN** 才恢复（机制与实测见 [mihomo.md §7](mihomo.md#7-tun-路由的边界)）。所以 **NAT 下想让 WSL 稳定走宿主，推荐自建 tun2socks（方案 B）**、别裸靠宿主 TUN 接管；下面几种"未接管"情形同样得靠方案 A/B。
+在无法使用 WSL Mirror / mirrored networking、必须继续用 WSL NAT 时：**宿主 mihomo TUN 开着且 `auto-route: true` 时，WSL NAT 的裸出站流量会被宿主 TUN 透明接管、经宿主 mihomo 代理出去（实测：tun2socks 停着时 WSL 裸连确实成功过、出口 IP=代理节点；fake-ip / redir-host / normal 三模式都通）——但（NAT 实测坑）这层接管不持久、分钟级就退化**：宿主 TUN 挂一小会儿就会**停止**接管 WSL 转发流量（路由还在、宿主自己上网正常，但 WSL 裸包进了 TUN 被黑洞丢弃、超时），得**重建宿主 TUN** 才恢复（机制与实测见 [mihomo.md §7](mihomo.md#7-tun-路由的边界)）。所以 **NAT 下想让 WSL 稳定走宿主，推荐自建 tun2socks（方案 B）**、别裸靠宿主 TUN 接管；下面几种"未接管"情形同样得靠方案 A/B。
 
 **别被"WSL 里看不到宿主 TUN"误导**：NAT 模式下 WSL 是独立 VM，`ip addr` 只有自己的 `eth0`、`ip route` 里也没有宿主的 `198.18.x` 路由——但接管发生在**宿主侧**（WSL 裸包过宿主 NAT 后，被宿主路由表按 `auto-route` 装的路由劫进 TUN），不在 WSL 侧、所以 WSL 看不到很正常。**至于"凭什么是 `auto-route` 而非 `strict-route` 决定接管、strict-route 又只做什么、以及源码/实测证据"，属 mihomo 内核行为，见 [mihomo.md §7](mihomo.md#7-tun-路由的边界)**，本文不复述。
 
