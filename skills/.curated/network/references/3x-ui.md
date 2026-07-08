@@ -4,7 +4,7 @@
 
 > 官方 feature 列表（`3x-ui/README.md`）：「Modern transports & security — TCP (Raw), mKCP, WebSocket, gRPC, HTTPUpgrade, and XHTTP, secured with TLS, XTLS, and REALITY.」以及「Fallbacks — serve multiple protocols on a single port (e.g. VLESS and Trojan on 443) using Xray's fallback support.」
 
-本篇**手把手**搭两套官方部署形态：先**直接接管对外端口**（inbound 自己占对外端口、自管 TLS/握手），再**结合 Caddy**（反代复用 443）。方案二的 Caddyfile 与 inbound **直接取自作者 RackNerd 机器上在跑的真实配置**（域名 / UUID / 密钥已脱敏为占位符，端口保留真实示例值）。其余分工：
+本篇**手把手**搭两套官方部署形态：先**直接接管对外端口**（inbound 自己占对外端口、自管 TLS/握手），再**结合 Caddy**（反代复用 443）。方案二的 Caddyfile **结构来自 [3x-ui 官方 Wiki 推荐的 Caddy 配置](https://github.com/MHSanaei/3x-ui/wiki/Configuration#reverse-proxy)**、并与作者 RackNerd 机器上在跑的真实配置对齐（域名 / UUID / 密钥已脱敏为占位符，端口保留真实示例值）。其余分工：
 
 - 客户端节点配置、协议选型 / 性能、Brutal / 拥塞控制、DNS / WebRTC 泄漏排查 → [mihomo.md](mihomo.md)。
 - **独立 systemd 版 Hysteria2 服务端**（不经面板、官方脚本装）→ [hysteria2.md](hysteria2.md)。
@@ -125,13 +125,15 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 
 ### 第 2 步：Caddy 站点反代到这个 inbound
 
-Caddyfile 里加一个站点（RackNerd 在跑的那份，域名/端口换成你的）：
+下面这份**结构照搬 3x-ui 官方推荐的 Caddy 配置**，只按 RackNerd 现网做了两处替换（面板认证用 caddy-security 而非 basic_auth、多一个订阅 `/sub/` 路由）：
+
+> 官方推荐配置：[3x-ui Wiki → Configuration → Reverse Proxy → Caddy](https://github.com/MHSanaei/3x-ui/wiki/Configuration#reverse-proxy)（`3x-ui-wiki/Configuration.md`，本地已 clone）。官方原文开头就是 `encode gzip` + 一段注释 **`# TLS 1.3 mandatory!`** 的 `tls { protocols tls1.3 }`，WebSocket 匹配也用同一套 `@websockets { header Connection *Upgrade*; header Upgrade websocket }` + 命中放行、否则 `respond "Forbidden" 403`。所以这两行不是我们自己加的——**是官方写法，保留即与官方一致**。
 
 ```caddyfile
 proxy.example.com {
-	encode gzip
+	encode gzip                       # 官方推荐（对已加密的 WS 隧道无实质增益，主要压面板/订阅的文本响应，无害）
 	tls {
-		protocols tls1.3          # 强制 TLS1.3
+		protocols tls1.3          # 官方注释原文「TLS 1.3 mandatory!」：只收 TLS1.3，缩小握手指纹面
 	}
 
 	# 代理流量：只放行 WebSocket 升级请求到 xray inbound，其余一律 403（藏住节点）
@@ -155,23 +157,30 @@ proxy.example.com {
 
 	# 其余流量 → 3x-ui 管理面板（示例端口 54324），务必加认证别裸奔
 	handle {
-		authorize with admin        # caddy-security 网关；没装就换 basic_auth / 独立端口 / SSH 隧道
+		authorize with admin        # caddy-security 网关；官方原版这里用 basic_auth，没装 caddy-security 就照官方换回 basic_auth / 独立端口 / SSH 隧道
 		reverse_proxy 127.0.0.1:54324
 	}
 
+	# Security Header（官方推荐同款）
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
 		-Server
+		-X-Powered-By
 	}
 }
 ```
 
-逐块解读：
+逐块解读（与官方原版对照）：
 
-- **`handle /websocket*` + `@ws` 匹配 `Connection: Upgrade` / `Upgrade: websocket`**：只有真正的 WS 升级请求才反代进 xray；有人直接 `GET /websocket` 探测 → 落 `respond 403`，把节点藏在「一个普通网站」后面。这个 path 必须和第 1 步 inbound 的 `wsSettings.path` **完全一致**。
-- **`/sub/*` → 3x-ui 内置订阅服务**：面板「订阅设置」里开启（端口 `2096`、路径 `/sub/` 是 3x-ui 默认值，`internal/web/service/setting.go` 里 `subPort`/`subPath` 的默认），客户端订阅地址就是 `https://proxy.example.com/sub/<subId>`。
-- **根路径 → 面板**：面板和节点**共用一个域名**，面板挂在根路径、用 `authorize with admin`（caddy-security）挡住。没装 caddy-security 就把这段换成 `basic_auth`、或干脆别经 Caddy 暴露面板（留 `127.0.0.1:54324` 走 SSH 隧道进）。`authorize` / caddy-security 细节见 `vps-maintenance` skill 的 caddy.md。
+- **`encode gzip` + `tls { protocols tls1.3 }`**：直接抄官方，`# TLS 1.3 mandatory!` 是官方注释原文。TLS1.3-only 缩小握手指纹面；gzip 对已加密的二进制 WS 隧道没实质增益，但压面板 / 订阅的文本响应有用、也无害，官方留着我们就留着。
+- **`handle /websocket*` + `@ws` 匹配 `Connection: Upgrade` / `Upgrade: websocket`**：官方同款（官方示例里叫 `route /api/v1*` + `@websockets`，只是 path 名不同）。只有真正的 WS 升级请求才反代进 xray；有人直接 `GET` 探测 → 落 `respond 403`，把节点藏在「一个普通网站」后。**这个 path 随便起，但必须和第 1 步 inbound 的 `wsSettings.path` 完全一致**。
+- **`/sub/*` → 3x-ui 内置订阅服务**（官方 Caddy 示例没带、但 nginx 示例带了这一段）：面板「订阅设置」里开启（端口 `2096`、路径 `/sub/` 是 3x-ui 默认值，`internal/web/service/setting.go` 里 `subPort`/`subPath` 的默认），客户端订阅地址就是 `https://proxy.example.com/sub/<subId>`。
+- **根路径 → 面板**（官方用 `route /admin*` + `basic_auth`）：面板和节点**共用一个域名**。这里换成 `authorize with admin`（caddy-security）是 RackNerd 的现网做法；**没装 caddy-security 就照官方用 `basic_auth`**，或干脆别经 Caddy 暴露面板（留 `127.0.0.1:54324` 走 SSH 隧道进）。`authorize` / caddy-security 细节见 `vps-maintenance` skill 的 caddy.md。
+- **`header {...}` 安全头**：HSTS / nosniff / SAMEORIGIN / `-Server` 全是官方推荐同款。
+- 差异小结：**协议骨架（gzip、tls1.3、@websockets 匹配、安全头）与官方逐字一致**；只有「面板认证方式」和「多一个订阅路由」按现网需要改过，功能等价。
 
 ### 第 3 步：reload + 验证
 
