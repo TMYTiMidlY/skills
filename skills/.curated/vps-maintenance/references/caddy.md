@@ -473,7 +473,7 @@ caddy-security 的 GitHub OAuth 由三种东西拼起来，先理清它们的关
 
 **想要更长的免登期**：把两个 lifetime 一起调长（如 30 天 `2592000` / 90 天 `7776000`，两者设一样）。代价：JWT 无状态，调长 = 撤销窗口变长（过期前无法 server-side 失效，强行作废只能换 `JWT_SHARED_KEY`，但那会让**所有人**一起掉线）。
 
-### 改权限不即时生效 · 无法单独踢人（无状态 JWT 的运维后果）
+### 改权限不即时生效：本想放行的人被旧 token 挡在门外、还蒙在鼓里
 
 **事故还原**：你在 Caddyfile 里给某用户新加了放行角色（改 `transform user` / `allow roles`），reload 生效，本以为他能进了——可他刷新页面还是 `403`。于是你想"把他踢下线、逼他重登，不就拿到新角色了？"结果发现：**单个用户根本踢不下线**。为什么改了权限他还被拒、为什么踢不了人，根子都在上一节的"无状态"。
 
@@ -1153,7 +1153,7 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 | 大量 WS / 长连接僵尸、内存缓涨、疑似拖累 reload | hijack 裸管道无超时、客户端静默死 | 本节「WebSocket / 长连接泄漏」 |
 | 登录后无限 302 / `ERR_TOO_MANY_REDIRECTS` | 签发 / 读取方 caddy-security 版本不同 → cookie 名对不上 | 本节「跨版本 cookie 名陷阱」 |
 | 能登、能跳回来，但一个角色都没有 → 403 / 无限跳 | 改了 provider `realm` 没同步 `transform user match realm` | 「callback URL 与字段映射」改 realm 的连带 |
-| 某用户能登、也有角色，改过权限后却仍 403（`role is valid, but not allowed by access list`） | 旧 token 角色早于配置变更，`authorize` 不重算、只等 `exp` | 「改权限不即时生效 · 无法单独踢人」 |
+| 某用户能登、也有角色，改过权限后却仍 403（`role is valid, but not allowed by access list`） | 旧 token 角色早于配置变更，`authorize` 不重算、只等 `exp` | 「改权限不即时生效」 |
 | 证书签不出 / ACME 反复失败 / 垃圾子域名狂签 | DNS 没指过来，或 on-demand `ask` 太宽 | 本节「reload 卡住」第 3 条 + 「`on_demand_tls`」节 |
 | docs-share viewer 渲染 / 下载 / 缓存异常 | viewer 壳子 / Markdeep / SigV4 细节 | docs-share「这套方案踩过的坑」 |
 | 大陆 Aliyun ECS 未备案 SNI 被封 | 备案 / SNI 封锁 | [icp-filing.md](icp-filing.md) |
