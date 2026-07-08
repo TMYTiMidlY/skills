@@ -38,7 +38,7 @@
 | `ppt-master` | [hugohe3/ppt-master](https://github.com/hugohe3/ppt-master) | AI 多角色协作把 PDF/DOCX/URL/Markdown 转成原生可编辑 PPTX（真 DrawingML 形状/文本框） |
 | `teacher` | [JackyYang258/AgentTeacher](https://github.com/JackyYang258/AgentTeacher) | 用六段式（直觉 → 可跑示例 / 伪代码 → 逐段讲解 → 陷阱 → 延伸 → 自测题）把一个技术概念讲清楚；DL/ML 概念默认 PyTorch 伪代码 + 张量形状标注 |
 | `handoff` | [mattpocock/skills](https://github.com/mattpocock/skills) | 把当前对话压缩成 handoff 文档，便于另一个 agent 接手；自动建议下一步可用 skill、去除敏感信息、保存到临时目录 |
-| `prototype` | [mattpocock/skills](https://github.com/mattpocock/skills) | 构建可丢弃的原型快速打磨设计：分“可运行 terminal app”（验证状态/业务逻辑）与“多套 UI 变体可切换路由”两条路线 |
+| `prototype` | [mattpocock/skills](https://github.com/mattpocock/skills) | 构建可丢弃的原型快速打磨设计：分"可运行 terminal app"（验证状态/业务逻辑）与"多套 UI 变体可切换路由"两条路线 |
 
 以下 skill 从外部仓库下载，尚未经过适配和验证，放在 `.experimental/` 目录下：
 
@@ -60,7 +60,29 @@
 | `zoom-out` | [mattpocock/skills](https://github.com/mattpocock/skills) | 从更高层次理解代码上下文 |
 | `caveman` | [mattpocock/skills](https://github.com/mattpocock/skills) | 超压缩沟通模式 |
 | `write-a-skill` | [mattpocock/skills](https://github.com/mattpocock/skills) | 创建结构化 agent skill |
-| `humanizer-zh` | [op7418/Humanizer-zh](https://github.com/op7418/Humanizer-zh) | 去除中文文本中的 AI 生成痕迹（Humanizer 汉化版） |<!-- skills-table:end -->
+| `humanizer-zh` | [op7418/Humanizer-zh](https://github.com/op7418/Humanizer-zh) | 去除中文文本中的 AI 生成痕迹（Humanizer 汉化版） |
+| `ponytail/ponytail` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | 让 agent 当“最懒的资深工程师”：写代码前过 YAGNI→复用→stdlib→原生→一行的阶梯，只写能跑的最少代码；支持 lite/full/ultra 强度 |
+| `ponytail/ponytail-review` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | 只审过度工程的代码评审：对 diff 逐条标出可删/stdlib/原生/YAGNI/可缩短，结尾给可省行数 |
+| `ponytail/ponytail-audit` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | 整仓过度工程审计：同 review 的标签体系，扫全代码库而非 diff，按可删量排序 |
+| `ponytail/ponytail-debt` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | 把代码里的 ponytail: 注释汇成技术债台账，标出没写升级触发条件的条目 |
+| `ponytail/ponytail-gain` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | 展示 ponytail 的 benchmark 中位数战绩（更少代码/成本、更快）的 ASCII 记分牌 |
+| `ponytail/ponytail-help` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | ponytail 各模式/命令的速查卡 |
+| `superpowers/brainstorming` | [obra/superpowers](https://github.com/obra/superpowers) | 创造性工作前先对话式挖需求和设计，产出获批准的方案后再开始实现 |
+| `superpowers/dispatching-parallel-agents` | [obra/superpowers](https://github.com/obra/superpowers) | 把 2 个以上无共享状态、无顺序依赖的独立任务派发给隔离上下文的子 agent 并行执行 |
+| `superpowers/executing-plans` | [obra/superpowers](https://github.com/obra/superpowers) | 在独立会话中执行一份已写好的实施计划，含审阅检查点 |
+| `superpowers/finishing-a-development-branch` | [obra/superpowers](https://github.com/obra/superpowers) | 开发完成、测试通过后，给出合并/PR/清理等收尾方式的结构化选项 |
+| `superpowers/receiving-code-review` | [obra/superpowers](https://github.com/obra/superpowers) | 收到代码评审意见时要求先做技术核实，不表演性认同或盲目照做 |
+| `superpowers/requesting-code-review` | [obra/superpowers](https://github.com/obra/superpowers) | 派发代码评审子 agent，用精心构造的独立上下文评估工作产出而非过程 |
+| `superpowers/subagent-driven-development` | [obra/superpowers](https://github.com/obra/superpowers) | 按实施计划逐任务派发全新实现子 agent，每个任务后接一次评审，分支收尾前再做一次整体评审 |
+| `superpowers/systematic-debugging` | [obra/superpowers](https://github.com/obra/superpowers) | 遇到任何 bug/测试失败/异常行为时，先系统定位根因再提修复方案，不做随手补丁 |
+| `superpowers/test-driven-development` | [obra/superpowers](https://github.com/obra/superpowers) | 先写测试、看它失败，再写能让测试通过的最少实现代码 |
+| `superpowers/using-git-worktrees` | [obra/superpowers](https://github.com/obra/superpowers) | 开始需要隔离的功能开发前，优先用平台原生 worktree 工具，没有时降级到手动 git worktree |
+| `superpowers/using-superpowers` | [obra/superpowers](https://github.com/obra/superpowers) | 对话开始时的强制入口：规定如何发现和调用 skill，要求任何回复（含澄清提问）前先完成 skill 调用 |
+| `superpowers/verification-before-completion` | [obra/superpowers](https://github.com/obra/superpowers) | 声称工作完成/已修复/测试通过前，要求先跑验证命令并确认输出，证据先于断言 |
+| `superpowers/writing-plans` | [obra/superpowers](https://github.com/obra/superpowers) | 已有 spec 或需求、动手写代码前，写一份假设工程师零上下文的完整实施计划 |
+| `superpowers/writing-skills` | [obra/superpowers](https://github.com/obra/superpowers) | 编写/编辑/验证新 skill 的方法论：把写 skill 本身当作对流程文档做 TDD |<!-- skills-table:end -->
+
+`ponytail/` 和 `superpowers/` 与上面其他条目不同：上游本身是一个打包了多个 skill 的仓库（分别是 6 个和 14 个），不是单一能力，所以嫁接时多套了一层以仓库名命名的目录，保留归属、也不与本仓已有的同类 skill（如 `tdd`、`worktree`、`diagnose`）合并或去重。两者也有一点相似：都不满足于"等用户调用"，而是各自想办法让自己在没人主动喊它时也生效——`ponytail` 靠 Claude Code/Codex 等宿主的生命周期 hook 在每次会话/每条消息注入规则；`superpowers` 的 `using-superpowers` 则是在 skill 正文里直接写死"对话开始时必须先调用本 skill，包括在回答任何澄清性提问之前"。两种"强迫生效"的实现层级不同（前者是宿主机制，后者是文档层面的自我指令），但目的一致。
 
 此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 
