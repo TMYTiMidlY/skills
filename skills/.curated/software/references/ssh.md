@@ -196,6 +196,26 @@ ssh-keyscan -H <host> <新IP> >> ~/.ssh/known_hosts
 
 追加不删旧条目，对 OpenSSH（只看主机名）无影响，同时补齐检查 IP 的客户端所需的 IP→key 映射。
 
+**另一种情况：host key 真的变了**（连接弹 `@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED @@@` + `Host key verification failed`）——换 IP 后重装了系统、或新 IP 根本是另一台机，host key 跟着换了。这跟上面「IP 变、key 没变」相反：OpenSSH 会**硬拒绝连接**（不再静默放行），必须显式重新信任。
+
+⚠️ 这条警告的正常成因**就是**中间人攻击。**只有你确知变更原因**（自己换了 IP / 重装了这台 / 新 IP 是新机）才重新信任；拿不准先带外核对新 key 指纹，别盲目清。
+
+```bash
+# 1)（稳妥）带外核对：ssh-keyscan 拿服务器实时 key 指纹，和 VPS 面板/控制台给的比对
+ssh-keyscan -t ed25519 <host> 2>/dev/null | ssh-keygen -lf -
+
+# 2) 删掉旧条目（那条大警告信息里会直接打印这条命令；若还存过 IP→key 条目再删 IP）
+ssh-keygen -R <host>
+ssh-keygen -R <新IP>          # 可选
+
+# 3) 重连、接受新 key（交互按 yes 自动 re-add，默认 -H 哈希落盘）
+ssh <host>
+# 自动化 / 非交互：一次性接受首见 key（但仍会拒绝“已存在且不符”的 key，需先做第 2 步）
+ssh -o StrictHostKeyChecking=accept-new <host>
+```
+
+事后可坐实「是重装不是有人冒充」：重新信任后 `ssh-keygen -F <host>` 存的指纹，应与 `ssh-keyscan` 实时指纹、以及带外拿到的指纹三者一致。
+
 ## 6. ControlMaster 连接复用
 
 裸 `ssh` / `scp` 每次调用都新建 TCP 并重新认证（百毫秒级开销）。`ControlMaster` 让多次 ssh 复用同一条已认证的**主连接**（经一个 Unix domain socket），后续调用只开 channel，省掉重复握手；`ControlPersist` 让主连接在空闲后再保留一段时间。
