@@ -71,7 +71,7 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 > 本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。**内核侧**：DNS 模式（fake-ip / redir-host / normal）见 [mihomo.md §10](mihomo.md#10-dns-泄漏原理与-mihomo-配置)、TUN 路由规则（IP-CIDR / route-exclude）见 [§7](mihomo.md#7-tun-路由的边界)、REST 控制见 [§6](mihomo.md#6-运行态控制rest-api-与-web-面板)、节点 / 协议选型见 [§3](mihomo.md#3-流量链路入口规则与节点组)·[§4](mihomo.md#4-协议性能与客户端配置)。
 
-在无法使用 WSL Mirror / mirrored networking、必须继续用 WSL NAT 时，一个反直觉但已坐实的事实：**宿主 mihomo TUN 开着且 `auto-route: true` 时，WSL NAT 的裸出站流量会被宿主 TUN 透明接管、经宿主 mihomo 代理出去——fake-ip / redir-host / normal 三种 DNS 模式都通**（与 mihomo.md [§7.1](mihomo.md#71-wsl-ssh-借道宿主-mihomo没开-tun-时才需要) 一致）。所以默认**无需**在 WSL 里逐工具配代理；只有落到下面"未接管"条件时才要。
+在无法使用 WSL Mirror / mirrored networking、必须继续用 WSL NAT 时，一个已坐实的事实：**宿主 mihomo TUN 开着且 `auto-route: true` 时，WSL NAT 的裸出站流量会被宿主 TUN 透明接管、经宿主 mihomo 代理出去——fake-ip / redir-host / normal 三种 DNS 模式都通**。所以默认**无需**在 WSL 里逐工具配代理；只有落到下面"未接管"条件时才要。
 
 **为什么 WSL 看不到 Meta 却仍被接管**：NAT 模式下 WSL 是独立 VM，`ip addr` 只有自己的 `eth0`、`ip route` 里也没有 `0.0.0.0/2 via 198.18.x`——但这只说明"WSL 侧看不到宿主 TUN"，**不等于"流量逃出了 mihomo"**。接管发生在**宿主侧**：WSL 裸包经宿主 NAT 后被重新投回宿主自己的路由表，而 `auto-route` 在宿主装了 `0.0.0.0/1`+`128.0.0.0/1`（metric 0、最高优先级）指向 Meta 的路由，于是所有被宿主路由 / 转发的包（含 WSL NAT 来的）都落进 Meta → mihomo 代理。fake-ip 同样通：回给 WSL 的假 IP 与 fake-ip 池、TUN 同属这一个宿主 mihomo，闭环自洽。
 
