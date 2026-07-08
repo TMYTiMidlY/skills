@@ -37,6 +37,43 @@ python3 <skills>/harness/scripts/patch-copilot-cli.py --revert   # 从 .tmy-patc
 
 ---
 
+## 自动重打：`copilot-auto-patch` systemd --user 服务
+
+手动记着「auto-update 后重跑脚本」太容易忘——CLI 默认 `autoUpdate: true`，新掉的版本目录是干净的，会把上一版打好的补丁架空（见上面 `_vkey` 那段的实测场景）。用一个 systemd --user 服务盯着 pkg cache、自动重打，就不用惦记了。本机 + AgWorkstation 两台都装了这套（WSL2 + systemd --user + linger 已开）。
+
+**三个 unit**（都在 `~/.config/systemd/user/`，脚本副本在 `~/.local/share/copilot-auto-patch/patch-copilot-cli.py`）：
+
+| unit | 作用 |
+|---|---|
+| `copilot-auto-patch.service` | oneshot，跑 `python3 <副本> --apply --latest-only --strict`；`ExecStartPre=/bin/sleep 5` 等下载写完；env 只给 `PATH=/usr/bin:/bin`，node 靠脚本 `find_node()` 自己找（nvm/fnm 都行） |
+| `copilot-auto-patch.path` | `PathModified=%h/.cache/copilot/pkg/linux-x64`，新版本目录一落就触发 service（inotify，近实时） |
+| `copilot-auto-patch.timer` | `OnStartupSec=1min` + `OnUnitActiveSec=30min` 兜底：开机补一次 + 周期重扫（补下载竞态 / 关机期间的更新） |
+
+**为什么用 `--latest-only --strict`**：`--latest-only`（配合修好的 `_vkey`）只补 loader 实际会跑的最高版本；`--strict` 让「锚点在新版本失效 / `node --check` 失败」直接以非零退出 → **单元 `failed` 进 journal**，这样"补丁腐坏"不会静默，能被 agent 发现并逆向修。
+
+**排障**（看到自动 patch 没生效时）：
+```bash
+systemctl --user status copilot-auto-patch.service      # 是否 failed
+journalctl --user -u copilot-auto-patch.service         # 哪个 patch SKIP / 为什么
+systemctl --user list-timers copilot-auto-patch.timer   # 下次兜底重扫时间
+systemctl --user start copilot-auto-patch.service       # 手动触发一次
+```
+`failed` 就按脚本打印的 patch 名，到本文对应节用「稳定锚点」重新逆向那一个。
+
+**维护坑**：
+- 服务跑的是脚本**副本**，不是 skill 里的原件。**改了 `scripts/patch-copilot-cli.py` 后要重新 `cp` 到两台的 `~/.local/share/copilot-auto-patch/`**，否则服务还在跑旧版。
+- 平台目录名 `linux-x64` 写死在 `.path` 里；换架构（如 arm64）要改 `PathModified`。
+- 只对**新会话**生效（运行中的 `copilot` 已把 app.js 载进内存）——服务只保证「下次开的会话是打好补丁的」。
+
+**新机器复现**（一次性）：把 `patch-copilot-cli.py` 放到 `~/.local/share/copilot-auto-patch/`，三个 unit 放到 `~/.config/systemd/user/`（unit 用 `%h` 无需改路径），然后：
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now copilot-auto-patch.path copilot-auto-patch.timer
+loginctl enable-linger "$USER"   # 没开 linger 的话，让 user manager 开机自起
+```
+
+---
+
 ## 通用套路（脚本内建，也是手动逆向的规矩）
 
 1. **只改 `app.js`**（CLI 实际跑的那份），不动 `sdk/index.js`（programmatic SDK，CLI 不走它）。

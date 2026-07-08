@@ -26,6 +26,8 @@ pkg cache 里运行时真正跑的 app.js（见 harness/references/copilot-patch
         patch-copilot-cli.py --revert   # 从备份恢复所有版本目录的 app.js
         （任意模式可加 --latest-only：只处理每个平台版本号最高的那份，即 loader 实际会跑的那份，
           不碰旧版本目录。想精确「只改在跑的这版」时用它。）
+        （加 --strict：处理完若有 patch SKIP / node --check 失败，进程退非零——给 systemd
+          copilot-auto-patch 服务判「补丁失效、需人工逆向」用；常与 --apply --latest-only 合用。）
 auto-update 后新版本目录是干净的，重跑一次即可（幂等）。
 """
 import os, re, sys, glob, shutil, subprocess
@@ -33,6 +35,7 @@ import os, re, sys, glob, shutil, subprocess
 APPLY  = "--apply"  in sys.argv
 REVERT = "--revert" in sys.argv
 LATEST_ONLY = "--latest-only" in sys.argv
+STRICT = "--strict" in sys.argv
 BACKUP_SUFFIX = ".tmy-patch.bak"
 
 # ------- 版本目录发现（对齐 CLI 自己的 pkg cache 查找顺序） -------
@@ -202,20 +205,21 @@ def process(path, node):
     src0 = open(path, encoding="utf-8").read()
     cur = src0
     lines = []
+    ok = True
     for name, marker, fn in PATCHES:
         if marker in cur:
             lines.append(f"    [{name}] already"); continue
         new, note = fn(cur)
         if new is None:
-            lines.append(f"    [{name}] SKIP: {note}"); continue
+            lines.append(f"    [{name}] SKIP: {note}"); ok = False; continue
         cur = new
         lines.append(f"    [{name}] {'APPLY' if APPLY else 'would apply'}: {note}")
     changed = cur != src0
     for l in lines: print(l)
     if not changed:
-        print("    -> no change"); return
+        print("    -> no change"); return ok
     if not APPLY:
-        print("    -> (dry-run) not written"); return
+        print("    -> (dry-run) not written"); return ok
     if not os.path.exists(path + BACKUP_SUFFIX):
         shutil.copy2(path, path + BACKUP_SUFFIX)
     open(path, "w", encoding="utf-8").write(cur)
@@ -223,10 +227,11 @@ def process(path, node):
         r = subprocess.run([node, "--check", path], capture_output=True, text=True)
         if r.returncode != 0:
             shutil.copy2(path + BACKUP_SUFFIX, path)
-            print(f"    -> FAILED node --check, REVERTED: {r.stderr.strip()[:200]}"); return
+            print(f"    -> FAILED node --check, REVERTED: {r.stderr.strip()[:200]}"); return False
         print("    -> written + node --check ok")
     else:
         print("    -> written (node not found; --check SKIPPED, verify manually)")
+    return ok
 
 def main():
     files = app_js_files()
@@ -235,17 +240,24 @@ def main():
     node = find_node()
     mode = "REVERT" if REVERT else ("APPLY" if APPLY else "DRY-RUN")
     tag = " (latest-only)" if LATEST_ONLY else ""
+    tag += " (strict)" if STRICT else ""
     print(f"mode={mode}{tag}  node={node or '(none)'}  found {len(files)} app.js\n")
     if not files:
-        print("no app.js found under pkg cache roots."); return
+        print("no app.js found under pkg cache roots.")
+        if STRICT: sys.exit(1)
+        return
     if REVERT:
         do_revert(files); return
+    all_ok = True
     for f in files:
         print(f"== {f}")
-        process(f, node)
+        if not process(f, node): all_ok = False
         print("")
     if not APPLY:
         print("(dry-run; re-run with --apply to write. 只对新会话生效；auto-update 后重跑。)")
+    if STRICT and not all_ok:
+        print("STRICT: 有 patch 未命中或 node --check 失败（见上）—— 版本形态可能已变，需手动逆向。")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
