@@ -2,7 +2,7 @@
 
 3x-ui 是 [Xray-core](https://github.com/XTLS/Xray-core) 的 Web 管理面板：在面板里建 **inbound**（VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / WireGuard 等），配传输（TCP·mKCP·WebSocket·gRPC·HTTPUpgrade·XHTTP）与安全层（TLS·XTLS·REALITY），面板再把它翻译成 Xray 配置下发。
 
-> 官方 feature 列表（`3x-ui/README.md`）：「Modern transports & security — TCP (Raw), mKCP, WebSocket, gRPC, HTTPUpgrade, and XHTTP, secured with TLS, XTLS, and REALITY.」以及「Fallbacks — serve multiple protocols on a single port (e.g. VLESS and Trojan on 443) using Xray's fallback support.」
+> 官方 feature 列表（[`3x-ui/README.md`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/README.md#L29-L30)）：「Modern transports & security — TCP (Raw), mKCP, WebSocket, gRPC, HTTPUpgrade, and XHTTP, secured with TLS, XTLS, and REALITY.」以及「Fallbacks — serve multiple protocols on a single port (e.g. VLESS and Trojan on 443) using Xray's fallback support.」
 
 本篇**手把手**搭两套官方部署形态：先**直接接管对外端口**（inbound 自己占对外端口、自管 TLS/握手），再**结合 Caddy**（反代复用 443）。方案二的 Caddyfile **结构来自 [3x-ui 官方 Wiki 推荐的 Caddy 配置](https://github.com/MHSanaei/3x-ui/wiki/Configuration#reverse-proxy)**、并与作者 RackNerd 机器上在跑的真实配置对齐（域名 / UUID / 密钥已脱敏为占位符，端口保留真实示例值）。其余分工：
 
@@ -15,7 +15,7 @@
 
 理解这条流水线，才知道「改完 inbound 要不要重启、为什么偶尔断流」：
 
-> `3x-ui/docs/architecture.md` §5.1「DB → Xray config pipeline」：面板控制器**从不直接改 Xray 运行配置**。流程是 ① service 改 DB（inbound/client/setting）→ ② `XrayService`（`service/xray.go`）据 DB 重建整份 `xray.Config` → ③ 先尝试 **hot apply**（`xray/hot_diff.go`，只把增删的 inbound/user 通过 Xray gRPC 推过去，**不重启进程**，活连接不断）→ ④ 结构性变更 hot 不了才**整进程重启**（`xray/process.go`）。重启由「need restart」原子标志去抖，`@every 30s` cron 消费，窗口内多次改动最多重启一次。
+> [`3x-ui/docs/architecture.md` §5.1](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/docs/architecture.md#L288)「DB → Xray config pipeline」：面板控制器**从不直接改 Xray 运行配置**。流程是 ① service 改 DB（inbound/client/setting）→ ② `XrayService`（`service/xray.go`）据 DB 重建整份 `xray.Config` → ③ 先尝试 **hot apply**（`xray/hot_diff.go`，只把增删的 inbound/user 通过 Xray gRPC 推过去，**不重启进程**，活连接不断）→ ④ 结构性变更 hot 不了才**整进程重启**（`xray/process.go`）。重启由「need restart」原子标志去抖，`@every 30s` cron 消费，窗口内多次改动最多重启一次。
 
 所以：加 / 删客户端一般热生效不断流；改传输 / 安全层这类结构变更会触发一次整体重启（30s 内合并）。生成的运行配置落在 `/usr/local/x-ui/bin/config.json`，随时可 `cat` 出来对照。
 
@@ -25,7 +25,7 @@
 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
 ```
 
-> `3x-ui/README.md`「Quick Start」：安装时**随机生成** username / password / access path；装完命令行敲 `x-ui` 打开管理菜单（启停服务、看 / 重置登录凭据、管理 SSL 证书等）。SQLite 单文件 `/etc/x-ui/x-ui.db`，面板初始路径由 `XUI_INIT_WEB_BASE_PATH` 决定（默认 `/`）。
+> [`3x-ui/README.md`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/README.md#L69)「Quick Start」：安装时**随机生成** username / password / access path；装完命令行敲 `x-ui` 打开管理菜单（启停服务、看 / 重置登录凭据、管理 SSL 证书等）。SQLite 单文件 `/etc/x-ui/x-ui.db`，面板初始路径由 `XUI_INIT_WEB_BASE_PATH` 决定（默认 `/`）。
 
 首次进面板做三件事：① `x-ui` 菜单里看/重置随机账号密码与 access path；② 把面板监听改成 **`127.0.0.1:<高位端口>`**（如 `54324`），不要 `0.0.0.0` 裸暴（对外访问走方案二的 Caddy 反代或 SSH 隧道）；③ 面板设置里改掉默认端口和路径。下面两套方案配的是**节点 inbound**，和面板自身 TLS 是两回事（可共用一张证书）。
 
@@ -39,7 +39,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 
 最省心的直连方案：**不用域名、不用证书**，inbound 直接占 443（或任意 TCP 端口），靠「偷用」一个真实大站的 TLS 握手来伪装。
 
-> 机制（`Xray-core/transport/internet/reality/reality.go`、`config.proto`）：服务端 REALITY 配置里 `dest` 指向一个真实目标站（如 `www.microsoft.com:443`），`server_names` 是允许的 SNI，配一对 `private_key`/公钥与 `short_ids`。未授权的主动探测握手会被**代理到真实 `dest`**，探测者看到的就是那个大站的合法证书与响应；只有持正确公钥 + shortId 的客户端才被放行进代理。较新版本还带 `mldsa65_seed`（ML-DSA-65 后量子额外校验）与 `limit_fallback_*`（对回落流量限速）。
+> 机制（[`reality.go`](https://github.com/XTLS/Xray-core/blob/d7fa2076c3e5401173bf9b58f7b07f9aa5174443/transport/internet/reality/reality.go)、[`config.proto`](https://github.com/XTLS/Xray-core/blob/d7fa2076c3e5401173bf9b58f7b07f9aa5174443/transport/internet/reality/config.proto#L9-L23)）：服务端 REALITY 配置里 `dest` 指向一个真实目标站（如 `www.microsoft.com:443`），`server_names` 是允许的 SNI，配一对 `private_key`/公钥与 `short_ids`。未授权的主动探测握手会被**代理到真实 `dest`**，探测者看到的就是那个大站的合法证书与响应；只有持正确公钥 + shortId 的客户端才被放行进代理。较新版本还带 `mldsa65_seed`（ML-DSA-65 后量子额外校验）与 `limit_fallback_*`（对回落流量限速）。
 
 手把手（面板 → 入站 → 添加入站）：
 
@@ -59,7 +59,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 
 要用真证书（有域名、或想走标准 TLS）时，证书直接由 3x-ui 的 `x-ui` 菜单签发和续期，不必自己配 acme：
 
-> `3x-ui/x-ui.sh`：主菜单 **option 20（SSL Certificate Management）**内置 `acme.sh`。域名证书 `ssl_cert_issue`：`acme.sh --issue -d <domain> --standalone --httpport <port>`（HTTP-01，需该端口对外可达且空闲），默认 CA 为 Let's Encrypt，`--reloadcmd "x-ui restart"`，证书落在 `/root/cert/<domain>/fullchain.pem` + `privkey.pem`。还有 `ssl_cert_issue_for_ip`：**给纯 IP 签 Let's Encrypt 短期证书**（`/root/cert/ip`，有效 ~6 天、自动续），适合没有域名的机器。
+> [`3x-ui/x-ui.sh`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/x-ui.sh)：主菜单 **[option 20（SSL Certificate Management）](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/x-ui.sh#L3428)**内置 `acme.sh`。域名证书 [`ssl_cert_issue`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/x-ui.sh#L1733)：`acme.sh --issue -d <domain> --standalone --httpport <port>`（HTTP-01，需该端口对外可达且空闲），默认 CA 为 Let's Encrypt，`--reloadcmd "x-ui restart"`，证书落在 `/root/cert/<domain>/fullchain.pem` + `privkey.pem`。还有 [`ssl_cert_issue_for_ip`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/x-ui.sh#L1524)：**给纯 IP 签 Let's Encrypt 短期证书**（`/root/cert/ip`，有效 ~6 天、自动续），适合没有域名的机器。
 
 手把手：
 
@@ -82,7 +82,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 
 直连方案的对外端口**必须在防火墙 + 云安全组一起放行**，按协议放 TCP 或 UDP：
 
-> `3x-ui/x-ui.sh` 自带防火墙菜单，可 `ufw` 放行如 `80,443,2053` 或端口段。UDP 协议（Hysteria2）记得放 `<port>/udp`。云厂商安全组是**另一层**，面板 / ufw 放了但安全组没放照样不通。
+> [`3x-ui/x-ui.sh`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/x-ui.sh#L1018) 自带防火墙菜单，可 `ufw` 放行如 `80,443,2053` 或端口段。UDP 协议（Hysteria2）记得放 `<port>/udp`。云厂商安全组是**另一层**，面板 / ufw 放了但安全组没放照样不通。
 
 ---
 
@@ -177,7 +177,7 @@ proxy.example.com {
 
 - **`encode gzip` + `tls { protocols tls1.3 }`**：直接抄官方，`# TLS 1.3 mandatory!` 是官方注释原文。TLS1.3-only 缩小握手指纹面；gzip 对已加密的二进制 WS 隧道没实质增益，但压面板 / 订阅的文本响应有用、也无害，官方留着我们就留着。
 - **`handle /websocket*` + `@ws` 匹配 `Connection: Upgrade` / `Upgrade: websocket`**：官方同款（官方示例里叫 `route /api/v1*` + `@websockets`，只是 path 名不同）。只有真正的 WS 升级请求才反代进 xray；有人直接 `GET` 探测 → 落 `respond 403`，把节点藏在「一个普通网站」后。**这个 path 随便起，但必须和第 1 步 inbound 的 `wsSettings.path` 完全一致**。
-- **`/sub/*` → 3x-ui 内置订阅服务**（官方 Caddy 示例没带、但 nginx 示例带了这一段）：面板「订阅设置」里开启（端口 `2096`、路径 `/sub/` 是 3x-ui 默认值，`internal/web/service/setting.go` 里 `subPort`/`subPath` 的默认），客户端订阅地址就是 `https://proxy.example.com/sub/<subId>`。
+- **`/sub/*` → 3x-ui 内置订阅服务**（官方 Caddy 示例没带、但 nginx 示例带了这一段）：面板「订阅设置」里开启（端口 `2096`、路径 `/sub/` 是 3x-ui 默认值，[`internal/web/service/setting.go`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/internal/web/service/setting.go#L86-L87) 里 `subPort`/`subPath` 的默认），客户端订阅地址就是 `https://proxy.example.com/sub/<subId>`。
 - **根路径 → 面板**（官方用 `route /admin*` + `basic_auth`）：面板和节点**共用一个域名**。这里换成 `authorize with admin`（caddy-security）是 RackNerd 的现网做法；**没装 caddy-security 就照官方用 `basic_auth`**，或干脆别经 Caddy 暴露面板（留 `127.0.0.1:54324` 走 SSH 隧道进）。`authorize` / caddy-security 细节见 `vps-maintenance` skill 的 caddy.md。
 - **`header {...}` 安全头**：HSTS / nosniff / SAMEORIGIN / `-Server` 全是官方推荐同款。
 - 差异小结：**协议骨架（gzip、tls1.3、@websockets 匹配、安全头）与官方逐字一致**；只有「面板认证方式」和「多一个订阅路由」按现网需要改过，功能等价。
@@ -197,7 +197,7 @@ curl -sI https://proxy.example.com/ | head -3
 
 一旦 inbound 藏在 Caddy 后面，Xray 看到的源 IP 就成了 Caddy 的地址（127.0.0.1），**面板的在线列表 / 每客户端 IP 限制会全部失效**。3x-ui 官方专门给了处理：
 
-> `3x-ui/docs/real-client-ip.md`：inbound → **Transport / Stream Settings → 开 Sockopt → Real client IP 预设**。两种机制二选一——`sockopt.trustedXForwardedFor`（从 HTTP 头取真实 IP，仅 WebSocket / HTTPUpgrade / XHTTP 有效）或 `acceptProxyProtocol`（从 L4 PROXY 协议头取，上游必须真的发 PROXY 头，否则连不上）。**只用一个，别两个都开**。这些字段是服务端专用，会从订阅输出里剥掉；且只有确实在可信反代后才开 `trustedXForwardedFor`，否则客户端能伪造头骗源 IP。
+> [`3x-ui/docs/real-client-ip.md`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/docs/real-client-ip.md#L12)：inbound → **Transport / Stream Settings → 开 Sockopt → Real client IP 预设**。两种机制二选一——`sockopt.trustedXForwardedFor`（从 HTTP 头取真实 IP，仅 WebSocket / HTTPUpgrade / XHTTP 有效）或 `acceptProxyProtocol`（从 L4 PROXY 协议头取，上游必须真的发 PROXY 头，否则连不上）。**只用一个，别两个都开**。这些字段是服务端专用，会从订阅输出里剥掉；且只有确实在可信反代后才开 `trustedXForwardedFor`，否则客户端能伪造头骗源 IP。
 
 对上面这套 **Caddy HTTP 反代**：Caddy 默认给上游注入 `X-Forwarded-For`，所以在这个 inbound 的 Sockopt 里手动把 `trustedXForwardedFor` 设成 `["X-Forwarded-For"]`（预设里的 `CF-Connecting-IP` 是给 Cloudflare CDN 的，不适用）：
 
@@ -214,7 +214,7 @@ curl -sI https://proxy.example.com/ | head -3
 
 如果只是想「一个 443 上同时挂代理 + 一个幌子网站 / 多协议」，Xray 自带 **fallback** 就够，不一定要 Caddy：
 
-> `Xray-core/proxy/vless/inbound/config.proto`：VLESS inbound 的 `fallbacks` 是一组 `Fallback{ name(SNI), alpn, path, type, dest, xver }`。带 TLS 的 VLESS inbound 占 443，未命中的 TLS / HTTP 握手按 SNI / ALPN / path **回落到 `dest`**（一个真实 web 服务或另一个协议的本地监听）。README 说的「VLESS and Trojan on a single port (443)」就是靠它。
+> [`Xray-core/proxy/vless/inbound/config.proto`](https://github.com/XTLS/Xray-core/blob/d7fa2076c3e5401173bf9b58f7b07f9aa5174443/proxy/vless/inbound/config.proto#L11-L18)：VLESS inbound 的 `fallbacks` 是一组 `Fallback{ name(SNI), alpn, path, type, dest, xver }`。带 TLS 的 VLESS inbound 占 443，未命中的 TLS / HTTP 握手按 SNI / ALPN / path **回落到 `dest`**（一个真实 web 服务或另一个协议的本地监听）。README 说的「VLESS and Trojan on a single port (443)」就是靠它。
 
 fallback（Xray 内建、纯 TCP 层按握手特征分流）与 Caddy 反代（HTTP 层、能顺带做认证 / 多站点 / 自动证书）是两条路：只想省一个端口用 fallback；想藏在完整网站后 + 蹭 Caddy 证书生态、面板也要暴露，用 Caddy（RackNerd 走的就是 Caddy 这条）。
 
