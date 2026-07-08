@@ -15,7 +15,7 @@
 
 理解这条流水线，才知道「改完 inbound 要不要重启、为什么偶尔断流」：
 
-> [`3x-ui/docs/architecture.md` §5.1](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/docs/architecture.md#L288)「DB → Xray config pipeline」：面板控制器**从不直接改 Xray 运行配置**。流程是 ① service 改 DB（inbound/client/setting）→ ② `XrayService`（`service/xray.go`）据 DB 重建整份 `xray.Config` → ③ 先尝试 **hot apply**（`xray/hot_diff.go`，只把增删的 inbound/user 通过 Xray gRPC 推过去，**不重启进程**，活连接不断）→ ④ 结构性变更 hot 不了才**整进程重启**（`xray/process.go`）。重启由「need restart」原子标志去抖，`@every 30s` cron 消费，窗口内多次改动最多重启一次。
+> **DB → Xray config pipeline**（直接对着源码看）：面板控制器**从不直接改 Xray 运行配置**。流程是 ① service 改 DB（inbound/client/setting）→ ② [`XrayService.GetXrayConfig`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/internal/web/service/xray.go#L109) 据 DB 重建整份 `xray.Config` → ③ 先尝试 **hot apply**（[`tryHotApply`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/internal/web/service/xray.go#L980) 调差异算法 [`ComputeHotDiff`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/internal/xray/hot_diff.go#L48)，只把增删的 inbound/user 通过 Xray gRPC 推过去，**不重启进程**，活连接不断）→ ④ 结构性变更 hot 不了才**整进程重启**（[`process.Start`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/internal/xray/process.go#L494)）。重启由 [`SetToNeedRestart`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/internal/web/service/xray.go#L1118) 原子标志去抖、[`@every 30s`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/internal/web/web.go#L288) cron [消费](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/internal/web/web.go#L315)，窗口内多次改动最多重启一次。
 
 所以：加 / 删客户端一般热生效不断流；改传输 / 安全层这类结构变更会触发一次整体重启（30s 内合并）。生成的运行配置落在 `/usr/local/x-ui/bin/config.json`，随时可 `cat` 出来对照。
 
@@ -125,15 +125,15 @@ bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.
 
 ### 第 2 步：Caddy 站点反代到这个 inbound
 
-下面这份**结构照搬 3x-ui 官方推荐的 Caddy 配置**，只按 RackNerd 现网做了两处替换（面板认证用 caddy-security 而非 basic_auth、多一个订阅 `/sub/` 路由）：
+下面这份**结构照搬 3x-ui 官方推荐的 Caddy 配置**，只按 RackNerd 现网做了几处调整（面板认证用 caddy-security 而非 basic_auth、多一个订阅 `/sub/` 路由、并**删掉官方 header 块顶部那两行 `header_up Authorization/Content-Type`**——实测它们在 Caddy v2.11.2 里根本解析不过（`header_up` 是 `reverse_proxy` 的子指令、不能放进 `header {}`；`caddy adapt` 直接报 `Unexpected next token after '{'`），**照抄官方全文会导致 Caddy 启动失败**，删掉才是对的）：
 
-> 官方推荐配置：[3x-ui Wiki → Configuration → Reverse Proxy → Caddy](https://github.com/MHSanaei/3x-ui/wiki/Configuration#reverse-proxy)（`3x-ui-wiki/Configuration.md`，本地已 clone）。官方原文开头就是 `encode gzip` + 一段注释 **`# TLS 1.3 mandatory!`** 的 `tls { protocols tls1.3 }`，WebSocket 匹配也用同一套 `@websockets { header Connection *Upgrade*; header Upgrade websocket }` + 命中放行、否则 `respond "Forbidden" 403`。所以这两行不是我们自己加的——**是官方写法，保留即与官方一致**。
+> 官方推荐配置：[3x-ui Wiki → Configuration → Reverse Proxy → Caddy](https://github.com/MHSanaei/3x-ui/wiki/Configuration#reverse-proxy)（`3x-ui-wiki/Configuration.md`，本地已 clone）。官方原文开头就是 `encode gzip` + `tls { protocols tls1.3 }`（官方明确注明**必须强制 TLS 1.3**），WebSocket 匹配也用同一套 `@websockets { header Connection *Upgrade*; header Upgrade websocket }` + 命中放行、否则 `respond "Forbidden" 403`。所以这两行不是我们自己加的——**是官方写法，保留即与官方一致**。
 
 ```caddyfile
 proxy.example.com {
 	encode gzip                       # 官方推荐（对已加密的 WS 隧道无实质增益，主要压面板/订阅的文本响应，无害）
 	tls {
-		protocols tls1.3          # 官方注释原文「TLS 1.3 mandatory!」：只收 TLS1.3，缩小握手指纹面
+		protocols tls1.3          # 官方要求必须强制 TLS 1.3：只收 TLS1.3 握手，缩小指纹面
 	}
 
 	# 代理流量：只放行 WebSocket 升级请求到 xray inbound，其余一律 403（藏住节点）
@@ -175,7 +175,7 @@ proxy.example.com {
 
 逐块解读（与官方原版对照）：
 
-- **`encode gzip` + `tls { protocols tls1.3 }`**：直接抄官方，`# TLS 1.3 mandatory!` 是官方注释原文。TLS1.3-only 缩小握手指纹面；gzip 对已加密的二进制 WS 隧道没实质增益，但压面板 / 订阅的文本响应有用、也无害，官方留着我们就留着。
+- **`encode gzip` + `tls { protocols tls1.3 }`**：直接抄官方，**官方明确要求必须强制 TLS 1.3**。TLS1.3-only 缩小握手指纹面；gzip 对已加密的二进制 WS 隧道没实质增益，但压面板 / 订阅的文本响应有用、也无害，官方留着我们就留着。
 - **`handle /websocket*` + `@ws` 匹配 `Connection: Upgrade` / `Upgrade: websocket`**：官方同款（官方示例里叫 `route /api/v1*` + `@websockets`，只是 path 名不同）。只有真正的 WS 升级请求才反代进 xray；有人直接 `GET` 探测 → 落 `respond 403`，把节点藏在「一个普通网站」后。**这个 path 随便起，但必须和第 1 步 inbound 的 `wsSettings.path` 完全一致**。
 - **`/sub/*` → 3x-ui 内置订阅服务**（官方 Caddy 示例没带、但 nginx 示例带了这一段）：面板「订阅设置」里开启（端口 `2096`、路径 `/sub/` 是 3x-ui 默认值，[`internal/web/service/setting.go`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/internal/web/service/setting.go#L86-L87) 里 `subPort`/`subPath` 的默认），客户端订阅地址就是 `https://proxy.example.com/sub/<subId>`。
 - **根路径 → 面板**（官方用 `route /admin*` + `basic_auth`）：面板和节点**共用一个域名**。这里换成 `authorize with admin`（caddy-security）是 RackNerd 的现网做法；**没装 caddy-security 就照官方用 `basic_auth`**，或干脆别经 Caddy 暴露面板（留 `127.0.0.1:54324` 走 SSH 隧道进）。`authorize` / caddy-security 细节见 `vps-maintenance` skill 的 caddy.md。
