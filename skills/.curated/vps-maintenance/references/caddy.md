@@ -475,7 +475,18 @@ caddy-security 的 GitHub OAuth 由三种东西拼起来，先理清它们的关
 
 ### 改权限不即时生效：本想放行的人被旧 token 挡在门外、还蒙在鼓里
 
-**事故还原**：你在 Caddyfile 里给某用户新加了放行角色（改 `transform user` / `allow roles`），reload 生效，本以为他能进了——可他刷新页面还是 `403`。于是你想"把他踢下线、逼他重登，不就拿到新角色了？"结果发现：**单个用户根本踢不下线**。为什么改了权限他还被拒、为什么踢不了人，根子都在上一节的"无状态"。
+**事故还原**：你在 Caddyfile 里给某用户放行（典型：改 `transform user` 给他发个新角色，或把站点切到要这新角色的权限组），reload 生效，本以为他能进了——可他刷新页面还是 `403`。于是你想"把他踢下线、逼他重登，不就拿到新角色了？"结果发现：**单个用户根本踢不下线**。为什么改了权限他还被拒、为什么踢不了人，根子都在上一节的"无状态"。
+
+**问题到底出在哪——分清两类改动，生效时机正相反：**
+
+| 改动 | 改的是 | 生效时机 |
+|---|---|---|
+| `transform user`（身份 → 角色映射） | **令牌里有什么**（roles / sub 等 claims） | 登录那刻**烤进 JWT**、此后不变 → 改了**得重登**才更新（**本坑**） |
+| `allow roles` / `authorize with <policy>`（换权限组 / 改放行名单） | **策略要什么**（gatekeeper 的 ACL） | **每请求重算** → reload **即时**生效 |
+
+即时那半边有源码坐实：`go-authcrunch` 每个请求都跑 `accessList.Allow(usr.GetData())`，且"用户已缓存就直接放行"的老捷径**已删**（`pkg/authz/validator/validator.go:145-158` 里被注释掉的 `if usr.Cached { return nil }`）；token 缓存只省重复验签 / 解析、**不缓存放行判定**。所以**卡住人的从来不是"换组"本身**——切 `authorize with` 或改 `allow roles`，reload 当场就算数。真正的坑永远是：**新组要一个"靠 `transform user` 在登录时才发"的角色，而他 token 是改配置之前签的、压根没这角色**。
+
+> 实例（2026-07）：给 `sub.tmytimidly.com` 从 `authorize with admin` 切到新组 `authorize with sub`（要 `authp/sub`）——换组即时生效；但用户旧 token 只有 `authp/user`、没 `authp/sub`（发 `authp/sub` 的 `transform` 在他登录后才加的）→ 一直被拒，`reload` / `restart` 都没用，**只有他登出重登**才补上。
 
 **改了权限他仍被拒 = 角色烤进了旧 token。** `transform user` 只在登录那刻算一次角色写进 JWT，`authorize` 端**只验签读 claims、从不重算**。他攥着改配置**之前**签发的旧 token，里面没有新角色，得等 `exp` 过期重签才更新。诊断信号（`authorize` 日志）：
 
