@@ -40,7 +40,7 @@ Go 的包生态是**去中心化**的：没有 PyPI/npm/crates.io 那样的中�
 
 ## Zellij
 
-Zellij Web client、HTTPS 证书要求、login token/session token、反代注入 Cookie、`default_shell`、Web/xterm 主题分层、给特定软件写 OSC 10/11 颜色 wrapper、Codex 输入框颜色、鼠标选区颜色与 WSL systemd service 写法见 [references/zellij.md](references/zellij.md)。
+Zellij Web client、HTTPS 证书要求、login token/session token、反代注入 Cookie、`default_shell`、Web/xterm 主题分层、给特定软件写 OSC 10/11 颜色 wrapper、Codex 输入框颜色、鼠标选区颜色、pane 布局键位（全屏 `Ctrl p`→`f`、resize 模式 `Ctrl n`、`stacked_resize` 自动堆叠）与 WSL systemd service 写法见 [references/zellij.md](references/zellij.md)。
 
 ## Service / systemd
 
