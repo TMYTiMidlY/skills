@@ -55,9 +55,9 @@ web_sharing "on"
 
 - **`web_client { ... }` 只被 Web server 读**。普通交互式 `zellij`（读 `config.kdl`）不使用这一段，只有 `zellij web`（读 web.kdl）才生效。写在交互 `config.kdl` 里的 `web_client` 块不起作用，调浏览器端外观应改 web.kdl。
 
-## 手滑会改变布局的几个键（全屏 / resize / stacked_resize）
+## pane 大小相关的操作（全屏 / resize / stacked_resize）
 
-正常敲命令时容易误触、把左右分屏搞成别的样子的几个操作。以下均为 zellij **默认（mode 键位）** 行为，键位引自 `0.44.x` 默认配置 `zellij-utils/assets/config/default.kdl`；都是 toggle 或可逆操作，pane 内容不会丢。
+zellij 中几个改变 pane 大小 / 占比的操作，均为 **默认（mode 键位）** 行为；键位引自 `0.44.x` 默认配置 `zellij-utils/assets/config/default.kdl`，都是 toggle 或可逆操作，pane 内容不会丢。
 
 - **`Ctrl p` 进 pane 模式 → `f`：聚焦全屏（`ToggleFocusFullscreen`）**。把当前 pane 临时铺满整个 tab、隐藏其余 pane（不是关闭，数据都在），状态栏显示 `FULLSCREEN`；再按一次 `Ctrl p` `f` 还原。（`default.kdl`：`Ctrl p`→Pane 在 206 行，pane 模式 `f` 在 35 行。tmux 兼容模式 `Ctrl b` 然后 `z` 同效，166 行。）
 
