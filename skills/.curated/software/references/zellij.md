@@ -55,6 +55,16 @@ web_sharing "on"
 
 - **`web_client { ... }` 只被 Web server 读**。普通交互式 `zellij`（读 `config.kdl`）不使用这一段，只有 `zellij web`（读 web.kdl）才生效。写在交互 `config.kdl` 里的 `web_client` 块不起作用，调浏览器端外观应改 web.kdl。
 
+## 手滑会改变布局的几个键（全屏 / resize / stacked_resize）
+
+正常敲命令时容易误触、把左右分屏搞成别的样子的几个操作。以下均为 zellij **默认（mode 键位）** 行为，键位引自 `0.44.x` 默认配置 `zellij-utils/assets/config/default.kdl`；都是 toggle 或可逆操作，pane 内容不会丢。
+
+- **`Ctrl p` 进 pane 模式 → `f`：聚焦全屏（`ToggleFocusFullscreen`）**。把当前 pane 临时铺满整个 tab、隐藏其余 pane（不是关闭，数据都在），状态栏显示 `FULLSCREEN`；再按一次 `Ctrl p` `f` 还原。（`default.kdl`：`Ctrl p`→Pane 在 206 行，pane 模式 `f` 在 35 行。tmux 兼容模式 `Ctrl b` 然后 `z` 同效，166 行。）
+
+- **`Ctrl n` 进 resize 模式 → 方向键 / `h j k l` / `+ - =`：调整当前 pane 大小**。每按一步移动分隔线 **5%**（源码 `pub const RESIZE_PERCENT: f64 = 5.0`，`zellij-server/src/panes/tiled_panes/tiled_pane_grid.rs:18`）；按住会自动重复，几下就把一侧撑到 80%+。`h/j/k/l`（或方向键）= 朝该方向 Increase，`H/J/K/L` = Decrease，`=`/`+` = Increase、`-` = Decrease。`Ctrl n` 再按一次退出模式，反向缩回即复原。（`default.kdl` 12–21 行；`Ctrl n`→Resize 在 209 行。）
+
+- **`stacked_resize`（选项，默认 `true`）：resize 压得太狠时自动把 pane 转成堆叠（stack）**。当你不停把一侧撑大、另一侧被压过阈值，zellij 不再硬挤，而是把布局改成一个 stack：pane 竖排，只有聚焦的那个显示完整内容，其余折叠成**一行标题栏**，移动焦点 / 点标题才展开切换。0.41.0 引入、默认开启（`options.rs` 里 `stacked_resize: Option<bool>`；默认配置注释 `// stacked_resize false`，即“默认 true、去掉注释才关”）。它由上面的 resize 触发，所以往回缩（`Ctrl n` 反方向 / `-`）就能退出 stack 回到平铺；想彻底禁用就在 `config.kdl` 写 `stacked_resize false`。
+
 ## login token 与 session token
 
 zellij web 的认证是**两层 token**：
