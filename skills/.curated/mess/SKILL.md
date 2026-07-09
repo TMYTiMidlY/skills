@@ -31,5 +31,7 @@ description: 记录排查过的疑难杂症和踩坑经历。当用户遇到类�
   - 关键词：`总是断网`、`WSL 内 EasyTier 节律性搞坏整网`、`挪宿主机解决`、`ping 网关 100% 丢包但能上网`、`CoPP 控制平面限速`、`ICMP rate limit`、`ping 网关不是断网指标`、`WSL2 mirrored networking`、`分源 IP 绑定测试`、`TcpClient Bind 源地址`、`strong host model`、`ping -I / curl --interface 分链路`、`断窗时长恒定 ~5 分钟`、`EasyTier peer removed 反推通断`
 - **WSL user systemd 的 session bus 突然消失，`systemctl --user` 连不上；临时 bus + manager reexec 可恢复，但会中断 running user services** → [references/bug-fix.md](references/bug-fix.md)
   - 关键词：`systemctl --user`、`Failed to connect to bus`、`/run/user/1000/bus`、`DBUS_SESSION_BUS_ADDRESS`、`dbus-daemon --session`、`kill -RTMIN+25`、`daemon-reexec`、`systemd --user`、`running user services 断开`
+- **手动 `source` 工作区 `.envrc` → symlink 分发钻进子仓库每个子目录；配 anchored `core.excludesFile` 只挡根层而漏进 `git status`** → [references/bug-fix.md](references/bug-fix.md)
+  - 关键词：`.envrc`、`direnv`、`手动 source 从子目录`、`link_into_subdirs`、`$PWD 被错设`、`BASH_SOURCE guard`、`pwd -P`、`core.excludesFile`、`gitignore 含斜杠 anchored`、`check-ignore NOT ignored`、`.mcp.json 反而被忽略`、`symlink 分发深一层`、`.agents/skills`、`.github/instructions`、`git status 大量 untracked`、`测试假象 [[ -e "$src" ]] 早退`
 
 > Copilot CLI 相关的调研笔记已迁移到 `harness` skill（包括 bash 工具 env 黑名单、`COPILOT_ALLOW_ALL` vs `--yolo`、`/rewind` 非 git 拒绝、Walk-Up（向上查找）机制总览、Custom Instructions（AGENTS.md / `.github/instructions` 嵌套查找）、Safety Net 双 bug、项目级 hook 不向上查、`.mcp.json` 上溯停在 git root、`.mcp.json` headers `${VAR}` 不展开、Skills 发现、`GIT_CONFIG_COUNT` 注入 credential helper、`gh repo fork` SSH 身份错配、Copilot SDK 与 session export 等）。

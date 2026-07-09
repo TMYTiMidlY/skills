@@ -647,3 +647,56 @@ ls -l /run/user/1000/bus
 - 真正让旧 manager 接入 bus 的关键是 manager reexec（本次用 `SIGRTMIN+25`），但它可能让 running user services 中断。
 
 关键词：`systemctl --user`、`Failed to connect to bus`、`/run/user/1000/bus`、`DBUS_SESSION_BUS_ADDRESS`、`dbus-daemon --session`、`kill -RTMIN+25`、`daemon-reexec`、`systemd --user`、`running user services 断开`
+
+## 手动 `source` 工作区 `.envrc` → symlink 分发钻进子目录（配 anchored excludesFile 只挡根层而漏进 `git status`）
+
+> 2026-07-10 | direnv + git `core.excludesFile` | 工作区根 `.envrc` 向各子仓库分发 Copilot 配置软链
+
+工作区根有个 direnv `.envrc`，里面 `link_into_subdirs` 把根上的 `.agents/skills`、`.mcp.json`、`.github/hooks/safety-net.json`、`.github/instructions/global.instructions.md` 软链分发到**每个直接子目录**（`for sub in "$PWD"/*/`），让每个子仓库各有一份配置。这些分发链本应被工作区级 `core.excludesFile`（`<workspace-root>/.timidly-excludes`）忽略、不进任何 git diff。
+
+## 症状
+
+- 在某个子仓库 `<child-repo>` 里 `git status`，冒出**几十个 untracked**：`<subdir>/.agents/`、`<subdir>/.github/`，遍布该仓库**每一个子目录**，全是本该被忽略的分发软链。
+- `core.excludesFile` 确认生效（`git config --show-origin core.excludesFile` 指向 `.timidly-excludes`），但 `git check-ignore -v <subdir>/.agents/skills` 返回 **NOT ignored**。
+
+## 排查关键转折
+
+1. **anchored pattern**：`.timidly-excludes` 里的忽略项大多**含斜杠**（`.agents/skills`、`.github/hooks/safety-net.json`…）。gitignore 语义下，含斜杠的 pattern **锚定到仓库根**——只匹配 `<repo>/.agents/skills`，匹配不到 `<repo>/<subdir>/.agents/skills`。唯一不含斜杠的 `.mcp.json` 是 unanchored、匹配任意深度，所以子目录里的 `.mcp.json` 软链**没**进 `git status`——这一对照正好点出"斜杠=锚定"是漏出主因。
+2. **软链指向暴露触发方式**：漏出的软链指向 `<child-repo>/.agents/skills`（上一层），说明 `link_into_subdirs` 是以 `$PWD=<child-repo>` 跑的。但 `<child-repo>` 自己没有 `.envrc`。→ 只可能是**有人在 `<child-repo>` 里手动 `source <workspace-root>/.envrc`**：direnv 正常加载会先 cd 到 `.envrc` 所在目录（`$PWD`=工作区根，只分发到各子仓库根这一层），而手动 `source` 保持 cwd 不变、`$PWD` 停在子仓库里，于是 `for sub in "$PWD"/*/` 把链铺进了子仓库的**每个子目录**，深了一层。
+
+## 根因
+
+两层叠加：
+
+- `link_into_subdirs` 用 `$PWD` 定分发目标；手动 `source` 从子目录执行时 `$PWD` 被错设成该子目录 → 链铺深一层。
+- 工作区 `core.excludesFile` 的忽略项 anchored（含斜杠）、只覆盖仓库根那一层 → 深一层的分发链没被忽略 → 漏进 `git status`（unanchored 的 `.mcp.json` 反而被正确挡住，是旁证）。
+
+## 解决
+
+**清理**：先确认要删的全是软链（`find <subdir>/.agents <subdir>/.github -type f` 输出为空 = 无独有实体文件），再 `trash-put` 掉这些 `.agents`/`.github`/`.mcp.json`，根级 canonical 不动。
+
+**防复发**：给 `link_into_subdirs` 加 early-return guard——用 `${BASH_SOURCE[0]}` 解析出 `.envrc` **自身所在目录**，只有当前 `pwd -P` 等于它才分发，否则跳过并打一行提示：
+
+```bash
+link_into_subdirs() {
+  local src="$1" rel="$2" sub target root
+  [[ -e "$src" ]] || return 0
+  root="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+  if [[ -n "$root" && "$(pwd -P)" != "$root" ]]; then
+    [[ -n "$_warned" ]] || { echo "envrc: cwd '$(pwd -P)' != workspace root '$root'; skip link_into_subdirs" >&2; _warned=1; }
+    return 0
+  fi
+  for sub in "$PWD"/*/; do ... done
+}
+```
+
+- direnv 正常加载：cd 到 `.envrc` 目录 → `pwd==root` → 照常分发。
+- 手动 `source` 从子目录：`pwd!=root` → 跳过 + 提示，不再乱铺。
+- **fail-safe**：`${BASH_SOURCE[0]}` 取不到 → `root` 空 → 条件为假 → 落到"照常跑"，绝不误伤正常 direnv 流程。
+- guard 放函数内，未来新增的分发调用自动受保护。
+
+### 测试踩坑（重要）
+
+验证 guard 时若**从一个空临时目录** `source` 真 `.envrc`，会得到假的"没跳过也没分发"假象——因为函数在 guard **之前**有 `[[ -e "$src" ]] || return 0`，空目录里 `$PWD/.github/...` 不存在 → 到达 guard 前就早退了。必须**构造带真实 `.github/hooks/safety-net.json` 等源文件 + 一个 child 子目录**的假仓库来测：source 真文件（cwd≠真根）应打印提示且 child 下 0 链；source 副本（cwd=副本自身根）应无提示且 child 下生成 4 条链。
+
+关键词：`.envrc`、`direnv`、`手动 source 从子目录`、`link_into_subdirs`、`$PWD 被错设`、`BASH_SOURCE guard`、`pwd -P`、`core.excludesFile`、`gitignore 含斜杠 anchored`、`check-ignore NOT ignored`、`.mcp.json 反而被忽略`、`symlink 分发深一层`、`.agents/skills`、`.github/instructions`、`git status 冒出大量 untracked`、`测试假象 [[ -e "$src" ]] 早退`
