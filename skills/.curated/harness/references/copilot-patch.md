@@ -18,22 +18,23 @@ python3 <skills>/harness/scripts/patch-copilot-cli.py --apply    # 落盘（备�
 python3 <skills>/harness/scripts/patch-copilot-cli.py --revert   # 从 .tmy-patch.bak 恢复所有版本目录
 ```
 
-覆盖 4 个 patch（各带独立幂等 marker）：
+覆盖 5 个 patch（各带独立幂等 marker）：
 
 | patch 名 | marker | 效果 | 稳定锚点（手动逆向时也用它） |
 |---|---|---|---|
 | `retry-maxretries` | `tmy-retry` | 默认重试对象 `maxRetries` 5→10（GOAWAY / 瞬断更耐抗） | `maxRetries:5,defaultRetryDelaySeconds:5,backoffFactor:2`（默认配置对象，独特唯一） |
 | `effort-default` | `tmy-max-effort` | 每个模型默认 reasoning effort → 它支持的最高档（picker `(default)` 顶格） | `("sweagent-capi",…).clientOptions?.defaultReasoningEffort??"medium"`（默认解析函数） |
 | `webfetch-fakeip` | `tmy-webfetch-fakeip` | `web_fetch` SSRF 放行 fake-ip 段 `198.18/19`（mihomo fake-ip 下可用） | `.hookResolveAndValidateUrl(…)`（形态 B helper）；形态 A 用 `.networkIsBlockedIp` |
-| `tiers-clearpoint` | `tmy-tiers-b` | typed `/model <id>` 落盘点别把 `effortLevel`/`contextTier` 清成默认，支持的模型保成最高 effort / `long_context` | `.effortLevel=void 0,<x>.contextTier=void 0` + 前方就近 `.find(a=>a.id===<id>)` 拿模型对象 |
+| `tiers-clearpoint` | `tmy-tiers-b` | **context tier 落盘半**：typed `/model <id>` 落盘点别把 `effortLevel`/`contextTier` 清成默认，支持的模型保成最高 effort / `long_context`（下次启动不掉档、settings 不被抹） | `.effortLevel=void 0,<x>.contextTier=void 0` + 前方就近 `.find(a=>a.id===<id>)` 拿模型对象 |
+| `tiers-live` | `tmy-tiers-live` | **context tier 运行时半**：`setModel` 那次 live 切换调用把 tier 位从 `void 0` 换成守卫 → **本会话**切模型后即时长上下文（补 clearpoint 只管落盘、live 窗口仍掉 264k 的洞） | `setModel:async(<id>,…)=>{let <lst>=…?.type==="success"?…list` + 就近 `<fn>(<id>,void 0,{model,effort,contextTier},void 0,…)` 的**第 4 位** `void 0` |
 
 **跑成功（全 `apply` 或 `already`）就不用往下读**。**开新会话才生效**（运行中的 `copilot` 已把 `app.js` 载进内存）；`copilot update` 拉的新版本目录是干净的，**重跑一次**即可（幂等）。
 
-**实测（两台机器各 5 个版本目录 1.0.68→1.0.69）**：auto-update 后 pkg cache 里**正式版 `1.0.69` 与预发布版 `1.0.69-2` 并存**，loader 跑的是正式版 `1.0.69`（SemVer：release > prerelease，`copilot --version` 报 `1.0.69` 印证）——四个 patch 对它全命中、`--apply` 后 `node --check` 干净、每处替换语义正确、每 marker 唯一。旧版本目录 loader 不跑，锚点形态不同会各自 `SKIP`（如更早版本无 `long_context` 特性→`tiers` 跳过），不影响当前版本。⚠️ **别用位序数字比版本**：`1.0.69-2` 的数字元组 `(1,0,69,2)` 会被误判得比 `1.0.69` 的 `(1,0,69)` 高、和 loader 相反；脚本 `_vkey` 已按 SemVer 优先级排（正式版 > 其预发布），`--latest-only` 才和 loader 选的是同一份。这也是「auto-update 后要重跑」的典型场景：新掉的正式版目录是干净的，把上一版打好的补丁架空了。
+**实测（两台机器 1.0.70-0）**：五个 patch 全命中、`--apply` 后 `node --check` 干净、每处替换语义正确、每 marker 唯一。旧版本目录 loader 不跑，锚点形态不同会各自 `SKIP`（如更早版本无 `long_context` 特性→两个 `tiers` 跳过；2 参 `setModel` 旧形态→`tiers-live` 跳过），不影响当前版本。⚠️ **别用位序数字比版本**：正式版 `1.0.69` 与预发布 `1.0.69-2` 并存时，`1.0.69-2` 的数字元组 `(1,0,69,2)` 会被误判得比 `1.0.69` 的 `(1,0,69)` 高、和 loader（SemVer：release > prerelease）相反；脚本 `_vkey` 已按 SemVer 优先级排，`--latest-only` 才和 loader 选的是同一份。这也是「auto-update 后要重跑」的典型场景：新掉的正式版目录是干净的，把上一版打好的补丁架空了。
 
 **跑失败时**：脚本会打印是哪个 patch、什么原因（`anchor count=0` / 特性缺失 / 找不到模型对象）。按 patch 名到下面对应节，用「稳定锚点」重新 `view` 当前 `app.js` 定位、据「改什么」重写替换。**每次只修失效的那一个**。
 
-**脚本不覆盖、需手动**的两项（形态在 1.0.69-2 已变 / 移除）见文末[未覆盖节](#未覆盖需手动逆向)。
+**脚本不覆盖、需手动**的一项（retry 非-API 退避下限，形态已移除）见文末[未覆盖节](#未覆盖需手动逆向)。
 
 ---
 
@@ -124,12 +125,12 @@ loginctl enable-linger "$USER"   # 没开 linger 的话，让 user manager 开�
 - **每个模型的「默认档」来自 bundle 静态解析、用户不可配**：
   - *effort*：静态表（源标签 `"sweagent-capi"`）的 `clientOptions.defaultReasoningEffort`，按 model→family→vendor 匹配、缺省硬回落 `"medium"`，再过 native 用该模型 `supportedReasoningEfforts` 校验。这既是 picker `(default)` 标签来源，也是 typed `/model` 回落目标。
   - *context*：`long_context`（分层定价大窗口档，如 gpt-5.x 的 1.1M）**只在该模型 `billing.token_prices` 带 `long_context` 时才存在**；不支持的模型只有 `default` 一档。
-- **两处被 typed `/model` 清空 / 重置**（补丁的靶）：
-  - **清空点**：typed `/model <id>` 执行时那行 `effortLevel=void 0,contextTier=void 0`（落盘清空 settings + 本会话内存）。
-  - **setModel 重置**：native `setModel` 的 switch 调用少传 tier 参 → 把本会话内存 state 重置回 default。⚠️ **1.0.69-2 起该 setModel 已改为转发当前 tier**（`<fn>(U,void 0,{…contextTier:<当前值>})`），形态与旧版不同，见[未覆盖节](#未覆盖需手动逆向)。
-  - 所以「先用无参 `/model` 两步选择器选好档」扛不住之后任何一次 typed `/model` 切模型（picker 路径传满参、不清；typed 路径走清空）。
+- **两处被 typed `/model` 清空 / 重置**（补丁的靶，**两处现在都补**）：
+  - **清空点（落盘半）**：typed `/model <id>` 落盘写 settings 前那行 `effortLevel=void 0,contextTier=void 0`（清空 settings）。→ `tiers-clearpoint` 补。
+  - **setModel（运行时半）**：`setModel:async` 里那次 live 切换调用 `<fn>(<id>,void 0,{model,effort,contextTier},void 0,<ee>)` 把 tier 位（**第 4 个位置参**）传成 `void 0` → 内部 `fe.model.switchTo({…,contextTier:第4参})` 把**本会话 live 窗口**重置回默认档。→ `tiers-live` 补（把那个 `void 0` 换成守卫；picker 路径本来就传满第 4 参、不动）。
+  - 所以「先用无参 `/model` 两步选择器选好档」扛不住之后任何一次 typed `/model` 切模型（picker 路径两处都传满参、不清；typed 路径两处都靠补丁兜）。
 - **⚠️ 交互 TUI 无视 `--context` 开关，只认 `settings.json` 的 `contextTier`**（实测；无头 `-p` 才认开关）。根因：交互 App 有个挂载 effect 只从盘重灌 tier（启动时 runtime 没带 tier → 落到 `settings.contextTier`）。**所以交互启动要长上下文＝改 `settings.json` `contextTier: long_context`，别指望 `--context`。**
-- **context 的完整修复 = 两件套**：① `settings.json` `contextTier: long_context`（管交互启动即长上下文）＋ ② 清空点补丁（管 typed `/model` 切换后不掉档、settings 不被抹）。缺 ② 实测：启动 1M，但 typed `/model` 切走再切回 → `/context` 从 1M 掉回 264k，且 `settings.json` 的 `contextTier` 被物理删掉。
+- **context 的完整修复 = 三件套**：① `settings.json` `contextTier: long_context`（管交互**启动**即长上下文）＋ ② 清空点补丁 `tiers-clearpoint`（管 typed `/model` **落盘**不被抹、下次启动对）＋ ③ setModel 补丁 `tiers-live`（管 typed `/model` 后**本会话 live 窗口**即时长上下文）。缺 ③ 实测（1.0.70-0，opus-4.8）：typed `/model claude-opus-4.8` 后 `settings.json` 落了 `long_context`、但 `/context` live 窗口仍 **264k**；补 ③ 后 live 变 **1000k**。（这三件套的历史：② + ③ 就是早年 `patch-copilot-cli-longcontext.py` 的 PATCH#1 + PATCH#2；重构时误以为「1.0.69-2 起 setModel 已转发当前 tier」把 ③ 删了，1.0.70-0 实测证伪、遂补回。）
 
 **实测四象限（opus-4.8；上下文窗口取 `/context` 面板，prompt 上限取 resolved `max_prompt_tokens`）**：
 
@@ -137,8 +138,16 @@ loginctl enable-linger "$USER"   # 没开 linger 的话，让 user manager 开�
 |---|---|---|
 | 无头 `-p` ＋ `--context default` | 264k | 200k |
 | 无头 `-p` ＋ `--context long_context` | **1,000,000** ✓ | 936,000 |
-| 交互 TUI ＋ `--context long_context` | 264k ✗ | 200k |
-| 交互 TUI ＋ settings `contextTier=long_context`（不带开关） | **1,000,000** ✓ | 936,000 |
+| 交互 TUI 启动 ＋ `--context long_context` 开关 | 264k ✗ | 200k |
+| 交互 TUI 启动 ＋ settings `contextTier=long_context`（不带开关） | **1,000,000** ✓ | 936,000 |
+
+**会话内 typed `/model` 的 live 窗口（1.0.70-0 实测，PTY 驱动真 TUI + `/context`）**：
+
+| 场景 | live `/context` 窗口 | settings 落盘 |
+|---|---|---|
+| 只补 `tiers-clearpoint`（落盘半）：`/model claude-opus-4.8` | 264k ✗（掉档） | `long_context` ✓ |
+| 加 `tiers-live`（运行时半）：`/model claude-opus-4.8` | **1,000,000** ✓ | `long_context` ✓ |
+| 加 `tiers-live`：`/model gpt-5-mini`（不支持 long） | 192k（默认，守卫回落、不崩） | 无 `contextTier` ✓ |
 
 ### 改什么（两个作用面，effort / context 同理）
 
@@ -147,13 +156,13 @@ loginctl enable-linger "$USER"   # 没开 linger 的话，让 user manager 开�
 - **作用面 A「默认解析」**（管 picker `(default)` 标签 + 启动 / 解析回落）：改读「每个模型默认档」的解析函数，让它返回**该模型支持的最高档**而非静态默认。
   - *effort*（脚本 `effort-default` 做的就是这面）：解析函数用 `("sweagent-capi",…).clientOptions?.defaultReasoningEffort??"medium"` 这段独特字面量定位；改成先取该模型 `supportedReasoningEfforts` 里最高（`max>xhigh>high>medium>low`）、取不到回落原逻辑。同一模块内有现成的 `("sweagent-capi",…)` 取模型描述符，复用它拿 `supportedReasoningEfforts`。
   - *context*：理论对称，但 stock 里 context 默认本就是 `default`、没有独立的「默认取 long_context」解析点，故脚本不做 context 的 A 面。
-- **作用面 B「typed `/model` 清空点」**（管切模型后不掉档，**effort/context 共享同一处代码**；脚本 `tiers-clearpoint` 做这面）：
-  - 用稳定属性名串 `effortLevel=void 0,contextTier=void 0` 定位（这是 typed `/model <id>` 落盘写 settings 前那行）。**前方就近有 `<s>=<r>.find(a=>a.id===<model-id>)`**——拿到模型对象喂守卫。把末尾两个 `=void 0` 分别改成守卫三目：effort→最高档、context→`long_context`（支持时）。
-  - 该锚点的**三目形式** `<l>.model=<n>===<u>?void 0:<n>,…` 天然只命中「实名 model」分支、跳过 `/model auto` 分支（auto 无固定模型 / 无 long_context，本就该回默认）。
+- **作用面 B「typed `/model` 切换点」**（管切模型后不掉档）——**两处代码、两个补丁**：
+  - **B-落盘（`tiers-clearpoint`，effort/context 共享）**：用稳定属性名串 `effortLevel=void 0,contextTier=void 0` 定位（typed `/model <id>` 落盘写 settings 前那行）。**前方就近有 `<s>=<r>.find(a=>a.id===<model-id>)`**——拿到模型对象喂守卫。把末尾两个 `=void 0` 分别改成守卫三目：effort→最高档、context→`long_context`（支持时）。该锚点的**三目形式** `<l>.model=<n>===<u>?void 0:<n>,…` 天然只命中「实名 model」分支、跳过 `/model auto`（auto 无固定模型 / 无 long_context）。
+  - **B-运行时（`tiers-live`，只 context）**：`setModel:async(<id>,<ie>,<ee>)=>{let <lst>=<mn>?.type==="success"?<mn>.list:void 0;` 拿到 id 与模型列表 `<lst>`；就近的 live 切换调用 `<fn>(<id>,void 0,{model,effort,contextTier},void 0,<ee>)` 的**第 4 个位置参**（`void 0`）就是喂给内部 `fe.model.switchTo({…,contextTier:第4参})` 的 live tier。把这个 `void 0` 换成守卫 IIFE：`(()=>{let _m=(<lst>||[]).find(_x=>_x&&_x.id===<id>);return <守卫(_m)>?"long_context":void 0})()`。picker 路径传的是非 `void 0` 的第 4 参、不匹配本锚点（要求 2nd＝`void 0` 且 4th＝`void 0`），天然不误伤。
 - **守卫（不支持的模型必须回落、不能崩）**：
   - *effort*：`<mv>.supportedReasoningEfforts` 里按 `["max","xhigh","high","medium","low"]` 取第一个命中的，空则 `void 0`（回落默认）。
-  - *context*：照抄 native 能力判定——`<mv>.billing.token_prices` 存在且 `<alias>.modelsIsTieredTokenPrices(JSON.stringify(...))` 为真且 `"long_context" in …`，否则 `void 0`。模块别名（`<alias>`，形如 `v`）从 `<x>.modelsIsTieredTokenPrices` 探测、别硬编。
-  - **⚠️ 特性前置守卫**（《通用套路》第 4 条的实例）：`long_context` 分层定价是较新特性、靠 native `modelsIsTieredTokenPrices` 判定；老版本没有这个 native 函数，注入引用它的守卫会**运行时崩**、而 `node --check` 查不出。所以打 context 前必须先确认 bundle 里有 `modelsIsTieredTokenPrices` 字面量，没有就跳过（脚本 `tiers-clearpoint` 已内建此守卫：1.0.67 无特性→自动 SKIP）。真踩过：放松锚点后多版本全匹配 + `node --check` 全过，老版本一敲 `/model` 就炸。
+  - *context*（B-落盘 / B-运行时共用同一判定）：照抄 native 能力判定——`<mv>.billing.token_prices` 存在且 `<alias>.modelsIsTieredTokenPrices(JSON.stringify(...))` 为真且 `"long_context" in …`，否则 `void 0`。模块别名（`<alias>`，1.0.70-0 里是 `S`）从 `<x>.modelsIsTieredTokenPrices` 探测、别硬编。全 `&&` 短路 + IIFE 局部变量，任何模型对象形态都不会抛、最坏回 `void 0`。
+  - **⚠️ 特性前置守卫**（《通用套路》第 4 条的实例）：`long_context` 分层定价是较新特性、靠 native `modelsIsTieredTokenPrices` 判定；老版本没有这个 native 函数，注入引用它的守卫会**运行时崩**、而 `node --check` 查不出。所以打 context 前必须先确认 bundle 里有 `modelsIsTieredTokenPrices` 字面量，没有就跳过（脚本两个 `tiers` 都内建此守卫：无特性→自动 SKIP）。真踩过：放松锚点后多版本全匹配 + `node --check` 全过，老版本一敲 `/model` 就炸。
 
 ### 验证：用真 PTY 驱动交互式 TUI
 
@@ -162,9 +171,11 @@ loginctl enable-linger "$USER"   # 没开 linger 的话，让 user manager 开�
 - 子进程 `os.execvp("copilot",…)` 拿到**真控制终端**；`ioctl(fd, TIOCSWINSZ, …)` 设窗口、`TERM=xterm-256color`。
 - master fd：`select.select([fd])` 读＝看屏幕；`os.write(fd,ch)` ＝敲键盘（`\r` 提交、`\x03` 退出）。
 - **逐字符输入（~60ms/字符）**：一次性灌整行会和 TUI 自动补全竞争、截断命令——踩过。
-- 断言：从磁盘读 `settings.json` 看 `contextTier` / `effortLevel`；正则剥 ANSI 后 grep 稳定串（`Model changed from`、footer 的 `1.1M context`）。**必须换一个和当前不同、且支持目标档的模型**（如 gpt-5.4）强制真切换——切同款＝没切，区分不出「hack 没生效」vs「本就同档」；`-p "/model"` 一次性喂会走另一条「Already using」路径（不在 app.js 里），测不到。
+- **启动先应答「Do you trust the files in this folder?」信任框**（在 `/tmp` 等新目录会弹）：检测到就先发 `1\r`，否则你的 `/model` 会被信任框吃掉——踩过。
+- **断言分两层，缺一不可**：① 从磁盘读 `settings.json` 看 `contextTier`/`effortLevel`（落盘半）；② **`/model` 后再发 `/context` 读 live 面板的窗口数**（`opus-4.8 · 70k/1000k tokens` 才是真 1M，264k＝掉档）。**只看 ① 会被 `tiers-clearpoint` 骗过**——它把 settings 写成 `long_context` 了，但没 `tiers-live` 时 live 窗口仍 264k。正则剥 ANSI 后 grep `Model changed from` / `… · Nk/Mk tokens`。**必须换一个和当前不同、且支持目标档的模型**（如 gpt-5.4）强制真切换；`-p "/model"` 一次性喂会走另一条「Already using」路径（不在 app.js 里），测不到。
+- **零干扰隔离法**（别动用户真环境）：`COPILOT_HOME=<scratch>` 指到只含小文件（`config.json` 带鉴权 + 自造 `settings.json`）的 scratch 目录（3.4G 的 `logs/`、`session-state/` 不用拷）；要测「补丁版 app.js」而不碰真 pkg cache，就 `cp -a` 版本目录到 `COPILOT_CACHE_HOME=<scratch>/pkg/<platform>/`、目录名改成极高版本号（如 `9.9.9-0`）让 loader 必选它、补丁只打这份。CLI 认 `COPILOT_CACHE_HOME`（实测：只有 scratch 那份带 `tmy-tiers-live` → live 出 1M，反证 CLI 跑的就是它）。
 
-**实测结论**：支持的模型（gpt-5.4 / 5.5 / opus-4.8）→ typed `/model` 后 footer 显 `(1M context)`/`(1.1M context)` + settings 落 `long_context`；不支持的（gpt-5-mini）→ 守卫回落 default、不崩。opus-4.8 切走再切回，`/context` 从补丁前 264k 变 **1000k**、`settings.json` `contextTier` 不再被抹。
+**实测结论（1.0.70-0）**：支持的模型（gpt-5.4 / 5.5 / opus-4.8）→ typed `/model` 后 `settings.json` 落 `long_context`（`tiers-clearpoint`）**且** live `/context` 出 `1000k`/`1.1M`（`tiers-live`）；不支持的（gpt-5-mini，192k）→ 两半守卫都回落 default、不崩。**关键教训**：`tiers-clearpoint` 单独存在时 `settings.json` 看着对（`long_context`）、但 live 窗口仍 264k——所以补丁验证一定要读 live `/context`、不能只读 settings。
 
 ---
 
@@ -215,9 +226,10 @@ patch 后**开新会话**让它 `web_fetch` 任意外网 URL；若错误从 `blo
 
 ## 未覆盖、需手动逆向
 
-脚本刻意不碰的两处（1.0.69-2 形态已变 / 移除，硬做易崩或无收益）。需要时对着当前 `app.js` 手动逆向：
+脚本刻意不碰的一处（当前形态已变 / 移除，硬做易崩或无收益）。需要时对着当前 `app.js` 手动逆向：
 
-- **retry 非-API 错误的 4 秒退避下限**：旧版本 `retryAfter*(0.8+Math.random()*0.4)` 套 `Math.max(…,4)`。**1.0.69-2 已无此 jitter 公式**（`Math.random` 只剩 brace-expansion 占位、temp 文件名等无关用途）。`maxRetries` 翻倍已覆盖主要收益；若未来版本重现该公式，锚点用 `.8+Math.random()*.4`。
-- **默认档位「作用面 B 的本会话内存半」（setModel）**：旧版本 setModel 的 switch 调用「少传 tier 参 → 重置 default」，补第 4 参即可。但 **1.0.69-2 起该调用已改为 `<fn>(U,void 0,{model:…,effort:…,contextTier:<当前 state 值>})`——已经转发当前 tier**，不再是「缺参重置」。这意味着：清空点补丁（`tiers-clearpoint`，脚本已做）保住 settings 落盘半 → 下次启动正确；本会话内存半是否还需要补，取决于该 state 值怎么流转，得逐版本核 `setModel` 上下文。若实测**同一会话内**切模型仍瞬时掉档，再手动逆向 `setModel:async` 附近、把它读的 tier state 源头也守卫住。
+- **retry 非-API 错误的 4 秒退避下限**：旧版本 `retryAfter*(0.8+Math.random()*0.4)` 套 `Math.max(…,4)`。**当前版本已无此 jitter 公式**（`Math.random` 只剩 brace-expansion 占位、temp 文件名等无关用途）。`maxRetries` 翻倍已覆盖主要收益；若未来版本重现该公式，锚点用 `.8+Math.random()*.4`。
+
+> 📌 **曾经未覆盖、现已补回**：context tier 的「本会话内存半 / setModel」。重构时误判「1.0.69-2 起 setModel 已转发当前 tier、无需补」，1.0.70-0 实测证伪（typed `/model` 后 live `/context` 掉回 264k），已由 `tiers-live`（作用面 B-运行时）补回，见上文补丁二。教训：**「setModel 已转发 tier」不能只看调用点带没带 `contextTier`——得看那个 tier 值的来源；1.0.70-0 里 live 切换认的是第 4 个位置参（`void 0`），不认对象里的 `contextTier`。**
 
 **手动逆向工作流**（脚本报某个 patch `SKIP` 时）：① 按上表「稳定锚点」`grep`/`view` 当前 `app.js` 确认字面量还在、看它现在长什么样；② 用 node 切片（`s.indexOf(锚点)` 前后各切一段、`replace(/\s+/g," ")` 压平）读清结构；③ 数命中数（须唯一）；④ 按「改什么」写替换、混淆名反向引用捕获；⑤ `node --check`；⑥ 按上面的四象限 / PTY / `web_fetch` 各自的验证法确认真生效。改完把新锚点同步回脚本对应的 `p_*` 函数。

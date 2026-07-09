@@ -10,16 +10,17 @@ pkg cache 里运行时真正跑的 app.js（见 harness/references/copilot-patch
 **任何一个 patch 锚点在新版本失效，只会单独 skip 并打印原因**，不影响其余、也不破坏
 文件；这时再对照 copilot-patch.md 的「改什么 + 稳定字面量」重新逆向那一个 patch。
 
-覆盖（均对 1.0.69-2 实测命中；旧版本形态不同会各自 skip，反正 loader 只跑最高版）：
+覆盖（对 1.0.70-0 实测命中；旧版本形态不同会各自 skip，反正 loader 只跑最高版）：
   retry-maxretries  默认重试配置对象 maxRetries 5→10（GOAWAY/瞬断更耐抗）
   effort-default    每个模型默认 reasoning effort → 它支持的最高档（picker (default) 顶格）
   webfetch-fakeip   web_fetch SSRF 守卫放行 fake-ip 段 198.18/19（mihomo fake-ip 下可用）
-  tiers-clearpoint  typed `/model <id>` 落盘点：别把 effortLevel/contextTier 清成默认，
-                    支持的模型分别保成最高 effort / long_context（切模型不掉档、settings 不被抹）
+  tiers-clearpoint  context tier 落盘半：typed `/model <id>` 落盘点别把 effortLevel/contextTier
+                    清成默认，支持的模型分别保成最高 effort / long_context（下次启动不掉档、settings 不被抹）
+  tiers-live        context tier 运行时半：setModel 那次 live 切换把 tier 位从 void 0 换成守卫，
+                    让**本会话**切模型后即时长上下文（补 clearpoint 只管落盘、live 窗口仍掉 264k 的洞）
 
-**不覆盖、需手动**（形态在 1.0.69-2 已变/移除，见 copilot-patch.md 说明）：
+**不覆盖、需手动**（形态在当前版本已变/移除，见 copilot-patch.md 说明）：
   · retry 的非-API 错误退避 4s 下限（该 jitter 公式当前版本已不在）
-  · setModel 的本会话内存半（1.0.69-2 已改为转发当前 tier M0，语义待逐版本核）
 
 用法：  patch-copilot-cli.py            # dry-run，只报告命中/skip，不写
         patch-copilot-cli.py --apply   # 落盘（自动备份 + node --check + 失败回滚）
@@ -184,11 +185,43 @@ def p_tiers(src):
            f'{l}.effortLevel={eff},{l}.contextTier={ctx}/*{mk}*/')
     return src[:m.start()] + new + src[m.end():], f"typed /model 保档 (model={mv}, alias={alias})"
 
+def p_tiers_live(src):
+    # 运行时半：setModel 里那次 live 切换调用把 tier 位传成 void 0 → fe.model.switchTo
+    # ({contextTier:void 0}) 把本会话窗口重置成默认档（typed /model 后 /context 掉回 264k）。
+    # 该 tier 是 iP 的第 4 个位置参（picker 路径传满、setModel 路径传 void 0）。把这个 void 0
+    # 换成守卫（模型支持 long_context 就传 long_context）→ 本会话即时长上下文。落盘半由
+    # tiers-clearpoint 负责，二者合起来才是完整的 context tier 修复（历史上的 PATCH#1+#2）。
+    mk = "tmy-tiers-live"
+    alias = module_alias(src)
+    if not alias:
+        return None, "no modelsIsTieredTokenPrices (pre-long_context 版本) — skip"
+    # setModel:async(<id>,<ie>,<ee>)=>{let <lst>=<mn>?.type==="success"?<mn>.list:void 0;
+    sig = re.search(r'setModel:async\(([\w$]+),([\w$]+),([\w$]+)\)=>\{'
+                    r'let ([\w$]+)=([\w$]+)\?\.type==="success"\?\5\.list:void 0;', src)
+    if not sig:
+        return None, "setModel signature not found (形态已变)"
+    mid, ie, ee, lst, mn = sig.groups()
+    # 就近的 live 切换调用 <fn>(<id>,void 0,{model,effort,contextTier},void 0,<ee>)
+    call = re.compile(r'([\w$]+)\(' + re.escape(mid) +
+                      r',void 0,(\{model:[\w$]+,effort:[\w$]+,contextTier:[\w$]+\}),void 0,' +
+                      re.escape(ee) + r'\)')
+    ms = list(call.finditer(src, sig.end(), sig.end() + 800))
+    if len(ms) != 1:
+        return None, f"setModel live-call anchor count={len(ms)} (want 1)"
+    m = ms[0]; fn, obj = m.group(1), m.group(2)
+    guard = (f'(()=>{{let _m=({lst}||[]).find(_x=>_x&&_x.id==={mid});'
+             f'return _m&&_m.billing&&_m.billing.token_prices&&'
+             f'{alias}.modelsIsTieredTokenPrices(JSON.stringify(_m.billing.token_prices))&&'
+             f'"long_context"in _m.billing.token_prices?"long_context":void 0}})()/*{mk}*/')
+    new = f'{fn}({mid},void 0,{obj},{guard},{ee})'
+    return src[:m.start()] + new + src[m.end():], f"setModel live tier (fn={fn}, list={lst}, alias={alias})"
+
 PATCHES = [
     ("retry-maxretries", "tmy-retry",           p_retry),
     ("effort-default",   "tmy-max-effort",      p_effort),
     ("webfetch-fakeip",  "tmy-webfetch-fakeip", p_webfetch),
     ("tiers-clearpoint", "tmy-tiers-b",         p_tiers),
+    ("tiers-live",       "tmy-tiers-live",      p_tiers_live),
 ]
 
 # ============================ 主流程 ============================
