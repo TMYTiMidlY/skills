@@ -270,6 +270,35 @@ global options 里见到的：
 
 ⚠️ **on-demand 必须配 permission（`ask` 或 internal）**：否则任意 SNI 都能让你签 = 被打爆 ACME 限额 / 占内存，官方强制要求。
 
+### 通配证书（DNS-01）vs on-demand 单域证书：两条签发路径
+
+同样是"真 Let's Encrypt 证书"，拿到手的路径有两条，直接决定**要不要 DNS 密钥、首访会不会卡、子域名单露不露**。根子在 **ACME 的三种 challenge**（挑战，CA 用来验证"你真的控制这个名字"；Caddy `acme {…}` 块里可开关，`acmeissuer.go:431-442`）：
+
+| challenge | 怎么证明控制 | 前提 | 能签通配 `*.x` |
+|---|---|---|---|
+| **HTTP-01** | 在 `:80/.well-known/acme-challenge/…` 放应答文件 | 80 端口公网可达 | ❌ |
+| **TLS-ALPN-01** | 在 `:443` TLS 握手里用特制 ALPN 应答 | 443 端口公网可达 | ❌ |
+| **DNS-01** | 在域名下写一条 `_acme-challenge` TXT 记录 | **DNS 服务商 API 密钥**（Caddy 里 `tls { dns <provider> … }`；没配报 `DNS challenge enabled, but no DNS provider configured`，`acmeissuer.go:216`） | ✅ **只有它行** |
+
+**为什么通配只能走 DNS-01**：签 `*.foo.com` 等于声明"整个 foo.com 命名空间归我"，HTTP/TLS-ALPN 只能证明你控制**某一个** host，证不了整段，所以 Let's Encrypt 规定 wildcard **必须** DNS-01。于是分成两条路：
+
+- **通配证书 `*.foo.com`（DNS-01）**：一张证书覆盖所有一级子域（`a.foo`/`b.foo`… 共用）。提前签好、缓存 → 任意子域**首访即时**、与连接来路无关。代价：得给 Caddy 配 DNS provider 的 **API 密钥**；好处：省 LE 限额（1 张顶多域）、**藏子域名单**（公开 CT 日志只露 `*.foo.com`）。注意通配只吃**一级**——`*.foo.com` 覆盖 `a.foo.com`，**不**覆盖 `a.b.foo.com`（那要另配 `*.b.foo.com`）。
+
+- **on-demand 单域（HTTP-01 / TLS-ALPN-01）**：不预签，**某 host 第一次 TLS 握手时**才现签一张**只含它自己**的单域证书（见上一节 `on_demand_tls`）。好处：不用 DNS 密钥、新域名 DNS 一指过来 + 门卫放行就能用、零配置扩容。代价：① 首访要等签发（几十 ms～数秒），② 每域一次 ACME 订单 → 吃 LE 限流（**50 证书/注册域/周**），③ 每个 host 逐个进 CT 公开日志。
+
+**on-demand 天生强制一道门卫**（这就是上一节 `ask` 的由来）：Caddy 源码里，只要自动化策略是"通配或默认（无显式 subject = 无边界）"且用公网 issuer 却没配 permission 模块，就**开不起来**——直接报 `on-demand TLS cannot be enabled without a permission module to prevent abuse`（`automation.go:296-306`；"无边界"判定 `isWildcardOrDefault()` 见 `:463-474`）。放行逻辑：每遇一个没预签的名字就调 `permission.CertificateAllowed(name)`（`automation.go` 的 `DecisionFunc` → `ondemand.go` 的 `PermissionByHTTP`：GET `ask` 端点带 `?domain=<SNI>`，2xx 才签）。道理很直白：on-demand 等于"谁来握手都可能触发签发"，不设门卫会被随便打的 SNI 刷爆 ACME 配额。
+
+**怎么看一个在跑的 Caddy 用的哪种**（看证书 SAN 一眼区分）：
+
+```bash
+echo | openssl s_client -connect <edge_ip>:443 -servername <host> 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -ext subjectAltName
+# 通配： X509v3 Subject Alternative Name: DNS:*.foo.com
+# 单域： X509v3 Subject Alternative Name: DNS:host.foo.com   ← on-demand 典型长这样
+```
+
+**实测坑（on-demand 特有）**：on-demand 证书是"首次握手现签"，若第一次访问走的是**签不出来的路径**，握手会直接失败（`curl` 退出码 35 = SSL 握手错）而非超时。典型：用 `curl --resolve <host>:443:127.0.0.1` 从**环回**打一个全新 on-demand 域——本机根本没这张证书、ACME 挑战又没法在环回路径上完成，握手就挂；换**真实公网路径**（DNS 真解析到边缘、80/443 可达）打一次，证书当场签出来、之后即正常。通配证书无此问题（证书早在缓存里，与连接从哪来无关）。
+
 ### 可复用的错误页 snippet
 
 如果你有一个单独的 `error-pages` 服务跑在 `localhost:4040`，可以用 snippet 集中定义，再按站点 `import`：
