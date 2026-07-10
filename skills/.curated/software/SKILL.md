@@ -42,6 +42,10 @@ Zellij Web client、HTTPS 证书要求、login token/session token、反代注�
 
 Go 没有 PyPI/npm 那样的中央包索引——**导入路径本身就是仓库地址**（`github.com/u/p` 直接指向该仓库），push 一个 git tag 即发布。覆盖：`go install pkg@version` 装二进制的语义（装到 `GOBIN`、带 `@ver` 时忽略当前 `go.mod` 不污染项目依赖、Go 1.16 起装工具专用它）、导入路径→仓库的解析（已知托管站规则 / `.git` 后缀 / vanity 路径的 `?go-get=1` + `<meta name="go-import">` 重定向 + Go 1.25 subdir + `mod` 代理变体）、版本模型（SemVer、major ≥ 2 的 `/vN` 路径后缀共存、伪版本、MVS 最小版本选择）、`go.mod`/`go.sum`/模块缓存、GOPROXY/GOSUMDB/GOPRIVATE（默认 `proxy.golang.org` + `sum.golang.org`、`direct` 回落、私有模块绕过）。每条据 `go.dev/ref/mod` 与 `go help <topic>`。见 [references/go.md](references/go.md)。
 
+## uv（Python 包 / 环境管理器）
+
+[uv](https://github.com/astral-sh/uv)（Astral 的快速 Python 包 / venv 管理器）使用与排障。重点记一个**不是 uv 本身、而是 snap 版 uv** 的坑：`ExecStart=/snap/bin/uv run …` 的 systemd 服务，被 uv 拉起的应用日志**在 `journalctl -u <service>` 里完全看不到**——snapd 把进程重挪进 `snap.astral-uv.uv-<uuid>.scope` cgroup，journald 按 cgroup 归属日志，应用输出挂在 snap scope 名下而非服务单元名下（`classic` confinement 也一样）；绕过是按 `journalctl -t <SyslogIdentifier>` 查，治本是把 `ExecStart` 换成非 snap 的 uv。另附 `uv run` 下 Python 块缓冲需 `PYTHONUNBUFFERED=1` 的实测。见 [references/uv.md](references/uv.md)。
+
 ## Service / systemd
 
 多用户共享服务、systemd 模板单元与按 UID 分配端口见 [references/service.md](references/service.md)。
