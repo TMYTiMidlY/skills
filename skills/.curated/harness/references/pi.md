@@ -281,6 +281,33 @@ token 换取后写入 `auth.json`（含 JWT 提取的 `accountId`），base URL 
 
 设置：旗标 `pi --thinking high`；模型合写 `pi --model "openai-codex/gpt-5.5:high"`；交互 `Shift+Tab` 循环（编辑器**边框颜色**指示当前档）；`settings.json.defaultThinkingLevel`。[^effort]
 
+**实测印证（OpenAI 兼容后端的 effort 线格式）**：对一个自建 OpenAI 兼容网关（USTC `api.llm.ustc.edu.cn`，LiteLLM + 自部署 DeepSeek-V4）与 DeepSeek 官方 API 实跑——请求体**直接吃** `reasoning_effort`（DeepSeek 官方枚举 `low/medium/high/xhigh/max` 五档；该自建后端 `none/minimal/low/medium/high/xhigh/max` 七档）与 `thinking:{type:"enabled"|"disabled"|"adaptive"}`。pi 七档里的 `off` 即线上的 `none`——这正是上一段"OpenAI 兼容各家→若干变体、部分才是 `reasoning_effort`"的一个真身。⚠️ 实测值随端点/时间变，非源码。[^probe]
+
+### 4.7 自定义 OpenAI/Anthropic 兼容 provider（`models.json`）与端点探针
+
+`/login` 只列**内置** provider；接**任意自定义 URL + key**（自建网关、ollama、vLLM、校园/公司 LLM 平台）走 `~/.pi/agent/models.json`，**不走 `/login`**：[^customprov]
+
+```json
+{"providers":{"my-gw":{"baseUrl":"https://host/v1","api":"openai-completions","apiKey":"sk-…","models":[{"id":"deepseek-v4-pro"}]}}}
+```
+
+热加载，打开 `/model` 即见（不进 `/login` 列表）。`apiKey` 支持字面量 / `$ENV` / `!command`。
+
+**坑：`api` 字段决定 baseUrl 带不带 `/v1`**——两条路都走各自**官方 SDK**（`new OpenAI({baseURL})` / `@anthropic-ai/sdk`），SDK 拼 path 的约定不同：[^customprov]
+
+| `api` | baseUrl 写法 | SDK 最终打到 |
+|---|---|---|
+| `openai-completions` | 带 `/v1`：`https://host/v1` | OpenAI SDK 接 `/chat/completions` → `…/v1/chat/completions` |
+| `anthropic-messages` | **不带** `/v1`：`https://host` | Anthropic SDK 自补 `/v1/messages`；写了 `/v1` 会变成 `…/v1/v1/messages` |
+
+**端点探针**（拿到一个"号称兼容 OpenAI/Anthropic"的 endpoint，判它到底是什么、真吃哪些参数——`curl` 直接打，与 pi 无关）：[^probe]
+
+1. **非法值探针**：故意传非法 `reasoning_effort:"xxx"` / `thinking.type:"xxx"`，看**谁**报错——错误里带上游异常类（如 `DeepseekException`）＝校验发生在真实后端、参数确实被吃，且报错常**列出合法枚举全集**（七档 effort、`thinking.type` 三值就是这样套出来的）；不报错＝可能被中间层吞掉或忽略（该网关对 `thinking.type` 乱值就返 200）。
+2. **响应指纹认中间层**：原生 DeepSeek 带 `system_fingerprint`；套了 **LiteLLM** 的网关给每个 choice 包一层 `provider_specific_fields`（还可能在报错里露出 fallback 路由表）。据此判断打的是原厂还是二次网关。
+3. **枚举/结构集合差异**：同一模型名，两端返回的合法枚举或字段结构不一致 → **不是同一后端**。例：USTC 自建缺 `system_fingerprint`、effort 多出 `none/minimal`，证明是自部署权重 + LiteLLM，而非转发 DeepSeek 官方云——"透传到官方后端"是错的说法。
+
+⚠️ 探针结论是对**特定端点、特定时间**的实测（2026-07 对 `api.llm.ustc.edu.cn` 与 `api.deepseek.com`）；枚举集/包装字段随版本变，非源码保证。
+
 ---
 
 ## 5. 扩展 / skill / 插件系统
@@ -524,6 +551,7 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 - **高**（本地 clone `8479bd8` 源码直证）：分包、agent loop、会话树、配置/指令发现（AGENTS/CLAUDE、非 PI.md、FS 根 vs git 根）、五模式与 31 条 RPC 命令、SDK 入口、35 provider 与 Codex/Copilot OAuth、鉴权顺序、thinking level 映射与 clamp、33 事件/15 可改写、扩展 API 与 ToolDefinition、skill 格式（name 可选/description 必需/`{baseDir}` 已移除）与优先级、跨 harness 复用、subagent 示例、orchestrator、pi-telegram/pi-chat 机制、信任非沙箱、三种容器化、平台要求。
 - **中/快照**：画廊 ~5.1k 包数与各包月下载、popular 排名（随时间变）。
 - **随时间变化**：模型名/上下文窗口/版本号/star 数。
+- **实测快照（非源码）**：自定义 provider 的 `baseUrl`/`api` 拼法与 SDK 行为为源码证（4.7 表 + `[^customprov]`）；但 4.6/4.7 的**端点探针结论**（USTC/DeepSeek 的 `reasoning_effort` 枚举集、`thinking.type` 三值、`system_fingerprint`/`provider_specific_fields` 指纹）是 2026-07 对具体端点实跑，随端点/版本变。
 - **存疑**：`pi-skills` README 的 `{baseDir}` 说法与主仓行为不一致（已在正文标注）；OpenClaw 组织变动仅作者一手推文；Reddit 讨论未抓取核实。
 
 ---
@@ -554,6 +582,8 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 [^codex]: [`packages/ai/src/utils/oauth/openai-codex.ts`](https://github.com/earendil-works/pi/blob/8479bd8/packages/ai/src/utils/oauth/openai-codex.ts):455-463、536-603；`providers/openai-codex.ts`、`providers/openai-codex.models.ts`。
 [^copilot]: [`packages/ai/src/utils/oauth/github-copilot.ts`](https://github.com/earendil-works/pi/blob/8479bd8/packages/ai/src/utils/oauth/github-copilot.ts):251-280；`providers/github-copilot.ts:13-17`；`packages/ai/src/auth/helpers.ts:16-21`；`providers/github-copilot.models.ts`。
 [^effort]: `packages/ai/src/types.ts`（`ThinkingLevel`/`ModelThinkingLevel`）、`packages/agent/src/types.ts:289`；`packages/ai/src/api/{openai-codex-responses.ts:516-525,anthropic-messages.ts:796-1022,openai-completions.ts:600-668}`；`packages/ai/src/models.ts:408-418`（clamp）；`cli/args.ts`（`--thinking`）。
+[^customprov]: `models.json` 自定义 provider：`packages/coding-agent/docs/{models.md,custom-provider.md}`（`providers.<id>.{baseUrl,api,apiKey,models,compat}`、`api` 取值即 4.1 那 9 种 wire API）；baseUrl 经官方 SDK 拼接——`packages/ai/src/api/openai-completions.ts:532-534`（`new OpenAI({baseURL: model.baseUrl})`，SDK 接 `/chat/completions`）、`anthropic-messages.ts:854`（`baseURL: model.baseUrl`，`@anthropic-ai/sdk` 自补 `/v1/messages`）。
+[^probe]: **实测法，非源码**——2026-07 用 `curl` 对 `api.llm.ustc.edu.cn/v1`（USTC 自建网关）与 `api.deepseek.com` 实跑：非法 `reasoning_effort`/`thinking.type` 触发的 400 报错枚举、`system_fingerprint`（原生 DeepSeek）vs `provider_specific_fields`（LiteLLM 包装）差异、两端 effort 枚举集不同。枚举/字段随端点与版本变，引用前自行复跑。
 [^extloader]: [`packages/coding-agent/src/core/extensions/loader.ts`](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/src/core/extensions/loader.ts):389-395（Bun `virtualModules` vs Node alias）、141-145（`clearExtensionCache`）。
 [^extapi]: [`packages/coding-agent/src/core/extensions/types.ts`](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/src/core/extensions/types.ts):435-499、1165-1398（`ExtensionAPI`/`defineTool`/`ToolDefinition`）。
 [^hello]: [`packages/coding-agent/examples/extensions/hello.ts`](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/examples/extensions/hello.ts)；`examples/extensions/README.md:17-138`（分类目录：Lifecycle&Safety / Custom Tools / Commands&UI / Git / … 含 permission-gate、todo、dynamic-tools、plan-mode、git-checkpoint、custom-provider-gitlab-duo）。
