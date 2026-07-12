@@ -46,7 +46,7 @@ pi 的核心哲学是**中心极小**：给你原语，让你把 agent 适配到
 
 | 故意不内置 | 官方建议替代 |
 |---|---|
-| **No MCP** | 用带 README 的 CLI 工具（见 Skills），或装扩展补 MCP（见 §5.6） |
+| **No MCP** | 用带 README 的 CLI 工具（见 Skills），或装扩展补 MCP（见 §5.7） |
 | **No sub-agents** | tmux 起多个 pi 实例，或用扩展/社区包自己实现（§7） |
 | **No permission popups** | 跑容器里，或用扩展自建确认流（如示例 `permission-gate`） |
 | **No plan mode** | 计划写进文件，或用扩展（示例 `plan-mode/`） |
@@ -376,7 +376,32 @@ export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
 - **包清单**：`package.json` 加 `"keywords":["pi-package"]` 与可选 `"pi": { extensions, skills, prompts, themes, video, image }`；无 `pi` 字段则按约定自动发现——`extensions/` 收 **`.ts` 与 `.js`**，`skills/` **递归找 `SKILL.md` 且加载顶层 `.md`**，`prompts/*.md`，`themes/*.json`。核心依赖放 `peerDependencies`（**四个 pi 包 + `typebox`**，由 pi 提供），第三方依赖放 `dependencies`（装包时 `npm install --omit=dev`）。画廊预览靠 `pi.video`/`pi.image`。[^packages]
 - **管理**：`pi list` / `pi update [--all]` / `pi remove` / `pi config`（TUI 开关资源，`-l` 项目级）。
 
-### 5.5 开发闭环
+### 5.5 生态热门插件（按月下载 · 快照，会变）
+
+| 包 | ~月下载 | 作用 | 装 |
+|---|---|---|---|
+| `@hypabolic/pi-hypa` | ~198K | 上下文压缩（确定性压缩 shell 输出、上下文感知文件工具） | `pi install npm:@hypabolic/pi-hypa` |
+| `pi-web-access` | ~136K | 网络搜索（Brave/Tavily/Perplexity/Exa/OpenAI）+ URL/PDF/YouTube/GitHub 抓取 | `pi install npm:pi-web-access` |
+| `pi-mcp-adapter` | ~124K | 接入 MCP server（见 §5.7） | `pi install npm:pi-mcp-adapter` |
+| `context-mode` | ~117K | MCP + FTS5 知识库 + 沙箱执行，号称省 ~98% 上下文 | `pi install npm:context-mode` |
+| `pi-subagents` | ~111K | 子 agent 委派（见 §6.3） | `pi install npm:pi-subagents` |
+| `@tintinweb/pi-subagents` | ~40K | Claude Code 风子 agent + FleetView（见 §6.3） | `pi install npm:@tintinweb/pi-subagents` |
+| `bigpowers` | ~35K | 73 个工程方法学 skill 包 | `pi install npm:bigpowers` |
+| `@ayulab/pi-rewind` | ~32K | `/rewind` 检查点回溯 | `pi install npm:@ayulab/pi-rewind` |
+| `@plannotator/pi-extension` | ~30K | 交互式计划评审 / PR 评审 | `pi install npm:@plannotator/pi-extension` |
+| `pi-lens` | ~30K | 实时代码反馈（LSP/biome/ruff/类型检查/ast-grep） | `pi install npm:pi-lens` |
+| `@juicesharp/rpiv-todo` | ~28K | 存活于 `/reload` 与压缩的 todo 覆盖层 | `pi install npm:@juicesharp/rpiv-todo` |
+| `@remnic/plugin-pi` | ~27K | 持久记忆 | `pi install npm:@remnic/plugin-pi` |
+| `@gotgenes/pi-permission-system` | ~24K | 工具访问控制 / 权限策略 | `pi install npm:@gotgenes/pi-permission-system` |
+| `pi-simplify` | ~23K | 改动后清晰度/可维护性复审 | `pi install npm:pi-simplify` |
+| `@ff-labs/pi-fff` | ~22K | FFF 模糊文件/内容搜索 | `pi install npm:@ff-labs/pi-fff` |
+| `@quintinshaw/pi-dynamic-workflows` | ~22K | Code-mode 大规模 fan-out + `/deep-research`（见 §6.3） | `pi install npm:@quintinshaw/pi-dynamic-workflows` |
+| `pi-hermes-memory` | ~15K | 持久记忆 + 会话搜索 + 密钥扫描 | `pi install npm:pi-hermes-memory` |
+| `cc-safety-net` | ~9K | 拦截破坏性 git/文件系统命令 | `pi install npm:cc-safety-net` |
+
+下载量为 `pi.dev/packages` 快照（月），会变；名字/排名仅供参考。[^packages]
+
+### 5.6 开发闭环
 
 ```
 写：~/.pi/agent/extensions/x.ts（或项目 .pi/extensions/x.ts）——自动发现
@@ -387,11 +412,11 @@ export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
 ```
 无 `pi init` 脚手架（手动建包）。主题文件保存即热重载（无需 `/reload`）。[^skilldev]
 
-### 5.6 MCP 支持（⬜ 靠适配器补）
+### 5.7 MCP 支持（⬜ 靠适配器补）
 
 核心刻意不内置 MCP。社区 `pi-mcp-adapter`（⬜）以扩展形式把 MCP server 接进来：默认暴露一个 `mcp` 代理工具（search/describe/call，参数走 JSON 串），或用 `directTools` 把选定 MCP 工具注册成 pi 原生工具。装：`pi install npm:pi-mcp-adapter` 后重启。[^mcp]
 
-### 5.7 安全 · 信任 · 隔离（harness 必读）
+### 5.8 安全 · 信任 · 隔离（harness 必读）
 
 - **Project Trust 只是资源加载门**：决定是否加载项目级 `.pi/settings.json`、`.pi/{extensions,skills,prompts,themes}`、`.pi/SYSTEM.md`/`APPEND_SYSTEM.md`、项目 `.agents/skills`、以及缺失的项目包。**它不是沙箱**，不限制模型让工具做什么；内置工具以 pi 进程权限读写文件、跑 shell。[^security]
 - **要真隔离用容器**，官方给三种模式：**Gondolin**（本地 Linux 微 VM，host 跑 pi、内置工具路由进 VM）、**Plain Docker**（整个 pi 进程进容器）、**OpenShell**（带文件/进程/网络/凭据/推理管控的策略沙箱）。§7.2 的 pi-chat 用的就是 Gondolin（模式一）。[^containers]
@@ -470,6 +495,15 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 
 ---
 
+## 附录：命令 · 旗标 · 快捷键速查
+
+- **内置斜杠命令（22）**：`/settings /model /scoped-models /export /import /share /copy /name /session /changelog /hotkeys /fork /clone /tree /trust /login /logout /new /compact /resume /reload /quit`；另有 `/skill:<name> [args]` 与 prompt 模板 `/<模板名>`。[^ops]
+- **CLI 旗标**：`--help/-h`、`--version/-v`、`--mode <text|json|rpc>`、`--print/-p`、`--continue/-c`、`--resume/-r`、`--provider`、`--model`、`--api-key`、`--system-prompt`、`--append-system-prompt`、`--name/-n`、`--no-session`、`--session`、`--session-id`、`--fork`、`--session-dir`、`--models`、`--list-models`、`--verbose`、`--approve/-a`、`--no-approve/-na`、`--offline`、`--extension/-e`、`--skill`、`--theme`、`--export`、`--prompt-template`/`--no-prompt-templates`，以及工具/资源开关旗标。[^ops]
+- **常用快捷键**（可在 `~/.pi/agent/keybindings.json` 改）：`Ctrl+L` 模型选择；`Ctrl+P`/`Shift+Ctrl+P` 循环 scoped 模型；`Shift+Tab` 循环 thinking level；`Ctrl+C` 中止当前 run；`Ctrl+X` 复制；`Alt+Enter`/`Shift+Enter`/`Ctrl+J` 换行；`Esc` 取消；`Ctrl+D`/`Ctrl+Z` 退出/挂起；tree/scoped-model 选择器各自的过滤键。[^ops]
+- **官方示例扩展分类**（🟦 `packages/coding-agent/examples/extensions/`，需自行拷贝）：Lifecycle & Safety、Custom Tools、Commands & UI、Git Integration、System Prompt & Compaction、System Integration、Resources、Messages & Communication、Session Metadata、Custom Providers、External Dependencies；代表：`permission-gate`、`todo`、`dynamic-tools`、`plan-mode/`、`git-checkpoint`、`custom-provider-gitlab-duo/`。SDK 示例 `examples/sdk/01-minimal.ts` … `13-session-runtime.ts`。[^hello]
+
+---
+
 ## 关键仓库 / 资源
 
 | 仓库/资源 | 说明 | 状态 |
@@ -480,7 +514,7 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 | [badlogic/pi-skills](https://github.com/badlogic/pi-skills) | first-party skill 集 | 🟧 |
 | [badlogic/pi-telegram](https://github.com/badlogic/pi-telegram) | Telegram 远控 | 🟧 |
 | [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat) | Discord/Telegram 多渠道 + VM 隔离 | 🟧 |
-| `pi-subagents` / `@tintinweb/pi-subagents` / `@quintinshaw/pi-dynamic-workflows` / `pi-mcp-adapter` / `@hypabolic/pi-hypa` / `pi-web-access` / `context-mode` / `pi-lens` / `@gotgenes/pi-permission-system` … | 生态热门包 | ⬜ |
+| `pi-subagents` / `@tintinweb/pi-subagents` / `@quintinshaw/pi-dynamic-workflows` / `pi-mcp-adapter` / `@hypabolic/pi-hypa` / `pi-web-access` / `context-mode` / `pi-lens` / `@gotgenes/pi-permission-system` … | 见 §5.5 生态热门插件 | ⬜ |
 | npm `pi-package` keyword · 画廊 <https://pi.dev/packages> · RFC <https://rfc.earendil.com/keyword/pi/> | 发布/发现/路线图 | — |
 
 ---
@@ -510,6 +544,7 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 [^tui]: `packages/tui/src/tui.ts`:292-300、1284-1309、1367-1549。
 [^platform]: [`packages/coding-agent/docs/windows.md`](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/docs/windows.md):3-16；`docs/settings.md:184-190`（`shellPath`）；`docs/index.md:15-18`；`package.json`/`packages/coding-agent/package.json` `engines.node ">=22.19.0"`。
 [^modes]: [`packages/coding-agent/src/cli/args.ts`](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/src/cli/args.ts):10、74-278；`src/main.ts:100-110`（非 TTY 自动 print）；`src/modes/{print-mode.ts,index.ts}`、`src/core/slash-commands.ts:19-42`。
+[^ops]: 斜杠命令/CLI 旗标/快捷键：`packages/coding-agent/src/core/slash-commands.ts:19-42`；`src/cli/args.ts:74-278`；`docs/keybindings.md:1-153`；`src/core/keybindings.ts:64-207`。
 [^rpc]: [`packages/coding-agent/src/modes/rpc/rpc-types.ts`](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/src/modes/rpc/rpc-types.ts):20-72；`rpc-mode.ts`、`jsonl.ts`、`src/rpc-entry.ts`；`pi.dev/docs/latest/rpc`。
 [^sdk]: [`packages/coding-agent/src/index.ts`](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/src/index.ts):192-219（`core/sdk.ts`）；`examples/sdk/{01-minimal,12-full-control,13-session-runtime}.ts`、`examples/sdk/README.md`。
 [^providers]: [`packages/coding-agent/docs/providers.md`](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/docs/providers.md):14-22、`docs/{settings.md,models.md,compaction.md}`；`packages/ai/src/models.ts`。
