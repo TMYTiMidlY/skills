@@ -304,7 +304,7 @@ token 换取后写入 `auth.json`（含 JWT 提取的 `accountId`），base URL 
 | `thinkingFormat` | pi 生成的关键字段 |
 |---|---|
 | `openai`（默认） | `reasoning_effort`；`off` 只有在 `thinkingLevelMap.off` 映射为字符串时才显式发送 |
-| `deepseek` | `thinking:{type:"enabled"\|"disabled"}` + 可选 `reasoning_effort` |
+| `deepseek` | `thinking:{type:"enabled"}` / `thinking:{type:"disabled"}` + 可选 `reasoning_effort` |
 | `zai` | 上述 `thinking.type`；开启时再带 `clear_thinking:false` + 可选 `reasoning_effort` |
 | `qwen` | 顶层 `enable_thinking:boolean` |
 | `qwen-chat-template` | `chat_template_kwargs:{enable_thinking,preserve_thinking:true}` |
@@ -320,7 +320,7 @@ token 换取后写入 `auth.json`（含 JWT 提取的 `accountId`），base URL 
 
 `anthropic-messages` 不用这个枚举：它有独立 serializer。pi 在 `off` 时发 `thinking:{type:"disabled"}`，开启时对旧式模型发 budget-based thinking、对 `forceAdaptiveThinking` 模型发 adaptive thinking + `output_config.effort`。USTC 当前网关下，四个在线模型的 `off/low` 都按预期切换；这是端点实测，不是所有 Anthropic 兼容代理的保证。[^effort][^probe]
 
-> **别把档名当算力承诺。** DeepSeek V4 官方当前只区分 `high/max`，兼容输入中的 `low/medium` 会映到 `high`、`xhigh` 会映到 `max`。要让 pi UI 精确反映这一点，应再写 `thinkingLevelMap`；仅补 `thinkingFormat` 只保证“字段和开关发对”。
+> **别把档名当算力承诺。** DeepSeek V4 官方当前只区分 `high/max`，兼容输入中的 `low/medium` 会映到 `high`、`xhigh` 会映到 `max`。要让 pi UI 精确反映这一点，应再写 `thinkingLevelMap`；仅补 `thinkingFormat` 只保证“字段和开关发对”。[^probe]
 
 ### 4.7 自定义 OpenAI/Anthropic 兼容 provider（`models.json`）
 
@@ -390,6 +390,8 @@ pi --provider my-gw --model deepseek-v4-pro --thinking low \
 | `claude-sonnet-4-6` | `qwen36-27b` | 关 | Claude 名称别名，实际路由到 Qwen |
 | `glm-5.2` | `glm-5.2` | 开 | router 明确指向 GLM-5.2 |
 
+这不是 `/model/info` 的完整转录，而是与本次选型有关的**去重子集**；网关当时还暴露 `qwen3.5`/`qwen3.5-thinking`、`deepseek-v4-flash-ascend1` 等兼容或重复部署别名。省略不代表不可用，也不要仅凭别名新旧判断底模。
+
 这推翻了“`qwen3.6-chat`=35B、`qwen3.6-reasoner`=27B”这一早期猜测：前两者其实是**同一个 27B 的两种模式**，真正的 35B 是 `qwen-chat`/`qwen-reasoner`。若目标是每协议保留 5 个**不同底模**且允许切 thinking，推荐 ID 集合是：
 
 ```
@@ -427,7 +429,7 @@ GLM 当时因平台临时限制出现 404/500/内部服务连接失败；**临�
 | prompt cache | 第二次请求出现 `prompt_tokens_details.cached_tokens` | 显式 `cache_control:ephemeral` 后出现 `cache_read_input_tokens` | 两边都能命中，机制/usage 字段不同 |
 | thinking `off/low` | 默认 serializer 下开关错误，需 §4.6 的 `thinkingFormat` | 当前网关下正确切换 | 这是 serializer 差异，不是模型能力差异 |
 
-图片探针必须减少猜中概率：1×1 红色图让 Flash 偶然猜中一次；换成两组随机四色象限后，DeepSeek 明确说看不到图片，Qwen 连续读出正确色组。空间顺序提示要写成 `TL, TR, BL, BR` 或明确 clockwise，避免把“能看见”与“方位指令失误”混为一谈。
+图片探针必须减少猜中概率：第一组由黄/蓝/红/绿四种常见色组成的象限图里，Flash 偶然报出了同四个色名但顺序错误；换成两组随机配色后，DeepSeek 明确说看不到图片，Qwen 连续读出正确色组。空间顺序提示要写成 `TL, TR, BL, BR` 或明确 clockwise，避免把“能看见”与“方位指令失误”混为一谈。
 
 **OpenAI 风格图片消息**（公网 URL；本地文件可换成 `data:image/png;base64,<BASE64>`）：
 
