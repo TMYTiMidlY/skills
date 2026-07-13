@@ -4,12 +4,12 @@
 
 **来源标签**（每处用 `>` 就近给出处，全篇无脚注）：
 
-- **【pi】** pi 官方文档 / 源码——**文档优先，文档没写才引源码**。文档在 pi 包 `docs/` 下（`models.md` / `custom-provider.md` / `providers.md`），源码在 `@earendil-works/pi-ai`。
+- **【pi】** pi 官方文档 / 源码——**优先引[官方在线文档](https://pi.dev/docs/latest)链接**（`docs/xxx.md` 对应 `pi.dev/docs/latest/xxx`）；官方文档没覆盖的实现细节才回落仓库。**仓库里的 `docs/*.md` 与源码 `@earendil-works/pi-ai`（[earendil-works/pi](https://github.com/earendil-works/pi) monorepo 的 `packages/ai`）同级**，都能给 GitHub 链接就给。
 - **【厂】** 上游厂商官方文档（DeepSeek / Qwen / Z.ai 等底模自己的规格）。
 - **【台】** 平台文档 / 用户转贴（如 USTC 大模型平台用户指南的模型列表、价目、分层）。
 - **【测】** 我方 curl / pi 实测（路由 header、`/model/info`、thinking 开关、图片、枚举探针等）。
 
-> 【pi】本文 §1–§4 的 pi 行为以 `docs/models.md`、`docs/custom-provider.md` 为准，serializer/计费细节文档未覆盖处引 `pi-ai` 源码；§5.2 的具体端点数据是 2026-07 对 `api.llm.ustc.edu.cn` 与 pi `v0.80.6` 的实测快照，随 ACL / router / 版本变化，引用前复跑。
+> 【pi】本文 §1–§4 的 pi 行为以 [docs/models.md](https://pi.dev/docs/latest/models)、[docs/custom-provider.md](https://pi.dev/docs/latest/custom-provider) 为准，serializer/计费细节文档未覆盖处引 [pi-ai 源码](https://github.com/earendil-works/pi/tree/main/packages/ai/src)；§5.2 的具体端点数据是 2026-07 对 `api.llm.ustc.edu.cn` 与 pi `v0.80.6` 的实测快照，随 ACL / router / 版本变化，引用前复跑。
 
 ---
 
@@ -17,7 +17,7 @@
 
 `/login` 里的 provider 列表是**硬编码的内置 provider**（Amazon Bedrock、Anthropic、DeepSeek… 33 个），**没有“自定义 URL + Key”这一项**——找不到是正常的。任意自定义端点走 `~/.pi/agent/models.json`，热加载（改完打开 `/model` 即生效，不重启）。
 
-> 【pi】`docs/models.md`「Custom Models」；`/login` 只列内置 provider，自定义走 `models.json`。
+> 【pi】[docs/models.md](https://pi.dev/docs/latest/models)「Custom Models」；`/login` 只列内置 provider，自定义走 `models.json`。
 
 最小可用例（OpenAI 兼容端点）：
 
@@ -36,7 +36,7 @@
 
 `id` 之外全部可省（有默认值，见 §2）。配好后该 provider 出现在 `/model` 列表里（不是 `/login`）。需要 OAuth 或非标准流式协议才写 extension 用 `pi.registerProvider()`。
 
-> 【pi】`docs/custom-provider.md`（`registerProvider` 用于 OAuth / 非标准协议）；普通 URL+Key 用 `models.json` 即可。
+> 【pi】[docs/custom-provider.md](https://pi.dev/docs/latest/custom-provider)（`registerProvider` 用于 OAuth / 非标准协议）；普通 URL+Key 用 `models.json` 即可。
 
 **两种入口一句话**：`openai-completions` 打 `POST /chat/completions`（经典 Chat Completions），`anthropic-messages` 打 `POST /v1/messages`（Claude 风格结构化内容块）。同一个 key 常常两条都能用——但 **baseUrl 拼法、thinking 控制方式、缓存 / 图片 / 工具字段都不同**，见下节对照表。
 
@@ -55,7 +55,7 @@
 | `apiKey` | 可选。字面量 / `$ENV_VAR` / `!command`；由 `/login`、`auth.json` 或 CLI `--api-key` 提供时可省 |
 | `models` | 该 provider 暴露的模型条目数组（**必须显式列，pi 不会自动拉 `GET /v1/models`**） |
 
-> 【pi】`docs/models.md`「Provider Configuration」+「Value Resolution」（`apiKey` 三形态与解析顺序）。
+> 【pi】[docs/models.md](https://pi.dev/docs/latest/models)「Provider Configuration」+「Value Resolution」（`apiKey` 三形态与解析顺序）。
 
 ### 2.1 两入口对照（openai-completions ↔ anthropic-messages）
 
@@ -72,10 +72,12 @@
 | 图片消息 | `content` 里 `{type:"image_url", image_url:{url}}`（公网 URL 或 `data:image/png;base64,…`） | `content` 里 `{type:"image", source:{type:"base64", media_type, data}}` |
 | 工具 | OpenAI function 格式 → `tool_calls` | Anthropic 格式 → `tool_use` |
 
-> 【pi】baseUrl 拼接：`pi-ai` `openai-completions.ts`（`new OpenAI({baseURL})`，SDK 接 `/chat/completions`）、`anthropic-messages.ts`（`baseURL: model.baseUrl`，Anthropic SDK 自补 `/v1/messages`）；`docs/models.md`「Anthropic Messages Compatibility」/「OpenAI Compatibility」。
+> 【pi】baseUrl 拼接：`pi-ai` [openai-completions.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-completions.ts)（`new OpenAI({baseURL})`，SDK 接 `/chat/completions`）、[anthropic-messages.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/anthropic-messages.ts)（`baseURL: model.baseUrl`，Anthropic SDK 自补 `/v1/messages`）；[docs/models.md](https://pi.dev/docs/latest/models)「Anthropic Messages Compatibility」/「OpenAI Compatibility」。
 > 【测】2026-07-13：`GET/POST https://api.llm.ustc.edu.cn/v1/messages` → 200；同 key 打 `…/v1/v1/messages` → `404 {"detail":"Not Found"}`。坐实「anthropic 端 baseUrl 不能带 `/v1`」。
 
 两条 anthropic-version 头 pi 会自动带，不用手填。
+
+**配置角度**：只看「配起来省不省心」，`anthropic-messages` 在 thinking 这一轴更简单——原生 serializer 自动发对 `thinking:{type:…}`，不用像 openai 侧那样猜 `compat.thinkingFormat`（配错就「off 仍思考 / low 仍不思考」，见 §3.1）。但它只省这一件事：不保证后端真按档多想，`tool` / 缓存 / 图片是否更好使仍要逐项实测（见 §5）；缓存反而 openai 侧自动命中、anthropic 侧要显式 `cache_control`。所以按你要的模型 / 功能在哪个入口是一等公民来选，别只图省一个 `thinkingFormat`。
 
 ### 2.2 Model 条目字段（全字段 + 默认值）
 
@@ -92,11 +94,11 @@
 | `cost` | 否 | 全 0 | 每百万 token 费率（见 §4） |
 | `compat` | 否 | 继承 provider `compat` | 兼容性覆盖，含 `thinkingFormat`、`maxTokensField` 等；与 provider 级 `compat` 合并 |
 
-> 【pi】`docs/models.md`「Model Configuration」字段表与默认值。
+> 【pi】[docs/models.md](https://pi.dev/docs/latest/models)「Model Configuration」字段表与默认值。
 
 **要点**：`models` 必须显式列——pi **不会**请求 `GET /v1/models` 自动生成条目。列表接口可帮你发现候选 ID，但常混别名 / 占位 / 无权限模型，每个条目的能力、上下文、输出上限仍要独立核验（见 §5）。`pi --list-models <pattern>` 可查 pi 最终解析出的 context/max-out/reasoning/image 元数据。
 
-> 【pi】`docs/models.md`「Custom Models」：显式列 `models`，不自动导入 `/v1/models`。
+> 【pi】[docs/models.md](https://pi.dev/docs/latest/models)「Custom Models」：显式列 `models`，不自动导入 `/v1/models`。
 
 `apiKey` 优先用 `$ENV` 或 `!command`，别把长期 key 写进可分享配置或前端。
 
@@ -110,7 +112,7 @@
 - **旗标**：`pi --provider <id> --model <model>`，或合写 `pi --model <id>/<model>`，或带 effort `pi --model <id>/<model>:high`。
 - **默认**：`settings.json` 的 `defaultProvider` / `defaultModel`；循环集 `--models "<id>/*,…"` 或 `enabledModels`。
 
-> 【pi】斜杠命令 / 旗标 / 快捷键：`docs/usage.md`、`cli/args.ts`、`core/slash-commands.ts`、`docs/keybindings.md`。
+> 【pi】斜杠命令 / 旗标 / 快捷键：[docs/usage.md](https://pi.dev/docs/latest/usage)、[cli/args.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/cli/args.ts)、[core/slash-commands.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/slash-commands.ts)、[docs/keybindings.md](https://pi.dev/docs/latest/keybindings)。
 
 ## 3. effort / thinking：能力、档位、线格式是三件事
 
@@ -122,7 +124,7 @@
 | 档位映射 | `thinkingLevelMap` | 七档 → 厂商档；`null` 隐藏不支持档 | 不决定字段放 `reasoning`/`thinking`/别处 |
 | 序列化方言 | `compat.thinkingFormat` | 告诉 `openai-completions` serializer 怎么编码开关 / effort | 不证明后端真支持这些档 |
 
-> 【pi】`docs/models.md`「Model Configuration」「Thinking Level Map」；三层职责由 `reasoning` / `thinkingLevelMap` / `compat.thinkingFormat` 分担。
+> 【pi】[docs/models.md](https://pi.dev/docs/latest/models)「Model Configuration」「Thinking Level Map」；三层职责由 `reasoning` / `thinkingLevelMap` / `compat.thinkingFormat` 分担。
 
 ### 3.1 `thinkingFormat` 各方言发什么（仅 `openai-completions` 用）
 
@@ -138,7 +140,7 @@
 | `chat-template` | 按 `chatTemplateKwargs` 自定义模板参数 |
 | `openrouter` / `together` / `string-thinking` / `ant-ling` | 各自的 `reasoning{}` 或字符串式方言 |
 
-> 【pi】方言取值：`docs/models.md`「OpenAI Compatibility」的 `thinkingFormat` 行；各方言实际字段：`pi-ai` `openai-completions.ts` 的 `compat.thinkingFormat` 分支（`deepseek` 发 `thinking.type`、`qwen` 发顶层 `enable_thinking`、`zai` 带 `clear_thinking` 等）。
+> 【pi】方言取值：[docs/models.md](https://pi.dev/docs/latest/models)「OpenAI Compatibility」的 `thinkingFormat` 行；各方言实际字段：`pi-ai` [openai-completions.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-completions.ts) 的 `compat.thinkingFormat` 分支（`deepseek` 发 `thinking.type`、`qwen` 发顶层 `enable_thinking`、`zai` 带 `clear_thinking` 等）。
 
 **为什么自定义域名容易错**：pi 按 baseUrl 自动探测兼容性——`api.deepseek.com`、Z.ai 等已知地址能命中厂商规则；**校园 / 公司网关域名通常只落到默认 `openai`**。于是：
 
@@ -151,7 +153,7 @@
 
 anthropic 端有独立 serializer：`off` 发 `thinking:{type:"disabled"}`；开启时对旧式模型发 budget-based thinking、对 `forceAdaptiveThinking` 模型发 adaptive thinking + `output_config.effort`。所以 **anthropic provider 的模型不用配 `thinkingFormat`**。
 
-> 【pi】`pi-ai` `anthropic-messages.ts` 的 thinking serializer（budget / adaptive 两路）。
+> 【pi】`pi-ai` [anthropic-messages.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/anthropic-messages.ts) 的 thinking serializer（budget / adaptive 两路）。
 
 > 别把档名当算力承诺：`thinkingLevelMap` 只做 pi 七档 → 厂商档的名义映射，不保证后端真按档想更久。要精确反映某底模只有 `high/max` 之类，得显式写 `thinkingLevelMap`。
 
@@ -163,11 +165,11 @@ anthropic 端有独立 serializer：`off` 发 `thinking:{type:"disabled"}`；开
 
 `cost` = `{ input, output, cacheRead, cacheWrite }`，**每百万 token 费率**；不填全 0（pi 显示 $0）。可选 `tiers` 做超阈值分档定价。
 
-> 【pi】`docs/models.md`「Model Configuration」：`cost` = per-million-token rates，默认全 0。
+> 【pi】[docs/models.md](https://pi.dev/docs/latest/models)「Model Configuration」：`cost` = per-million-token rates，默认全 0。
 
 **单位说明**：pi **没有货币概念**——计算就是 `(rate / 1e6) × tokens`，结果一律**前面贴 `$`**、保留 3 位小数显示。你填什么数它照单全收当美元显示；填多少就等于「每百万 token 多少（某币种）」，pi 只负责乘和贴 `$`。
 
-> 【pi】`pi-ai` `models.js`：`usage.cost.input = (rate.input / 1000000) * usage.input`（output/cacheRead/cacheWrite 同理，求和为 total）；显示层 `$${cost.toFixed(3)}`，无货币换算。
+> 【pi】`pi-ai` [models.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/models.ts)：`usage.cost.input = (rate.input / 1000000) * usage.input`（output/cacheRead/cacheWrite 同理，求和为 total）；显示层 `$${cost.toFixed(3)}`，无货币换算。
 
 ### 4.2 缓存命中谁说了算：服务端 `usage` 自报
 
@@ -176,7 +178,7 @@ pi **不自己判断缓存命不命中**——服务端在每次响应的 `usage
 - **openai-completions**：`prompt_tokens` 是总输入（**含**缓存部分）；`prompt_tokens_details.cached_tokens`（DeepSeek 系用 `prompt_cache_hit_tokens`）= 命中数 → `cacheRead`；`cache_write_tokens`（多数厂商不报 → 0）→ `cacheWrite`；`input = prompt_tokens − cacheRead − cacheWrite`（避免重复计）。
 - **anthropic-messages**：直接分字段——`cache_read_input_tokens` → cacheRead、`cache_creation_input_tokens` → cacheWrite、`input_tokens` → input。
 
-> 【pi】`pi-ai` `openai-completions.ts` 的 usage 解析（`cached_tokens` 拆 `input`/`cacheRead`）、`anthropic-messages.ts` 的 `cache_read_input_tokens` / `cache_creation_input_tokens` 映射。
+> 【pi】`pi-ai` [openai-completions.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-completions.ts) 的 usage 解析（`cached_tokens` 拆 `input`/`cacheRead`）、[anthropic-messages.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/anthropic-messages.ts) 的 `cache_read_input_tokens` / `cache_creation_input_tokens` 映射。
 
 **推论 / 坑**：整条链全靠**服务端自报**。网关若不报 `cached_tokens`（或报 0），pi 就把全部算成全价 input，哪怕物理上真命中；反过来 pi 也无法验证服务端的缓存账。想确认缓存真省钱，连发两次同长前缀、看 `usage` 的 `cacheRead` 是否跳上去（`/session` 里的 `R` 就是它）。另外 openai 端多数厂商不报 `cache_write_tokens`，写缓存往往折进 `input` 按全价计——所以有的平台价目里只有「缓存命中（读）」折扣、没有单列「写缓存」价。
 
@@ -190,7 +192,7 @@ pi **不自己判断缓存命不命中**——服务端在每次响应的 `usage
 - **footer 实时用量**：`↑` 输入 `↓` 输出 `R` 缓存读 `W` 缓存写 `CH` 命中率；`/session` 看 token 与成本。
 - **`PI_CACHE_RETENTION=long`**：延长直连 provider 的 prompt 缓存（Anthropic 1h / OpenAI 24h）。
 
-> 【pi】`docs/settings.md`（`compaction`）、`docs/models.md`（`modelOverrides.contextWindow`）、README（`PI_CACHE_RETENTION`、footer 用量符号）。
+> 【pi】[docs/settings.md](https://pi.dev/docs/latest/settings)（`compaction`）、[docs/models.md](https://pi.dev/docs/latest/models)（`modelOverrides.contextWindow`）、[README](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/README.md)（`PI_CACHE_RETENTION`、footer 用量符号）。
 
 ## 5. 验证 + 实战
 
