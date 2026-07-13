@@ -295,6 +295,22 @@ git update-ref refs/heads/<branch> "$NEW_CHILD" <期望旧tip>
 
 代价：手工重建会漏掉 committer date、GPG 签名、合并提交的第二父等细节，只适合线性、无签名的小改；能跑 `rebase -i` 时优先 rebase。
 
+## 事后归因：并发被踩后用 reflog 认出「谁动了 ref」
+
+多个会话共享同一 `.git` 时，"我的提交被谁冲了"靠 reflog 的 **reason 字段**复盘——它是操作类型的签名，据此就能区分 tip 是被 append 前进、还是被 reset 回退：
+
+| reflog reason | 干这事的命令 |
+| --- | --- |
+| `commit: …` / `commit (amend): …` | `git commit` / `--amend` |
+| `reset: moving to <X>` | `git reset`（含 `--hard`）——**把 tip 退回旧提交的唯一嫌疑** |
+| `checkout: moving from A to B` | `git checkout` / `switch` |
+| **空**（reason 整段为空） | `git update-ref` 不带 `-m`（本页 plumbing 那套正是如此）|
+
+- **靠它分清「前进 vs 回退」**：`commit`、以及空-reason 的 `update-ref`（CAS）都只让 tip **前进**或失败；只有 `reset: moving to` 才是**回退**。并发把你的 amend 冲没了，认准那条 `reset` 就是真凶，plumbing 的空-reason 提交反而清白（它只会前进、碰不到 worktree）。
+- **看「操作发生时间」用 `git reflog show --date=iso <ref>`**：`--format=%ci` 拿到的是**被指向提交自身**的提交时间、不是这次 reflog 操作的时间（会误导时序判断）；`%gi`（reflog 条目时间的占位符）在旧版 git 不认、会原样吐 `%gi`。
+- **HEAD 与各分支各有独立 reflog**：`git reflog show HEAD` 与 `git reflog show <branch>` 对照看，才能还原「HEAD 动了但分支没动」这类局部操作。
+- **捞回被冲掉的提交**：被 `reset` / `amend` 弃掉的旧提交不会消失，用 `git reflog`（近期操作）或 `git fsck --no-reflogs`（列 dangling commit）拿到它的 SHA，再 `git reset --hard <sha>` 或按路径 `git restore --source=<sha>` 取回内容。
+
 ## 相关
 
 - 三棵树概念：[Pro Git · Reset Demystified](https://git-scm.com/book/en/v2/Git-Tools-Reset-Demystified)（git-scm.com 官方书，HEAD / Index / Working Directory 的定义与流转）。
