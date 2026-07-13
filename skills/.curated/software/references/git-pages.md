@@ -357,64 +357,135 @@ permission / ask 端点有两种相反的失败模式：
 
 DNS 服务商 API 可以同时下发解析记录和 TXT；API key 需要覆盖目标 zone。若只授权了其他域名，常见表现是 `SOA ... not found`。
 
-### <a id="publishing-api"></a>发布接口与客户端
+### <a id="publishing-api"></a>发布路径与客户端
 
-这些客户端都驱动同一套 HTTP 接口：
+git-pages 只有两种内容进入方式：**服务端拉取仓库**，或**客户端上传产物**。`[[wildcard]]` 不是第三种发布方式；它是在 HTTP 请求到达后，根据 host + path 推导仓库，可同时参与 webhook 拉取和归档上传的鉴权。
 
-- **裸 curl**：`curl https://pages.example.com/ -X PUT --data-binary @site.tar.gz -H 'Content-Type: application/x-tar+gzip' -H 'Authorization: Pages <口令>'`（DNS Challenge 方案）。body 也可是 `application/zip`。
-- **git-pages-cli v1.10.0**：`--upload-dir <目录>` / `--upload-git <仓库URL>` / `--delete` / `--dry-run` / `--expires 14`（[参数定义](https://codeberg.org/git-pages/git-pages-cli/src/commit/a63042dcc9c1419967ded3ce389dae1bab39724e/main.go#L43-L58)）。
-- **Forgejo Action v2.2.0**：`with: { site, token: ${{ forge.token }}, source }`；[`action.yml`](https://codeberg.org/git-pages/action/src/commit/2b24bbb7ff943d3c8fe1df91326adec66daea6dd/action.yml#L1-L35) 实际启动 git-pages-cli 容器，因此它是 CLI 的 CI 包装层，不是另一套协议。
+[`ServePages`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/pages.go#L930-L977) 按 HTTP 方法分发请求：
 
-**底层 HTTP 协议**：读请求走 `GET` / `HEAD`，按 host 和可选 project name 返回站点文件；保留端点包括 `/.git-pages/health`、`/.git-pages/manifest.json`、`/.git-pages/manifest.pb` 和 `/.git-pages/archive.tar`。写请求由 [`ServePages`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/pages.go#L930-L977) 按方法分发：
+| 发布路径 | HTTP / body | 内容由谁取得 | 触发者 / 客户端 | 仓库可见性 | 鉴权族 |
+|---|---|---|---|---|---|
+| 服务端拉取 | PUT：仓库 clone URL | git-pages 浅克隆指定分支 | curl / `cli --upload-git` | 必须可匿名 clone | [仓库来源授权](#repository-auth) |
+| 服务端拉取 | POST：push webhook JSON | git-pages 从 payload 取 clone URL 后浅克隆 | Forgejo/Gitea/Gogs/GitHub webhook | 必须可匿名 clone | [仓库来源授权](#repository-auth) |
+| 客户端上传 | PUT：tar / tar+gzip / tar+zstd / zip | 客户端先 checkout / 构建 / 打包 | curl / `cli --upload-dir` / Action / CI | 公开、私有均可 | [通用授权](#shared-auth) 或 [Forge token 授权](#archive-auth) |
+| 客户端上传 | PATCH：tar / tar+gzip / tar+zstd | 客户端生成增量归档 | `cli --upload-dir --path` / Action `path:` | 公开、私有均可 | [通用授权](#shared-auth) 或 [Forge token 授权](#archive-auth) |
+| 下线 | DELETE（或空 body PUT） | 不再提供内容 | curl / `cli --delete` | 无关 | 与归档上传相同 |
 
-| 写入通道 | body | 干什么 | 谁驱动 |
-|---|---|---|---|
-| **PUT**（仓库 URL）| clone URL 文本 | 服务端浅克隆（`depth=1`、单分支）后全量替换 | curl / `cli --upload-git` |
-| **PUT**（归档）| tar / tar+gzip / tar+zstd / **zip** | 全量替换 | curl / `cli --upload-dir` / Action |
-| **PATCH**（归档）| tar / tar+gzip / tar+zstd（**无 zip**）| 增量合并（char device(0,0)=whiteout 删；`Atomic: yes/no`；输掉竞态返回 `409` 重试）| `cli --upload-dir --path` / Action `path:` |
-| **POST**（webhook）| Forgejo/Gitea/Gogs/**GitHub** push payload | 按事件头（`X-*-Event`）触发，仅处理**授权分支**（通常 `pages`；wildcard index 站可配 `index-repo-branch`）| forge webhook |
-| **DELETE**（或空 body PUT）| — | 下线站点 | curl / `cli --delete` |
+#### <a id="repository-visibility"></a>服务端拉取仓库
 
-`Dry-Run: yes` 只运行鉴权，不修改内容；`Expires: <HTTP-date>` 需要源码快照同时开启 `features = ['expiration']` 和 `[limits].allow-expiration = true`。所有内容更新以 manifest 切换为原子边界，具体保证取决于存储后端（[README](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/README.md#L100-L126)）。`_redirects` / `_headers` 见 [站点文件约定](#site-files)。
+PUT 仓库 URL 和 POST webhook 都由 git-pages 自己克隆仓库（[`AuthorizeUpdateFromRepository`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L417-L479)）。克隆固定为 `depth=1`、单分支、不取 tag（[`CloneOptions`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/fetch.go#L55-L72)），得到的新 manifest 会全量替换旧站点（[`UpdateFromRepository`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/update.go#L118-L147)）。
+
+PUT 可用 `Branch` 头指定分支，缺省为 `pages`。POST 通过 `X-Forgejo-Event` / `X-GitHub-Event` / `X-Gitea-Event` / `X-Gogs-Event` 识别 webhook，只接受 push 事件（[`postPage`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/pages.go#L810-L839)），并按站点映射检查分支——项目站固定为 `pages`，wildcard 根站可用 `index-repo-branch`。
+
+```mermaid
+flowchart TD
+  A["要发布一个 forge 仓库"] --> B{"git-pages 能否匿名 clone?"}
+  B -->|能| C["服务端拉取<br/>PUT 仓库 URL 或 POST webhook"]
+  B -->|不能| D["客户端上传产物<br/>CI / CLI / curl 发送归档"]
+  C -.私有库误用.-> E["服务端 clone 返回<br/>401 authentication required"]
+```
+
+仓库设为 public 仍不一定能匿名 clone：Gitea / Forgejo 的实例级 `[service] REQUIRE_SIGNIN_VIEW = true` 会要求登录后才能读取公开仓库。匿名请求 `<clone-url>/info/refs?service=git-upload-pack` 或 `/api/v1/version` 返回 401/403 时，应改用客户端上传。该开关的服务端背景见本 skill 的 [git-server](git-server.md)。
+
+`git-pages-cli --upload-git <URL> --token <token>` 不会在本地 clone；CLI 只是把 URL 作为 PUT body 交给服务端，服务端克隆时也不会使用这个 forge token。因此私有仓库走这条路径仍会 401。
+
+#### <a id="client-upload"></a>客户端上传产物
+
+客户端先取得站点内容，再把归档放进请求体：
+
+- **裸 curl**：`curl https://pages.example.com/ -X PUT --data-binary @site.tar.gz -H 'Content-Type: application/x-tar+gzip' -H 'Authorization: Pages <口令>'`。body 也可使用 zip。
+- **git-pages-cli v1.10.0**：`--upload-dir <目录>` / `--delete` / `--dry-run` / `--expires 14`（[参数定义](https://codeberg.org/git-pages/git-pages-cli/src/commit/a63042dcc9c1419967ded3ce389dae1bab39724e/main.go#L43-L58)）。
+- **Forgejo Action v2.2.0**：[`action.yml`](https://codeberg.org/git-pages/action/src/commit/2b24bbb7ff943d3c8fe1df91326adec66daea6dd/action.yml#L1-L35) 实际启动 git-pages-cli 容器；CI 也可以直接调用 CLI 或 curl。它们都是客户端上传，不是新的传输协议。
+
+PUT 归档会全量替换站点；PATCH 会增量合并，不支持 zip。PATCH 用 character device `(0,0)` 作为 whiteout 删除标记，需要 `Atomic: yes|no`，输掉并发竞态时返回 `409`，客户端应原样重试。
 
 CI 打包有两个常见现象：
 
 - `git archive` 生成的 tar 可能带 `pax_global_header`（type `g`）；git-pages 会报告 `tar: unsupported type 'g'` 但跳过该条目，发布仍可成功。想避免告警可用普通 `tar` 打包。
 - 生成文件索引时，`git ls-files` 默认会引用并八进制转义非 ASCII 路径；使用 `git -c core.quotePath=false ls-files` 取得真实 UTF-8 文件名，再逐路径段做 URL 编码。
 
+#### <a id="private-repo-action"></a>私有仓库的 Forgejo Action
+
+私有仓库由 CI checkout 后上传归档，不经过 `pages` 分支：
+
+```yaml
+name: publish-to-git-pages
+on:
+  push:
+    branches: [main]
+jobs:
+  publish:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+      # 可选：生成一个根 index.html 导航页等构建步骤 …
+      - name: package + publish
+        env:
+          GITPAGES_TOKEN: ${{ secrets.GITPAGES_TOKEN }}   # 对本仓有 push 权限的 forge PAT
+        run: |
+          command -v curl >/dev/null || { apt-get update -qq; apt-get install -y -qq curl >/dev/null; }
+          tar --exclude='./.git' -cf "${RUNNER_TEMP:-/tmp}/site.tar" .
+          code=$(curl -s -m 300 -o /tmp/resp -w "%{http_code}" -X PUT \
+            "https://<user>.<zone>/<project>/" \
+            -H "Forge-Authorization: token ${GITPAGES_TOKEN}" \
+            -H "Content-Type: application/x-tar" \
+            --data-binary @"${RUNNER_TEMP:-/tmp}/site.tar")
+          cat /tmp/resp; [ "$code" = "200" ] || exit 1
+```
+
+- **token**：使用对目标仓库有 push 权限的 forge PAT，scope 包含 `read:user` 与仓库 write，存为仓库 Actions secret（如 `GITPAGES_TOKEN`）。git-pages 只调用 `/api/v1/user` 和 `/api/v1/repos/<owner>/<repo>` 读取身份与 `permissions.push`，不会修改仓库（[`forge_api.go`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/forge_api.go#L17-L103)）。Forgejo 仓库 secret 可通过 `PUT /api/v1/repos/<owner>/<repo>/actions/secrets/<NAME>` 写入。
+- **dry-run**：请求头 `Dry-Run: yes`（任意非空值都会触发）只执行鉴权和映射，不落库；适合定位 401、wildcard 映射和 token 权限（[README](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/README.md#L113-L116)）。token 无权访问推导出的仓库时，响应可能是 `no access to <owner>/<repo> or invalid token`（[`forge_api.go`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/forge_api.go#L90-L105)）。
+- **容器内生成 token**：Forgejo 拒绝以 root 运行管理 CLI。容器默认用户是 root 时，使用 `docker exec -u git <forgejo容器> forgejo admin user generate-access-token --username <U> --scopes read:user,write:repository --raw`。
+- **runner 单并发**：`capacity: 1` 时，一个长期卡住的 workflow 会占满唯一槽位，后续发布全部排队。停止对应 job 容器后 runner 会把 run 标为 failed 并释放槽；迁移期可把不再自动运行的旧 workflow 改为 `on: workflow_dispatch`。Runner / DinD / token 机制见本 skill 的 [git-server](git-server.md)。
+
+#### <a id="publishing-http-details"></a>读取、特殊头与格式限制
+
+读请求走 `GET` / `HEAD`，按 host 和可选 project name 返回站点文件；保留端点包括 `/.git-pages/health`、`/.git-pages/manifest.json`、`/.git-pages/manifest.pb` 和 `/.git-pages/archive.tar`。
+
+`Dry-Run: yes` 只运行鉴权，不修改内容；`Expires: <HTTP-date>` 需要源码快照同时开启 `features = ['expiration']` 和 `[limits].allow-expiration = true`。所有内容更新以 manifest 切换为原子边界，具体保证取决于存储后端（[README](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/README.md#L100-L126)）。`_redirects` / `_headers` 见 [站点文件约定](#site-files)。
+
 SHA-256 Git object 支持仍受 go-git 能力限制；Git LFS 则因协议/API 与反射型 HTTP DoS 风险被明确排除（[上游说明](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/README.md#L123-L126)）。
 
 ### <a id="publishing-auth"></a>发布鉴权
 
-#### <a id="auth-entrypoints"></a>请求类型与鉴权入口
+发布路径决定进入哪组鉴权函数；本节只讨论请求如何获得授权，内容传输见 [发布路径与客户端](#publishing-api)。
 
-HTTP 分发和鉴权入口是一一对应的：
+#### <a id="auth-entrypoints"></a>鉴权入口
 
-| 请求 | 内容 | 鉴权入口 |
+| 发布路径 / 请求 | 鉴权入口 | 按序尝试的机制 |
 |---|---|---|
-| PUT（仓库 URL）/ POST（webhook） | 由 git-pages 克隆仓库 | [`AuthorizeUpdateFromRepository`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L417-L479) |
-| PUT / PATCH（归档） | 请求体直接携带站点内容 | [`AuthorizeUpdateFromArchive`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L729-L804) |
-| DELETE | 下线站点 | [`AuthorizeDeletion`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L806-L808) |
-| GET `/.git-pages/*` | 枚举 manifest / archive 等元数据 | [`AuthorizeMetadataRetrieval`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L367-L415) |
+| 服务端拉取：PUT 仓库 URL / POST webhook | [`AuthorizeUpdateFromRepository`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L417-L479) | `PAGES_INSECURE` → DNS Challenge → Repository Allowlist → POST Wildcard Match |
+| 客户端上传：PUT / PATCH 归档 | [`AuthorizeUpdateFromArchive`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L729-L804) | `PAGES_INSECURE` → DNS Challenge → Forge Wildcard → Forge DNS Allowlist |
+| DELETE | [`AuthorizeDeletion`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L806-L808) | 与归档上传相同 |
+| GET `/.git-pages/*` | [`AuthorizeMetadataRetrieval`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L367-L415) | Development Mode → DNS Challenge → Wildcard Match（metadata） |
 
-#### <a id="repository-auth"></a>仓库地址与 webhook 鉴权
+| 鉴权机制 | 服务端拉取 | 归档上传 / 删除 | 凭据 | 额外 DNS TXT | forge API | 典型场景 |
+|---|---|---|---|---|---|---|
+| `PAGES_INSECURE` | ✓ | ✓ | git-pages 无凭据；反代可另加共享密钥 | 无 | 否 | 由可信反代统一保护写请求 |
+| DNS Challenge | ✓ | ✓ | 自签口令 | `_git-pages-challenge.<host>` | 否 | 单站、脚本发布 |
+| Repository Allowlist | PUT / POST | — | 无 | `_git-pages-repository.<host>` | 否 | 可匿名 clone 的固定根站 |
+| Wildcard Match（content） | 仅 POST | — | webhook payload | 无 | 否 | 可匿名 clone 的通配多租户 |
+| Forge Wildcard | — | ✓ | forge token | 无 | 是 | 通配多租户的 CI / 客户端上传 |
+| Forge DNS Allowlist | — | ✓ | forge token | `_git-pages-forge-allowlist.<host>` | 是 | 固定根站的 CI / 客户端上传 |
 
-PUT 仓库 URL 和 POST webhook 都走 `AuthorizeUpdateFromRepository`：先尝试 DNS Challenge；再用 `_git-pages-repository.<host>` TXT 做 repository allowlist；POST 还可按 `[[wildcard]]` 模板匹配 webhook 中的 clone URL 和分支。repository allowlist 不需要 token，也不调用 forge API，但只授权根 / `.index` 站点（[`authorizeDNSAllowlist`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L200-L246)）。
+#### <a id="shared-auth"></a>通用授权
 
-`git-pages-cli --upload-git <URL> --token <token>` 不会在本地克隆仓库；CLI 只是把 URL 作为 PUT body 交给服务端，因此这条路径不使用 `Forge-Authorization`。forge token 只用于归档 PUT / PATCH / DELETE。需要私有仓库内容时，应在 CI 中先 checkout / 构建，再上传归档。
+`PAGES_INSECURE` 和 DNS Challenge 都适用于服务端拉取、归档上传与删除。
 
-#### <a id="archive-auth"></a>归档直传与删除鉴权
+**`PAGES_INSECURE` + 反代兜底** —— [`authorizeInsecure`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L36-L45) 在 `PAGES_INSECURE=1` 时无条件放行。采用该模式时，让 git-pages 只监听回环地址，由 Caddy 对写方法校验共享密钥：
 
-归档 PUT / PATCH 和 DELETE 依次尝试 `PAGES_INSECURE → DNS Challenge → Forge Wildcard → Forge DNS Allowlist`，第一个通过即放行（[`authorizeDNSChallengeOrForgeWithToken`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L729-L777)）：
+```caddyfile
+pages.example.com {
+    @write method PUT PATCH POST DELETE
+    @noauth not header Authorization "Bearer <共享密钥>"
+    handle @write {
+        handle @noauth { respond 403 }
+    }
+    reverse_proxy 127.0.0.1:3000
+}
+```
 
-| 方案 | 密钥类型 | 额外鉴权 DNS(TXT) | 要不要 forge API | 适合 |
-|---|---|---|---|---|
-| **DNS Challenge** | 自签口令（你随便定）| 是（1 条 TXT）| 否 | 单站、脚本发、最少依赖 |
-| **Forge Token + DNS Allowlist** | forge access token | 是（1 条 TXT）| 是 | 复用 forge 账号权限、能按账号撤销（"deploy token"）|
-| **Forge Wildcard**（= 通配多租户）| forge token（含 CI 自动 token）| 否 | 是 | 一个域名后缀、无数用户各发各站（多租户）|
-| **`PAGES_INSECURE` + 反代兜底** | 反代层的 `<共享密钥>` | 否 | 否 | 不使用 git-pages 鉴权、由反代统一保护写请求 |
-
-“额外鉴权 DNS(TXT)”不包含 A/AAAA/CNAME 解析记录；解析记录始终需要，鉴权 TXT 只由所选方案决定。
+客户端发布时带 `-H 'Authorization: Bearer <共享密钥>'`。这个方案只有 Caddy 一层校验：如果写方法匹配漏配，或 git-pages 后端端口意外暴露公网，请求将直接通过。DNS Challenge / Forge token 则仍由 git-pages 自身校验。
 
 **DNS Challenge（自签口令）** —— [`authorizeDNSChallenge`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L131-L198) 把 `sha256("<host> <口令>")` 与 `_git-pages-challenge.<host>` 的 TXT 集合比对。CLI 可生成随机口令和 zone file 记录（[CLI 实现](https://codeberg.org/git-pages/git-pages-cli/src/commit/a63042dcc9c1419967ded3ce389dae1bab39724e/main.go#L291-L302)）：
 
@@ -444,6 +515,19 @@ if !slices.Contains(actualChallenges, expectedChallenge) { 拒绝 } // 命中任
 
 所以同名多条 TXT 可以同时保留新旧口令，便于轮换。支持 `Authorization: Pages <口令>`，也支持 `Authorization: Basic base64("Pages:<口令>")`（用于无法发送自定义 scheme 的 webhook）。CLI 可用 `--password-file` 或 `GIT_PAGES_PASSWORD`，避免把口令放进 argv（[CLI 读取逻辑](https://codeberg.org/git-pages/git-pages-cli/src/commit/a63042dcc9c1419967ded3ce389dae1bab39724e/main.go#L229-L249)）。这与 Let's Encrypt DNS-01 不同：DNS-01 是签证书时的一次性域名验证；这里的 TXT 是每次发布都会查询的长期凭据。
 
+#### <a id="repository-auth"></a>仓库来源授权
+
+服务端拉取在 DNS Challenge 之后尝试两种“仓库来源是否匹配”的授权，不读取 `Forge-Authorization`：
+
+- **Repository Allowlist**：PUT 仓库 URL 和 POST webhook 都可使用。git-pages 查询 `_git-pages-repository.<host>`，TXT 每条值必须是绝对 clone URL；请求中的 URL 命中即可。它免 token、免 forge API，但 [`authorizeDNSAllowlist`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L200-L246) 只允许根 / `.index` 站点。
+- **Wildcard Match（content）**：仅 POST webhook 使用。git-pages 先由 host + path 套 `[[wildcard]]` 得到预期仓库和分支，再与 webhook payload 的 `repository.clone_url` / `ref` 比较。这里的 wildcard 只做映射与匹配；它不会监听 push，也不会主动拉仓库。
+
+GitHub 不提供 Gogs 兼容 API，因此多租户发布使用 Wildcard Match：`[[wildcard]].authorization` 留空，由 GitHub push webhook 触发，匹配后匿名克隆公开仓库。该路径免 token、免 forge API，对应 [鉴权规则](#auth-order) 中的 Wildcard Match。
+
+#### <a id="archive-auth"></a>Forge token 授权
+
+归档 PUT / PATCH 和 DELETE 在通用授权未通过后，依次尝试 Forge Wildcard 与 Forge DNS Allowlist（[`authorizeDNSChallengeOrForgeWithToken`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L729-L777)）。两者都读取 `Forge-Authorization`，并通过 forge API 验证 token 对目标仓库的 push 权限。
+
 **Forge Token + DNS Allowlist（deploy token）** —— [`authorizeForgeDNSAllowlist`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L700-L727) 先读取 `_git-pages-forge-allowlist.<host>` 中的绝对 clone URL，再把 `Forge-Authorization` token 交给 forge API 核对 push 权限。配置步骤：① Forgejo 建 access token，授予 user read 和目标仓库 write；② DNS 加 `_git-pages-forge-allowlist.pages.example.com. TXT "https://git.example.com/user/repo.git"`；③ `git-pages-cli … --token <forge-token> --upload-dir ./_site`。API 先读取当前用户，再读取仓库 `permissions.push`（[`forge_api.go`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/forge_api.go#L17-L103)；函数名保留了 Gogs 历史命名，但 Gogs / Gitea / Forgejo 共用这组 API）。撤销权限可直接在 forge 完成；代价是发布依赖 forge API 可用。DNS allowlist 只授权根 / `.index` 站点，不能给子项目单独授权。CLI 也支持 `GIT_PAGES_TOKEN`。
 
 **Forge Wildcard（多租户）** —— [`authorizeForgeWildcard`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L638-L698) 按 `[[wildcard]]` 从 host / path 推导仓库，再用 forge token 校验权限。`[[wildcard]]` 是 TOML 数组表，可配置多段：
@@ -459,73 +543,6 @@ authorization = "forgejo"
 [`Matches` / `ApplyTemplate`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/wildcard.go#L37-L84) 要求 host 比 domain 后缀多一个标签，并把它作为用户名：根 `/` 映射到 `.index`，使用 `index-repo` 和 `index-repo-branch`；`/<项目>/` 映射到 `<user>/<项目>`，分支固定为 `pages`。仓库归属每次请求现算，不需要预登记。Forgejo Actions 的自动 token 可直接用于这条路径；源码快照还支持 Forgejo 16+ 的 PR preview。固定单域名不符合“后缀前多一个用户名标签”的匹配条件，不适合 Forge Wildcard。
 
 > **多 forge 排序（v0.9.1 实测）**：可以为不同 forge 配多段 `[[wildcard]]`。若一个 domain 是另一个的后缀，把更长、更具体的 domain 放前面；否则短后缀可能先匹配，把 `alice.gitea.pages.example.com` 的用户名误算成 `alice.gitea`，进而生成错误 clone URL。
->
-> **GitHub 多租户**：GitHub 不提供 Gogs 兼容 API，因此 `authorization` 留空，改走 Wildcard Match content：POST GitHub push webhook，git-pages 按模板匹配 `repository.clone_url` 和 `ref`，再匿名克隆公开仓库。这条路径免 token、免 forge API，对应 [鉴权规则](#auth-order) 中的 Wildcard Match。
-
-**`PAGES_INSECURE` + 反代兜底** —— [`authorizeInsecure`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L36-L45) 在 `PAGES_INSECURE=1` 时无条件放行。采用该模式时，让 git-pages 只监听回环地址，由 Caddy 对写方法校验共享密钥：
-
-```caddyfile
-pages.example.com {
-    @write method PUT PATCH POST DELETE
-    @noauth not header Authorization "Bearer <共享密钥>"
-    handle @write {
-        handle @noauth { respond 403 }
-    }
-    reverse_proxy 127.0.0.1:3000
-}
-```
-
-客户端发布时带 `-H 'Authorization: Bearer <共享密钥>'`。这个方案只有 Caddy 一层校验：如果写方法匹配漏配，或 git-pages 后端端口意外暴露公网，请求将直接通过。DNS Challenge / Forge Token 则仍由 git-pages 自身执行第二层校验。
-
-#### <a id="repository-visibility"></a>仓库可见性与发布路径
-
-webhook（POST）和仓库 URL PUT 由 git-pages 自己克隆仓库；归档 PUT / PATCH 则由客户端直接发送内容。因此仓库可见性决定了发布路径：
-
-```mermaid
-flowchart TD
-  A["要把一个 forge 仓库发布到 git-pages"] --> B{"仓库公开还是私有?"}
-  B -->|公开| C["webhook（POST）<br/>forge push 时回调 git-pages<br/>→ git-pages 匿名浅克隆该仓库（规则 3/4）"]
-  B -->|私有| D["归档 PUT/PATCH<br/>带 Forge-Authorization token（规则 5/7）<br/>内容在请求体(tar/zip), 不 clone"]
-  C -.失败模式.-> E["私有库走 webhook → 服务端匿名 clone 报<br/>401 authentication required"]
-```
-
-仓库设为 public 仍不一定能匿名 clone：Gitea / Forgejo 的实例级 `[service] REQUIRE_SIGNIN_VIEW = true` 会要求登录后才能读取公开仓库。匿名请求 `<clone-url>/info/refs?service=git-upload-pack` 或 `/api/v1/version` 返回 401/403 时，行为等同私有仓库，应改用归档 PUT。该开关的服务端背景见本 skill 的 [git-server](git-server.md)。
-
-私有库误走 webhook 时，常见错误是 `git clone: ... 401 authentication required`；dry-run 可能显示 `no access to <owner>/<repo> or invalid token`。私有仓库应让 CI 先获得仓库内容，再打包成 tar / zip，通过归档 PUT 上传。
-
-#### <a id="private-repo-action"></a>私有仓库的 Forgejo Action
-
-可直接套用的 Forgejo Action 骨架（从 `main` 直接打包发布，归档模式不经 `pages` 分支）：
-
-```yaml
-name: publish-to-git-pages
-on:
-  push:
-    branches: [main]
-jobs:
-  publish:
-    runs-on: docker
-    steps:
-      - uses: actions/checkout@v4
-      # 可选：生成一个根 index.html 导航页等构建步骤 …
-      - name: package + publish
-        env:
-          GITPAGES_TOKEN: ${{ secrets.GITPAGES_TOKEN }}   # 对本仓有 push 权限的 forge PAT
-        run: |
-          command -v curl >/dev/null || { apt-get update -qq; apt-get install -y -qq curl >/dev/null; }
-          tar --exclude='./.git' -cf "${RUNNER_TEMP:-/tmp}/site.tar" .
-          code=$(curl -s -m 300 -o /tmp/resp -w "%{http_code}" -X PUT \
-            "https://<user>.<zone>/<project>/" \
-            -H "Forge-Authorization: token ${GITPAGES_TOKEN}" \
-            -H "Content-Type: application/x-tar" \
-            --data-binary @"${RUNNER_TEMP:-/tmp}/site.tar")
-          cat /tmp/resp; [ "$code" = "200" ] || exit 1
-```
-
-- **token**：使用对目标仓库有 push 权限的 forge PAT，scope 包含 `read:user` 与仓库 write，存为仓库 Actions secret（如 `GITPAGES_TOKEN`）。git-pages 只调用 `/api/v1/user` 和 `/api/v1/repos/<owner>/<repo>` 读取身份与 `permissions.push`，不会修改仓库（[`forge_api.go`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/forge_api.go#L17-L103)）。Forgejo 仓库 secret 可通过 `PUT /api/v1/repos/<owner>/<repo>/actions/secrets/<NAME>` 写入。
-- **dry-run**：请求头 `Dry-Run: yes`（任意非空值都会触发）只执行鉴权和映射，不落库；适合定位 401、wildcard 映射和 token 权限（[README](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/README.md#L113-L116)）。
-- **容器内生成 token**：Forgejo 拒绝以 root 运行管理 CLI。容器默认用户是 root 时，使用 `docker exec -u git <forgejo容器> forgejo admin user generate-access-token --username <U> --scopes read:user,write:repository --raw`。
-- **runner 单并发**：`capacity: 1` 时，一个长期卡住的 workflow 会占满唯一槽位，后续发布全部排队。停止对应 job 容器后 runner 会把 run 标为 failed 并释放槽；迁移期可把不再自动运行的旧 workflow 改为 `on: workflow_dispatch`。Runner / DinD / token 机制见本 skill 的 [git-server](git-server.md)。
 
 #### <a id="auth-order"></a>鉴权规则与判定顺序
 
@@ -542,7 +559,7 @@ git-pages README 的 Authorization 段列出内容更新的完整判定顺序，
 | 7 | Forge Auth（DNS allowlist）| PUT/PATCH/DELETE | `_git-pages-forge-allowlist.<host>` TXT + `Forge-Authorization` 头 | **是** | ✗ | **仅根 / `.index` 站** |
 | 8 | Default Deny | — | — | — | — | 其余一律拒 |
 
-与上面的方案对应：DNS Challenge = 规则 2，Forge DNS Allowlist = 规则 7，Forge Wildcard = 规则 5，`PAGES_INSECURE` + 反代兜底 = 规则 1；仓库地址 / webhook 还可使用免 token 的规则 3 和规则 4。
+与前面的适用矩阵对应：`PAGES_INSECURE` = 规则 1，DNS Challenge = 规则 2，Repository Allowlist = 规则 3，Wildcard Match = 规则 4，Forge Wildcard = 规则 5/6，Forge DNS Allowlist = 规则 7。
 
 > 规则 3 与规则 7 都调用 [`authorizeDNSAllowlist`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L200-L246)；其中 `.index` 检查写在共享函数里，所以两者都只授权根站，不能单独授权 `/子项目/`。
 >
@@ -571,6 +588,8 @@ flowchart LR
   A["main.go<br/>加载配置、启动监听"] --> B["pages.go<br/>ServePages 按 HTTP 方法分发"]
   B --> C["PUT / PATCH / POST / DELETE handler"]
   C --> D["auth.go<br/>按请求类型鉴权"]
+  C --> R["fetch.go<br/>服务端浅克隆仓库"]
+  R --> E
   C --> E["update.go<br/>生成或替换 manifest"]
   E --> F["manifest.go<br/>大文件变成哈希 blob"]
   F --> G["Backend<br/>FS 或 S3 持久化"]
@@ -581,6 +600,7 @@ flowchart LR
 |---|---|---|
 | 服务如何加载配置与密钥 | [`main.go` 参数和配置加载](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/main.go#L226-L361) | [`config.go` 配置结构](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/config.go#L62-L180) |
 | 请求如何进入各方法 handler | [`ServePages`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/pages.go#L930-L977) | [`PUT`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/pages.go#L533-L617) / [`PATCH`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/pages.go#L619-L689) / [`DELETE`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/pages.go#L769-L795) / [`POST`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/pages.go#L797-L929) |
+| 服务端如何拉取仓库 | [`FetchRepository`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/fetch.go#L55-L72) | [`UpdateFromRepository`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/update.go#L118-L147) |
 | 发布如何落成 manifest | [`Update()`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/update.go#L54-L107) | [`StoreManifest`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/manifest.go#L379-L425) 与 [`Backend` 接口](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/backend.go#L101-L149) |
 
 ### <a id="source-auth-flow"></a>鉴权与 forge 映射
