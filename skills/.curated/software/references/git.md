@@ -7,8 +7,10 @@
 Git 的所有"部分操作"只围绕三个位置：
 
 - **HEAD** —— 上一次提交的快照（tree）。
-- **index / 暂存区** —— 下一次提交的**草稿快照**。
+- **index / 暂存区** —— 下一次提交的**草稿快照**。它通常落在 `.git/index`，不是一堆散乱文件，而是一张按路径索引的表：每项记录“这个路径下一次提交应指向哪个 blob（文件内容对象）、文件模式和少量状态标记”。同一 worktree 里的多个终端/agent 共享同一个 index；不同 `git worktree` 各有自己的 index。
 - **worktree / 工作区** —— 磁盘上的当前文件。
+
+`git add -- <path>` 的本质是把该路径**当前工作区内容**写入/更新 index 条目；`git commit`（不带路径）再把整张 index 快照拍成提交。因为 index 按路径分项，add 一个新文件不会改动其它路径的条目，但同一路径若被多个会话同时 stage/commit，仍会互相影响。
 
 每个 `-p`（interactive patch）命令的行为，完全由两件事决定：**拿哪两个位置做 diff（"基准 floor" ↔ 目标）**，以及**把选中的 hunk 往哪个方向应用**。记住"基准是谁"，就能预测它看得见什么、动得了什么、什么会被当成不可改的底座。
 
@@ -28,7 +30,7 @@ $ git show --stat --oneline HEAD
  other.txt => renamed.txt | 0        # ← rename 搭车进了 commit
 ```
 
-结论：**只要东西在 index 里，一 commit 必然带走**。要不带走，只有两条路——把它撤出 index（`git restore --staged`），或改用下面不碰 index 的 pathspec 提交。
+结论：`git commit` **不带路径时**，只要东西在 index 里就必然带走。要隔离其它路径，只有两条路——把它们撤出 index（`git restore --staged`），或改用下面的 pathspec 部分提交：提交内容不取其它 index 条目，点名路径之外的暂存内容不会搭车。
 
 ## 在有其他改动时只提交一处：`git commit -- <path>`（不带 -p）是最稳的 CLI 方案
 
@@ -36,14 +38,14 @@ $ git show --stat --oneline HEAD
 
 - 只提交你点名的路径；
 - 别人已暂存的改动（rename、其它文件）、你没点名的 untracked 文件**一个都不搭车**，原封不动留在 index / worktree；
-- 对**已跟踪**文件连 `git add` 都省了（工作区改动直接进这一个提交）；但**全新的 untracked 文件必须先 `git add`**——git 要求路径 "already be known to Git"，否则匹配不到、报 `did not match any files known to git`。
+- 对**已跟踪**文件连 `git add` 都省了（工作区改动直接进这一个提交）；但**全新的 untracked 文件必须先让 Git “认识”这个路径**——否则匹配不到、报 `did not match any files known to git`。不必完整暂存内容，优先用下一小节的 `git add -N`。
 
 `--` 是否必需见本节末小节：对 commit 加不加提交结果相同，但推荐带上以防路径被误当成选项。
 
 ```
 # 工作区: 你改了 AGENTS.md，另有 6 项并发改动(4 modified + 2 untracked)
 $ git commit -m "docs: update agent rules" -- AGENTS.md
-# 结果: 只动 AGENTS.md；6 项并发改动纹丝不动，index 不受影响
+# 结果: 只动 AGENTS.md；6 项并发改动纹丝不动，其它路径的 index 条目不受影响
 # 选项(-m/-F)放 -- 前面；-- 之后一律当路径
 ```
 
@@ -56,6 +58,23 @@ $ git commit -m "docs: update agent rules" -- AGENTS.md
 | `git commit -p -- f.txt`（pathspec + **-p**） | index 为底座 + 选中 hunk（见下节） | **有**（rename 是底座，搭车） |
 
 > ⚠️ 反直觉点：给 `git commit` 加了 `-p` **反而破坏了 pathspec 提交本来的隔离性**。`commit -p f.txt` 不是"只提交 f.txt 一处"的隔离方案；`commit f.txt`（不带 -p）才是。`commit -p f.txt` 的价值只在"没有别的东西暂存"时——它省的是 `git add`，不是省"清理别人的暂存内容"。
+
+### 全新文件：用 `git add -N` 只登记路径，再精准提交
+
+`git add -N` / `--intent-to-add` 仍然会写 index，但只写一个“这个路径稍后要加入”的标记，不把文件内容暂存进去。git-add(1) 原文：*“An entry for the path is placed in the index with no content.”* 因此更准确的说法是**轻触 index，而不是完全不碰 index**。
+
+```bash
+# new.txt 目前是 ??（完全 untracked）
+git add -N -- new.txt
+# 此时 git status -s 显示 " A new.txt"：
+# 右列 A = 工作区内容仍未暂存；git diff --cached 里没有 new.txt 的内容
+
+git commit -m "add new.txt" -- new.txt
+```
+
+第二步仍走 pathspec 部分提交：只提交 `new.txt` 的当前工作区内容，别的已暂存文件不搭车、仍留在 index。成功后 `new.txt` 成为普通 tracked 文件。对比完整的 `git add -- new.txt`：后者也不会让其它路径搭车，但会先把 `new.txt` 的全部内容真正放进暂存区；若 commit 中途取消，它会继续保持 staged。
+
+边界：这种隔离保证的是**其它路径**不受影响。若另一会话也在操作 `new.txt` 本身（或已 stage 同一文件的其它 hunk），pathspec 无法区分“同一路径里谁的改动”；应改用独立 worktree，或用临时 index + `commit-tree`。
 
 ### `--` 分隔符：加不加提交结果相同，但推荐带上
 
