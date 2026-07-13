@@ -1223,6 +1223,8 @@ grep -nE 'changeConfig|rawCfgMu|ManageSync|tls.obtain|Shutdown|io\.Copy|streamin
    - **域名 DNS 没解析到本机前，别把它写进 Caddyfile**——托管证书签不出会一直在后台重试打转。
    - **收严 `on_demand_tls` 的 `ask` 端点**（见「`on_demand_tls`：陌生 SNI 的按需签证」节），别让任意子域名都能触发签证。
 
+   > **实测坐实（2026-07-05，Alibaba）**：站点块 `claudeclaw.chenzhaoyun.com` 的 DNS 指向 `47.99.118.97`（另一台机器），而本机真实入站 IP 是 `47.102.36.175`——托管证书永远签不出（Let's Encrypt 打到 DNS 指向的那台：`tls-alpn-01` 得 `remote error: tls: no application protocol`、`http-01` 得 404），每 ~2 分钟重试打转。这次 `reload` 就卡在此：`journalctl` 里 `13:11`/`13:12` 两条 `Reload operation timed out`、`13:14:01` `SIGKILL`（= 之后 `is-active` 卡死状态的 `ActiveEnterTimestamp`，一挂就是一周），窗口内**唯一**的错误活动就是这个域名的 `challenge failed` 循环。**已 `restart`、无法再 pprof 时的事后倒查手法**：`journalctl -u caddy --since <卡死点>` → 对 `"identifier"` 去重锁定唯一肇事域名 → 用 DoH 对比它的 DNS 与本机真实入站 IP（**别信 `api.ipify.org`**，它走 mihomo 出口拿到的是代理 IP、不是入站 IP；改用「已指向本机、证书正常」的域名反推真实入站 IP）。**修复**：DNS 没指过来 / 域名已搬走的，直接把该站点块从 Caddyfile 删掉，`reload`（卡就 `restart`）后循环立即消失。
+
 4. **现场确诊卡在哪**：趁还卡着时，用「通用诊断入口」的 `/config/` + pprof 两条命令抓当次卡点栈，才能把上面第 3 条那类嫌疑从「嫌疑」钉成「这次就是它」。
 
 5. **大改 / 加新域名，宁可 `restart` 不 `reload`**。reload 要在一把全局锁里同时收尾旧配置、起新配置，配置越大越容易卡；换二进制、改 systemd 环境变量本来就必须 restart。有界的 restart 比「可能挂死的 reload」省心。
