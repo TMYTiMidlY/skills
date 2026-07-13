@@ -1,13 +1,13 @@
 ---
 name: vps-maintenance
-description: 新服务器/VPS 初始化、服务器侧安全配置、网络质量检测、BBR/EasyTier/Caddy/caddy-security/error-pages 等服务安装配置时使用；远程执行规范由 remote 提供。
+description: 新服务器/VPS 初始化、服务器侧安全配置、网络质量检测、BBR/EasyTier/Caddy/caddy-security/error-pages 等服务安装配置时使用；远程操作优先使用 portal MCP server，缺失时遵循 software skill 的 SSH 规范。
 ---
 
 # VPS Maintenance
 
 ## 使用范围
 
-当用户要配置新服务器或 VPS、做服务器侧安全配置、安装或调整服务器上的基础服务时使用本 skill。实际远程执行命令仍遵循 `remote` 的 SSH 操作规范。
+当用户要配置新服务器或 VPS、做服务器侧安全配置、安装或调整服务器上的基础服务时使用本 skill。实际远程操作优先使用 portal MCP server；当前环境未提供时，遵循 `software` skill 的 SSH 远程执行、sudo 与远端文件编辑规范。
 
 如果用户没有明确指定任务类型，先确认是：
 
