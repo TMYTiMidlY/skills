@@ -259,7 +259,7 @@ with Camoufox(fingerprint_preset=True, os="macos") as browser:
 选择：
 - 要**最强的持久指纹身份 / 多身份并行 / 配置文件 / 代理轮换** → `camoufox-cli`（Bin-Huang）。
 - 要**自带 MCP**、或更贴近 CloverLabsAI 官方组织 → `camoufox-browser`（rlgrpe）。
-- 两者都是年轻第三方项目，按实验工具看待稳定性；本机 `~/projects/readonly-repos` 已各 clone 一份可查源码。
+- 两者都是年轻第三方项目，按实验工具看待稳定性；两者源码均可在各自官方仓库查证。
 
 `camoufox-browser` 示例：
 
