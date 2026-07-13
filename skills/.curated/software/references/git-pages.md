@@ -298,7 +298,7 @@ pages.example.com {
 > - **不收紧 = 签证风暴**：`permission` 若指向一个"来者不拒"的端点（或干脆没配），任意野域名来握手都会触发签发，撞 Let's Encrypt 限额（`too many certificates` / 子域名标签数超限的 `too many subdomain labels`，最长 **30 天**退避），还会持续占 Caddy 内部 certmagic 的 obtain 锁，和 `caddy reload` 卡死高度同时段。所以**一定**把 permission 指到 git-pages 的 `:3001`（它只对真发布过的站 `StatObject .exists` 放行），别用宽松兜底。运维现象与根因详见 `vps-maintenance` skill 的 [`references/caddy.md`](../../vps-maintenance/references/caddy.md) 「`on_demand_tls`」「reload 卡住」两节。
 > - **收紧后又 fail-closed**：permission 口一旦答不了（git-pages 挂了、或它连不上 S3 后端 `StatObject` 超时），Caddy 就**签不出证书 → 整个 `*.pages` 站点直接 TLS 握手失败、不可达**。这不是风暴而是"静默全挂"，排查时先 `curl http://127.0.0.1:3001/?domain=<某已发布域名>` 看 ask 口是否 200，再看 git-pages ↔ S3 后端是否通。
 
-### 要改哪些 DNS 记录
+### DNS 记录
 
 `<域名>` = 站点根域、`<edge>` = 边缘反代公网 IP、`<host>` = 完整站点域名。按选的模式加：
 
@@ -314,93 +314,7 @@ pages.example.com {
 
 > 有 DNS 服务商 API（如 Spaceship）时，解析记录 + TXT 都能脚本化下发——前提是那把 API key 对 `<域名>` 本身有 DNS 写权限（只授权别的域名会 404 `SOA ... not found`）。
 
-### 选一种"谁能推"的鉴权方案
-
-**归档直传 / 删除**类请求（tar/zip 的 PUT/PATCH、DELETE）的鉴权入口是 `authorizeDNSChallengeOrForgeWithToken`（`src/auth.go`），**按顺序**尝试 `PAGES_INSECURE → DNS Challenge → Forge Wildcard → Forge DNS Allowlist`，第一个通过即放行。挑一种：
-
-> 注意：**推 git 仓库 / webhook**（PUT body 为仓库 URL、POST webhook）走的是另一个函数 `AuthorizeUpdateFromRepository`，多一种**免 token、免 forge API** 的方式——在 `_git-pages-repository.<域名>` TXT 里列出允许的 clone URL 即可（README Authorization 第 3 条）。想"webhook 推 `pages` 分支就发布"、又不想建任何密钥的自建场景，这条最省事。下表对照的是归档直传路径。
-
-| 方案 | 密钥类型 | 额外鉴权 DNS(TXT) | 要不要 forge API | 适合 |
-|---|---|---|---|---|
-| **DNS Challenge** | 自签口令（你随便定）| 是（1 条 TXT）| 否 | 单站、脚本发、最少依赖 |
-| **Forge Token + DNS Allowlist** | forge access token | 是（1 条 TXT）| 是 | 复用 forge 账号权限、能按账号撤销（"deploy token"）|
-| **Forge Wildcard**（= 通配多租户）| forge token（含 CI 自动 token）| 否 | 是 | 一个域名后缀、无数用户各发各站（多租户）|
-| **边缘 ****** `PAGES_INSECURE`** | 你在 Caddy 里定的 ****** | 否 | 否 | 不想碰 DNS，安全全押在反代上 |
-
-> 「额外鉴权 DNS(TXT)」列指的是**除基础解析记录外，还要不要加 `_git-pages-*` TXT**。四种模式都得先有一条把域名指向边缘的 A/AAAA/CNAME（那是解析、不是鉴权）；只有 DNS Challenge / Allowlist 需要再加鉴权 TXT。Forge Wildcard 虽然要一条 `*.pages.<域名>` 通配解析，但那仍是解析记录、**没有鉴权 TXT**，故填「否」。
-
-**DNS Challenge（自签口令）**——本质是"把一个口令的哈希写进 DNS TXT"。用官方 CLI 一条命令生成口令 + 现成 TXT：
-
-```bash
-git-pages-cli https://pages.example.com --challenge
-# 输出：password: 28a616f4-...（口令，自己收好）
-#       _git-pages-challenge.pages.example.com. 3600 IN TXT "a59ecb..."（把这条加到 DNS）
-```
-
-TXT 加到 DNS 后，发布带口令即可（`net.LookupTXT` 返回该名下**所有** TXT，命中任意一条即过——同名挂多条 = 多个口令，适合轮换）：
-
-```bash
-git-pages-cli https://pages.example.com --password <口令> --upload-dir ./_site
-# 或裸 curl：
-curl https://pages.example.com/ -X PUT --data-binary @site.tar.gz \
-  -H 'Content-Type: application/x-tar+gzip' -H 'Authorization: Pages <口令>'
-```
-
-口令别名 `--password-file` / `GIT_PAGES_PASSWORD` 环境变量，避免进 argv。与 Let's Encrypt 的 DNS-01 challenge **不是一回事**（LE 是实时一次性验证域名控制权；这里是永久 TXT，每次发布现查现比）。
-
-**Forge Token + DNS Allowlist（"deploy token"）**——不自己造口令，用 forge 的 access token 当发布凭据，git-pages 去问 forge"这 token 对这仓库有没有 push 权限"。① Forgejo 建 token：Settings → Applications → Access tokens，勾 **user: Read** + **repository: Read and write**；② DNS 加 `_git-pages-forge-allowlist.pages.example.com. TXT "https://git.example.com/user/repo.git"`（可多条）；③ 发布 `git-pages-cli … --token <forge-token> --upload-dir ./_site`。**好处**：撤销某人只需在 forge 改，不用换口令。**代价**：多一个"必须活着的 forge API"运行时依赖；源码 `if projectName != ".index"` 写死——**只能授权根/索引站点，不能给子项目单独授权**。token 别名 `GIT_PAGES_TOKEN` 环境变量。
-
-**Forge Wildcard（多租户）**——就是 Codeberg 给每个用户发 `<用户名>.codeberg.page` 的机制，`config.toml` 配 `[[wildcard]]`：
-
-```toml
-[[wildcard]]
-domain        = "pages.example.com"
-clone-url     = "https://git.example.com/<user>/<project>.git"
-index-repo    = "pages"
-authorization = "forgejo"
-```
-
-请求进来时按 **host 子域名标签 = 用户名** + **路径首段 = 项目名** 套 `clone-url` 模板**现算**仓库：**根 `/`** → 项目名取 `.index` → 用 `index-repo`（如 `pages`）→ 仓库 `<user>/pages`，分支取 `index-repo-branch`；**`/<项目>/`** → 仓库 `<user>/<项目>`，**分支在代码里硬编码为 `pages`**（`src/wildcard.go`：`.index` 用 `IndexBranch`，否则 `branch = "pages"`）。算出仓库后拿请求带的 forge token 核权限。CI 里用官方 [git-pages/action](https://codeberg.org/git-pages/action) 时 Forgejo Actions 的自动 token 就够，还支持 PR 预览站。单站场景**别用它**——它要求"后缀前恰好多一段子域名"，固定单域名套不上。
-
-> **多 forge 并存 + 排序坑（实测 v0.9.1）**：可配多个 `[[wildcard]]` 段让不同 forge 各自多租户（如 forgejo 用 `pages.example.com`、gitea 用 `gitea.pages.example.com`）。但**若一个 domain 是另一个的后缀，务必把更长/更具体的排前面**——否则短后缀那段会先匹配到长后缀租户的 host：实测把"host 去掉 domain 后缀"的**整段前缀**当 user（如 `alice.gitea.pages.example.com` 落到 `pages.example.com` 段时被当 user=`alice.gitea`），clone-url 算错、鉴权失败。
->
-> **GitHub 做多租户**要单独说：GitHub 不认 gogs 兼容 API（`authorization` 不能设成任何 forge），只能走 **Wildcard Match content（下面 8 条规则的规则 4）**——`[[wildcard]]` 的 `authorization` **留空**，然后 `POST` 一个 GitHub push webhook（body 含 `repository.clone_url` + `ref`，头 `X-GitHub-Event: push`、`Content-Type: application/json`），git-pages 按模板匹配 clone-url（**免 token、免 forge API**）后现克隆该**公开** repo 的对应分支。实测能从公网直接 clone GitHub 公开库并发布。
-
-**边缘 Bearer + `PAGES_INSECURE`**——`PAGES_INSECURE=1` 让 git-pages **无条件放行**所有到达它的请求（`authorizeInsecure`）。配合 git-pages 只监听 `127.0.0.1` + Caddy 只对带正确 Bearer 令牌的写请求放行，就成了"Caddy 是唯一关卡"：
-
-```caddyfile
-pages.example.com {
-    @write method PUT PATCH POST DELETE
-    @noauth not header Authorization "Bearer <token>"
-    handle @write {
-        handle @noauth { respond 403 }
-    }
-    reverse_proxy 127.0.0.1:3000
-}
-```
-
-**代价**：安全**单点**押在"Caddy 配置写对 + git-pages 永不暴露公网"上——Caddy 一旦漏配或 git-pages 意外监听公网，`PAGES_INSECURE` 谁来都放行，没有第二道防线。DNS Challenge / Forge Token 那几种即使 Caddy 出错，git-pages 自己那道校验仍独立生效。**生产慎用，仅在你完全掌控反代时用**。
-
-**完整鉴权规则表（README 的 8 条，按判断顺序）**——上面四个是最实用的；完整看，内容更新鉴权 README 列了 8 条按序尝试的规则（`src/auth.go` 逐条对应）：
-
-| # | 规则（README）| 触发方法 | 载体 | 调 forge API? | 对 GitHub | 关键限制 |
-|---|---|---|---|---|---|---|
-| 1 | Development Mode | 任意 | `PAGES_INSECURE=1`（"边缘 Bearer"是 **Caddy 层**附加约定，git-pages 代码里无对应实现）| 否 | ✓ | 无条件放行，生产禁用 |
-| 2 | DNS Challenge | PUT/PATCH/DELETE/POST | `_git-pages-challenge.<host>` TXT + 口令（`Authorization: Pages <口令>`，或 Basic `Base64("Pages:<口令>")` 给发不了自定义头的 GitHub/Gogs）| 否 | ✓ | 绝对权限；PUT/POST 限分支 `pages` |
-| 3 | DNS Allowlist（repo）| PUT / POST | `_git-pages-repository.<host>` TXT 列 clone URL | **否、免 token** | ✓ | **仅根 / `.index` 站**；**不能 DELETE** |
-| 4 | Wildcard Match（content）| **仅 POST**(webhook) | `[[wildcard]]` 配置 + webhook payload | **否** | ✓（收 GitHub payload）| 只走 webhook，REST 不行 |
-| 5 | Forge Auth（wildcard）| PUT/PATCH/DELETE | `[[wildcard]]` + `Forge-Authorization` 头 | **是**（Gogs/Gitea/Forgejo 兼容 API）| ✗ | 多租户；archive 路径 |
-| 6 | Forge Auth（wildcard, preview）| PUT/PATCH/DELETE | `[[wildcard]].preview-domain` + token，走 `/api/v1/actions/run` | **是** | ✗ | **仅 Forgejo 16+、需 feature flag**；PR 预览站 |
-| 7 | Forge Auth（DNS allowlist）| PUT/PATCH/DELETE | `_git-pages-forge-allowlist.<host>` TXT + `Forge-Authorization` 头 | **是** | ✗ | **仅根 / `.index` 站** |
-| 8 | Default Deny | — | — | — | — | 其余一律拒 |
-
-对照上面四方案：DNS Challenge = 规则 2，Forge Token = 规则 7，Forge Wildcard = 规则 5，边缘 Bearer = 规则 1，另有免 token 的 repository allowlist = 规则 3。
-
-> **两条"仅根站"限制同源**：规则 3 与规则 7 都调同一个 `authorizeDNSAllowlist(r, scope)`（`src/auth.go:200`），`.index`-only 检查（`if projectName != ".index"`，`src/auth.go:218`）写在共享函数里，所以两者都**只授权根 / 索引站点、不能给 `/子项目/` 单独授权**。
->
-> **对 GitHub 一句话**：能"发布"（规则 2/3/4 都收 GitHub payload），但**不能复用 GitHub 的权限校验**——规则 5/6/7 的 forge-token 走 Gogs/Gitea/Forgejo 兼容 API（`src/forge_api.go` 的 `makeGogsAPIRequest` 打 `/api/v1/…`，无任何 GitHub 代码路径）。
-
-### 怎么推：客户端与 HTTP API
+### 发布通道：HTTP 写接口与客户端
 
 三种客户端底层都是打同一套 HTTP 接口：
 
@@ -420,9 +334,92 @@ pages.example.com {
 
 特殊头/文件：`Expires: <HTTP-date>`（配 `allow-expiration`）、`Dry-Run: yes`（只验权不落盘）；站点根 Netlify 风 `_redirects` / `_headers`（`_headers` 里 `Basic-Auth:` 伪头**明文存储、非安全特性**，仅防搜索引擎）。所有更新原子生效。两个"不支持"原因不同：**SHA-256 Git 哈希**是暂时受 [go-git 限制](https://github.com/go-git/go-git/issues/706)（将来自动获得）；**Git LFS** 是**有意不支持**（单厂商规格、无稳定 Go API、有反射型 HTTP DoS 滥用风险）。
 
-### 私有库从 CI 发布（Forgejo Action 实例）
+### 鉴权：谁能推
 
-**最关键的实践决策：公开库 vs 私有库走不同发布路径。** 上面「怎么推」里"webhook（POST）"和"归档 PUT"对"仓库是否公开"要求完全不同：
+#### 两条鉴权入口（归档直传 / 推仓库·webhook）
+
+发布鉴权在 `src/auth.go` 分**两条代码路径**，对应上面写入通道的两组：
+
+- **归档直传 / 删除**（tar/zip 的 PUT/PATCH、DELETE）→ `AuthorizeUpdateFromArchive` / `AuthorizeDeletion` → `authorizeDNSChallengeOrForgeWithToken`，**按顺序**尝试 `PAGES_INSECURE → DNS Challenge → Forge Wildcard → Forge DNS Allowlist`，第一个通过即放行。下面「四个实用方案」讲的就是这条。
+- **推 git 仓库 URL / webhook**（PUT body 为仓库 clone URL、POST webhook）→ `AuthorizeUpdateFromRepository`（另一组机制）：先 `authorizeDNSAllowlist(r, "git-pages-repository")` 查 `_git-pages-repository.<域名>` 的 TXT（每条 = 允许的 clone URL，逐条 `url.Parse` 只收绝对 URL，**免 token、免 forge API**），再 `authorizeWildcardMatchSite`（webhook 通配匹配）。想"webhook 推 `pages` 分支就发布"、又不想建任何密钥的自建场景，这条最省事（对应下面完整规则表的规则 3）。
+
+#### 四个实用方案
+
+归档路径按序尝试的四种，挑一种（前三种 git-pages 自己校验；第四种把校验全押在反代上）：
+
+| 方案 | 密钥类型 | 额外鉴权 DNS(TXT) | 要不要 forge API | 适合 |
+|---|---|---|---|---|
+| **DNS Challenge** | 自签口令（你随便定）| 是（1 条 TXT）| 否 | 单站、脚本发、最少依赖 |
+| **Forge Token + DNS Allowlist** | forge access token | 是（1 条 TXT）| 是 | 复用 forge 账号权限、能按账号撤销（"deploy token"）|
+| **Forge Wildcard**（= 通配多租户）| forge token（含 CI 自动 token）| 否 | 是 | 一个域名后缀、无数用户各发各站（多租户）|
+| **`PAGES_INSECURE` + 反代兜底** | 你在 Caddy 里定的 `<共享密钥>` | 否 | 否 | 不想碰 DNS，安全全押在反代上 |
+
+> 「额外鉴权 DNS(TXT)」列指的是**除基础解析记录外，还要不要加 `_git-pages-*` TXT**。四种模式都得先有一条把域名指向边缘的 A/AAAA/CNAME（那是解析、不是鉴权）；只有 DNS Challenge / Allowlist 需要再加鉴权 TXT。Forge Wildcard 虽然要一条 `*.pages.<域名>` 通配解析，但那仍是解析记录、**没有鉴权 TXT**，故填「否」。
+
+**DNS Challenge（自签口令）** —— 源码入口 `authorizeDNSChallenge`：本质是"把一个口令的哈希写进 DNS TXT"。用官方 CLI 一条命令生成口令 + 现成 TXT：
+
+```bash
+git-pages-cli https://pages.example.com --challenge
+# 输出：password: 28a616f4-...（口令，自己收好）
+#       _git-pages-challenge.pages.example.com. 3600 IN TXT "a59ecb..."（把这条加到 DNS）
+```
+
+TXT 加到 DNS 后，发布带口令即可：
+
+```bash
+git-pages-cli https://pages.example.com --password <口令> --upload-dir ./_site
+# 或裸 curl：
+curl https://pages.example.com/ -X PUT --data-binary @site.tar.gz \
+  -H 'Content-Type: application/x-tar+gzip' -H 'Authorization: Pages <口令>'
+```
+
+源码逻辑：`net.LookupTXT` 拿该名下**所有** TXT，把 `sha256(host + " " + 口令)` 和它们逐条比对，命中任意一条即过——
+
+```go
+challengeHostname := fmt.Sprintf("_git-pages-challenge.%s", host)
+actualChallenges, _ := net.LookupTXT(challengeHostname)          // 该名下全部 TXT
+expectedChallenge := sha256(host + " " + param)                  // param = 你传的口令
+if !slices.Contains(actualChallenges, expectedChallenge) { 拒绝 } // 命中任意一条即可
+```
+
+所以同名挂多条 TXT = 多个口令，适合轮换。支持 `Authorization: Pages <口令>` 或 `Authorization: Basic base64("Pages:<口令>")`（给发不了自定义头的 GitHub/Gogs）。口令别名 `--password-file` / `GIT_PAGES_PASSWORD` 环境变量，避免进 argv。与 Let's Encrypt 的 DNS-01 challenge **不是一回事**（LE 是实时一次性验证域名控制权；这里是永久 TXT，每次发布现查现比）。
+
+**Forge Token + DNS Allowlist（"deploy token"）** —— 源码入口 `authorizeForgeDNSAllowlist` → `authorizeDNSAllowlist`：不自己造口令，用 forge 的 access token 当发布凭据，git-pages 去问 forge"这 token 对这仓库有没有 push 权限"。① Forgejo 建 token：Settings → Applications → Access tokens，勾 **user: Read** + **repository: Read and write**；② DNS 加 `_git-pages-forge-allowlist.pages.example.com. TXT "https://git.example.com/user/repo.git"`（可多条，逐条 `url.Parse`、只收绝对 URL）；③ 发布 `git-pages-cli … --token <forge-token> --upload-dir ./_site`。核权限时先 `FetchGogsAuthorizedUser` 查 token 是谁、是 owner 直接放行，否则 `CheckGogsRepositoryPushPermission` 查协作者权限（函数名 "Gogs" 是历史遗留，Gitea/Forgejo/Gogs API 兼容）。**好处**：撤销某人只需在 forge 改，不用换口令。**代价**：多一个"必须活着的 forge API"运行时依赖；`if projectName != ".index"` 写死——**只能授权根/索引站点，不能给子项目单独授权**。token 别名 `GIT_PAGES_TOKEN` 环境变量。
+
+**Forge Wildcard（多租户）** —— 源码入口 `authorizeForgeWildcard` + `src/wildcard.go`：就是 Codeberg 给每个用户发 `<用户名>.codeberg.page` 的机制，`config.toml` 配 `[[wildcard]]`（TOML 的**数组表**，可多段）：
+
+```toml
+[[wildcard]]
+domain        = "pages.example.com"
+clone-url     = "https://git.example.com/<user>/<project>.git"
+index-repo    = "pages"
+authorization = "forgejo"
+```
+
+请求进来时按 **host 子域名标签 = 用户名** + **路径首段 = 项目名** 套 `clone-url` 模板**现算**仓库（`Matches` 要求"后缀前恰好多一段子域名"、多出那段当用户名，`ApplyTemplate` 套模板）：**根 `/`** → 项目名取 `.index` → 用 `index-repo`（如 `pages`）→ 仓库 `<user>/pages`，分支取 `index-repo-branch`；**`/<项目>/`** → 仓库 `<user>/<项目>`，**分支在代码里硬编码为 `pages`**（`src/wildcard.go`：`.index` 用 `IndexBranch`，否则 `branch = "pages"`）。算出仓库后拿请求带的 `Forge-Authorization` token 问 forge API 核权限，**每次请求现算归属、不预登记**。CI 里用官方 [git-pages/action](https://codeberg.org/git-pages/action) 时 Forgejo Actions 的自动 token 就够，还支持 PR 预览站。单站场景**别用它**——它要求"后缀前恰好多一段子域名"，固定单域名套不上。
+
+> **多 forge 并存 + 排序坑（实测 v0.9.1）**：可配多个 `[[wildcard]]` 段让不同 forge 各自多租户（如 forgejo 用 `pages.example.com`、gitea 用 `gitea.pages.example.com`）。但**若一个 domain 是另一个的后缀，务必把更长/更具体的排前面**——否则短后缀那段会先匹配到长后缀租户的 host：实测把"host 去掉 domain 后缀"的**整段前缀**当 user（如 `alice.gitea.pages.example.com` 落到 `pages.example.com` 段时被当 user=`alice.gitea`），clone-url 算错、鉴权失败。
+>
+> **GitHub 做多租户**要单独说：GitHub 不认 gogs 兼容 API（`authorization` 不能设成任何 forge），只能走 **Wildcard Match content（下面 8 条规则的规则 4）**——`[[wildcard]]` 的 `authorization` **留空**，然后 `POST` 一个 GitHub push webhook（body 含 `repository.clone_url` + `ref`，头 `X-GitHub-Event: push`、`Content-Type: application/json`），git-pages 按模板匹配 clone-url（**免 token、免 forge API**）后现克隆该**公开** repo 的对应分支。实测能从公网直接 clone GitHub 公开库并发布。
+
+**`PAGES_INSECURE` + 反代兜底** —— 源码入口 `authorizeInsecure`：`PAGES_INSECURE=1` 让 git-pages **无条件放行**所有到达它的请求。配合 git-pages 只监听 `127.0.0.1` + Caddy 只对带正确 `<共享密钥>` 的写请求放行 =「Caddy 是唯一关卡」：
+
+```caddyfile
+pages.example.com {
+    @write method PUT PATCH POST DELETE
+    @noauth not header Authorization "Bearer <共享密钥>"
+    handle @write {
+        handle @noauth { respond 403 }
+    }
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+客户端发布时带 `-H 'Authorization: Bearer <共享密钥>'`。**代价**：安全**单点**押在"Caddy 配置写对 + git-pages 永不暴露公网"上——Caddy 一旦漏配或 git-pages 意外监听公网，`PAGES_INSECURE` 谁来都放行，没有第二道防线。DNS Challenge / Forge Token 那几种即使 Caddy 出错，git-pages 自己那道校验仍独立生效。**生产慎用，仅在你完全掌控反代时用**。
+
+#### 公开库 vs 私有库走哪条
+
+**最关键的实践决策：公开库 vs 私有库走不同发布路径。** 上面「发布通道」里"webhook（POST）"和"归档 PUT"对"仓库是否公开"要求完全不同：
 
 ```mermaid
 flowchart TD
@@ -434,7 +431,11 @@ flowchart TD
 
 > ⚠️ **坑：仓库"公开"是必要不充分条件。** 上图按仓库可见性分岔，但 forge **实例级**开关 `[service] REQUIRE_SIGNIN_VIEW = true`（Gitea/Forgejo 两家同，默认 `false`）会让**未登录连公开仓库都读不到**——此时 git-pages 匿名 clone 公开库**照样 401**，行为等同私有库，只能走归档 PUT。即"仓库设成 public 了 webhook 却仍 401"的隐形原因。判据：匿名 `curl -sI <clone-url>/info/refs?service=git-upload-pack` 或匿名打 `/api/v1/version` 返回 401/403，就是实例开了这开关（详见 `git-server.md` ③ 登录）。
 
-webhook / PUT-仓库-URL 路径让 git-pages **自己去 clone** 仓库——**对私有库匿名 clone 会 401**。私有库要走**归档 PUT**：CI 有仓库读权限 → 本地打成 tar → 带 forge token PUT 上去（内容在请求体，不 clone）。可直接套用的 Forgejo Action 骨架（从 `main` 直接打包发布，归档模式不经 `pages` 分支）：
+webhook / PUT-仓库-URL 路径让 git-pages **自己去 clone** 仓库——**对私有库匿名 clone 会 401**。私有库要走**归档 PUT**：CI 有仓库读权限 → 本地打成 tar → 带 forge token PUT 上去（内容在请求体，不 clone）。
+
+#### Forgejo Action 归档 PUT 骨架
+
+可直接套用的 Forgejo Action 骨架（从 `main` 直接打包发布，归档模式不经 `pages` 分支）：
 
 ```yaml
 name: publish-to-git-pages
@@ -464,6 +465,34 @@ jobs:
 - **token**：一个 forge PAT（scope 含 `read:user` + 对仓库的读/`write:repository`），存成仓库 Actions secret（如 `GITPAGES_TOKEN`）。git-pages 只 GET forge API（`/api/v1/user` + `/api/v1/repos/<owner>/<repo>` 验 `permissions.push`）、不改仓库，但它检查的是"该 token 身份对仓库有没有 push 权限"。Forgejo 设仓库 secret 用 API：`PUT /api/v1/repos/<owner>/<repo>/actions/secrets/<NAME>`，体 `{"data":"<值>"}`，token auth 即可。
 - **dry-run 定位**：任一发布请求加头 `Dry-Run: yes`（curl 里 `-H 'Dry-Run: 1'` 也行，非空即触发），git-pages 只跑到鉴权+映射校验就返回 `dry-run ok`、不落库。排 401 / 映射不对 / token 权限时先 dry-run 看卡哪一环。
 
+#### 完整规则表：git-pages README 的 8 条鉴权规则
+
+上面四个是最实用的；完整看，git-pages 项目自己的 README（Authorization 段）列了 8 条按序尝试的规则（`src/auth.go` 逐条对应）：
+
+| # | 规则（README）| 触发方法 | 载体 | 调 forge API? | 对 GitHub | 关键限制 |
+|---|---|---|---|---|---|---|
+| 1 | Development Mode | 任意 | `PAGES_INSECURE=1`（反代兜底是 **Caddy 层**附加约定，git-pages 代码里无对应实现）| 否 | ✓ | 无条件放行，生产禁用 |
+| 2 | DNS Challenge | PUT/PATCH/DELETE/POST | `_git-pages-challenge.<host>` TXT + 口令（`Authorization: Pages <口令>`，或 Basic `Base64("Pages:<口令>")` 给发不了自定义头的 GitHub/Gogs）| 否 | ✓ | 绝对权限；PUT/POST 限分支 `pages` |
+| 3 | DNS Allowlist（repo）| PUT / POST | `_git-pages-repository.<host>` TXT 列 clone URL | **否、免 token** | ✓ | **仅根 / `.index` 站**；**不能 DELETE** |
+| 4 | Wildcard Match（content）| **仅 POST**(webhook) | `[[wildcard]]` 配置 + webhook payload | **否** | ✓（收 GitHub payload）| 只走 webhook，REST 不行 |
+| 5 | Forge Auth（wildcard）| PUT/PATCH/DELETE | `[[wildcard]]` + `Forge-Authorization` 头 | **是**（Gogs/Gitea/Forgejo 兼容 API）| ✗ | 多租户；archive 路径 |
+| 6 | Forge Auth（wildcard, preview）| PUT/PATCH/DELETE | `[[wildcard]].preview-domain` + token，走 `/api/v1/actions/run` | **是** | ✗ | **仅 Forgejo 16+、需 feature flag**；PR 预览站 |
+| 7 | Forge Auth（DNS allowlist）| PUT/PATCH/DELETE | `_git-pages-forge-allowlist.<host>` TXT + `Forge-Authorization` 头 | **是** | ✗ | **仅根 / `.index` 站** |
+| 8 | Default Deny | — | — | — | — | 其余一律拒 |
+
+对照上面四方案：DNS Challenge = 规则 2，Forge Token = 规则 7，Forge Wildcard = 规则 5，`PAGES_INSECURE` + 反代兜底 = 规则 1，另有免 token 的 repository allowlist = 规则 3。
+
+> **两条"仅根站"限制同源**：规则 3 与规则 7 都调同一个 `authorizeDNSAllowlist(r, scope)`（`src/auth.go:200`），`.index`-only 检查（`if projectName != ".index"`，`src/auth.go:218`）写在共享函数里，所以两者都**只授权根 / 索引站点、不能给 `/子项目/` 单独授权**。
+>
+> **对 GitHub 一句话**：能"发布"（规则 2/3/4 都收 GitHub payload），但**不能复用 GitHub 的权限校验**——规则 5/6/7 的 forge-token 走 Gogs/Gitea/Forgejo 兼容 API（`src/forge_api.go` 的 `makeGogsAPIRequest` 打 `/api/v1/…`，无任何 GitHub 代码路径）。
+
+#### 写入通道 → 鉴权函数
+
+- **PUT（仓库 URL）/ POST（webhook）** → `AuthorizeUpdateFromRepository`（先 DNS repository-allowlist、再 webhook wildcard-match，见「两条鉴权入口」）
+- **PUT / PATCH（归档）** → `AuthorizeUpdateFromArchive` → `authorizeDNSChallengeOrForgeWithToken`（上面四方案按序）
+- **DELETE** → `AuthorizeDeletion`
+- **元数据检索**（`/.git-pages/manifest.json` 等枚举站点内容的接口）→ `AuthorizeMetadataRetrieval`：除 DNS challenge 外，wildcard 站点在**没设 Basic-Auth 时**也可能经 `authorizeWildcardMatchHost` 放行 metadata——即这类站点的目录清单未必私密。
+
 ### 生命周期（过期 / 下线 / 管理员直删）
 
 - **过期**：发布带 `Expires: <HTTP-date>` 头（或 CLI `--expires <天>`），需 `config.toml` 开 `allow-expiration`；过期站由定时任务 `git-pages -site-expire` 清。
@@ -474,35 +503,13 @@ jobs:
 
 ## 排障 / 踩过的坑
 
-- **私有库配了 webhook → 每次 push 失败 `git clone: ... 401 authentication required`**：webhook / PUT-仓库-URL 路径是匿名浅克隆，对私有库无效（见上「私有库从 CI 发布」）。改用归档 PUT。dry-run 会显示 `no access to <owner>/<repo> or invalid token`。
+- **私有库配了 webhook → 每次 push 失败 `git clone: ... 401 authentication required`**：匿名浅克隆对私有库无效，改用归档 PUT（详见上面「公开库 vs 私有库走哪条」）；dry-run 会显示 `no access to <owner>/<repo> or invalid token`。
 - **`--upload-git --token X` 里的 token 被静默忽略**：`cli --upload-git` **不在本地 clone**，只是把仓库 URL 当 body PUT、由服务端克隆——走 `AuthorizeUpdateFromRepository`，PUT 时压根不读 `Forge-Authorization`（`src/auth.go` 的 allowlist 分支限 PUT/POST、wildcard-match 限 POST）。**forge-token 鉴权只在归档（PUT/PATCH archive）路径上有意义**。
 - **`git archive` 打的 tar 让 git-pages 报 `tar: unsupported type 'g'`**：`git archive` 会塞一个 `pax_global_header`（type `g`），git-pages 跳过它、**不影响发布**（仍 200）。想干净就用 `tar` 直接打（如上 Action），不带 pax header。
 - **生成文件索引时中文/非 ASCII 文件名链接损坏**：`git ls-files` 默认把非 ASCII 路径**加引号 + 八进制转义**输出（`"...\345\276..."`），当成文件名会生成 `%22...%5C345...` 的坏链接。用 `git -c core.quotePath=false ls-files` 拿真实 UTF-8 名，再对每段做 URL 编码。
 - **用 Forgejo 容器 CLI 铸 token 报 "not supposed to be run as root"**：`docker exec` 默认 root，而 Forgejo 拒绝以 root 跑。加 `-u git`：`docker exec -u git <forgejo容器> forgejo admin user generate-access-token --username <U> --scopes read:user,write:repository --raw`。
 - **runner 单并发（`capacity: 1`）时，一个卡死的 job 堵死所有构建**：若同仓另有别的 push 触发的 workflow（如遗留的 rclone sync）打到一个**挂掉的后端**（连不上时会长时间重试/卡住），它占住唯一 runner 槽，**后续所有 job（含 git-pages 发布）都排不上**。清卡死 job：`docker exec <dind容器> docker stop <job容器id>`（runner 感知后把该 run 记 failed、释放槽）。迁移期把不再需要的旧 workflow 触发从 `on: push` 改成 `on: workflow_dispatch`（停自动、留手动），比直接删文件更可逆。（Forgejo Actions runner / DinD / token 机制细节见本 skill `git-server.md`。）
 - **连 S3 后端静默 Access Denied**：自建 endpoint 走明文 HTTP（RustFS/MinIO 本地口）时 `[storage.s3] insecure = true` 必须开，否则默认按 https 连、连 http 端口报 Access Denied（`backend_s3.go`: `Secure = !insecure`）。S3 客户端行为坑另见本 skill `rustfs.md`。
-
----
-
-## 鉴权机制源码剖析（`src/auth.go`）
-
-`src/auth.go` 里发布鉴权分两条代码路径：**归档直传 / 删除**走 `AuthorizeUpdateFromArchive` / `AuthorizeDeletion` → `authorizeDNSChallengeOrForgeWithToken`（下面前四条按序尝试）；**推仓库 URL / webhook** 走 `AuthorizeUpdateFromRepository`（另一组机制）。README 的 Authorization 段对内容更新列了 8 条规则，本节只覆盖归档路径那几条 + webhook 路径。上面「选一种鉴权方案」是"怎么用"，这里是"源码怎么判"。
-
-- **Development Mode（`PAGES_INSECURE=1`）** —— `authorizeInsecure`：环境变量置真则无条件放行。对应"边缘 Bearer"方案。
-- **DNS Challenge** —— `authorizeDNSChallenge`：
-  ```go
-  challengeHostname := fmt.Sprintf("_git-pages-challenge.%s", host)
-  actualChallenges, _ := net.LookupTXT(challengeHostname)          // 该名下全部 TXT
-  expectedChallenge := sha256(host + " " + param)                  // param = 你传的口令
-  if !slices.Contains(actualChallenges, expectedChallenge) { 拒绝 } // 命中任意一条即可
-  ```
-  支持 `Authorization: Pages <口令>` 或 `Authorization: Basic base64("Pages:<口令>")`（非 Forgejo forge 用）。多 TXT = 多口令。
-- **Forge Wildcard（依赖 `[[wildcard]]`）** —— `[[wildcard]]` 是 TOML 的**数组表**（可多段）。`authorizeForgeWildcard` + `src/wildcard.go` 的 `Matches`（要求"后缀前恰好多一段"，多出的当用户名）/ `ApplyTemplate`（套 clone-url 现算仓库）→ 拿 `Forge-Authorization` token 问 forge API 权限。**每次请求现算归属，不预登记**。
-- **Forge DNS Allowlist（不需要 `[[wildcard]]`）** —— `authorizeForgeDNSAllowlist` → `authorizeDNSAllowlist`：查 `_git-pages-forge-allowlist.<域名>` 的 TXT（**每条值 = 仓库 clone URL**，逐条 `url.Parse`，只收绝对 URL）。再 `authorizeGogsUser` 拿 token 问 forge：先 `FetchGogsAuthorizedUser` 查 token 是谁、是 owner 直接放行，否则 `CheckGogsRepositoryPushPermission` 查协作者权限（函数名 "Gogs" 是历史遗留，Gitea/Forgejo/Gogs API 兼容）。`if projectName != ".index"` 写死——只授权根站点。
-- **元数据检索** —— `AuthorizeMetadataRetrieval`：保护"能枚举站点内容"的接口（`/.git-pages/manifest.json` 等）。除 DNS challenge 外，wildcard 站点在**没设 Basic-Auth 时**也可能经 `authorizeWildcardMatchHost` 放行 metadata——即这类站点的目录清单未必私密。
-- **推仓库 URL / webhook 路径（`AuthorizeUpdateFromRepository`）** —— 先 `authorizeDNSAllowlist(r, "git-pages-repository")` 查 `_git-pages-repository.<域名>` 的 TXT（每条 = 允许的 clone URL，**不需要 token、不问 forge API**，自建 webhook 场景最省事）；再 `authorizeWildcardMatchSite`（webhook 通配匹配）。
-
-各写入通道 → 鉴权函数：**PUT（仓库 URL）/ POST（webhook）** → `AuthorizeUpdateFromRepository`；**PUT / PATCH（归档）** → `AuthorizeUpdateFromArchive`；**DELETE** → `AuthorizeDeletion`。
 
 ---
 
