@@ -61,9 +61,9 @@ zellij 中几个改变 pane 大小 / 占比的操作，均为 **默认（mode �
 
 - **`Ctrl p` 进 pane 模式 → `f`：聚焦全屏（`ToggleFocusFullscreen`）**。把当前 pane 临时铺满整个 tab、隐藏其余 pane（不是关闭，数据都在），状态栏显示 `FULLSCREEN`；再按一次 `Ctrl p` `f` 还原。（`default.kdl`：`Ctrl p`→Pane 在 206 行，pane 模式 `f` 在 35 行。tmux 兼容模式 `Ctrl b` 然后 `z` 同效，166 行。）
 
-- **`Ctrl n` 进 resize 模式 → 方向键 / `h j k l` / `+ - =`：调整当前 pane 大小**。每按一步移动分隔线 **5%**（源码 `pub const RESIZE_PERCENT: f64 = 5.0`，`zellij-server/src/panes/tiled_panes/tiled_pane_grid.rs:18`）；按住会自动重复，几下就把一侧撑到 80%+。`h/j/k/l`（或方向键）= 朝该方向 Increase，`H/J/K/L` = Decrease，`=`/`+` = Increase、`-` = Decrease。`Ctrl n` 再按一次退出模式，反向缩回即复原。（`default.kdl` 12–21 行；`Ctrl n`→Resize 在 209 行。）
+- **`Ctrl n` 进 resize 模式 → 方向键 / `h j k l` / `+ - =`：调整当前 pane 大小**。方向映射是 **`h/j/k/l` = 左/下/上/右**（方向键同理），表示朝该方向 Increase；大写 `H/J/K/L` 表示朝左/下/上/右 Decrease。这些**带方向**的操作每按一步移动分隔线 **5%**（源码 `pub const RESIZE_PERCENT: f64 = 5.0`，`zellij-server/src/panes/tiled_panes/tiled_pane_grid.rs:18`），压到边界就停。`=`/`+` = 无方向 Increase、`-` = 无方向 Decrease；默认开启 `stacked_resize` 时走下面单独的自动堆叠算法，不是同一套 5% 定向 resize。`Ctrl n` 再按一次退出模式。（`default.kdl` 12–21 行；`Ctrl n`→Resize 在 209 行。）
 
-- **`stacked_resize`（选项，默认 `true`）：resize 压得太狠时自动把 pane 转成堆叠（stack）**。当你不停把一侧撑大、另一侧被压过阈值，zellij 不再硬挤，而是把布局改成一个 stack：pane 竖排，只有聚焦的那个显示完整内容，其余折叠成**一行标题栏**，移动焦点 / 点标题才展开切换。0.41.0 引入、默认开启（`options.rs` 里 `stacked_resize: Option<bool>`；默认配置注释 `// stacked_resize false`，即“默认 true、去掉注释才关”）。它由上面的 resize 触发，所以往回缩（`Ctrl n` 反方向 / `-`）就能退出 stack 回到平铺；想彻底禁用就在 `config.kdl` 写 `stacked_resize false`。
+- **`stacked_resize`（选项，默认 `true`）：只处理无方向的 `=`/`+` 与 `-`**。源码 `resize_active_pane()` 的门槛是 `stacked_resize && strategy.direction.is_none()`；因此 `h/j/k/l` 和方向键都**不会**触发自动 stack，压到底只会停住（Zellij 0.44.3 Web client 实测亦如此）。反复按 `=`/`+` 时，Zellij 先尝试自动扩大当前 pane，空间不足时再把相邻 pane 转成 stack；`-` 用于缩小或拆回先前的堆叠状态。具体先动哪一侧受焦点和当前几何布局影响。0.41.0 引入、默认开启（`options.rs` 里 `stacked_resize: Option<bool>`；默认配置注释 `// stacked_resize false`，即“默认 true、去掉注释才关”）；想彻底禁用就在 `config.kdl` 写 `stacked_resize false`。
 
 ## pane 布局排列（swap layout 切换 / 新建 pane vs stack / 并入 stack）
 
@@ -94,12 +94,12 @@ zellij 中几个改变 pane 大小 / 占比的操作，均为 **默认（mode �
 ### 把已散开的独立 pane 收成一摞 / 全 stack〔实测，含一条否定结论〕
 
 - **`MovePane` 不能把独立 pane「追加」进 stack**：焦点在独立 pane 上、`Ctrl+p`→`h/j/k/l`（或 move 模式 `Ctrl+h` 再方向键）朝 stack 方向移动，实测是**位置对调 / 轮转**——被移动的 pane 进 stack 顶部，同时把 stack 原来一个成员顶出到空位，**总数和层数都不变**。指望用移动把散 pane 一个个塞进去让 stack 长高，行不通。
-- **键盘正解**：`Ctrl+n` 进 resize 模式、朝一个方向狂压，越过阈值触发 `stacked_resize`（见上一节），把那一列独立 pane 自动折成一个 stack；或放弃现有的、在 stack 内用 `s` 重建。
-- **想要整个 tab 一摞**：焦点选定一个 pane，反复 `Ctrl+p`→`s` 把内容都叠上去；或 resize 压出来。想让 `Alt+[]` 直接切出「全 stack」档，则要改配置（自定义 swap layout，去掉内置那档的「左 1」和 `min_panes=5`），属配置层、不在键盘范围。
+- **键盘路径**：`Ctrl+n` 进 resize 模式，反复按无方向的 `=`/`+` 让 `stacked_resize` 自动扩大 / 堆叠；不要用 `h/j/k/l`，它们只做定向 resize。结果受焦点和当前几何布局影响，必要时先把焦点移到想保留展开的 pane；`-` 可逐步拆回。
+- **想要整个 tab 一摞**：默认没有一个把任意现存独立 pane 全部强制合并的直接键位；可尝试用 `Ctrl+n`→`=`/`+` 让 `stacked_resize` 按当前几何逐步收拢。`Ctrl+p`→`s` 只会**新建** pane 并叠到当前 pane，不会搬运已经存在的 pane。想让 `Alt+[]` 直接切出「全 stack」档，则要改配置（自定义 swap layout，去掉内置那档的「左 1」和 `min_panes=5`），属配置层、不在键盘范围。
 
-### web client 提醒〔部分待确认〕
+### web client 键盘透传〔Zellij 0.44.3 实测〕
 
-zellij web 经 xterm.js 把键盘事件透传给终端，`Ctrl+p`、`Alt+[]`、`Ctrl+n` 等默认键一般都能进 zellij；个别组合可能先被浏览器快捷键截获（没反应多半就是被浏览器吃了），可在 `config.kdl` 改绑或改用鼠标。
+当前 Web client 已确认 `Ctrl+p`、`Ctrl+n`、`Alt+[` / `Alt+]`、`Alt+n` 以及 resize 模式的 `h/j/k/l`、`=`/`+` 都能正常进入 Zellij，未被浏览器截获；`h/j/k/l` 的实际方向是左/下/上/右，压到底不会自动 stack，而 `=`/`+` 会触发自动 stack。两者差异来自 Zellij 的动作分流规则，不是浏览器吃键。不同浏览器若某组合完全没反应，才考虑浏览器快捷键冲突。
 
 ## login token 与 session token
 
