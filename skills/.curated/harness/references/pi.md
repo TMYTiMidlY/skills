@@ -289,203 +289,15 @@ token 换取后写入 `auth.json`（含 JWT 提取的 `accountId`），base URL 
 ② 自动压缩：`settings.json.compaction.{enabled,reserveTokens(默认 16384),keepRecentTokens(默认 20000)}`，触发条件 `contextTokens > contextWindow - reserveTokens`；手动 `/compact [指令]`；
 ③ footer 实时显示用量（`↑`输入 `↓`输出 `R`缓存读 `W`缓存写 `CH`命中率）；`/session` 看 token 与成本。`PI_CACHE_RETENTION=long` 延长直连 provider 的 prompt 缓存（Anthropic 1h / OpenAI 24h）。[^providers][^ops]
 
-### 4.6 选 effort（"thinking level"）：能力、档位、线格式是三件事
+### 4.6 选 effort（"thinking level"）
 
-七档 `off | minimal | low | medium | high | xhigh | max`。设置入口仍是 `pi --thinking high`、`pi --model "provider/model:high"`、交互 `Shift+Tab` 与 `settings.json.defaultThinkingLevel`；但配置时要分清三层：[^effort]
+七档 `off | minimal | low | medium | high | xhigh | max`。设置入口：`pi --thinking high`、`pi --model "provider/model:high"`、交互 `Shift+Tab`、`settings.json.defaultThinkingLevel`。[^effort]
 
-| 层 | 字段 | 只负责什么 | 不负责什么 |
-|---|---|---|---|
-| 能力声明 | `reasoning: true` | 让 pi 把模型视为可思考、显示 thinking UI | 不决定请求里发哪个 JSON 字段 |
-| 档位映射 | `thinkingLevelMap` | 把 pi 七档映射为厂商档位；`null` 可隐藏不支持档 | 不决定字段放在 `reasoning`、`thinking` 还是别处 |
-| 序列化方言 | `compat.thinkingFormat` | 告诉 `openai-completions` 适配器怎样编码开关/effort | 不证明后端真的支持这些档位 |
+thinking 的**三层机制**（`reasoning` 能力声明 / `thinkingLevelMap` 档位映射 / `compat.thinkingFormat` 线格式方言）、各方言实际发什么字段、以及 `anthropic-messages` 的独立 serializer——都属**配自定义模型**时才要拧的旋钮，连同「off 仍思考 / low 仍不思考」这类误配坑，整体见 [pi-custom-model.md](pi-custom-model.md) §3。
 
-`thinkingFormat` 是 **pi 本地定义的枚举**，字符串本身不会发给服务端。源码分支如下：[^effort]
+### 4.7 自定义 provider（`models.json`）+ 端点探针 + 实战快照 → 见 `pi-custom-model.md`
 
-| `thinkingFormat` | pi 生成的关键字段 |
-|---|---|
-| `openai`（默认） | `reasoning_effort`；`off` 只有在 `thinkingLevelMap.off` 映射为字符串时才显式发送 |
-| `deepseek` | `thinking:{type:"enabled"}` / `thinking:{type:"disabled"}` + 可选 `reasoning_effort` |
-| `zai` | 上述 `thinking.type`；开启时再带 `clear_thinking:false` + 可选 `reasoning_effort` |
-| `qwen` | 顶层 `enable_thinking:boolean` |
-| `qwen-chat-template` | `chat_template_kwargs:{enable_thinking,preserve_thinking:true}` |
-| `chat-template` | 按 `chatTemplateKwargs` 自定义模板参数 |
-| `openrouter` / `together` / `string-thinking` / `ant-ling` | 各自的 `reasoning` 或字符串式方言 |
-
-**为什么自定义域名容易错**：pi 会按 URL 自动探测兼容性；`api.deepseek.com`、Z.ai 等已知地址能命中厂商规则，校园/公司网关域名通常只能落到默认 `openai`。于是：
-
-- 选择 `off` 时，默认分支可能什么都不发；若底模默认 thinking=on，结果就是“off 仍思考”。
-- 选择 `low` 时，只发 `reasoning_effort:"low"`；若底模真正开关是 `enable_thinking` 或 `thinking.type`，结果就是“low 仍不思考”。
-
-**USTC/LiteLLM 实测**：未配 `thinkingFormat` 时，OpenAI 协议下 DeepSeek Pro/Flash 的 `off` 仍返回 reasoning，`qwen3.6-chat` 的 `low` 仍无 reasoning；显式发送 `thinking:{type:"disabled"}` 后 DeepSeek 才真正关闭。该网关会拒绝 Qwen 官方的顶层 `enable_thinking`，但 Qwen 的 `reasoner` 别名接受 `thinking.type`，因此在这个**特定代理**上应借用 `thinkingFormat:"deepseek"`——这表示线格式相同，不表示 Qwen 属于 DeepSeek。GLM 则对应 pi 的 `zai` 方言。[^probe]
-
-`anthropic-messages` 不用这个枚举：它有独立 serializer。pi 在 `off` 时发 `thinking:{type:"disabled"}`，开启时对旧式模型发 budget-based thinking、对 `forceAdaptiveThinking` 模型发 adaptive thinking + `output_config.effort`。USTC 当前网关下，四个在线模型的 `off/low` 都按预期切换；这是端点实测，不是所有 Anthropic 兼容代理的保证。[^effort][^probe]
-
-> **别把档名当算力承诺。** DeepSeek V4 官方当前只区分 `high/max`，兼容输入中的 `low/medium` 会映到 `high`、`xhigh` 会映到 `max`。要让 pi UI 精确反映这一点，应再写 `thinkingLevelMap`；仅补 `thinkingFormat` 只保证“字段和开关发对”。[^probe]
-
-### 4.7 自定义 OpenAI/Anthropic 兼容 provider（`models.json`）
-
-`/login` 只列**内置** provider；任意自定义 URL + key（自建网关、Ollama、vLLM、校园/公司平台）都走 `~/.pi/agent/models.json`，**不走 `/login`**。[^customprov]
-
-```json
-{
-  "providers": {
-    "my-gw": {
-      "baseUrl": "https://host/v1",
-      "api": "openai-completions",
-      "apiKey": "$MY_GW_KEY",
-      "models": [
-        {
-          "id": "deepseek-v4-pro",
-          "name": "DeepSeek V4 Pro",
-          "reasoning": true,
-          "input": ["text"],
-          "contextWindow": 1000000,
-          "maxTokens": 384000,
-          "compat": { "thinkingFormat": "deepseek" }
-        }
-      ]
-    }
-  }
-}
-```
-
-**必须显式列 `models`**：pi 不会请求 `GET /v1/models` 再自动生成 `/model` 条目。列表接口可以帮人发现候选 ID，但常混有别名、占位模型、无权限模型甚至误导性名称；每个条目的能力、上下文与输出上限仍需独立核验。保存后打开 `/model` 会热加载；`pi --list-models <pattern>` 可检查 pi 最终解析出的 context/max-output/reasoning/image 元数据。[^customprov]
-
-`apiKey` 支持字面量 / `$ENV` / `!command`，优先用环境变量或受控命令，别把长期 key 写进可分享配置或前端。`input`/`contextWindow`/`maxTokens`/`cost` 不填时使用 pi 默认值；代理自己的计费未确认前，不要直接抄上游价格，否则 `/session` 成本显示会产生伪精度。
-
-**`api` 决定 baseUrl 带不带 `/v1`**——两条路走各自官方 SDK，path 拼接约定不同：[^customprov]
-
-| `api` | baseUrl 写法 | SDK 最终打到 |
-|---|---|---|
-| `openai-completions` | 带 `/v1`：`https://host/v1` | OpenAI SDK 接 `/chat/completions` → `…/v1/chat/completions` |
-| `anthropic-messages` | **不带** `/v1`：`https://host` | Anthropic SDK 自补 `/v1/messages`；写了 `/v1` 会变成 `…/v1/v1/messages` |
-
-**最小验证分两层**：先用 curl 直打协议端点，排除 pi；再用 pi 自身做干净探活，验证 serializer、流式解析与会话层：
-
-```bash
-pi --provider my-gw --model deepseek-v4-pro --thinking low \
-  --no-session --no-extensions --no-skills --no-prompt-templates \
-  --no-context-files --no-tools -p 'Reply exactly OK.'
-```
-
-需要验证工具时再单独启用一个只读工具并用 `--mode json` 检查是否真的出现 `toolCall` / `tool_execution_*`，不要用“模型碰巧猜对文件内容”代替工具调用证据。
-
-### 4.8 实战快照：USTC LiteLLM 网关（2026-07）
-
-这节记录的是**特定校园端点的可复现实测**，不是 pi 或各底模的永久保证。USTC 用户指南主推四个底模：DeepSeek-V4-Flash、DeepSeek-V4-Pro、Qwen3.6-35B-A3B、Qwen3.6-27B；`glm-5.2` 是 API 额外开放项，未列在主推页。协议页只承诺 OpenAI/Anthropic 兼容，并未承诺后者的 tool/cache 更优。[^probe]
-
-#### 4.8.1 别名与真实后端：以 `/model/info` 为准
-
-`GET /v1/models` 只返回可见 ID；带 key 的 LiteLLM `GET /model/info` 还会暴露 `litellm_params.model`、credential 名、固定的 `chat_template_kwargs` 与协议支持。结合响应头 `x-litellm-model-id`，可确认同一别名经 OpenAI/Anthropic 两协议是否落到同一个 router entry。以下只描述**路由配置**，不等价于权重证明：
-
-| 对外 ID | router 后端名 | 默认 thinking | 结论 |
-|---|---|---:|---|
-| `deepseek-v4-pro` | `deepseek-v4-pro` | 开 | 路由到 Pro |
-| `deepseek-v4-flash-ascend` | `deepseek-v4-flash-ascend` | 开 | 路由到 Flash 的 Ascend 部署 |
-| `qwen-chat` | `qwen36-35b-a3b` | 关 | 35B-A3B chat 别名 |
-| `qwen-reasoner` | `qwen36-35b-a3b` | 开 | 35B-A3B reasoner 别名 |
-| `qwen3.6-chat` | `qwen36-27b` | 关 | **不是 35B** |
-| `qwen3.6-reasoner` | `qwen36-27b` | 开 | 27B reasoner 别名 |
-| `claude-haiku-4-5` | `qwen36-35b-a3b` | 关 | Claude 名称别名，实际路由到 Qwen |
-| `claude-sonnet-4-6` | `qwen36-27b` | 关 | Claude 名称别名，实际路由到 Qwen |
-| `glm-5.2` | `glm-5.2` | 开 | router 明确指向 GLM-5.2 |
-
-这不是 `/model/info` 的完整转录，而是与本次选型有关的**去重子集**；网关当时还暴露 `qwen3.5`/`qwen3.5-thinking`、`deepseek-v4-flash-ascend1` 等兼容或重复部署别名。省略不代表不可用，也不要仅凭别名新旧判断底模。
-
-这推翻了“`qwen3.6-chat`=35B、`qwen3.6-reasoner`=27B”这一早期猜测：前两者其实是**同一个 27B 的两种模式**，真正的 35B 是 `qwen-chat`/`qwen-reasoner`。若目标是每协议保留 5 个**不同底模**且允许切 thinking，推荐 ID 集合是：
-
-```
-deepseek-v4-pro
-deepseek-v4-flash-ascend
-qwen-reasoner          # Qwen3.6-35B-A3B，可显式关 thinking
-qwen3.6-reasoner       # Qwen3.6-27B，可显式关 thinking
-glm-5.2
-```
-
-若只要固定低延迟非思考模式，则分别选 `qwen-chat` / `qwen3.6-chat` 并在 pi 中标 `reasoning:false`。同名别名的 `x-litellm-model-id` 在两协议下相同，说明“协议对”走同一个 router entry；这不等于所有协议能力/参数都完全对称。
-
-#### 4.8.2 能力与规格证据
-
-| 底模 | `reasoning` | 图片 | context | max output | 证据强度 |
-|---|---:|---:|---:|---:|---|
-| DeepSeek V4 Pro | 是 | 否 | 1M | 384K | DeepSeek 官方 Models & Pricing + USTC 文档 |
-| DeepSeek V4 Flash | 是 | 否 | 1M | 384K | 同上；USTC 为 Ascend 部署别名 |
-| Qwen3.6-35B-A3B | 是 | 是 | 262,144 native | 81,920 | Qwen 官方 model card 的部署/调用示例；USTC 文档确认 VL 与 262K |
-| Qwen3.6-27B | 是 | 是 | 262,144 native | 81,920 | 同上 |
-| GLM-5.2 | 是 | 否 | 1M | 128K | Z.ai 官方页明确写 Text / 1M / 128K / thinking |
-
-Qwen card 还写可扩到 1,010,000，但 USTC 明确提供 262K，故平台配置应取 262,144。`81,920` 是官方调用示例反复使用且网关接受的值，card 未单独把它标成“硬上限”；DeepSeek/GLM 的 max output 则是官方规格卡直接声明。向网关提交一个巨大 `max_tokens` 后得到短回答，只能证明**参数通过校验**，不能证明已生成到该极限；真正的长上下文/长输出压力测试成本很高，应单列进行。[^probe]
-
-GLM 当时因平台临时限制出现 404/500/内部服务连接失败；**临时不可用不等于假模型**。`/model/info` 的真实后端名与内部服务标识是强路由证据，但任何黑盒 API 都无法密码学证明实际加载了哪份权重。
-
-#### 4.8.3 图片、工具、缓存、thinking 的端到端结果
-
-| 项目 | OpenAI 兼容 | Anthropic 兼容 | 正确解读 |
-|---|---|---|---|
-| 文本 | 四个在线模型均经 pi 成功；GLM 当时临时受限 | 同左 | 可用性要与身份分开判断 |
-| 图片 | 两个 Qwen 通过 pi 正确读随机四色图 | 两个 Qwen 同样成功 | 只有两种 Qwen 底模是 VL；DeepSeek/GLM 纯文本 |
-| auto tool calling | DeepSeek/Qwen 实际执行 `read` 成功 | 同样成功 | 不能说 Anthropic tool 更好 |
-| 强制 `tool_choice` | Qwen 某些请求把参数写进 reasoning 而非 `tool_calls` | 某些请求写进 thinking 而非 `tool_use` | auto 成功不代表 forced choice 完全兼容 |
-| prompt cache | 第二次请求出现 `prompt_tokens_details.cached_tokens` | 显式 `cache_control:ephemeral` 后出现 `cache_read_input_tokens` | 两边都能命中，机制/usage 字段不同 |
-| thinking `off/low` | 默认 serializer 下开关错误，需 §4.6 的 `thinkingFormat` | 当前网关下正确切换 | 这是 serializer 差异，不是模型能力差异 |
-
-图片探针必须减少猜中概率：第一组由黄/蓝/红/绿四种常见色组成的象限图里，Flash 偶然报出了同四个色名但顺序错误；换成两组随机配色后，DeepSeek 明确说看不到图片，Qwen 连续读出正确色组。空间顺序提示要写成 `TL, TR, BL, BR` 或明确 clockwise，避免把“能看见”与“方位指令失误”混为一谈。
-
-**OpenAI 风格图片消息**（公网 URL；本地文件可换成 `data:image/png;base64,<BASE64>`）：
-
-```json
-{
-  "role": "user",
-  "content": [
-    { "type": "text", "text": "描述这张图" },
-    { "type": "image_url", "image_url": { "url": "https://example.com/photo.png" } }
-  ]
-}
-```
-
-本地图片用 Base64 Data URL；用 `jq` 组 JSON 能避免 shell 引号把 Base64/中文弄坏：
-
-```bash
-IMG_B64="$(base64 -w0 photo.png)"  # macOS: base64 < photo.png | tr -d '\n'
-jq -n --arg image "data:image/png;base64,$IMG_B64" '{
-  model: "qwen-reasoner",
-  messages: [{role:"user", content:[
-    {type:"text", text:"描述这张图"},
-    {type:"image_url", image_url:{url:$image}}
-  ]}]
-}' | curl "$USTC_OPENAI_BASE/chat/completions" \
-  -H "Authorization: Bearer $USTC_API_KEY" \
-  -H "Content-Type: application/json" \
-  --data-binary @-
-```
-
-**Anthropic 原生图片块**：
-
-```json
-{
-  "role": "user",
-  "content": [
-    {
-      "type": "image",
-      "source": { "type": "base64", "media_type": "image/png", "data": "<BASE64>" }
-    },
-    { "type": "text", "text": "描述这张图" }
-  ]
-}
-```
-
-Python 生成 Data URL：
-
-```python
-import base64
-from pathlib import Path
-
-mime = "image/png"
-b64 = base64.b64encode(Path("photo.png").read_bytes()).decode()
-image_url = f"data:{mime};base64,{b64}"
-```
-
-最后一个高频误判：thinking 模型在 `max_tokens` 很小时可能把预算全耗在 reasoning，最终 `content` 为空且 `finish_reason/stop_reason=length`。先看 reasoning block 与 stop reason，再加预算复测；不要把“没 final text”直接判成协议不通。
+把任意 OpenAI/Anthropic 兼容端点接进 pi 的全部细节——`models.json` 写法与全字段、`api` 选型与 baseUrl `/v1` 拼接坑、`cost` 与缓存计费、thinking 三层与线格式方言、两入口（openai-completions ↔ anthropic-messages）对照、接入前的端点真伪探针，以及 USTC LiteLLM 网关 2026-07 的实测快照（别名↔后端、规格、¥ 费率、图片/工具/缓存/thinking 端到端、最终配置）——整体移到专门文档：[**pi-custom-model.md**](pi-custom-model.md)。
 
 ---
 
@@ -701,33 +513,9 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 
 ---
 
-## 9. 与 pi 无关但可复用：兼容网关 / 模型真伪审计
+## 9. 兼容网关 / 模型真伪审计 → 见 `pi-custom-model.md` §5.1
 
-本节是通用 API 网关经验，暂放在这里但与 pi runtime 无绑定。
-
-### 9.1 证据梯级
-
-从强到弱使用，别反过来：
-
-1. **部署/路由元数据**：受控的 router config、LiteLLM `/model/info`、模型 UUID、实际 upstream 名；若能接触部署端，再核镜像 digest、权重目录与启动参数。
-2. **官方平台文档 + 上游模型官方文档**：前者证明平台声称提供什么，后者证明底模规格；两者不能互相替代。
-3. **响应头与错误链**：`x-litellm-*`、upstream exception、fallback 表、内部 model group；可证明网关/路由行为，但不能证明权重内容。
-4. **差分行为探针**：图像、thinking 开关、工具结构、长上下文、特有 tokenizer/模板；一次回答不够，要多组随机输入与对照组。
-5. **模型自报身份**：只能当线索。模型可能不知道自己的版本、被 system prompt 改名、复述训练语料或直接幻觉；“它说自己是 X”既不能证真，也不能单独证伪。
-
-### 9.2 一套不会自欺的探针
-
-- **身份**：先查 `/v1/models`，再查更强的 `/model/info`/部署元数据；跨 OpenAI/Anthropic 请求比较 router model UUID，而非比较自然语言答案。
-- **参数是否真吃**：传合法开/关两组与非法值一组；只看 HTTP 200 不够，要比较 reasoning block、usage、stop reason 和上游错误。
-- **图片**：生成随机多色/随机文字图，至少两组；问题中不要泄露答案。1×1 常见色、公开 demo 图都容易被猜中或记住。
-- **工具**：分别测 auto 与 forced `tool_choice`，并完成一次“tool call → tool result → final answer”闭环；只生成 JSON 文本不算工具调用。
-- **缓存**：同一长前缀连续调用两次，检查明确的 cached-token 字段；延迟下降只能做旁证。
-- **极限**：接受 `max_tokens:384000` 不等于能稳定生成 384K；上下文和输出上限需真实长请求、tokenizer 计数与 stop reason 才能验证。
-- **故障**：把 ACL、限流、临时下线、后端连接失败与“模型是假”分开。至少隔时重试并看路由元数据。
-
-### 9.3 网关运营侧的信息泄露清单
-
-LiteLLM 默认/宽松配置可能在普通 key 可见响应里泄露：模型白名单、fallback 路由、credential 名、内部 upstream URL/service DNS、版本、RPM、预算与累计 spend。运营方应限制 `/model/info`/`/health`，清洗错误与 `x-litellm-*` 响应头；客户端记录审计结果时也应脱敏，不把 raw header/body 直接提交进 Git。
+「逆向刻画一个 LLM 推理端点」的通用方法论（证据梯级、非自欺探针套件、网关运营侧信息泄露清单）已并入 [pi-custom-model.md](pi-custom-model.md) §5.1——与「怎么把这个端点接进 pi」放在同一份，不再单列。
 
 ---
 
@@ -760,8 +548,8 @@ LiteLLM 默认/宽松配置可能在普通 key 可见响应里泄露：模型白
 - **高**（本地 clone `8479bd8` 源码直证）：分包、agent loop、会话树与回读 schema、配置/指令发现、五模式与 31 条 RPC 命令、SDK、provider/OAuth、鉴权顺序、thinking level / `thinkingLevelMap` / `thinkingFormat` 的职责与各 serializer 分支、33 事件/15 可改写、扩展与 skill、subagent/orchestrator、远控、信任非沙箱、三种容器化、平台要求。
 - **中/快照**：画廊 ~5.1k 包数与各包月下载、popular 排名（随时间变）。
 - **随时间变化**：模型名/上下文窗口/版本号/star 数。
-- **实测快照（非源码）**：自定义 provider 的 baseUrl/SDK 拼法为源码证；§4.8 与 §9 的 USTC/LiteLLM 模型映射、header、tool/cache/image/thinking 行为是 2026-07-12 对具体端点和 pi v0.80.6 的实跑，随 ACL、router 配置、LiteLLM 与底模版本变化。`/model/info` 是强路由证据，但不能密码学证明权重。
-- **尚未闭环**：GLM-5.2 当时临时受限，USTC 上 `thinkingFormat:"zai"` 尚待服务恢复后端到端复测；完整 1M context / 128K–384K output 未做昂贵压力测试。
+- **实测快照（非源码）**：自定义 provider 的 baseUrl/SDK 拼法为源码证；USTC/LiteLLM 的模型映射、header、tool/cache/image/thinking 等实测快照已移入 [pi-custom-model.md](pi-custom-model.md)（2026-07 对具体端点和 pi v0.80.6 的实跑，随 ACL、router、LiteLLM 与底模版本变化）。`/model/info` 是强路由证据，但不能密码学证明权重。
+- **尚未闭环**：完整 1M context / 128K–384K output 未做昂贵的极限压力测试（只验证了参数过校验，未真的生成到上限）。GLM-5.2 与 `thinkingFormat:"zai"` 已在恢复后经 pi 端到端复测通过。
 - **存疑**：`pi-skills` README 的 `{baseDir}` 说法与主仓行为不一致（已在正文标注）；OpenClaw 组织变动仅作者一手推文；Reddit 讨论未抓取核实。
 
 ---
@@ -793,7 +581,6 @@ LiteLLM 默认/宽松配置可能在普通 key 可见响应里泄露：模型白
 [^copilot]: [`packages/ai/src/utils/oauth/github-copilot.ts`](https://github.com/earendil-works/pi/blob/8479bd8/packages/ai/src/utils/oauth/github-copilot.ts):251-280；`providers/github-copilot.ts:13-17`；`packages/ai/src/auth/helpers.ts:16-21`；`providers/github-copilot.models.ts`。
 [^effort]: `packages/ai/src/types.ts`（`ThinkingLevel`/`ModelThinkingLevel`）、`packages/agent/src/types.ts:289`；`packages/ai/src/api/{openai-codex-responses.ts:516-525,anthropic-messages.ts:796-1022,openai-completions.ts:600-668}`；`packages/ai/src/models.ts:408-418`（clamp）；`cli/args.ts`（`--thinking`）。
 [^customprov]: `models.json` 自定义 provider：`packages/coding-agent/docs/{models.md,custom-provider.md}`（`providers.<id>.{baseUrl,api,apiKey,models,compat}`、`api` 取值即 4.1 那 9 种 wire API）；baseUrl 经官方 SDK 拼接——`packages/ai/src/api/openai-completions.ts:532-534`（`new OpenAI({baseURL: model.baseUrl})`，SDK 接 `/chat/completions`）、`anthropic-messages.ts:854`（`baseURL: model.baseUrl`，`@anthropic-ai/sdk` 自补 `/v1/messages`）。
-[^probe]: **实测快照，非 pi 源码保证**——2026-07-12 对 USTC 公开用户指南 `http://114.214.240.30:2026/{models,application,api-usage,protocol}/`、`api.llm.ustc.edu.cn` 的 OpenAI/Anthropic 端点、LiteLLM `/v1/models`/`/model/info`/`/health` 与 DeepSeek 官方 API 交叉核验；并用 pi v0.80.6 做 text/image/tool/thinking/cache 端到端测试。规格再对照 DeepSeek 官方 Models & Pricing/Thinking Mode、Qwen 官方 Hugging Face model cards、Z.ai GLM-5.2 官方页。记录时已省略 API key、内部 upstream 地址、预算与 spend；模型映射、ACL、header 和行为都会随 router/版本变化，引用前复跑。
 [^extloader]: [`packages/coding-agent/src/core/extensions/loader.ts`](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/src/core/extensions/loader.ts):389-395（Bun `virtualModules` vs Node alias）、141-145（`clearExtensionCache`）。
 [^extapi]: [`packages/coding-agent/src/core/extensions/types.ts`](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/src/core/extensions/types.ts):435-499、1165-1398（`ExtensionAPI`/`defineTool`/`ToolDefinition`）。
 [^hello]: [`packages/coding-agent/examples/extensions/hello.ts`](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/examples/extensions/hello.ts)；`examples/extensions/README.md:17-138`（分类目录：Lifecycle&Safety / Custom Tools / Commands&UI / Git / … 含 permission-gate、todo、dynamic-tools、plan-mode、git-checkpoint、custom-provider-gitlab-duo）。
