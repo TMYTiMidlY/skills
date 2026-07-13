@@ -76,7 +76,7 @@ Codeberg 官方在用的是 **git-pages**。另外三个是跟 Codeberg 无关�
 | 语言 / 依赖体量 | Go，独立后端 | Go，**重**（goja + goja_nodejs + websocket + lru + afero + gitea SDK）| Go，**极轻**（仅 gitea SDK 依赖，几百行核心，distroless 静态镜像）| Go，轻（oauth2 + scs + yaml）|
 | 定位 | 通用、可横向扩展、官方生产级 | homelab 全功能"准应用服务器" | 极简静态托管 | 小众自托管，卖点是 OAuth2 私有页 |
 | 内容怎么进来（发布模型）| **推**产物到 Pages 存储（`PUT`/`PATCH`/webhook/CLI/Action），不必挂公开分支 | 从 `gh-pages` **分支**经 Gitea API 读 | 从 `gh-pages` **分支**经 Gitea API 读 | **推** `POST /deploy`（tar.gz），不必挂公开分支 |
-| 发布鉴权（**谁能推**，写侧）| DNS challenge / forge token / wildcard / `PAGES_INSECURE`（四选一，见下「鉴权方案」）| 靠 forge repo 写权限（谁能推 `gh-pages` 谁能发）| 靠 forge repo 写权限（同左）| workflow token（如 `${{ forgejo.token }}`）校验对该 repo 的写权限 |
+| 发布鉴权（**谁能推**，写侧）| DNS challenge / forge token / **Forge Wildcard** / `PAGES_INSECURE`（四选一，见下「鉴权方案」；Forge Wildcard = forge 通配多租户，一个域名后缀下各用户各发各站，本文档也用它）| 靠 forge repo 写权限（谁能推 `gh-pages` 谁能发）| 靠 forge repo 写权限（同左）| workflow token（如 `${{ forgejo.token }}`）校验对该 repo 的写权限 |
 | 静态托管 | ✓ | ✓ | ✓ | ✓ |
 | JS 动态路由 | ✗ | ✓ **Goja 引擎**（按路由挂 JS handler）| ✗ | ✗ |
 | 反向代理 | ✗ | ✓ 按路由反代到上游 | ✗ | ✗ |
@@ -259,19 +259,25 @@ pages.example.com {
 
 > 通配块按 Host/SNI 路由、与别的站共用 Caddy 的 `:443`（不占独立端口）；**不写 `authorize with`**——pages 本就是公开静态站、不设登录墙。首次 HTTPS 发布有鸡生蛋问题：git-pages **在站点发布前无法为该域名申请证书**（[git-pages-cli 文档](https://codeberg.org/git-pages/git-pages-cli)）。首发要么走明文 HTTP，要么用 CLI 的 `--server <已有证书的域名>` 指一个已有证书的 host 中转。
 
+> ⚠️ **on-demand 的 permission 口是命门，必须收紧、也怕后端挂**（两个方向的坑）：
+> - **不收紧 = 签证风暴**：`permission` 若指向一个"来者不拒"的端点（或干脆没配），任意野域名来握手都会触发签发，撞 Let's Encrypt 限额（`too many certificates` / 子域名标签数超限的 `too many subdomain labels`，最长 **30 天**退避），还会持续占 Caddy 内部 certmagic 的 obtain 锁，和 `caddy reload` 卡死高度同时段。所以**一定**把 permission 指到 git-pages 的 `:3001`（它只对真发布过的站 `StatObject .exists` 放行），别用宽松兜底。运维现象与根因详见 `vps-maintenance` skill 的 [`references/caddy.md`](../../vps-maintenance/references/caddy.md) 「`on_demand_tls`」「reload 卡住」两节。
+> - **收紧后又 fail-closed**：permission 口一旦答不了（git-pages 挂了、或它连不上 S3 后端 `StatObject` 超时），Caddy 就**签不出证书 → 整个 `*.pages` 站点直接 TLS 握手失败、不可达**。这不是风暴而是"静默全挂"，排查时先 `curl http://127.0.0.1:3001/?domain=<某已发布域名>` 看 ask 口是否 200，再看 git-pages ↔ S3 后端是否通。
+
 ### 要改哪些 DNS 记录
 
 `<域名>` = 站点根域、`<edge>` = 边缘反代公网 IP、`<host>` = 完整站点域名。按选的模式加：
 
-| 场景 | 要加的记录 | 说明 |
-|---|---|---|
-| **通配多租户**（最常用） | `*.pages.<域名>` A/AAAA → `<edge>`（或 CNAME 到边缘主机名）| 让任意 `<user>.pages.<域名>` 都解析到边缘；**forge-wildcard 鉴权不需要任何 TXT** |
-| **单域名固定站** | `pages.<域名>` A/AAAA/CNAME → `<edge>` | 一条即可 |
-| **DNS Challenge** | 上面那条 + `_git-pages-challenge.<host>` TXT = CLI `--challenge` 算出的哈希 | 口令可多条 TXT |
-| **Forge Allowlist / 免 token Repository Allowlist** | 上面那条 + `_git-pages-forge-allowlist.<host>` 或 `_git-pages-repository.<host>` TXT = 仓库 clone URL | 只授权根 / `.index` 站 |
-| **自定义域名接到某租户** | `<自定义域名>` CNAME → 边缘 + 对应授权 TXT | 同 Codeberg 托管版 |
+每种模式都要一条把域名指向边缘的**解析记录**（A/AAAA/CNAME）；**额外的 `_git-pages-*` TXT 只有 DNS Challenge / Allowlist 那两类才要**，通配多租户和单域名固定站都不用。「要 TXT?」列一眼看清：
 
-> 为什么通配多租户只要一条通配记录、不要 TXT：它的鉴权靠请求带的 forge token 现问 forge API，DNS 只负责"把域名解析到边缘"。**只有 DNS Challenge / Allowlist 那几种**才另加 `_git-pages-*` TXT。有 DNS 服务商 API（如 Spaceship）时都能脚本化下发——前提是那把 API key 对 `<域名>` 本身有 DNS 写权限（只授权别的域名会 404 `SOA ... not found`）。
+| 场景 | 解析记录（都要）| 要 TXT? | 额外 TXT 记录 |
+|---|---|---|---|
+| **通配多租户 = Forge Wildcard（方案 C，最常用）** | `*.pages.<域名>` A/AAAA → `<edge>`（或 CNAME 到边缘主机名）| **否** | 无——鉴权靠请求里的 forge token，DNS 只管解析 |
+| **单域名固定站** | `pages.<域名>` A/AAAA/CNAME → `<edge>` | **否** | 无 |
+| **DNS Challenge（方案 A）** | 上面那条 | **是** | `_git-pages-challenge.<host>` TXT = CLI `--challenge` 算出的哈希（口令可多条 TXT）|
+| **Forge Allowlist（方案 B）/ 免 token Repository Allowlist** | 上面那条 | **是** | `_git-pages-forge-allowlist.<host>` 或 `_git-pages-repository.<host>` TXT = 仓库 clone URL（只授权根 / `.index` 站）|
+| **自定义域名接到某租户** | `<自定义域名>` CNAME → 边缘 | 看所选方案 | 用方案 A/B 才加对应 TXT；用方案 C 则无（同 Codeberg 托管版）|
+
+> 有 DNS 服务商 API（如 Spaceship）时，解析记录 + TXT 都能脚本化下发——前提是那把 API key 对 `<域名>` 本身有 DNS 写权限（只授权别的域名会 404 `SOA ... not found`）。
 
 ### 选一种"谁能推"的鉴权方案
 
@@ -279,12 +285,14 @@ pages.example.com {
 
 > 注意：**推 git 仓库 / webhook**（PUT body 为仓库 URL、POST webhook）走的是另一个函数 `AuthorizeUpdateFromRepository`，多一种**免 token、免 forge API** 的方式——在 `_git-pages-repository.<域名>` TXT 里列出允许的 clone URL 即可（README Authorization 第 3 条）。想"webhook 推 `pages` 分支就发布"、又不想建任何密钥的自建场景，这条最省事。下表对照的是归档直传路径。
 
-| 方案 | 密钥类型 | 要不要 DNS | 要不要 forge API | 适合 |
+| 方案 | 密钥类型 | 额外鉴权 DNS(TXT) | 要不要 forge API | 适合 |
 |---|---|---|---|---|
-| **DNS Challenge** | 自签口令（你随便定）| 1 条 TXT | 否 | 单站、脚本发、最少依赖 |
-| **Forge Token + DNS Allowlist** | forge access token | 1 条 TXT | 是 | 复用 forge 账号权限、能按账号撤销（"deploy token"）|
-| **Forge Wildcard** | forge token（含 CI 自动 token）| 通配解析 | 是 | 一个域名后缀、无数用户各发各站（多租户）|
-| **边缘 Bearer + `PAGES_INSECURE`** | 你在 Caddy 里定的 Bearer 令牌 | 否 | 否 | 不想碰 DNS，安全全押在反代上 |
+| **DNS Challenge** | 自签口令（你随便定）| 是（1 条 TXT）| 否 | 单站、脚本发、最少依赖 |
+| **Forge Token + DNS Allowlist** | forge access token | 是（1 条 TXT）| 是 | 复用 forge 账号权限、能按账号撤销（"deploy token"）|
+| **Forge Wildcard**（= 通配多租户）| forge token（含 CI 自动 token）| 否 | 是 | 一个域名后缀、无数用户各发各站（多租户）|
+| **边缘 ****** `PAGES_INSECURE`** | 你在 Caddy 里定的 ****** | 否 | 否 | 不想碰 DNS，安全全押在反代上 |
+
+> 「额外鉴权 DNS(TXT)」列指的是**除基础解析记录外，还要不要加 `_git-pages-*` TXT**。四种模式都得先有一条把域名指向边缘的 A/AAAA/CNAME（那是解析、不是鉴权）；只有 DNS Challenge / Allowlist 需要再加鉴权 TXT。Forge Wildcard 虽然要一条 `*.pages.<域名>` 通配解析，但那仍是解析记录、**没有鉴权 TXT**，故填「否」。
 
 **DNS Challenge（自签口令）**——本质是"把一个口令的哈希写进 DNS TXT"。用官方 CLI 一条命令生成口令 + 现成 TXT：
 
