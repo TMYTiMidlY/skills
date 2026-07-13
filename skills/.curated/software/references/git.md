@@ -30,18 +30,21 @@ $ git show --stat --oneline HEAD
 
 结论：**只要东西在 index 里，一 commit 必然带走**。要不带走，只有两条路——把它撤出 index（`git restore --staged`），或改用下面不碰 index 的 pathspec 提交。
 
-## 在有其他改动时只提交一处：pathspec（不带 -p）是最稳的 CLI 方案
+## 在有其他改动时只提交一处：`git commit -- <path>`（不带 -p）是最稳的 CLI 方案
 
-`git commit <path>...`（**带路径、不带 `-p`**）是"部分提交 / partial commit"：它**忽略整个 index**，用 `HEAD + 列出文件的当前工作区内容`临时建一棵树来提交。因此：
+`git commit -- <path>...`（**带路径、不带 `-p`**）是"部分提交 / partial commit"。git-commit(1) 原文：以文件为参数（*without --interactive or --patch switch*）时，提交会 **"ignore changes staged in the index, and instead record the current content of the listed files (which must already be known to Git)"**——即忽略整个 index，用 `HEAD + 列出文件的当前工作区内容`临时建一棵树来提交。因此：
 
 - 只提交你点名的路径；
-- 别人已暂存的改动（rename、其它文件）、untracked 文件**一个都不搭车**，原封不动留在 index / worktree；
-- 连 `git add` 都省了（工作区改动直接进这一个提交）。
+- 别人已暂存的改动（rename、其它文件）、你没点名的 untracked 文件**一个都不搭车**，原封不动留在 index / worktree；
+- 对**已跟踪**文件连 `git add` 都省了（工作区改动直接进这一个提交）；但**全新的 untracked 文件必须先 `git add`**——git 要求路径 "already be known to Git"，否则匹配不到、报 `did not match any files known to git`。
+
+`--` 是否必需见本节末小节：对 commit 加不加提交结果相同，但推荐带上以防路径被误当成选项。
 
 ```
 # 工作区: 你改了 AGENTS.md，另有 6 项并发改动(4 modified + 2 untracked)
-$ git commit AGENTS.md -m "docs: update agent rules"
+$ git commit -m "docs: update agent rules" -- AGENTS.md
 # 结果: 只动 AGENTS.md；6 项并发改动纹丝不动，index 不受影响
+# 选项(-m/-F)放 -- 前面；-- 之后一律当路径
 ```
 
 对照三条命令（工作区: 别人已暂存 rename + 你未暂存的 `f.txt`）：
@@ -49,10 +52,28 @@ $ git commit AGENTS.md -m "docs: update agent rules"
 | 命令 | 机制 | 结果里有 rename 吗 |
 |---|---|---|
 | `git commit -m …`（无路径） | 提交整个 index | **有**（index 里就有） |
-| `git commit f.txt -m …`（pathspec，**无 -p**） | 忽略 index，只记 HEAD + f.txt 当前内容 | **没有**（隔离干净） |
-| `git commit -p f.txt -m …`（pathspec + **-p**） | index 为底座 + 选中 hunk（见下节） | **有**（rename 是底座，搭车） |
+| `git commit -- f.txt`（pathspec，**无 -p**） | 忽略 index，只记 HEAD + f.txt 当前内容 | **没有**（隔离干净） |
+| `git commit -p -- f.txt`（pathspec + **-p**） | index 为底座 + 选中 hunk（见下节） | **有**（rename 是底座，搭车） |
 
 > ⚠️ 反直觉点：给 `git commit` 加了 `-p` **反而破坏了 pathspec 提交本来的隔离性**。`commit -p f.txt` 不是"只提交 f.txt 一处"的隔离方案；`commit f.txt`（不带 -p）才是。`commit -p f.txt` 的价值只在"没有别的东西暂存"时——它省的是 `git add`，不是省"清理别人的暂存内容"。
+
+### `--` 分隔符：加不加提交结果相同，但推荐带上
+
+`--` 是 git 通用的**选项/路径分隔符**（git-commit(1) 的 SYNOPSIS 就写作 `[--] [<pathspec>...]`），本质是 revision 与 path 的消歧符（gitcli(7)）。对 `git commit`：
+
+- **提交结果与是否带 `--` 无关**：普通文件名下 `git commit f.txt` 与 `git commit -- f.txt` 产生完全相同的提交（都走上面的 pathspec 部分提交）。`--` 不改变"提交什么"，只消歧义。
+- **`--` 防的是"路径被误当成选项"**：文件名以 `-` 开头时，不带 `--` 会被解析成选项：
+
+  ```
+  $ git commit -m c -x      → error: unknown switch `x'    # -x 被当成选项
+  $ git commit -m c -- -x   → 正常提交名为 -x 的文件         # -- 之后 -x 是路径
+  ```
+
+  `git commit` 不接受 revision 参数，所以"路径名撞分支/标签名"这种歧义**咬不到 commit**（不像 `checkout`/`restore`/`reset`）；但加 `--` 的习惯全 git 一致、无害。
+- **选项要放在 `--` 前面**：`-m` / `-F` 等必须在 `--` 之前；`--` 之后的一切都当路径（把 `-m msg` 放到 `--` 后面会报 `pathspec '-m' did not match`）。
+- **官方建议**：gitcli(7) —— *"When writing a script that is expected to handle random user-input, it is a good practice to make it explicit which arguments are which by placing disambiguating `--` at appropriate places."* 路径来自变量 / 通配符 / 用户输入时显式加 `--` 更稳，所以把 `git commit -- <path>` 作为默认推荐写法。
+
+同理 `git restore -- <path>`、`git stash push -- <path>`、`git checkout <rev> -- <path>` 等吃路径的命令也建议用 `--` 划清"路径从哪开始"；对同时吃 revision 的命令（checkout/restore/reset）更是刚需。
 
 ## `-p` 系列的真相：以某个基准为底座，只能"加"选中的 hunk，减不掉底座
 
@@ -147,7 +168,24 @@ git rebase -i <你的提交>^     # 打开待办清单，把你那行的 pick �
  base    1e20ed8 不变      —             —
 ```
 
-即 `reword` 是 `--amend` 的推广：`--amend` 只够得到 HEAD，`reword` 能改范围内任意一条的消息，代价是重建其上所有子提交。若目的是**修正**后面某个提交而非改消息，`git commit --fixup=<commit>` 生成一条 fixup 提交、再 `git rebase -i --autosquash` 折叠，是保留清晰历史的写法（同样需要能跑 rebase）。
+即 `reword` 是 `--amend` 的推广：`--amend` 只够得到 HEAD，`reword` 能改范围内任意一条的消息，代价是重建其上所有子提交。
+
+### 用 fixup 修正旧提交，稍后再折叠
+
+`git commit --fixup=<target>` **不会立刻改写旧提交**，而是在当前分支顶端新建一条普通提交，标题自动写成 `fixup! <target 的标题>`。等工作告一段落，再由 `git rebase -i --autosquash <target>^` 自动把 fixup 移到目标提交后面并标成 `fixup`：内容并入目标提交，fixup 自己的标题/消息丢弃。
+
+```bash
+# 1. 把当前点名路径的修正做成 target 的 fixup；忽略 index 里的其它内容
+git commit --fixup=<target> -- <path>...
+
+# 2. 若刚建的 fixup 仍是 HEAD，又要补一点修正：直接更新这条 fixup
+git commit --amend --no-edit -- <path>...
+
+# 3. 最后把 fixup 折叠回目标提交（会重写 target 及其后的提交 SHA）
+git rebase -i --autosquash <target>^
+```
+
+第 2 步的 `--no-edit` 保留 `fixup! ...` 标题，pathspec 只更新点名路径：其它已暂存文件不会搭车、仍留在 index。amend 后 fixup 自己会换一个新 SHA，这是正常的。若 fixup 已经不再是 HEAD，不能直接 amend（会改到当前 HEAD）；通常再建一条指向同一 `<target>` 的 fixup，最后让 autosquash 一并折叠。
 
 **为什么这里 rebase 也可能用不了**：`git rebase -i` 要求 index 和 worktree 干净（会 checkout、移动 HEAD）。工作区若有并发会话**未提交的脏文件**，rebase 直接拒绝启动（`error: cannot rebase: You have unstaged changes.`）；而你又不能 `git stash` 掉别人的改动。
 
@@ -175,5 +213,6 @@ git update-ref refs/heads/<branch> "$NEW_CHILD" <期望旧tip>
 
 ## 相关
 
+- 官方文档：[git-commit(1)](https://git-scm.com/docs/git-commit)（DESCRIPTION 的 "way 3" = pathspec 部分提交忽略 index）、[gitcli(7)](https://git-scm.com/docs/gitcli)（`--` 消歧、revision/path 顺序、通配符转义规则）。
 - 跨设备 git 镜像见 [git-mirror.md](git-mirror.md)；自建 Forgejo / Gitea + MCP 见 [git-server.md](git-server.md)。
 - 删除临时文件 / 补丁残留用 `trash-put`，回收站行为见 [trash.md](trash.md)。
