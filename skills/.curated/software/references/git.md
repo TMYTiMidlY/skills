@@ -153,7 +153,9 @@ git commit -m "add new.txt" -- new.txt
 
 ### 非交互 / 脚本化：补丁手术
 
-Git **没有**非交互的 hunk 选择 porcelain（`-p` 系列都是交互式的），所以走 `git diff` 导出补丁 → 裁剪 → `git apply` 打回，方向靠 `git apply` 的参数：
+先分清 git 的两层命令：**porcelain** 是面向人的高层命令（`commit` / `add` / `status` / `restore`，接口稳定友好），**plumbing** 是底层命令（`commit-tree` / `hash-object` / `update-ref`，直接读写 git 对象与引用、输出机器友好供脚本拼装）。这对叫法是 git 官方的（`git(1)` 手册的章节名即 HIGH-LEVEL COMMANDS (PORCELAIN) / LOW-LEVEL COMMANDS (PLUMBING)，`gitglossary(7)` 有词条），取自卫浴比方——plumbing 是墙里的水管，porcelain 是架在其上、你直接接触的瓷洁具（马桶 / 洗手池那层）。
+
+挑 hunk 恰恰**没有**非交互的 porcelain（`-p` 系列都是交互式的），所以走 `git diff` 导出补丁 → 裁剪 → `git apply` 打回，方向靠 `git apply` 的参数：
 
 | 目的 | 命令 |
 |---|---|
@@ -240,7 +242,7 @@ git rebase -i <你的提交>^     # 打开待办清单，把你那行的 pick �
 #   edit    → 停下来改内容（可 git commit --amend 后 git rebase --continue）
 ```
 
-`reword` 的语义：**保留该提交的 tree（改动）完全不变，只重写 log message**。因为 commit 的 SHA = hash(tree + 父 + 作者 + committer + 消息)，消息一变 SHA 就变，**被 reword 的那条及其上所有子提交都会被重建成新 SHA**（父链变了），但各自的 tree 字节不变：
+`reword` 是 `git rebase -i` 交互待办里的官方命令关键字之一（`pick` / `reword` / `edit` / `squash` / `fixup` …，见 git-rebase(1)）。它的语义：**保留该提交的 tree（改动）完全不变，只重写 log message**。因为 commit 的 SHA = hash(tree + 父 + 作者 + committer + 消息)，消息一变 SHA 就变，**被 reword 的那条及其上所有子提交都会被重建成新 SHA**（父链变了），但各自的 tree 字节不变：
 
 ```
 # reword 中间那条 mine 后（theirs 叠在其上）
