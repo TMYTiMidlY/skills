@@ -211,3 +211,21 @@ agent SDK 默认形态是"单进程、单会话、一次性"，而 web 服务要
 
 这些模式在 GitHub `copilot-sdk`、Claude Agent SDK、Codex SDK 上都适用，因为它们要解的是同一道
 "单会话 runtime ↔ 多用户长生命周期服务"的鸿沟，与具体哪家 SDK 无关。
+
+## 案例：paseo —— 同一界面驱动 5 家异构 coding agent（ACP 与原生 RPC 混用）
+
+paseo（`getpaseo/paseo`，AGPL-3.0，自我定位 "One interface for Claude Code, Codex, Copilot, OpenCode, and Pi agents"）是本文各"驱动形态"的一个活样本：一个自托管 daemon 用**同一套 `AgentProvider` 抽象**纳管 5 家 agent，但**底层按家分两种驱动**，恰好印证前面「接入 / 驱动形态先选」的取舍。本地 clone `getpaseo/paseo` 读源码核实（2026-07）：
+
+- **Copilot → ACP（= 本文「JSON-RPC 单连接」形态）。** `packages/server/src/server/agent/providers/copilot-acp-agent.ts` 里 `defaultCommand: ["copilot", "--acp"]`，用官方 npm 包 `@agentclientprotocol/sdk`（paseo 锁 `^0.17.1`）说 ACP（Agent Client Protocol，编辑器/客户端 ↔ agent 的 JSON-RPC 协议，agentclientprotocol.com）。一个 turn = `connection.prompt({sessionId, messageId, prompt})` → 流式收 `session/update` 通知 → `stopReason:"end_turn"` 收尾（`acp-agent.ts` 的 `startTurn`）。
+- **Pi → 原生 JSONL RPC（= 本文「CLI 子进程 + stdio」形态），不是 ACP。** `providers/pi/cli-runtime.ts` spawn `pi --mode rpc`，往 stdin 写 `{"type":"prompt","message":…}`、按行读 stdout 事件到 settled。**pi 无原生 ACP server**（只有 `--mode text|json|rpc`）。
+- **Claude / Codex / OpenCode** 各走自己的 provider 适配（`generic-acp-agent` 或各家 CLI）。
+
+**可迁移结论（"把 copilot 接成对等 agent"这条线的核心，本会话原始调研）：**
+
+1. **`copilot --acp` 是把 Copilot 当"对等 agent"接入的官方口子**（Copilot CLI help：`--acp  Start as Agent Client Protocol server`，本地实测存在）——它自己 plan / 调工具 / 改文件 / 跑多轮。这与"把 copilot 当纯 LLM 后端"的 **model provider** 路线是两回事（后者只借模型、harness 仍归调用方）。
+2. **pi 侧无原生 ACP**，故"pi ⇄ copilot 来回对话"的形态必然是 `[pi 的 RPC / SDK / 扩展] ⇄ 桥 ⇄ [ACP client → copilot --acp]`；或 copilot 侧改用 Copilot SDK 的 `CopilotClient` + `RuntimeConnection`（见前文「Copilot SDK 详解：client vs extension」）。
+3. **"发一个 → 回一个 → 来回"的 peer 逻辑在 paseo 的 skills 层、不在 daemon**：`/paseo-committee`（两个异构 agent、各自 fresh context、并行出方案、多轮挑战到共识，人当 middleman）、`/paseo-handoff`、`/paseo-loop`、`/paseo-advisor` —— 即该模式的产品化。
+
+**相关生态（同一调研线，chat 实测、未在此展开）：** 把 `copilot --acp` 包成 MCP / 桥的现成物有 `oijkn/copilot-acp-mcp-bridge`、`bsmi021/mcp-copilot-acp`、`agents-chat`、`ZebLawrence/agent-team` 等；**pi 侧已有** `@buihongduc132/pi-acp-agents`（npm，依赖 `@agentclientprotocol/sdk`、暴露 `acp_spawn`/`acp_status`/`acp_msg` 工具）——即"pi 扩展经 ACP 驱动 copilot 来回"**已有现成实现**（评价一般，按需自行核）。`@agentclientprotocol/sdk` 0.x→1.x 把 client API 从 `new ClientSideConnection(...)` 换成 builder `client({name}).connectWith(...)`（npm latest 1.2.1，与 paseo 锁的 0.17.1 不同）。
+
+> 源码 / 出处：本地 clone `getpaseo/paseo`（`README.md`、`packages/server/src/server/agent/providers/{copilot-acp-agent.ts,acp-agent.ts,pi/cli-runtime.ts,generic-acp-agent.ts}`、`skills/paseo-*/SKILL.md`）与 `package-lock.json`（`@agentclientprotocol/sdk@0.17.1`）;Copilot CLI `--acp` 本地实测;npm `@agentclientprotocol/sdk`（dist-tags latest 1.2.1）、`@buihongduc132/pi-acp-agents@0.5.0`;本会话 2026-07 调研。
