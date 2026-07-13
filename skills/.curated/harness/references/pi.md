@@ -5,7 +5,7 @@
 > 扩展与 skill 系统与自研插件、多 agent 协同、手机远控，以及生态与社区。
 >
 > **来源基线**：`earendil-works/pi`（原 `badlogic/pi-mono`）@ `8479bd8`（2026-07-11），npm `@earendil-works/pi-coding-agent` v0.80.6，MIT。
-> 本文源码引用均据各上游官方仓库核实（非转述、直接读源码），行号对应上述 commit；各仓库 GitHub 链接见文末「关键仓库 / 资源」。
+> 本文源码引用均据各上游官方仓库核实（非转述、直接读源码）；pi 主仓行号对应上述 commit，第三方源码链接各自锁定 release tag 或 commit SHA。各仓库 GitHub 链接见文末「关键仓库 / 资源」。
 > ⚠️ 时效：模型名（`gpt-5.6-*`、`claude-sonnet-5`、`claude-opus-4.8`）、版本号、star 数、画廊包数（~5.1k）都会变；标注"快照"处以你查证当时为准。
 >
 > **集成状态图例**（全文用）：🟩 Core（主仓内置） · 🟦 官方示例（`examples/`，需自行拷贝） · 🟨 官方实验包（API 不稳定） · 🟧 独立 first-party 仓库 · ⬜ 社区包/项目。
@@ -286,7 +286,7 @@ session.dispose();
 
 > `packages/coding-agent/src/index.ts`:192-219（`core/sdk.ts`）；`examples/sdk/{01-minimal,12-full-control,13-session-runtime}.ts`、`examples/sdk/README.md`。
 
-> **核心无 Web 传输**：没有内置 HTTP server。"Web" 靠 ① `/share` → `pi.dev/session/#<id>` 渲染 HTML；② `--mode rpc` 让外部 Web 后端驱动；③ 社区前端（pi-web / tau / dashboard，**见 [Web 界面](#web-ui)**）。
+> **核心无 Web 传输**：没有内置 HTTP server。"Web" 靠 ① `/share` → `pi.dev/session/#<id>` 渲染 HTML；② `--mode rpc` 让外部 Web 后端驱动；③ 社区前端（pi-web / tau / dashboard / firstpick，**见 [Web 界面](#web-ui)**）。
 
 > `packages/coding-agent/src/cli/args.ts`:10、74-278；`src/main.ts:100-110`（非 TTY 自动 print）；`src/modes/{print-mode.ts,index.ts}`、`src/core/slash-commands.ts:19-42`；`badlogic/pi-telegram`（README:68-135 + `index.ts:867-875` 配对、events、`telegram_attach`、旧 scope peerDeps）；`earendil-works/pi-chat`（README:176-197 + `index.ts:683-697`、`src/{runtime,gondolin,secrets.ts:10-45}`）；`packages/coding-agent/docs/termux.md:16-100`；社区 `CelestialCreator/pocket-pi`、`a2ajinkya/phone-pi`。
 
@@ -582,85 +582,116 @@ README 一句话："用 tmux 起多个 pi 实例"；仓库 `docs/tmux.md` 只讲
 
 ## <a id="web-ui"></a>Web 界面 / 在浏览器里用 pi
 
-核心**不内置 Web UI / HTTP server**（`Mode` 只有 `text|json|rpc`，见 [调用形态](#invocation-modes)）。想"像 TUI 一样在浏览器里用 pi"全靠**社区前端**，它们的共同底座是 pi 的三条对外口子——[`--mode rpc`](#rpc)（JSONL/stdio）、[SDK `createAgentSession()`](#sdk)、扩展事件 API（`pi.on(...)`）——外加**直接复用 `~/.pi/agent`**（会话 `sessions/*.jsonl` + `auth.json`/`models.json`，**无需重新登录**）。据此分三种范式，各有代表作（均 ⬜ 社区、★为快照）：
+核心**不内置 Web UI / HTTP server**（`Mode` 只有 `text|json|rpc`，见 [调用形态](#invocation-modes)）。社区网页前端主要复用三类原语：[`--mode rpc`](#rpc)（JSONL/stdio）、[SDK `createAgentSession()`](#sdk)、扩展事件 API（`pi.on(...)`）；通常也直接读取 `~/.pi/agent` 的会话 JSONL、`auth.json` 与 `models.json`，因此能沿用已有登录和历史会话。
 
-| 工具 | npm · ★ · license | **驱动 pi 的方式**（关键差异） | 传输 · 端口 | 多会话 | 复用 `~/.pi/agent` | 特色 | 短板 |
-|---|---|---|---|---|---|---|---|
-| **agegr/pi-web** | `@agegr/pi-web` · ~1.1k★ · MIT | **SDK 进程内**（`createAgentSessionFromServices`；浏览器真驱动 prompt/steer/切模型/compact/fork） | Next.js · **SSE** · :30141 | 部分 | ✅ | 会话浏览/fork、**git worktree**、diff/图/pdf/docx 预览、skill 开关、context/cost | 无内置终端 |
-| **deflating/tau** | `tau-mirror` · ~275★ · MIT\* | **进程内 pi 扩展**，镜像正在跑的 TUI（`session_start` 自启；浏览器发 prompt→`pi.sendUserMessage`，**双向同步**） | Node `ws` · :3001 · **绑 0.0.0.0** | 一次镜像 1 个活动会话 | ✅（进程内自动继承） | **手机镜像**（`/qr` 二维码 + Tailscale 检测）、**PWA 可装主屏**、可选 Basic Auth | 无终端 / 无 skill / 无 pdf |
-| **BlackBelt/pi-agent-dashboard** | `@blackbelt-technology/pi-agent-dashboard` · ~188★ · MIT | **spawn N×`pi --mode rpc`**（`process-manager.ts`+`rpc-keeper/keeper.cjs`，每会话一 keeper、按行喂 stdin；另经 SDK 注册桥扩展） | Fastify+`ws` · :8000(UI)+:9999(pi 桥) · 另有 **Electron** | **是**（"指挥一支 pi 大军"） | ✅（`auth.json` live-sync、浏览器内 OAuth） | 内置终端(node-pty/xterm)、Monaco diff、pi-flows/subagents、OpenSpec、**mDNS+zrok 远程** | 重；只支持 pi、不支持 Oh My Pi |
+### <a id="webui-overview"></a>网页前端总览
 
-**三范式数据流**（同一 `~/.pi/agent` 底座、三种驱动一图；均无一依赖被删的 `pi-web-ui` 组件库，全自造前端）：
+下表取 npm 最新版；Star 是 **2026-07-14** 的 GitHub 仓库快照。`@firstpick/pi-package-webui` 位于 monorepo，25★ 指整个 [`Firstp1ck/npm-packages`](https://github.com/Firstp1ck/npm-packages)，满足“非个位数”门槛。
+
+| 工具 | npm · ★ · license | 驱动 pi 的方式 | 传输 · 端口 | 会话 | 文件 / 终端 | 远程与安全 |
+|---|---|---|---|---|---|---|
+| [**agegr/pi-web**](https://github.com/agegr/pi-web) | `@agegr/pi-web` 0.7.11 · 1,168★ · MIT | **SDK 进程内**：`createAgentSessionServices` → `createAgentSessionFromServices` | Next.js · **SSE** · :30141 | 历史会话树、切换、fork；非并发多聊 | diff / 图 / PDF / DOCX；无终端 | 默认 localhost；`-H` 可改 |
+| [**deflating/tau**](https://github.com/deflating/tau) | `tau-mirror` 1.0.9 · 276★ · MIT\* | **进程内扩展**：镜像正在跑的 TUI，浏览器消息注入同一会话 | 原生 SPA · **WebSocket** · :3001 | 一次镜像一个活动会话；历史只读 | 文件树 / 图 / 行内 diff；无 PDF、无终端 | 默认 `0.0.0.0`；Basic Auth、QR、Tailscale、PWA |
+| [**BlackBelt/pi-agent-dashboard**](https://github.com/BlackBeltTechnology/pi-agent-dashboard) | `@blackbelt-technology/pi-agent-dashboard` 0.5.4 · 189★ · MIT | **keeper sidecar → N×`pi --mode rpc`**；另加载桥扩展 | Fastify + WS · :8000 UI / :9999 pi 桥；Electron | 并行管理多会话 | node-pty/xterm 终端、Monaco、diff、PDF | 默认 `127.0.0.1`；mDNS、zrok |
+| [**@firstpick/pi-package-webui**](https://github.com/Firstp1ck/npm-packages/tree/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui) | `@firstpick/pi-package-webui` 0.6.6 · 25★（monorepo）· MIT | **pi 扩展启动器 → `pi-webui` → `pi --mode rpc`** | SSE / WebSocket（可选）· :31415 | 多标签，可从会话文件恢复 | 工作区导航、上传、worktree；无终端 | 默认 `127.0.0.1`；Remote PIN / LAN 由 companion 包提供 |
+
+`tau` 的 `package.json` 和 README 声明 MIT，但[核验时的仓库根目录](https://github.com/deflating/tau/tree/f68152d5435bb7175613d5de76f7b3638cce0a96)未附标准 `LICENSE` 文件，GitHub API 因此识别为无许可；表中以 `MIT*` 区分“作者声明”与“仓库授权文件”。
+
+#### 驱动链路
 
 ```mermaid
 flowchart TD
-    subgraph PW ["agegr/pi-web · SDK 进程内（独立 Next.js）"]
-        PW1["浏览器 React19"] -->|"prompt/steer"| PW2["Next.js Server :30141"]
-        PW2 -->|"createAgentSessionFromServices"| PW3["进程内 AgentSession"]
-        PW2 -.->|"SSE 事件流"| PW1
+    subgraph SDK ["SDK 进程内"]
+        PW_BROWSER["pi-web 浏览器"] <-->|"SSE + 命令"| PW_SERVER["Next.js :30141"]
+        PW_SERVER -->|"createAgentSessionFromServices"| PW_SESSION["AgentSession"]
     end
-    subgraph TAU ["deflating/tau · 扩展镜像正在跑的 TUI"]
-        TAU1["浏览器 原生 SPA"] -->|"prompt"| TAU2["pi 扩展 mirror-server :3001"]
-        TAU2 -->|"pi.sendUserMessage · pi.on 订阅"| TAU3["正在跑的 pi TUI 会话"]
-        TAU2 -.->|"WS 广播事件"| TAU1
+    subgraph MIRROR ["扩展镜像"]
+        TAU_BROWSER["tau 浏览器"] <-->|"WebSocket"| TAU_EXT["mirror-server :3001"]
+        TAU_EXT <-->|"pi.on / sendUserMessage"| TUI["正在运行的 pi TUI"]
     end
-    subgraph DASH ["BlackBelt/pi-agent-dashboard · 指挥 pi 大军"]
-        DASH1["浏览器 React19+Vite / Electron"] -->|"WS"| DASH2["Fastify :8000 UI + :9999 桥"]
-        DASH2 -->|"spawn keeper × N"| DASH3["keeper.cjs · 每会话一个"]
-        DASH3 -->|"按行喂 stdin"| DASH4["pi --mode rpc 子进程 × N"]
+    subgraph RPC ["RPC 子进程"]
+        DASH_BROWSER["dashboard 浏览器 / Electron"] <-->|"WebSocket"| DASH_SERVER["Fastify :8000 / :9999"]
+        DASH_SERVER -->|"keeper × N"| DASH_PI["pi --mode rpc × N"]
+        FP_BROWSER["firstpick 浏览器"] <-->|"SSE / WebSocket"| FP_SERVER["pi-webui :31415"]
+        FP_SERVER -->|"每标签一个子进程"| FP_PI["pi --mode rpc × N"]
     end
-    PW3 --> AGENT[("~/.pi/agent · 会话 JSONL · auth.json · models.json")]
-    TAU3 --> AGENT
-    DASH4 --> AGENT
+    PW_SESSION --> AGENT_DIR[("~/.pi/agent")]
+    TUI --> AGENT_DIR
+    DASH_PI --> AGENT_DIR
+    FP_PI --> AGENT_DIR
 ```
 
-三者深潜见下（均 ⬜ 社区，均据官方仓库源码核实）。
+### <a id="webui-askuser"></a>扩展交互协议（`ask_user`）
 
-### agegr/pi-web（⬜ SDK 进程内独立服务）
+`ask_user` / `question` 不是一种固定 UI，而是“工具向人索取输入”的能力。pi 的 RPC 协议把标准交互定义为 `select`、`confirm`、`input`、`editor` 请求，前端再用 `extension_ui_response` 回值；通知、状态栏、widget 与标题更新也是同一协议的非阻塞方法。官方类型见 [`RpcExtensionUIRequest` / `RpcExtensionUIResponse`](https://github.com/earendil-works/pi/blob/8479bd84743e8889f728acb21a62794102db0529/packages/coding-agent/src/modes/rpc/rpc-types.ts#L225-L275)。
 
-最像"把单人版 CLI 原样搬进网页"。`npx @agegr/pi-web@latest` → `http://localhost:30141`（`bin/pi-web.js` 的 `--port/-p`、`--hostname/-H`；默认 localhost、无鉴权 token）。
+因此，“扩展工具能加载”不等于“网页里能回答问题”：网页后端还要给 extension runner 绑定 UI context，浏览器要渲染 request，并把 response 路由回原请求。官方示例 [`question.ts`](https://github.com/earendil-works/pi/blob/8479bd84743e8889f728acb21a62794102db0529/packages/coding-agent/examples/extensions/question.ts#L44-L74) 和 [`questionnaire.ts`](https://github.com/earendil-works/pi/blob/8479bd84743e8889f728acb21a62794102db0529/packages/coding-agent/examples/extensions/questionnaire.ts#L84-L95) 使用 TUI 自定义组件，并显式拒绝 `ctx.mode !== "tui"`；它们不能直接代表 RPC 网页兼容性。
 
-- **驱动**：不 spawn 任何 pi 子进程，而在自己的 Next.js server 进程里**两段式**起会话——先 `createAgentSessionServices({cwd, agentDir})`、再 `createAgentSessionFromServices({services,…})`（`lib/rpc-manager.ts` 的 `startRpcSession`/`AgentSessionWrapper`；仓库单测明确断言"不用旧的单调 `createAgentSession`"）。浏览器是真驱动：prompt/steer/切模型/compact/fork 全落到这个进程内会话。
-- **栈与传输**：Next.js 16 + React 19；前端经 **SSE** 收事件——server route 回 `text/event-stream`、client 用自动重连的 `EventSource`（`app/api/agent/[id]/events/route.ts`、`hooks/useAgentSession.ts`）。Markdown/数学/图表齐活：`react-markdown`+`remark-gfm`、`katex`、`mermaid`、`react-syntax-highlighter`。
-- **会话/复用**：读 `~/.pi/agent/sessions`（`PI_CODING_AGENT_DIR` 可改指别处），会话即 `sessions/<编码cwd>/<时间戳>_<uuid>.jsonl`。`SessionSidebar.tsx` 按项目列历史会话树，可从任一历史消息续跑或 **fork 成独立路由**；无需重登。多会话是"可列可切"，非并发多聊。
-- **文件/预览**：`FileViewer.tsx` 一件覆盖 source / diff / image / audio / **PDF** / **DOCX**（`lib/file-types.ts` 的 `DocumentPreviewKind="pdf"|"docx"`，DOCX 经 `mammoth` 转 HTML）；另有 `FileExplorer.tsx` 文件树、`ModelsConfig.tsx`、`SkillsConfig.tsx` **skill 开关**。
-- **git worktree**（独有卖点）：`lib/worktree.ts` + `app/api/worktrees/route.ts` + `docs/worktrees.md`——侧栏列一个项目的全部 worktree，用切换器选 pi-web 在哪个 checkout 上开新活，天然适配"一仓多分支并行"。
-- **依赖**：当前 scope `@earendil-works/pi-coding-agent`+`@earendil-works/pi-ai`（均 `^0.80.6`、钉最新），**不碰**被删的 `pi-web-ui`。**无内置终端**。
+| 网页 UI | 浏览器交互 | 方法 | 实现边界 |
+|---|---|---|---|
+| **pi-agent-dashboard** | ✅ | `confirm` · `select` · **`multiselect`** · `input` · **`batch`** | 自带 `ask_user` 工具；`multiselect` 是 dashboard 在标准协议之外补的桥接方法，浏览器与 TUI 都有渲染器 |
+| **@firstpick/pi-package-webui** | ✅ | `select` · `confirm` · `input` · `editor` | 直接实现标准四种阻塞请求 |
+| **agegr/pi-web** | ✅ | `select` · `confirm` · `input` · `editor` | server 建 UI context；client 渲染 request 并回 response；另支持 notify/status/widget 等非阻塞 UI |
+| **tau** | ⚠️ 仅终端链路可用 | TUI 的 `ctx.ui.*` | 浏览器端虽有四种 dialog renderer，但 mirror server 只转发固定 agent/session 事件，未把 extension UI request/response 接进链路 |
 
-> pi-web `lib/rpc-manager.ts`（`startRpcSession`/`AgentSessionWrapper`/两段式 `createAgentSessionServices`→`createAgentSessionFromServices`）、`app/api/agent/[id]/events/route.ts`+`hooks/useAgentSession.ts`（SSE/`EventSource`）、`bin/pi-web.js`（:30141·`-p`/`-H`）、`lib/session-reader.ts`（`getAgentDir`）、`lib/file-types.ts`（`DocumentPreviewKind`）、`lib/worktree.ts`+`app/api/worktrees/route.ts`+`docs/worktrees.md`、`package.json`（`@earendil-works/pi-coding-agent`+`pi-ai@^0.80.6`、`next`16、`react`19、`mammoth`/`mermaid`/`katex`）。
+选择取决于交互形态：标准单选、确认、文本输入可用 pi-web 或 firstpick；原生复选与批量问卷用 dashboard；tau 适合“浏览器旁观 + 终端回答”。标准协议本身没有 `multiselect`，通用插件如何降级由插件决定，不应假定一定转成文本输入。
 
-### deflating/tau（⬜ 扩展镜像 TUI + 手机 PWA）
+另一个活跃候选 [`jmfederico/pi-web`](https://github.com/jmfederico/pi-web)（256★，2026-07-14 快照）目前只在 [`bindExtensions`](https://github.com/jmfederico/pi-web/blob/a1f749cdb6e185270a955e77848b364a2c3c68bb/src/server/sessions/piSessionService.ts#L1725-L1733) 传 `onError`，没有 UI context，故扩展工具可加载、浏览器却不能承接 `ask_user`。[`@cnbattle/pi-web`](https://github.com/cnbattle/pi-web) 仅 0★，未进入主表。
 
-"给正在跑的会话开第二块屏"。`pi install npm:tau-mirror`（或 `pi install git:github.com/deflating/tau`）后正常起 `pi`，状态栏出 URL、终端 `/qr` 出二维码。
+> 源码核验：pi-web v0.7.11 的 [extension runner 绑定](https://github.com/agegr/pi-web/blob/v0.7.11/lib/rpc-manager.ts#L169-L200)、[UI context](https://github.com/agegr/pi-web/blob/v0.7.11/lib/rpc-manager.ts#L703-L731) 与 [client response](https://github.com/agegr/pi-web/blob/v0.7.11/hooks/useAgentSession.ts#L642-L655)；dashboard v0.5.4 的 [`ask_user` 方法](https://github.com/BlackBeltTechnology/pi-agent-dashboard/blob/v0.5.4/packages/extension/src/ask-user-tool.ts#L1-L44) 与 [`multiselect` 桥](https://github.com/BlackBeltTechnology/pi-agent-dashboard/blob/v0.5.4/packages/extension/src/multiselect-polyfill.ts#L1-L24)；firstpick 的 [阻塞方法集合](https://github.com/Firstp1ck/npm-packages/blob/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui/bin/pi-webui.mjs#L150-L165)、[pending request 转发](https://github.com/Firstp1ck/npm-packages/blob/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui/bin/pi-webui.mjs#L7221-L7280) 与 [response 路由](https://github.com/Firstp1ck/npm-packages/blob/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui/bin/pi-webui.mjs#L11711-L11728)；tau 的 [固定事件转发列表](https://github.com/deflating/tau/blob/f68152d5435bb7175613d5de76f7b3638cce0a96/extensions/mirror-server.ts#L337-L359)、[浏览器 renderer](https://github.com/deflating/tau/blob/f68152d5435bb7175613d5de76f7b3638cce0a96/public/app.js#L420-L439) 与 [response 发送端](https://github.com/deflating/tau/blob/f68152d5435bb7175613d5de76f7b3638cce0a96/public/dialogs.js#L191-L197)。
 
-- **驱动**：它本身是个 pi 扩展（`package.json` 的 `pi.extensions:["./extensions/mirror-server.ts"]`），随 pi 启动、在 `session_start` 里自启内嵌 HTTP+WS 服务（**非**独立进程）。`pi.on(...)` 订阅**正在跑那个 TUI 会话**的约 15 类事件（`agent_*`/`turn_*`/`message_*`/`tool_execution_*`/`auto_compaction_*`/`auto_retry_*`/`model_select`）`broadcast` 给浏览器；浏览器发的 prompt 经 `handleCommand`→`pi.sendUserMessage` 注入同一会话——**双向、但只镜像当前活动会话**：`/api/sessions/switch` 是 no-op（`{success:true, mirror:true, note:"Session switching is controlled by the TUI in mirror mode"}`），换会话得回终端换；历史会话只读浏览（活动会话打绿点）。
-- **前端/传输**：`public/` 全是**原生 vanilla JS**（`app.js`/`session-sidebar.js`/`tool-card.js`/`message-renderer.js`/`websocket-client.js`… 共 16 个纯文件），零框架零构建；`ws` 只在 `/ws` 升级。带 `manifest.json`+`sw.js`——是个**可装到手机主屏的 PWA**。运行时依赖仅 `ws`+`qrcode`；对 pi 只有 `import type … from "@mariozechner/pi-coding-agent"`（旧 scope、仅类型、运行时零占用）。
-- **手机镜像**（招牌）：`/qr` 开 `/api/qr` 用 `qrcode` 出码；启动时扫网卡找 `100.x.x.x`（Tailscale CGNAT 段）自动检测 Tailscale，检出就并排给 LAN 与 Tailscale 两张 QR；心跳保活移动/Tailscale 连接。多开：`~/.pi/tau-instances/` 注册表 + `/api/instances` 让浏览器发现你其它终端里跑着的 tau 实例（作者 tmux 多窗口用法）。
-- **复用/安全**：进程内自动继承 `~/.pi/agent`（`PI_AGENT_DIR`/`SESSIONS_DIR`/`settings.json`，`ExtensionContext` 由运行中的 pi 会话直接传入，无独立鉴权）。**默认绑 `0.0.0.0`**（方便手机），公网/共享网络务必 `TAU_HOST=127.0.0.1` 或开 Basic Auth（`checkBasicAuth` 比对 `TAU_USER/TAU_PASS`，同挡 HTTP 与 WS，仅 `/api/health` 豁免；配好后 UI 有"Require login"开关、写 `settings.json`）。
-- **短板/许可**：**无终端**（ROADMAP 的"Live Terminal Embed"仍是设想）、无 skill；文件侧只有树 + 图片预览（`/api/file/preview` 仅 PNG/JPEG/GIF/WEBP/SVG/ICO，其余 415）+ 编辑工具**行内 diff**（红绿行），**无 PDF**。License 仅 `package.json`/README 声明 MIT、未附 `LICENSE` 文件，GitHub 识别为无（表中记 `MIT*`）。
+### agegr/pi-web
 
-> tau `extensions/mirror-server.ts`（`pi.on` 约 15 事件→`broadcast`、`handleCommand`→`pi.sendUserMessage`、`/api/sessions/switch` no-op、`/qr`+`/api/qr`+Tailscale `100.` 检测、`checkBasicAuth`、:3001·`0.0.0.0`）、`package.json`（`pi.extensions`、deps 仅 `ws`+`qrcode`、`import type @mariozechner/pi-coding-agent`）、`public/*`（16 原生 JS + `manifest.json`+`sw.js` PWA）、`ROADMAP.md`（终端仍设想）。
+⬜ 社区。最像“把单人版 CLI 搬进网页”：`npx @agegr/pi-web@latest` 后打开 `http://localhost:30141`；`--port/-p` 与 `--hostname/-H` 可改监听。
 
-### BlackBelt/pi-agent-dashboard（⬜ 多会话督程 + 全家桶）
+- **驱动**：不 spawn pi 子进程，而在 Next.js server 内先 `createAgentSessionServices({cwd, agentDir})`，再 `createAgentSessionFromServices({services,…})`；浏览器的 prompt、steer、切模型、compact、fork 都落到该进程内会话。
+- **会话与文件**：读取 `~/.pi/agent/sessions`，按项目显示历史会话树，可从历史消息续跑或 fork；文件查看覆盖 source、diff、图、音频、PDF 与 DOCX。多会话是“列出并切换”，不是并发多聊。
+- **工作区**：worktree 是一等对象，侧栏能列同一仓库的多个 checkout，并选择在哪个 worktree 开新会话。
+- **取舍**：依赖当前 scope 的 `@earendil-works/pi-coding-agent` 与 `pi-ai`；没有内置终端。
 
-主打并行——"从一个标签页指挥一支 pi 大军"。`npm i -g @blackbelt-technology/pi-agent-dashboard && pi-dashboard` → `http://localhost:8000`（`--port`/`--pi-port`/`--no-tunnel`）；另有 Electron 桌面版与 Docker。**pocket-pi 安卓内嵌的就是它**（见下节「远程控制与移动端」）。
+> 源码（v0.7.11）：[两段式 SDK 初始化](https://github.com/agegr/pi-web/blob/v0.7.11/lib/rpc-manager.ts#L961-L968)、[SSE 事件路由](https://github.com/agegr/pi-web/blob/v0.7.11/app/api/agent/%5Bid%5D/events/route.ts#L7-L70)、[会话 / 文件 / worktree 功能](https://github.com/agegr/pi-web/blob/v0.7.11/README.md#L40-L53)、[PDF / DOCX / 音频类型](https://github.com/agegr/pi-web/blob/v0.7.11/lib/file-types.ts#L1-L57)、[worktree 行为](https://github.com/agegr/pi-web/blob/v0.7.11/docs/worktrees.md#L1-L27)。
 
-- **驱动（keeper 三级）**：server 不直接 spawn pi。每个 headless 会话，server 先 spawn 一个 **keeper sidecar**（`packages/server/src/rpc-keeper/keeper.cjs <sessionId>`），keeper 再 spawn `pi --mode rpc` 并**独占其 stdin**（按行喂命令）。keeper **命比 server 长**：server 重启后扫 UDS socket 重连既有 keeper、会话不掉。另有 `tmux` 策略（tmux 窗口里交互式起 pi、不走 keeper）。同时它把自带**桥接扩展**经 SDK `@earendil-works/pi-coding-agent`（`^0.74.0`）注册进 pi——keeper/RPC 与 SDK 两条腿都用。
-- **服务/端口/栈**：`fastify@5` 起两个独立监听——**:8000 浏览器网关**与 **:9999 pi 桥**（`--port`/`--pi-port`）。传输 WebSocket（`@fastify/websocket`+`ws`+xterm `addon-attach`）。前端 React 19 + Vite 6 + Tailwind 4。它是个 **25+ 包的 npm workspaces monorepo**（`shared`/`extension`/`server`/`client`/`electron` + `flows`/`subagents`/`kb`/`automation`/`roles`… 插件），root peerDeps **对新旧 scope（`@earendil-works/*` 与 `@mariozechner/*`）都 optional**，新旧 pi 均可配。
-- **内置终端/文件**（另两家皆无终端）：真终端 `node-pty` + `@xterm/xterm`（ANSI 色、回滚、keep-alive）；文件侧 **Monaco 编辑器** + `@git-diff-view/react`（并排/统一 diff + 文件树）+ `pdfjs-dist`（PDF 预览）。
-- **全家桶**：`pi-flows` 实时执行面板（agent 卡片/详情/流程图）、**subagents** 检视（`subagents-plugin` + 配套 repo）、**OpenSpec** 集成（`@fission-ai/openspec`，`openspec/specs/` 20+ 规格、轮询、后台起会话）、**mDNS** 局域网发现别的 dashboard（`bonjour-service`）、**zrok** 隧道出公网（`tunnel.enabled`、读 `~/.zrok2/environment.json`）。插件靠 `dashboard-plugin-runtime`（loader + slot 注册）挂载。
-- **复用/绑定**：`auth.json` **live-sync** 到运行中会话、浏览器内 OAuth（`jsonwebtoken`）登 provider、桥扩展注册进 `~/.pi/agent/settings.json`、`piSessionsDir` 默认 `~/.pi/agent/sessions`；dashboard 自身配置另存 `~/.pi/dashboard/config.json`。默认 bind `127.0.0.1`（解析链 `--host`→`PI_DASHBOARD_HOST`→`config.bindHost`→`127.0.0.1`；Docker 才 `0.0.0.0`）。**短板**：重；只支持 pi、不支持 Oh My Pi。
+### deflating/tau
 
-> dashboard `packages/server/src/{process-manager.ts,rpc-keeper/keeper.cjs,server.ts,cli.ts}`（keeper 每会话一个·`pi --mode rpc`·独占 stdin·UDS 重连·:8000/:9999）、`openspec/specs/rpc-keeper-sidecar/spec.md`、`packages/server/package.json`（`@earendil-works/pi-coding-agent@^0.74.0`、`fastify`5、`node-pty`、`@fission-ai/openspec`、`bonjour-service`、`jsonwebtoken`）、`packages/client/package.json`（`react`19、`vite`6、`monaco-editor`、`@xterm/*`、`@git-diff-view/react`、`pdfjs-dist`）、`docs/architecture.md`（bind `127.0.0.1` 解析链）、`README.md`（flows/subagents/OpenSpec/mDNS/zrok、Electron/Docker）。
+⬜ 社区。它不是另起 agent，而是给当前 TUI 会话增加浏览器“第二块屏”：`pi install npm:tau-mirror` 后正常启动 pi，状态栏给出 URL，`/qr` 生成手机二维码。
 
-### <a id="web-ui-legacy"></a>历史：被删的 `@earendil-works/pi-web-ui`（≠ 网页版 TUI）
+- **驱动**：`package.json` 把 `extensions/mirror-server.ts` 注册成 pi 扩展；扩展订阅当前会话的 agent / turn / message / tool 等事件并广播，浏览器消息经 `pi.sendUserMessage` 回到同一会话。浏览器不能真正切换活动会话，历史会话只读。
+- **前端与手机**：原生 JavaScript SPA + WebSocket，带 manifest 与 service worker，可装成 PWA；自动探测 Tailscale `100.x.x.x` 地址并生成 LAN / Tailscale QR。
+- **网络**：默认监听 `0.0.0.0:3001`；可改 `TAU_HOST`，或用 `TAU_USER` / `TAU_PASS` 开 Basic Auth。默认设置适合手机直连，也意味着局域网可见范围更大。
+- **取舍**：无内置终端、无 PDF；License 只在元数据 / README 声明 MIT，仓库缺标准授权文件。
+
+> 源码（commit `f68152d`）：[扩展清单](https://github.com/deflating/tau/blob/f68152d5435bb7175613d5de76f7b3638cce0a96/package.json#L1-L27)、[同会话镜像与只读历史](https://github.com/deflating/tau/blob/f68152d5435bb7175613d5de76f7b3638cce0a96/README.md#L3-L19)、[session / diff / 文件功能](https://github.com/deflating/tau/blob/f68152d5435bb7175613d5de76f7b3638cce0a96/README.md#L49-L76)、[监听与 Basic Auth](https://github.com/deflating/tau/blob/f68152d5435bb7175613d5de76f7b3638cce0a96/README.md#L90-L102)、[QR 页面](https://github.com/deflating/tau/blob/f68152d5435bb7175613d5de76f7b3638cce0a96/extensions/mirror-server.ts#L870-L887)、[Tailscale 检测](https://github.com/deflating/tau/blob/f68152d5435bb7175613d5de76f7b3638cce0a96/extensions/mirror-server.ts#L1685-L1700)、[PWA manifest](https://github.com/deflating/tau/blob/f68152d5435bb7175613d5de76f7b3638cce0a96/public/manifest.json#L1-L28)。
+
+### BlackBelt/pi-agent-dashboard
+
+⬜ 社区。定位是多会话督程：`npm install -g @blackbelt-technology/pi-agent-dashboard && pi-dashboard`，默认打开 `http://localhost:8000`；另有 Electron 与 Docker 形态。
+
+- **驱动**：每个 headless 会话先起 keeper sidecar，keeper 再起 `pi --mode rpc` 并持有 stdin；server 重启后可重连 keeper。另有 tmux 策略，并通过 SDK 加载桥扩展。
+- **服务与界面**：Fastify 分别监听 :8000 浏览器网关与 :9999 pi 桥；React 19 + Vite 前端，内置 node-pty/xterm 终端、Monaco、diff 与 PDF 预览。
+- **编排扩展**：包含 flows、subagents、OpenSpec、mDNS 与 zrok；适合同时观察和操控多个 pi，会比单会话网页前端更重。
+- **存储与网络**：复用 `~/.pi/agent/sessions`，把凭据同步到运行中会话；自身配置在 `~/.pi/dashboard/config.json`。默认绑定 `127.0.0.1`，Docker 才通常改成 `0.0.0.0`。
+
+> 源码（v0.5.4）：[keeper 默认 RPC 参数与子进程](https://github.com/BlackBeltTechnology/pi-agent-dashboard/blob/v0.5.4/packages/server/src/rpc-keeper/keeper.cjs#L202-L239)、[终端 / diff / flows / OpenSpec / 远程能力](https://github.com/BlackBeltTechnology/pi-agent-dashboard/blob/v0.5.4/README.md#L181-L201)、[端口配置](https://github.com/BlackBeltTechnology/pi-agent-dashboard/blob/v0.5.4/README.md#L232-L239)、[React / xterm / diff 依赖](https://github.com/BlackBeltTechnology/pi-agent-dashboard/blob/v0.5.4/packages/client/package.json#L30-L70)、[架构文档](https://github.com/BlackBeltTechnology/pi-agent-dashboard/blob/v0.5.4/docs/architecture.md)。
+
+### <a id="webui-firstpick"></a>@firstpick/pi-package-webui
+
+⬜ 社区。它是 [`Firstp1ck/npm-packages`](https://github.com/Firstp1ck/npm-packages/tree/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui) monorepo 的子包。安装成 pi 扩展后可运行 `/webui-start` / `/webui-status`；也可全局安装并直接运行 `pi-webui`。
+
+- **驱动**：扩展先 spawn `pi-webui` 服务；服务为每个标签启动一个 `pi --mode rpc`，并显式重建要加载的 extension / skill / prompt / theme 资源。它与 dashboard 同属 RPC 子进程范式，但没有 keeper 层。
+- **会话与传输**：默认 `127.0.0.1:31415`；支持 SSE、WebSocket、带缓存 WebSocket 与自动选择。多标签可在重启后从会话文件恢复。
+- **附带能力**：上传、workspace 导航、[git worktree](https://github.com/Firstp1ck/npm-packages/blob/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui/lib/git-worktrees.mjs)、Mermaid、[自然对话 / 语音](https://github.com/Firstp1ck/npm-packages/blob/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui/public/voice-conversation.mjs)；一组 `@firstpick/pi-extension-*` 以 optional dependencies 捆绑。远程 LAN、二维码与 PIN 由同仓 [`@firstpick/pi-package-remote-webui`](https://github.com/Firstp1ck/npm-packages/tree/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-remote-webui) 提供。
+- **取舍**：原生实现标准四种交互请求；无内置终端。功能集中，但安装面和可选扩展比 pi-web 更大，社区规模也较小。
+
+> 源码（commit `69bd74fc`）：[包清单与扩展入口](https://github.com/Firstp1ck/npm-packages/blob/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui/package.json#L1-L38)、[扩展启动器默认值](https://github.com/Firstp1ck/npm-packages/blob/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui/index.ts#L13-L28)、[扩展 spawn 服务](https://github.com/Firstp1ck/npm-packages/blob/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui/index.ts#L533-L548)、[传输选项与阻塞交互](https://github.com/Firstp1ck/npm-packages/blob/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui/bin/pi-webui.mjs#L142-L165)、[RPC 子进程参数](https://github.com/Firstp1ck/npm-packages/blob/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui/bin/pi-webui.mjs#L6617-L6625)、[SSE 端点](https://github.com/Firstp1ck/npm-packages/blob/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui/bin/pi-webui.mjs#L10844-L10858)、[安装与监听说明](https://github.com/Firstp1ck/npm-packages/blob/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui/README.md#L17-L72)。
+
+### <a id="web-ui-legacy"></a>历史组件库 `@earendil-works/pi-web-ui`
 
 主仓曾有 `packages/web-ui`（npm `@earendil-works/pi-web-ui`）——**mini-lit 浏览器组件库**（`ChatPanel`/`AgentInterface`/消息渲染/IndexedDB 存储/artifact/JS REPL）。**它不是"在浏览器里驱动本地 pi"的工具**：package.json 无 `pi` 字段（非扩展）、不依赖 `pi-coding-agent`、不碰 `~/.pi/agent`/文件系统；agent **跑在浏览器里**（key 存 IndexedDB、经 CORS 代理直连厂商）。它是 `pi-tui`（终端渲染库）的**网页孪生**，用来搭"自己的 claude.ai 式网页 app"。
 
 - **删除**：2026-05-20 `b141e1fa`——全仓转"无构建 strip-only TS"时，它是唯一需浏览器构建（`tsc`+`tailwind`→`dist/`）的包，被清出；npm 上**未 deprecate**，冻结于 `@mariozechner/pi-web-ui@0.73.1` / `@earendil-works/pi-web-ui@0.75.3`。
-- **真正归宿**：Mario 自己的浏览器扩展产品 **`badlogic/sitegeist`**（~718★ · AGPL-3.0 · sitegeist.ai · **Chrome/Edge 侧边栏 manifest v3** · 原商业产品 **2026-03-18 转开源**）——其 `package.json` 以 `file:../pi-mono/packages/web-ui` 直连本包、`src/` **28 文件** `import … from "@mariozechner/pi-web-ui"`、`ChatPanel` 即 `sidepanel.ts` 主 UI。即 web-ui 是 sitegeist 的 UI 内核；从终端 pi 的 monorepo 移走与 coding agent 无关（`coding-agent` 从不依赖它）。**上一节三个社区前端（pi-web / tau / dashboard）亦无一依赖它**——全自造前端（pi-web 用 React/Next 自研组件、tau 用原生 JS、dashboard 用 React19+Vite+Monaco）；唯 tau 源码仍 `import type` 旧 scope `@mariozechner/pi-coding-agent`（仅类型声明、运行时零占用、与被删的 web-ui 组件库无关）。
+- **真正归宿**：Mario 自己的浏览器扩展产品 **`badlogic/sitegeist`**（~718★ · AGPL-3.0 · sitegeist.ai · **Chrome/Edge 侧边栏 manifest v3** · 原商业产品 **2026-03-18 转开源**）——其 `package.json` 以 `file:../pi-mono/packages/web-ui` 直连本包、`src/` **28 文件** `import … from "@mariozechner/pi-web-ui"`、`ChatPanel` 即 `sidepanel.ts` 主 UI。即 web-ui 是 sitegeist 的 UI 内核；从终端 pi 的 monorepo 移走与 coding agent 无关（`coding-agent` 从不依赖它）。**上一节四款社区前端均不依赖它**——pi-web 与 dashboard 用 React 自研、tau 与 firstpick 用原生 JavaScript；唯 tau 源码仍 `import type` 旧 scope `@mariozechner/pi-coding-agent`（仅类型声明、运行时零占用、与被删的 web-ui 组件库无关）。
 
-> `git show a7d8dd3d:packages/web-ui/{package.json,README.md}`（组件库、`dist/`、无 `pi` 字段）；`git show b141e1fa`（删除；同批 AGENTS.md 把 strip-only 规则扩到 `packages/*`、README 删"web-ui 需先 `npm run build`"注）；npm registry（两 scope 冻结、gitHead `a7d8dd3d`）；`badlogic/sitegeist` package.json（`file:` 依赖 + `build:chrome`）。
+> 源码：[删除前 README 的 `ChatPanel` / `AgentInterface` / IndexedDB](https://github.com/earendil-works/pi/blob/a7d8dd3d5db7d66aa5cc6886e32768b1196ce91f/packages/web-ui/README.md#L1-L153)、[删除 commit `b141e1fa`](https://github.com/earendil-works/pi/commit/b141e1fa2460868686ffd19c5d4ced743eee6c24)、sitegeist 的 [`file:` 依赖](https://github.com/badlogic/sitegeist/blob/104788c68e624a9705a9ee90f1d0b0176ad28747/package.json#L10-L22) 与 [`ChatPanel` 主界面](https://github.com/badlogic/sitegeist/blob/104788c68e624a9705a9ee90f1d0b0176ad28747/src/sidepanel.ts#L14-L23)。
 
 ---
 
@@ -749,6 +780,8 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 | [agegr/pi-web](https://github.com/agegr/pi-web) | 网页 UI（SDK 进程内驱动 + 读会话）→ [Web 界面](#web-ui) | ⬜ |
 | [deflating/tau](https://github.com/deflating/tau) | 网页镜像正在跑的 TUI（进程内扩展） | ⬜ |
 | [BlackBeltTechnology/pi-agent-dashboard](https://github.com/BlackBeltTechnology/pi-agent-dashboard) | 多会话网页督程（spawn N×rpc）；pocket-pi 内嵌 | ⬜ |
+| [Firstp1ck/npm-packages `pi-package-webui`](https://github.com/Firstp1ck/npm-packages/tree/69bd74fc78c3bda0642d4a201a9c9ae09ecc4c43/pi-package-webui) | 网页 UI（扩展 `/webui-start`→spawn rpc）；原生 `ask_user`，见 [扩展交互协议](#webui-askuser) | ⬜ |
+| [jmfederico/pi-web](https://github.com/jmfederico/pi-web) | 网页 UI（持久会话）；无 `ask_user` 桥（见 [扩展交互协议](#webui-askuser)） | ⬜ |
 | [badlogic/sitegeist](https://github.com/badlogic/sitegeist) | 浏览器 AI 助手（被删 `pi-web-ui` 的真正归宿） | ⬜ |
 | `pi-subagents` / `@tintinweb/pi-subagents` / `@quintinshaw/pi-dynamic-workflows` / `pi-mcp-adapter` / `@hypabolic/pi-hypa` / `pi-web-access` / `context-mode` / `pi-lens` / `@gotgenes/pi-permission-system` … | 见 [生态热门插件](#popular-plugins) | ⬜ |
 | npm `pi-package` keyword · 画廊 <https://pi.dev/packages> · RFC <https://rfc.earendil.com/keyword/pi/> | 发布/发现/路线图 | — |
@@ -757,7 +790,7 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 
 ## 置信度
 
-- **高**（本地 clone `8479bd8` 源码直证）：分包、agent loop、会话树与回读 schema、配置/指令发现、五模式与 31 条 RPC 命令、SDK、provider/OAuth、鉴权顺序、thinking level / `thinkingLevelMap` / `thinkingFormat` 的职责与各 serializer 分支、33 事件/15 可改写、扩展与 skill、subagent/orchestrator、远控、**三种社区网页前端的驱动方式（SDK 进程内 / 进程内扩展镜像 / N×`--mode rpc`）与端口**、`pi-web-ui` 组件库性质与删除时点/原因及其归宿 sitegeist（git+npm+API 直证）、信任非沙箱、三种容器化、平台要求。
+- **高**（本地 clone + 上游锁定源码直证）：分包、agent loop、会话树与回读 schema、配置/指令发现、五模式与 31 条 RPC 命令、SDK、provider/OAuth、鉴权顺序、thinking level / `thinkingLevelMap` / `thinkingFormat` 的职责与各 serializer 分支、33 事件/15 可改写、扩展与 skill、subagent/orchestrator、远控、**四款社区网页前端的驱动方式（SDK 进程内 / 进程内扩展镜像 / N×`--mode rpc` / 扩展启动器→rpc）与端口**、**网页 `ask_user` 交互协议兼容性（pi-web·firstpick·dashboard 支持、tau 仅终端、jmfederico 无桥；源码 `extension_ui_request`/`setUIContext`/`EXTENSION_UI_BLOCKING_METHODS` 直证）**、`pi-web-ui` 组件库性质与删除时点/原因及其归宿 sitegeist（git+npm+API 直证）、信任非沙箱、三种容器化、平台要求。
 - **中/快照**：画廊 ~5.1k 包数与各包月下载、popular 排名（随时间变）。
 - **随时间变化**：模型名/上下文窗口/版本号/star 数。
 - **存疑**：`pi-skills` README 的 `{baseDir}` 说法与主仓行为不一致（已在正文标注）；OpenClaw 组织变动仅作者一手推文；Reddit 讨论未抓取核实；`pi-web-ui` 从 monorepo 删除后 sitegeist 如何适配无公开记录——其公开仓库 HEAD 停在 2026-03-18（**删除前**），仍以 `file:../pi-mono/packages/web-ui` 链接、未 vendored。
