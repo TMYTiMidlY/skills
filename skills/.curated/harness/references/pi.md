@@ -466,6 +466,10 @@ export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
 - **包清单**：`package.json` 加 `"keywords":["pi-package"]` 与可选 `"pi": { extensions, skills, prompts, themes, video, image }`；无 `pi` 字段则按约定自动发现——`extensions/` 收 **`.ts` 与 `.js`**，`skills/` **递归找 `SKILL.md` 且加载顶层 `.md`**，`prompts/*.md`，`themes/*.json`。核心依赖放 `peerDependencies`（**四个 pi 包 + `typebox`**，由 pi 提供），第三方依赖放 `dependencies`（装包时 `npm install --omit=dev`）。画廊预览靠 `pi.video`/`pi.image`。
   > `packages/coding-agent/docs/packages.md`:55-172；`src/package-manager-cli.ts:77-289`；`src/core/package-manager.ts:48-53,614-619,1435-1446`；`pi.dev/packages`（快照）。
 - **管理**：`pi list` / `pi update [--all]` / `pi remove` / `pi config`（TUI 开关资源，`-l` 项目级）。
+- **⚠️ `pi remove` 卸不干净（三层残留，实测 2026-07）**：`remove`/`uninstall` 只做“除名”——把包从 `~/.pi/agent/settings.json` 的 `packages[]` 划掉、并从 `~/.pi/agent/npm/package.json` deps 移除后跑 npm 卸包。它**不碰**下面三处，需手动清（删文件一律 `trash-put` 不用 `rm`）：
+  1. **扩展自建的运行时目录**：扩展在自己代码里 `mkdir` 的数据目录（如 `~/.pi/<扩展名>/`，含 config/logs/runtime/会话映射）不在卸载器认知内——它只认 settings 登记的包，扩展跑起来自己造的目录一概不管。
+  2. **npm 空壳目录**：npm 卸包后，空的 scope 文件夹（`~/.pi/agent/npm/node_modules/@scope/`）及被它带进来、无人再引用的传递依赖（如某扩展拉的 `@agentclientprotocol/sdk`）常留下空目录不回收。
+  3. **卸载前就在跑的 pi 进程仍持有该扩展**（最隐蔽、现场实证）：扩展经 **jiti 加载进进程堆内存**，`pi remove` 只改磁盘配置、影响**将来**的启动，**杀不掉已在跑的进程里的扩展**。那个旧 pi（尤其挂在某 `pts/*` 的长期交互会话）只要还活着，就会**持续重建**你刚删掉的运行时目录（表现为“删了又长出来")。判据：`ls -la ~/.pi/<扩展名>` 的 mtime 是“你删除之后”的时间；`ps -eo pid,lstart,args | grep pi` 找出**启动时刻早于你 `pi remove` 时刻**的 pi 进程即元凶。真正清除顺序：先结束这些旧 pi 进程（`kill <PID>`，交互会话须先征得用户同意），再 `trash-put` 该目录，然后等几秒复查未重生。卸载后才启动的 pi 不加载该扩展、不会重建。
 
 ### <a id="popular-plugins"></a>生态热门插件（快照，会变）
 
@@ -541,7 +545,20 @@ agent 用 `.md` frontmatter 定义（`name`/`description`/`tools`/`model`+正文
 
 > `packages/coding-agent/examples/extensions/subagent/{index.ts,agents.ts:97-115,agents/*.md,README.md:55-65}`。
 
-### <a id="orchestration-community"></a>社区包（编排范式，⬜）
+### <a id="pi-flow"></a>`@kky42/pi-flow`（异构后端子 agent，⬜ 社区 · 实测 2026-07 跑通）
+
+**唯一把子 agent 派给异构外部 CLI**（而非只 pi-to-pi）的 ⬜ 包:`backend` 可选 `pi`（默认,进程内子会话）/ `codex`（spawn `codex exec --json …[resume]`）/ `claude`（`claude -p --output-format stream-json …[--resume]`）——一个协调 pi 能把不同 lane 派给不同 harness+模型。**无 `copilot` 后端**,补一个走 `copilot --acp` 的后端是自然缺口（ACP 接入形态见 [sdk.md](sdk.md)）。
+
+- **触发机制（源码确证,无"唤起"入口）**:只 `registerTool`（`Agent` 单发 + `workflow` fan-out）+ `registerFlag`（`--max-concurrent-subagents`/`--subagent-timeout-ms`）,**无 slash 命令/快捷键**——调用完全由 LLM 自主。每回合 `before_agent_start` 注入一段 `# Subagent Delegation` guidance、**列出当前可用 profile**——这是模型"发现"子 agent 的唯一途径（不是开关,是每轮喂名单;要显式用就直说"用 Agent 委派给 X"）。
+- **profile = 一个 md**:`~/.pi/agent/subagents/<name>.md`,**文件名即 `subagent_type`**;frontmatter `description`（必需,才进 guidance 名单）/`backend`/`model`/`thinking`/`tools`（仅 pi 后端限工具白名单）,正文为角色提示。内置 `general-purpose`。
+- **`Agent` 参数**:`description`（进度显示）/`subagent_type`/`prompt`（自包含,子不见父对话）/`session_key`（可选）。**多轮 review-and-revise** 靠同一 `session_key` → 后端原生续接（codex `exec resume`、claude `--resume`)。
+- **源码级约束**:① pi 后端子 agent **收不到 `Agent`**（不可套娃);外部 CLI 后端用各自工具面。② `session_key` 省略 = 一次性、无父上下文。③ codex/claude 后端以 approvals/sandbox **bypass** 运行（须信任环境）。④ `Agent`/`workflow` 前台阻塞返回、共享全局并发上限、超额排队。
+- **形态定性（对照 [sdk.md](sdk.md) 的接入形态,关键）**:codex/claude 外部后端 = **「CLI 子进程一次性(one-shot)」**——prompt 写 stdin 后即 `stdin.end()` 关闭,故**可观测**（实时读 `--json`/`stream-json` 事件做进度/token）、**可 abort**（`SIGTERM`→`SIGKILL` 树杀）,但**不可 steer**（无回传通道中途改指令）;多轮只能**回合之间** `session_key`→`codex exec resume`/`claude --resume`,非回合之内。**只有 pi 后端**用进程内 SDK `createAgentSession`。**三后端均不碰 ACP、也不用 codex/claude 官方 agent SDK**——要"能介入回合中"须改走 ACP（如 `copilot --acp`）或各家 SDK。
+- **headless**:`@kky42/pi-flow/headless` 的 `executeWorkflow()` 供调度器无 TUI 复用同一 profile 路径。
+
+> pi-flow `README.md`、`src/pi-subagent.ts`（注册 `Agent`/`workflow`/flag、`before_agent_start`→`injectSubagentGuidance`）、`src/prompts.ts`（`buildCoordinatorPrompt`/`AGENT_PROMPT_*`/workflow 契约）、`src/core/{codex.ts,claude.ts}`（拼 `codex exec`/`claude -p` 参数与流式解析）、`src/profiles.ts`（`~/.pi/agent/subagents/*.md` + 内置 `general-purpose`）;本地实测（pi 0.80.6 / codex 0.144.1 / pi-flow 2.1.1:`Agent{subagent_type:codex}`→`codex exec`→返回 + usage）。
+
+### <a id="orchestration-community"></a>社区包（编排范式,⬜）
 
 | 包 | ~月下载 | 范式 | 亮点 |
 |---|---|---|---|
@@ -551,7 +568,9 @@ agent 用 `.md` frontmatter 定义（`name`/`description`/`tools`/`model`+正文
 
 
 
-> npm/GitHub：`nicobailon/pi-subagents`、`tintinweb/pi-subagents`、`QuintinShaw/pi-dynamic-workflows`（README + npm 版本/下载）。
+**驱动与交互形态（实测源码）**:上列三者**均以 pi 进程内 SDK `createAgentSession` 起子 pi**,故都拿得到 session 对象、能 **`session.steer()`（运行中插话）+ `session.abort()`**——正是 [sdk.md](sdk.md) 说的「SDK client」红利（能介入回合中）;**代价是只同构 pi-to-pi**（pi 的 SDK 只能造 pi）。反观 [pi-flow](#pi-flow):它为**异构**（派给 codex/claude）改走各家 CLI 的非交互单发口子,**因此丢了 steer**（只剩观测+abort）。→「**既异构又能中途介入**」需要给外部 agent 一个统一交互协议——**ACP 或各家 agent SDK**,而这四个包**无一采用**,正是给 pi 补一个走 `copilot --acp` 后端的价值所在。
+
+> npm/GitHub：`nicobailon/pi-subagents`（`src/subagent/runner.ts:52` `createAgentSession`、`src/agents/{manager,orchestrator}.ts` `session.steer/abort`,纯 pi）、`tintinweb/pi-subagents`（`src/agent-runner.ts:227` `createAgentSession`、`:248/271` `session.steer`）、`QuintinShaw/pi-dynamic-workflows`（`src/core/agent-runner.ts` `createAgentSession`+`session.steer`,code-mode）——均纯 pi、无 ACP;本地 clone 实测核实（2026-07）。
 
 ### tmux 裸模式
 
