@@ -24,11 +24,11 @@
 
 ### `git commit` 拍的是整个暂存区(index) 的快照
 
-`git commit`（**不带路径**）把**整个 index** 打成一个提交，跟你这一轮 `git add` 了哪些无关——暂存区里有什么就提交什么。这不是 `-p` 特有的，是 commit 的定义。因此只要东西在 index 里就必然被带走；要隔离其它路径，只有两条路——把它们撤出 index（`git restore --staged`），或改用 **pathspec 部分提交**（见[场景一](#场景一只对整个文件动手整文件级)）。
+`git commit`（**不带路径**）把**整个 index** 打成一个提交，跟你这一轮 `git add` 了哪些无关——暂存区里有什么就提交什么。这不是 `-p` 特有的，是 commit 的定义。因此只要东西在 index 里就必然被带走；要隔离其它路径，只有两条路——把它们撤出 index（`git restore --staged`），或改用 **pathspec 部分提交**（见[场景一](#scene-whole-file)）。
 
 ### 通用规律：任何"部分操作"都是在两棵树之间做 diff
 
-不管你是想提交、丢弃、撤出还是搬走**一部分**改动，命令的行为都由两件事决定：**拿哪两棵树做 diff（"基准 floor" ↔ 目标）**，以及**把选中的改动往哪个方向搬**。记住"基准是谁"，就能预测一条命令看得见什么、动得了什么、什么会被当成不可改的底座。各命令具体的 floor 见[场景二的基准表](#交互式--p基准与效果)。
+不管你是想提交、丢弃、撤出还是搬走**一部分**改动，命令的行为都由两件事决定：**拿哪两棵树做 diff（"基准 floor" ↔ 目标）**，以及**把选中的改动往哪个方向搬**。记住"基准是谁"，就能预测一条命令看得见什么、动得了什么、什么会被当成不可改的底座。各命令具体的 floor 见[场景二的基准表](#patch-baseline)。
 
 ## 速查：想干嘛 → 用什么 → 去哪节
 
@@ -38,9 +38,9 @@
 | 只挑**文件里的某些 hunk / 行**（非交互补丁手术，或交互 `-p`） | `git diff \| filterdiff \| git apply` / `git add -p` 等 | 场景二 |
 | **改一条已经不在 HEAD 的旧提交**（后面被别人叠了新提交） | `git rebase -i` reword / `--fixup` / plumbing | 场景三 |
 
-## 场景一：只对整个文件动手（整文件级）
+## <a id="scene-whole-file"></a>场景一：只对整个文件动手（整文件级）
 
-你要对**整个（或几个）文件**做提交 / 丢弃 / 撤出 / 搬走，而**不挑文件内部的 hunk**；难点是工作区还躺着别人的改动，得只动你点名的路径。核心工具是 **pathspec**（`git commit -- <path>` / `git restore -- <path>` / `git stash push -- <path>`）——它们都按路径隔离，别的路径纹丝不动。想挑文件里的某几个 hunk/行，去[场景二](#场景二只挑文件里的某些-hunk--行子文件级含交互--p)。
+你要对**整个（或几个）文件**做提交 / 丢弃 / 撤出 / 搬走，而**不挑文件内部的 hunk**；难点是工作区还躺着别人的改动，得只动你点名的路径。核心工具是 **pathspec**（`git commit -- <path>` / `git restore -- <path>` / `git stash push -- <path>`）——它们都按路径隔离，别的路径纹丝不动。想挑文件里的某几个 hunk/行，去[场景二](#scene-hunk)。
 
 ### 只提交整个文件 → `git commit -- <path>`（不带 -p）
 
@@ -77,9 +77,9 @@ $ git commit -m "docs: update agent rules" -- AGENTS.md
 |---|---|---|
 | `git commit -m …`（无路径） | 提交整个 index | **有**（index 里就有） |
 | `git commit -- f.txt`（pathspec，**无 -p**） | 忽略 index，只记 HEAD + f.txt 当前内容 | **没有**（隔离干净） |
-| `git commit -p -- f.txt`（pathspec + **-p**） | index 为底座 + 选中 hunk（见[场景二基准表](#交互式--p基准与效果)） | **有**（rename 是底座，搭车） |
+| `git commit -p -- f.txt`（pathspec + **-p**） | index 为底座 + 选中 hunk（见[场景二基准表](#patch-baseline)） | **有**（rename 是底座，搭车） |
 
-> ⚠️ 反直觉点：给 `git commit` 加了 `-p` **反而破坏了 pathspec 提交本来的隔离性**。`commit -p f.txt` 不是"只提交 f.txt 一处"的隔离方案；`commit f.txt`（不带 -p）才是。`commit -p f.txt` 的价值只在"没有别的东西暂存"时——它省的是 `git add`，不是省"清理别人的暂存内容"。挑 hunk 的正题在[场景二](#场景二只挑文件里的某些-hunk--行子文件级含交互--p)。
+> ⚠️ 反直觉点：给 `git commit` 加了 `-p` **反而破坏了 pathspec 提交本来的隔离性**。`commit -p f.txt` 不是"只提交 f.txt 一处"的隔离方案；`commit f.txt`（不带 -p）才是。`commit -p f.txt` 的价值只在"没有别的东西暂存"时——它省的是 `git add`，不是省"清理别人的暂存内容"。挑 hunk 的正题在[场景二](#scene-hunk)。
 
 ### 全新 untracked 文件 → `git add -N` 再 `git commit -- <path>`
 
@@ -109,7 +109,7 @@ git commit -m "add new.txt" -- new.txt
 | 从**暂存区撤出**（unstage，还原到 HEAD） | `git restore --staged -- <path>` | 用 HEAD 覆盖 index（worktree 不动） | 可逆（不碰 worktree）；等价 `git reset -- <path>` |
 | 搬进 **stash** | `git stash push -- <path>` | 把该路径改动存进 stash 并回滚 worktree | 可逆（`git stash pop`/`apply` 找回） |
 
-`git restore -- <path>` / `-SW` **会立即、不可逆地丢弃未提交改动**，跑错路径就没了。想只对文件里的**某些 hunk/行**丢弃/撤出/搬走，见[场景二](#场景二只挑文件里的某些-hunk--行子文件级含交互--p)。
+`git restore -- <path>` / `-SW` **会立即、不可逆地丢弃未提交改动**，跑错路径就没了。想只对文件里的**某些 hunk/行**丢弃/撤出/搬走，见[场景二](#scene-hunk)。
 
 #### 更安全的丢弃：用 stash 顶替 restore
 
@@ -147,11 +147,11 @@ git commit -m "add new.txt" -- new.txt
 
 同理 `git restore -- <path>`、`git stash push -- <path>`、`git checkout <rev> -- <path>` 等吃路径的命令也建议用 `--` 划清"路径从哪开始"；对同时吃 revision 的命令（checkout/restore/reset）更是刚需。
 
-## 场景二：只挑文件里的某些 hunk / 行（子文件级，含交互 -p）
+## <a id="scene-hunk"></a>场景二：只挑文件里的某些 hunk / 行（子文件级，含交互 -p）
 
-你只要文件里的**一部分**改动（某几个 hunk / 某几行）去提交、丢弃、撤出或搬走。两条路：**非交互 / 脚本化**（补丁手术，确定性、适合 agent）或**交互式 `-p`**（逐 hunk 问你）。整文件级操作在[场景一](#场景一只对整个文件动手整文件级)。
+你只要文件里的**一部分**改动（某几个 hunk / 某几行）去提交、丢弃、撤出或搬走。两条路：**非交互 / 脚本化**（补丁手术，确定性、适合 agent）或**交互式 `-p`**（逐 hunk 问你）。整文件级操作在[场景一](#scene-whole-file)。
 
-### 非交互 / 脚本化：补丁手术
+### <a id="patch-surgery"></a>非交互 / 脚本化：补丁手术
 
 先分清 git 的两层命令：**porcelain** 是面向人的高层命令（`commit` / `add` / `status` / `restore`，接口稳定友好），**plumbing** 是底层命令（`commit-tree` / `hash-object` / `update-ref`，直接读写 git 对象与引用、输出机器友好供脚本拼装）。这对叫法是 git 官方的（[git(1)](https://git-scm.com/docs/git) 手册的章节名即 HIGH-LEVEL COMMANDS (PORCELAIN) / LOW-LEVEL COMMANDS (PLUMBING)，[gitglossary(7)](https://git-scm.com/docs/gitglossary) 有词条），取自卫浴比方——plumbing 是墙里的水管，porcelain 是架在其上、你直接接触的瓷洁具（马桶 / 洗手池那层）。
 
@@ -177,13 +177,13 @@ $ git commit -m "只提交第25行那处"       # 只含 TWENTYFIVE
 
 没有 `filterdiff` 时，用 `git diff <path> > p.patch` 手工删掉不要的 `@@` 段（每个 hunk 从 `@@` 开始到下一个 `@@` 或文件尾），保留补丁头四行（`diff --git` / `index` / `---` / `+++`），再 `git apply --cached p.patch`。git diff 每个 `@@` 的行号是相对原文件的绝对值，删掉别的 hunk 不影响保留 hunk 的定位。
 
-### 交互式 `-p`：基准与效果
+### <a id="patch-baseline"></a>交互式 `-p`：基准与效果
 
 `-p` 系列（`git add -p` / `commit -p` / `restore -p` / `stash -p`）不是 TUI，而是**交互式行提示**——打印一段 diff、问一行 `Stage this hunk [y,n,q,a,d,s,e,?]?`、从 stdin 读**一整行**答案。谱系（从左到右越来越"重"）：
 
 > 一次性 CLI（参数吃完就退，`git commit -m`）→ **交互式行提示**（`-p`，逐 hunk 问，管道 / here-string 就能喂答案）→ 全屏 TUI（vim / lazygit，raw mode、光标寻址，需 pty 才能自动化）。
 
-所以 `-p` 是交互程序里**最轻的一档**：能被 `printf 'y\nq\n' | git add -p` 这样的管道驱动（真 TUI 做不到）。注意 **`-p` 决定"问不问"，路径只决定"在哪些文件里问"**，两者正交——`git commit -p f.txt` 会把 f.txt 的每个 hunk 都问你一遍（其它文件不问）；想要 f.txt 全部又不被问，就别加 `-p`、直接 `git commit -- f.txt`（回[场景一](#场景一只对整个文件动手整文件级)）。
+所以 `-p` 是交互程序里**最轻的一档**：能被 `printf 'y\nq\n' | git add -p` 这样的管道驱动（真 TUI 做不到）。注意 **`-p` 决定"问不问"，路径只决定"在哪些文件里问"**，两者正交——`git commit -p f.txt` 会把 f.txt 的每个 hunk 都问你一遍（其它文件不问）；想要 f.txt 全部又不被问，就别加 `-p`、直接 `git commit -- f.txt`（回[场景一](#scene-whole-file)）。
 
 各 `-p` 命令的基准和作用（k.txt 构造：HEAD=`[base]`、index=`[base,STAGED]`、worktree=`[base,STAGED,WORKTREE]`）：
 
@@ -228,15 +228,15 @@ $ git commit -m "只提交第25行那处"       # 只含 TWENTYFIVE
 printf 'y\ns\nn\n' | git add -p <path>     # 对第1个hunk: 拆开→留前半→弃后半
 ```
 
-依赖 hunk 的顺序和数量，脆但可脚本化。要稳，优先用本场景[「非交互 / 脚本化：补丁手术」](#非交互--脚本化补丁手术)的 `git diff | filterdiff | git apply`。
+依赖 hunk 的顺序和数量，脆但可脚本化。要稳，优先用本场景[「非交互 / 脚本化：补丁手术」](#patch-surgery)的 `git diff | filterdiff | git apply`。
 
 ### 免 add、行级、隔离：三者的取舍
 
-`git commit -p -- <path>` 能免手动 `git add`（直接从 worktree 逐 hunk 选着提交），但它**以真实 index 为底座**——暂存区里别人已 stage 的内容（如一个 rename）会搭车（就是[场景一](#场景一只对整个文件动手整文件级)那个「加了 -p 反破坏隔离」的反直觉点）；补丁手术的 `git apply --cached` 同样写**真实 index**，脏 index 下照样搭车（实测：脏 index 下 `git diff <path> | filterdiff --hunks=N | git apply --cached` 后随手 `git commit`，别人暂存的 rename 一起进了提交）。所以「免 add + 行级 + 隔离」三者兼得，porcelain 层做不到。
+`git commit -p -- <path>` 能免手动 `git add`（直接从 worktree 逐 hunk 选着提交），但它**以真实 index 为底座**——暂存区里别人已 stage 的内容（如一个 rename）会搭车（就是[场景一](#scene-whole-file)那个「加了 -p 反破坏隔离」的反直觉点）；补丁手术的 `git apply --cached` 同样写**真实 index**，脏 index 下照样搭车（实测：脏 index 下 `git diff <path> | filterdiff --hunks=N | git apply --cached` 后随手 `git commit`，别人暂存的 rename 一起进了提交）。所以「免 add + 行级 + 隔离」三者兼得，porcelain 层做不到。
 
-**首选是别把自己逼到三者兼得**：能接受整文件粒度，就回[场景一](#场景一只对整个文件动手整文件级) `git commit -- <path>`——porcelain 会在建临时树提交的**同时把该路径同步进真实 index**，干净、无后遗；真要在别人的脏 index 上做行级隔离，**更稳的是另开独立 worktree**（`git worktree add`）在干净环境里动刀，而不是在共享 index 上做减法。三者都要、又逃不开脏 index，才下沉到 [commit-tree 手工建提交](#plumbing-commit-tree) 的**现造新树**那支——它借道临时 index、带一处「陈旧 index」陷阱，属兜底、别当默认。
+**首选是别把自己逼到三者兼得**：能接受整文件粒度，就回[场景一](#scene-whole-file) `git commit -- <path>`——porcelain 会在建临时树提交的**同时把该路径同步进真实 index**，干净、无后遗；真要在别人的脏 index 上做行级隔离，**更稳的是另开独立 worktree**（`git worktree add`）在干净环境里动刀，而不是在共享 index 上做减法。三者都要、又逃不开脏 index，才下沉到 [commit-tree 手工建提交](#plumbing-commit-tree) 的**现造新树**那支——它借道临时 index、带一处「陈旧 index」陷阱，属兜底、别当默认。
 
-## 场景三：改一条已经不在 HEAD 的旧提交
+## <a id="scene-old-commit"></a>场景三：改一条已经不在 HEAD 的旧提交
 
 场景：你提交后，并发会话在你之上又提交了 `<child>`，你的提交**不再是 HEAD**。`git commit --amend` 只能改 HEAD，够不到你的提交。
 
@@ -287,7 +287,7 @@ git rebase -i --autosquash <target>^
 
 ## <a id="plumbing-commit-tree"></a>commit-tree 手工建提交（绕过 index/worktree）
 
-[场景二](#场景二只挑文件里的某些-hunk--行子文件级含交互--p)的行级隔离、[场景三](#场景三改一条已经不在-head-的旧提交)脏工作区改埋掉的提交，porcelain 都做不到那一步，最终都落到同一套 plumbing：`git commit-tree` 直接从一棵树造出提交对象、`git update-ref` 带 CAS 原子移分支，全程不读不写 index / worktree。**手动、易错、无封装——能用 porcelain（`commit -- <path>` / `rebase`）就别来这**，只在"脏工作区 + 别人的暂存内容不能动"逼到没有 porcelain 可用时才兜底。
+[场景二](#scene-hunk)的行级隔离、[场景三](#scene-old-commit)脏工作区改埋掉的提交，porcelain 都做不到那一步，最终都落到同一套 plumbing：`git commit-tree` 直接从一棵树造出提交对象、`git update-ref` 带 CAS 原子移分支，全程不读不写 index / worktree。**手动、易错、无封装——能用 porcelain（`commit -- <path>` / `rebase`）就别来这**，只在"脏工作区 + 别人的暂存内容不能动"逼到没有 porcelain 可用时才兜底。
 
 骨架两件套：
 
@@ -296,7 +296,7 @@ git rebase -i --autosquash <target>^
 
 差别只在**那棵 tree 从哪来**：
 
-**复用旧树**（tree 字节不变，只换消息 / 换父 = reword）——[场景三](#场景三改一条已经不在-head-的旧提交)脏工作区 reword 走这支：
+**复用旧树**（tree 字节不变，只换消息 / 换父 = reword）——[场景三](#scene-old-commit)脏工作区 reword 走这支：
 
 ```
 # 目标：把 <old-mine> 的消息换成新消息，其上还有 <old-child>
@@ -315,7 +315,7 @@ git update-ref refs/heads/<branch> "$NEW_CHILD" <期望旧tip>
 
 多个子提交就逐层 `commit-tree`（各用自己的原 tree、父指向上一步的新提交）。复用原 tree = "只换消息 / 换父，内容不变"，正是 reword 对每条提交做的事。代价：手工重建会漏掉 committer date、GPG 签名、合并提交的第二父等细节，只适合线性、无签名的小改；能跑 `rebase -i` 时优先 rebase。
 
-**现造新树**（HEAD + 你选中的 hunk，需借道临时 index）——[场景二](#场景二只挑文件里的某些-hunk--行子文件级含交互--p)的「免 add + 行级 + 隔离」走这支：
+**现造新树**（HEAD + 你选中的 hunk，需借道临时 index）——[场景二](#scene-hunk)的「免 add + 行级 + 隔离」走这支：
 
 ```bash
 OLD=$(git rev-parse HEAD)
@@ -332,7 +332,7 @@ trash-put "$TMPIDX"
 
 `GIT_INDEX_FILE` 对**所有**核心 git 命令生效，`read-tree` / `apply --cached` / `write-tree` 全读写这个临时文件，真实 index 全程不碰、别人暂存的内容不搭车。
 
-> ⚠️ **陷阱：陈旧 index 会让下一发 commit「意外回退」你刚提交的改动。** 临时 index 的代价是**真实 index 全程没被更新**——提交后它对刚提交的那个文件仍停在旧版、与新 HEAD 对不上（`git status` 显示 `MM`：既「已暂存」又「未暂存」）。此刻若手一滑来一发**裸 `git commit`**（无路径 = 提交整个真实 index），会把该文件**倒回旧版、撤销你刚隔离进去的那个 hunk，并把别人暂存的内容一起带走**——费劲甩掉的「搭车」原样回来（实测复现）。对照[场景一](#场景一只对整个文件动手整文件级) `git commit -- <path>` 就没有这个坑：porcelain 提交时会顺带把该路径同步进真实 index。
+> ⚠️ **陷阱：陈旧 index 会让下一发 commit「意外回退」你刚提交的改动。** 临时 index 的代价是**真实 index 全程没被更新**——提交后它对刚提交的那个文件仍停在旧版、与新 HEAD 对不上（`git status` 显示 `MM`：既「已暂存」又「未暂存」）。此刻若手一滑来一发**裸 `git commit`**（无路径 = 提交整个真实 index），会把该文件**倒回旧版、撤销你刚隔离进去的那个 hunk，并把别人暂存的内容一起带走**——费劲甩掉的「搭车」原样回来（实测复现）。对照[场景一](#scene-whole-file) `git commit -- <path>` 就没有这个坑：porcelain 提交时会顺带把该路径同步进真实 index。
 > 所以走这支的收尾**必须** `git reset -- <path>` 把该路径的 index 条目同步回新 HEAD。它是**路径级、不带 `--hard` 的 reset：只改 index 这一个条目，不碰 worktree 文件、也不动别人暂存的其它内容**（切勿误用 `git reset --hard`——那会连 worktree 一起冲掉，才是真的「文件莫名被恢复」）。同步后 `git status` 只剩你没提交的那部分改动，裸 commit 不再反噬。
 
 > 根因：porcelain（`commit` / `add` / `-p` / `rebase`）都架在 **index / worktree 抽象层**上、甩不掉底座、要干净工作区；plumbing 的 `commit-tree` 直接操作 tree / blob 对象、**绕过这层抽象**——「要不要 staged、受不受底座约束、工作区干不干净」在这一层根本不成立。代价就是这层便利全没了：手动、易错、真实 index 变陈旧（见 ⚠️）、并发必须 `update-ref` CAS 兜底防 split-brain。
