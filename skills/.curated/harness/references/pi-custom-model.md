@@ -102,6 +102,16 @@
 
 ---
 
+### 2.3 在 pi 里选 / 切模型
+
+配好后该 provider/model 出现在 `/model` 列表（不是 `/login`）。
+
+- **交互**：`Ctrl+L` 或 `/model`（跨 provider 模糊搜）；`Ctrl+P` / `Shift+Ctrl+P` 循环「收藏 / scoped」模型；`/scoped-models` 配循环集。
+- **旗标**：`pi --provider <id> --model <model>`，或合写 `pi --model <id>/<model>`，或带 effort `pi --model <id>/<model>:high`。
+- **默认**：`settings.json` 的 `defaultProvider` / `defaultModel`；循环集 `--models "<id>/*,…"` 或 `enabledModels`。
+
+> 【pi】斜杠命令 / 旗标 / 快捷键：`docs/usage.md`、`cli/args.ts`、`core/slash-commands.ts`、`docs/keybindings.md`。
+
 ## 3. effort / thinking：能力、档位、线格式是三件事
 
 设置入口是 `pi --thinking high`、`pi --model "provider/model:high"`、交互 `Shift+Tab`、`settings.json.defaultThinkingLevel`；七档 `off | minimal | low | medium | high | xhigh | max`。但配自定义模型时要分清**三层**：
@@ -171,6 +181,16 @@ pi **不自己判断缓存命不命中**——服务端在每次响应的 `usage
 **推论 / 坑**：整条链全靠**服务端自报**。网关若不报 `cached_tokens`（或报 0），pi 就把全部算成全价 input，哪怕物理上真命中；反过来 pi 也无法验证服务端的缓存账。想确认缓存真省钱，连发两次同长前缀、看 `usage` 的 `cacheRead` 是否跳上去（`/session` 里的 `R` 就是它）。另外 openai 端多数厂商不报 `cache_write_tokens`，写缓存往往折进 `input` 按全价计——所以有的平台价目里只有「缓存命中（读）」折扣、没有单列「写缓存」价。
 
 ---
+
+### 4.3 上下文长度与压缩
+
+**无 `--context-window` 旗标**——上下文窗口是**模型属性** `contextWindow`（见 §2.2，可用 `modelOverrides` 覆盖某模型）。运行期靠：
+
+- **自动压缩**：`settings.json.compaction.{enabled, reserveTokens（默认 16384）, keepRecentTokens（默认 20000）}`，触发条件 `contextTokens > contextWindow − reserveTokens`；手动 `/compact [指令]`。
+- **footer 实时用量**：`↑` 输入 `↓` 输出 `R` 缓存读 `W` 缓存写 `CH` 命中率；`/session` 看 token 与成本。
+- **`PI_CACHE_RETENTION=long`**：延长直连 provider 的 prompt 缓存（Anthropic 1h / OpenAI 24h）。
+
+> 【pi】`docs/settings.md`（`compaction`）、`docs/models.md`（`modelOverrides.contextWindow`）、README（`PI_CACHE_RETENTION`、footer 用量符号）。
 
 ## 5. 验证 + 实战
 
