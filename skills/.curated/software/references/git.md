@@ -242,7 +242,9 @@ git rebase -i <你的提交>^     # 打开待办清单，把你那行的 pick �
 #   edit    → 停下来改内容（可 git commit --amend 后 git rebase --continue）
 ```
 
-`reword` 是 `git rebase -i` 交互待办里的官方命令关键字之一（`pick` / `reword` / `edit` / `squash` / `fixup` …，见 [git-rebase(1)](https://git-scm.com/docs/git-rebase)）。它的语义：**保留该提交的 tree（改动）完全不变，只重写 log message**。因为 commit 的 SHA = hash(tree + 父 + 作者 + committer + 消息)，消息一变 SHA 就变，**被 reword 的那条及其上所有子提交都会被重建成新 SHA**（父链变了），但各自的 tree 字节不变：
+`git rebase -i` 打开的不是让你直接编辑文件，而是一张**待办清单**（git 官方叫 todo list）：范围内每条提交各占一行、行首默认写着动作词 `pick`（意为“这条原样保留”）。把**你那条提交所在行**行首的 `pick` 删掉、换成想要的动作词（`reword` 改信息、`edit` 停下改内容……），存盘退出，git 就照这张清单从上往下逐条执行。
+
+`reword` 是 `git rebase -i` 交互待办里的官方命令关键字之一（`pick` / `reword` / `edit` / `squash` / `fixup` …，见 [git-rebase(1)](https://git-scm.com/docs/git-rebase)）。它的语义：**保留该提交的 tree（改动）完全不变，只重写 log message**。关键是分清**提交内容（tree）**与**提交身份（SHA）**：commit 的 SHA 是把 `tree + 父 + 作者 + committer + 消息` 整体做一次哈希算出来的，所以**消息一改、这条的 SHA 必变**（等于换了个新对象）；而它上面每条子提交都把“父 = 上一条的 SHA”算进自己的哈希，父的 SHA 一变、子提交的哈希输入跟着变，于是**一路向上全部重建成新 SHA**——但这些提交的 tree 字节自始至终没动。即 **SHA 变的是身份、tree 不变的是内容，两者不矛盾**：
 
 ```
 # reword 中间那条 mine 后（theirs 叠在其上）
