@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 命令行精准操作（有并发/无关改动时只提交某处、hunk/行级暂存、后有提交时 amend）与 Git 镜像/自建 Forgejo、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Hermes agent、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 命令行精准操作（有并发/无关改动时只提交某处、hunk/行级暂存、后有提交时 amend）与 Git 镜像/自建 Forgejo、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链 / git-pages 静态站）、本地中文 ASR、OpenList 网盘聚合、Hermes agent、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
 ---
 
 # Software
@@ -95,6 +95,10 @@ FunASR、Fun-ASR-Nano、Paraformer + VAD + Punc + CAM++、SenseVoiceSmall、Whis
 ## 私有 docs-share 站点（Git 仓库 → S3 直链分享）
 
 把要公网呈现的 md/html 放进一个私有 Git 仓库，每次 `git push` 或网页端上传/编辑即触发 CI（`rclone sync --checksum`）**增量同步**到一个 S3 兼容桶（桶结构 = 仓库树）；对外走 S3 **presigned 直链**（URL 自带签名 + 有效期）分享；`public/` 前缀通过 bucket policy 开放匿名读、无需签名——知道 URL 即可访问。`.md` 原样存（下载=raw），由 Caddy Accept rewrite + markdeep viewer 客户端渲染。完整内容见 [references/docs-share.md](references/docs-share.md)：密钥体系（root key 派生受限 CI key、凭据存储位置）、public 路径 vs 私有路径的 bucket policy 机制、presigned URL 生成（直贴/viewer 包装/脚本批量）、更新与撤销、markdeep 写作惯例（`[#key]` 引用 vs `[^name]` 脚注、GFM 不兼容点、研报模板）。服务端部署（Caddy 配置 / viewer 壳子 / CI key 创建 / bucket policy 设置命令）由 `vps-maintenance` skill 的 caddy.md 覆盖。S3 兼容存储底层行为见 [references/rustfs.md](references/rustfs.md)。
+
+## git-pages 静态站托管（Git forge → 网站，GitHub Pages 替代）
+
+[git-pages](https://codeberg.org/git-pages/git-pages) 把某个 Git 仓库某分支的内容直接 serve 成静态网站（文件按路径即 URL、图片等资源原样出，不用内联 data-URI），S3 或文件系统后端，配 Caddy on-demand TLS 全自动签证。是上面 docs-share「S3 presigned 直链」模型的**另一条路线**（docs-share 本身也已迁到这套）。核心要点见 [references/git-pages.md](references/git-pages.md)：**最关键的决策是公开库 vs 私有库走不同发布路径**——webhook（POST）让 git-pages 匿名 clone、**只对公开库有效**（私有库必 401）；私有库要走**归档 PUT + `Forge-Authorization` token**（内容在请求体、不 clone），典型是 Forgejo Action 打 tar + curl PUT。还覆盖：S3 桶布局（`blob`/`.index`/`.exists` 语义，`.exists` 驱动 on-demand TLS 且故意不随删站清除）、wildcard 映射（根 `.index` 从 IndexBranch、子项目从硬编码 `pages` 分支）、`Dry-Run` 头验链路、以及踩过的坑（`git archive` 的 pax header 告警、非 ASCII 文件名要 `core.quotePath=false`、Forgejo 铸 token 须 `-u git`、runner `capacity:1` 时卡死 job 堵死全部构建）。此外还含：背景（Codeberg Pages / v2 迁移 / 发布模型 / 同类自建工具横向对比）、用 Codeberg 官方零运维托管、自建整套（装 git-pages、`config.toml` + S3、Caddy on_demand 反代、DNS、四种鉴权方案 + README 8 条规则表）、生命周期、`src/auth.go` 鉴权源码剖析（源码链接锁到 commit SHA）。
 
 ## OpenList 网盘聚合面板
 
