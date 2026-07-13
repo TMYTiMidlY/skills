@@ -72,7 +72,7 @@ claude --worktree "#1234"        # 从指定 GitHub PR 建 worktree（fetch pull
 
 ## Codex（openai/codex，真开源）
 
-来源：本地 clone `readonly-repos/codex`，commit `bdd282f3bb`（2026-06-27，`codex-zsh-v0.1.0-55-gbdd282f3bb`）。**直接读源码核实，非转述**。
+来源：官方仓库 [`openai/codex` @ `bdd282f3bb`](https://github.com/openai/codex/tree/bdd282f3bb)（2026-06-27，`codex-zsh-v0.1.0-55-gbdd282f3bb`）。**直接读源码核实，非转述**。
 
 ### 没有创建/进入 worktree 的工具
 

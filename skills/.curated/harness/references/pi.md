@@ -5,7 +5,7 @@
 > 扩展与 skill 系统与自研插件、多 agent 协同、手机远控，以及生态与社区。
 >
 > **来源基线**：`earendil-works/pi`（原 `badlogic/pi-mono`）@ `8479bd8`（2026-07-11），npm `@earendil-works/pi-coding-agent` v0.80.6，MIT。
-> 本文源码引用均来自本地全量 clone：`~/projects/readonly-repos/{pi,pi-telegram,pi-chat,pi-skills,pi-web,tau,pi-agent-dashboard,sitegeist}`，行号对应上述 commit。
+> 本文源码引用均据各上游官方仓库核实（非转述、直接读源码），行号对应上述 commit；各仓库 GitHub 链接见文末「关键仓库 / 资源」。
 > ⚠️ 时效：模型名（`gpt-5.6-*`、`claude-sonnet-5`、`claude-opus-4.8`）、版本号、star 数、画廊包数（~5.1k）都会变；标注"快照"处以你查证当时为准。
 >
 > **集成状态图例**（全文用）：🟩 Core（主仓内置） · 🟦 官方示例（`examples/`，需自行拷贝） · 🟨 官方实验包（API 不稳定） · 🟧 独立 first-party 仓库 · ⬜ 社区包/项目。
@@ -595,7 +595,7 @@ flowchart TD
     DASH4 --> AGENT
 ```
 
-三者深潜见下（均 ⬜ 社区、本地 clone 在 `~/projects/readonly-repos/{pi-web,tau,pi-agent-dashboard}`）。
+三者深潜见下（均 ⬜ 社区，均据官方仓库源码核实）。
 
 ### agegr/pi-web（⬜ SDK 进程内独立服务）
 
