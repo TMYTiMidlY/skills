@@ -2,6 +2,8 @@
 
 私有 Git 仓库 → forgejo runner `rclone sync --checksum --remove` → RustFS S3 桶（桶结构 = 仓库树）。`public/*` 匿名可读，其他路径**默认**走 presigned URL。`.md` 浏览器直贴自动 markdeep 渲染。
 
+> **注**：docs-share 已迁往 **git-pages** 托管（见 [git-pages.md](git-pages.md)）——仓库直接 serve 成站点、路径即 URL。本文档保留 S3 直链模型，适用于"逐文件签名 + 有效期 + 默认私有"的分享场景；两套路线的取舍见 git-pages.md 开头。
+
 > **本文件 = 简明索引 + 安装/部署。** 每节是 1-3 句的速查;每个日常操作话题都在仓库 `README.md` 有**更详细的版本**:
 > <https://github.com/TMYTiMidlY/docs-share/blob/main/README.md>
 >
