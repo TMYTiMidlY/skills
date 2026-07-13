@@ -132,7 +132,7 @@
 > 【pi】[docs/models.md](https://pi.dev/docs/latest/models)「Model Configuration」「Thinking Level Map」；三层职责由 `reasoning` / `thinkingLevelMap` / `compat.thinkingFormat` 分担。
 > 【pi】源码锚点：档位类型 `packages/ai/src/types.ts`（`ThinkingLevel`/`ModelThinkingLevel`）、`packages/agent/src/types.ts:289`；各家 serializer `packages/ai/src/api/{openai-codex-responses.ts:516-525, anthropic-messages.ts:796-1022, openai-completions.ts:600-668}`；七档→厂商档的 clamp `packages/ai/src/models.ts:408-418`；CLI 旗标 `cli/args.ts`（`--thinking`）。
 
-### <a id="thinking-format"></a>`thinkingFormat` 各方言发什么（仅 `openai-completions` 用）
+### <a id="thinking-format"></a>`thinkingFormat` 各方言映射（仅 `openai-completions` 用）
 
 `thinkingFormat` 是 **pi 本地枚举**，字符串本身不发给服务端；它决定 serializer 往请求里写哪个字段：
 
@@ -155,7 +155,7 @@
 
 修法：给该模型显式写对 `compat.thinkingFormat`（具体端点选哪个见 [验证 + 实战](#verify)，别在这里假设）。
 
-### `anthropic-messages` 不用这套枚举
+### `anthropic-messages` 的 thinking（原生 serializer）
 
 anthropic 端有独立 serializer：`off` 发 `thinking:{type:"disabled"}`；开启时对旧式模型发 budget-based thinking、对 `forceAdaptiveThinking` 模型发 adaptive thinking + `output_config.effort`。所以 **anthropic provider 的模型不用配 `thinkingFormat`**。
 
@@ -177,7 +177,7 @@ anthropic 端有独立 serializer：`off` 发 `thinking:{type:"disabled"}`；开
 
 > 【pi】`pi-ai` [models.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/models.ts)：`usage.cost.input = (rate.input / 1000000) * usage.input`（output/cacheRead/cacheWrite 同理，求和为 total）；显示层 `$${cost.toFixed(3)}`，无货币换算。
 
-### <a id="cache-hit"></a>缓存命中谁说了算：服务端 `usage` 自报
+### <a id="cache-hit"></a>缓存命中的判定
 
 pi **不自己判断缓存命不命中**——服务端在每次响应的 `usage` 里报了多少 token 命中缓存，pi 只读数、拆桶、乘费率：
 
