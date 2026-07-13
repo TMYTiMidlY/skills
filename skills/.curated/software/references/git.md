@@ -325,6 +325,8 @@ git update-ref refs/heads/<branch> "$NEW_CHILD" <期望旧tip>
 
 代价：手工重建会漏掉 committer date、GPG 签名、合并提交的第二父等细节，只适合线性、无签名的小改；能跑 `rebase -i` 时优先 rebase。
 
+> ⚠️ 这套只干 **reword / 换父**（复用旧树、tree 字节不变），才这么短。**要改旧提交的「内容」、工作区又脏时，别在这手搓 tree**：那要现造新树、还得逐层重放子提交（一旦和子提交撞行还要三方合并），又长又易错。正解是先把工作区弄干净（提交 / 挪走你自己的改动，或 `git worktree add` 到干净环境），再用封装好的 `rebase -i` 的 `edit` 回去重做——让 git 替你重放子提交、该停就停，别自己拿 plumbing 复刻 rebase。
+
 ## 事后归因：并发被踩后用 reflog 认出「谁动了 ref」
 
 多个会话共享同一 `.git` 时，"我的提交被谁冲了"靠 reflog 的 **reason 字段**复盘——它是操作类型的签名，据此就能区分 tip 是被 append 前进、还是被 reset 回退：
