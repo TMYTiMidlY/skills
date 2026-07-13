@@ -183,7 +183,9 @@ WIN bind 50000: OK                     # 对照：在 excludedportrange 的 * �
 ## 解决
 
 - **根治**：别把固定服务端口挂在 49152–65535。改到**低端口（< 49152）** 即可永久避开 Hyper‑V 圈占。例：Clash Verge `mixed-port` 49760 → 49000（`49000<49152`，实测 bind OK）或 7888。WSL 那个 `mihomo.service` 用 7890 就从没这毛病。
-- **GUI 应用在 GUI 里改**：Clash Verge Rev 是 `verge.yaml` → 生成 `clash-verge.yaml` → 热重载 mihomo。GUI 正开着时直接改底层文件会被覆盖 / 不重载；非要改文件先完全退出 GUI 再改再开。
+- **改 Clash Verge Rev 的端口（无 GUI 时，实测踩坑）**：运行时端口链是**生成的基础 `config.yaml`** + 当前 profile/merge/script → 生成 `clash-verge.yaml` → GUI 经命名管道 `\\.\pipe\verge-mihomo` 推给核心。
+  - **坑一：`verge.yaml` 的 `verge_mixed_port` 在普通启动时并不驱动运行时端口**——只改它、重启 GUI，GUI 仍按旧 `config.yaml` 生成，端口不变。**真正生效要改基础 `config.yaml` 的 `mixed-port`**（`clash-verge.yaml` 启动时会被 GUI 从 `config.yaml` 重新生成覆盖，单改它没用）。把 `config.yaml` / `verge.yaml` / `clash-verge.yaml` 三处对齐后**退出并重启 GUI**，核心日志出现 `Mixed(http+socks) proxy listening at: [::]:<port>` 即成功。
+  - **坑二：核心 `verge-mihomo` 由 SYSTEM 服务 `clash-verge-service` 托管**，非提权 shell 杀不掉它（`Stop-Process` 报"拒绝访问"）；只能重启 GUI 让服务重拉核心（改文件期间先退 GUI，避免运行中的 GUI 回写覆盖）。
 - **诊断口诀（绑定失败先看错误码分流）**：
   - `10013 AccessDenied / WSAEACCES` → 端口被 Hyper‑V **独占保留**，查 `excludedportrange`，改**低端口**（本案）。
   - `10048 已占用但 netstat / Get-NetTCPConnection / ss 都查不到` → WSL 网络栈残留，`wsl --shutdown` 重建（见上一个案例）。
