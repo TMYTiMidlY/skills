@@ -99,7 +99,7 @@ done
 写、改、审查、重构任何 skill 都按 [references/conventions.md](references/conventions.md) 的要求来——那是唯一出处，含完整理由与正反例。**别在这里或别的 skill 里重抄规则，要提就写条目名链过去。** 速览（点进 conventions 看细节）：
 
 - **内容**：概念优先、说人话｜命令 / 示例优先｜每条说法有据、来源与置信度就近｜踩坑 / 排障紧贴主题｜少写"给 agent 自动执行的操作流程"（reference 只描述目标产物）｜不过度限制、少堆告诫｜个人配置不入正文、脱敏用占位符
-- **引用**：跨 skill 只写 skill 名 + 能力边界、不写任何文件路径｜同 skill 内用相对路径｜章节跳转用显式 `<a id>` 锚点（不用标题派生 slug）｜引上游源码 / 文档锁到版本（别指 `main` / `latest` 滚动 ref）
+- **引用**：引用做成可点击 Markdown 链接（跨 skill 例外）｜跨 skill 只写 skill 名 + 能力边界、不写任何文件路径｜同 skill 内用相对路径｜章节跳转用显式 `<a id>` 锚点（不用标题派生 slug）｜引上游源码 / 文档锁到版本（别指 `main` / `latest` 滚动 ref）
 - **标题**：命名"这节是什么"、不预告结论 / 计数 / 排名｜不编号、不用 §N 交叉引用｜并列小节靠客观属性区分｜改带 `<a id>` 的标题只改文字
 - **结构**：渐进式披露三层（description → SKILL.md → references）、单文件长度不是拆分理由｜脚本用 `uv` + PEP 723 内联依赖｜不绑定特定 AI 工具名｜frontmatter `name` 与目录名一致｜README 与 skill 状态同步
 
