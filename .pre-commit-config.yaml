@@ -1,0 +1,14 @@
+# 放仓库根目录，随 git 版本化：任何人 clone 都拿到同一套 hook。
+# 启用: uv tool install pre-commit && pre-commit install
+# 升级: pre-commit autoupdate   (会改写下面的 rev)
+repos:
+  - repo: https://github.com/lycheeverse/lychee
+    rev: lychee-v0.24.2          # 注意 tag 带 'lychee-' 前缀
+    hooks:
+      - id: lychee               # 自动下载静态二进制，无需 Node/cargo/Docker
+        types: [markdown]        # 覆盖默认 types:[text]，只查 .md
+        args:
+          - --no-progress
+          - --cache              # 磁盘缓存 .lycheecache，跨 commit 复用、避开限流
+          - --max-cache-age=2d   # 缓存超 2 天才重查
+          - --                   # 分隔符：其后 pre-commit 追加的文件名都当输入
