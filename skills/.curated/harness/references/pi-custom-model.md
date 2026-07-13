@@ -42,9 +42,14 @@
 
 ---
 
-## 2. `models.json` 结构与字段
+## <a id="models-fields"></a>2. `models.json` 结构与字段
 
 一个 provider 块 = 顶层连接信息 + `models` 数组。
+
+**注释与尾逗号**：`models.json` 先过 `stripJsonComments` 再 `JSON.parse`——**只认 `//` 行注释和尾随逗号，不支持 `/* */` 块注释**（是残缺 JSONC，不是完整 JSONC / JSON5）。想临时停用某个 provider / 模型，逐行加 `//` 注释掉即可；写成 `/* … */` 会让整个 `models.json` 解析失败（报 `Failed to parse models.json`）。
+
+> 【pi】coding-agent [core/model-registry.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/model-registry.ts) 用 `JSON.parse(stripJsonComments(content))`；[utils/json.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/utils/json.ts) 的 `stripJsonComments` 自述「Strip `//` line comments and trailing commas」，`/* */` 原样留下 → parse 报错。
+> 【测】2026-07-13：用 `/* */` 包 provider 块 → `Failed to parse models.json`；改 `//` 逐行注释 → `pi --list-models` 正常、该 provider 从列表消失。
 
 **Provider 级字段**：
 
@@ -72,7 +77,7 @@
 | 图片消息 | `content` 里 `{type:"image_url", image_url:{url}}`（公网 URL 或 `data:image/png;base64,…`） | `content` 里 `{type:"image", source:{type:"base64", media_type, data}}` |
 | 工具 | OpenAI function 格式 → `tool_calls` | Anthropic 格式 → `tool_use` |
 
-> 【pi】baseUrl 拼接：`pi-ai` [openai-completions.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-completions.ts)（`new OpenAI({baseURL})`，SDK 接 `/chat/completions`）、[anthropic-messages.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/anthropic-messages.ts)（`baseURL: model.baseUrl`，Anthropic SDK 自补 `/v1/messages`）；[docs/models.md](https://pi.dev/docs/latest/models)「Anthropic Messages Compatibility」/「OpenAI Compatibility」。
+> 【pi】baseUrl 拼接：`pi-ai` [openai-completions.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-completions.ts)`:532-534`（`new OpenAI({baseURL})`，SDK 接 `/chat/completions`）、[anthropic-messages.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/anthropic-messages.ts)`:854`（`baseURL: model.baseUrl`，Anthropic SDK 自补 `/v1/messages`）；[docs/models.md](https://pi.dev/docs/latest/models)「Anthropic Messages Compatibility」/「OpenAI Compatibility」。
 > 【测】2026-07-13：`GET/POST https://api.llm.ustc.edu.cn/v1/messages` → 200；同 key 打 `…/v1/v1/messages` → `404 {"detail":"Not Found"}`。坐实「anthropic 端 baseUrl 不能带 `/v1`」。
 
 两条 anthropic-version 头 pi 会自动带，不用手填。
@@ -114,7 +119,7 @@
 
 > 【pi】斜杠命令 / 旗标 / 快捷键：[docs/usage.md](https://pi.dev/docs/latest/usage)、[cli/args.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/cli/args.ts)、[core/slash-commands.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/slash-commands.ts)、[docs/keybindings.md](https://pi.dev/docs/latest/keybindings)。
 
-## 3. effort / thinking：能力、档位、线格式是三件事
+## <a id="thinking-layers"></a>3. effort / thinking：能力、档位、线格式是三件事
 
 设置入口是 `pi --thinking high`、`pi --model "provider/model:high"`、交互 `Shift+Tab`、`settings.json.defaultThinkingLevel`；七档 `off | minimal | low | medium | high | xhigh | max`。但配自定义模型时要分清**三层**：
 
@@ -125,6 +130,7 @@
 | 序列化方言 | `compat.thinkingFormat` | 告诉 `openai-completions` serializer 怎么编码开关 / effort | 不证明后端真支持这些档 |
 
 > 【pi】[docs/models.md](https://pi.dev/docs/latest/models)「Model Configuration」「Thinking Level Map」；三层职责由 `reasoning` / `thinkingLevelMap` / `compat.thinkingFormat` 分担。
+> 【pi】源码锚点：档位类型 `packages/ai/src/types.ts`（`ThinkingLevel`/`ModelThinkingLevel`）、`packages/agent/src/types.ts:289`；各家 serializer `packages/ai/src/api/{openai-codex-responses.ts:516-525, anthropic-messages.ts:796-1022, openai-completions.ts:600-668}`；七档→厂商档的 clamp `packages/ai/src/models.ts:408-418`；CLI 旗标 `cli/args.ts`（`--thinking`）。
 
 ### 3.1 `thinkingFormat` 各方言发什么（仅 `openai-completions` 用）
 
@@ -198,7 +204,7 @@ pi **不自己判断缓存命不命中**——服务端在每次响应的 `usage
 
 ---
 
-### 4.3 上下文长度与压缩
+### <a id="context-window"></a>4.3 上下文长度与压缩
 
 **无 `--context-window` 旗标**——上下文窗口是**模型属性** `contextWindow`（见 §2.2，可用 `modelOverrides` 覆盖某模型）。运行期靠：
 
