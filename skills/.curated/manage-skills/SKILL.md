@@ -96,7 +96,7 @@ done
 
 ## 写 / 改 skill 的规范
 
-写、改、审查、重构任何 skill 都按 [references/checklist.md](references/checklist.md) 的要求来——那是唯一出处，含完整理由与正反例。**别在这里或别的 skill 里重抄规则，要提就写条目名链过去。** 速览（点进 checklist 看细节）：
+写、改、审查、重构任何 skill 都按 [references/conventions.md](references/conventions.md) 的要求来——那是唯一出处，含完整理由与正反例。**别在这里或别的 skill 里重抄规则，要提就写条目名链过去。** 速览（点进 conventions 看细节）：
 
 - **内容**：概念优先、说人话｜命令 / 示例优先｜每条说法有据、来源与置信度就近｜踩坑 / 排障紧贴主题｜少写"给 agent 自动执行的操作流程"（reference 只描述目标产物）｜不过度限制、少堆告诫｜个人配置不入正文、脱敏用占位符
 - **引用**：跨 skill 只写 skill 名 + 能力边界、不写任何文件路径｜同 skill 内用相对路径｜章节跳转用显式 `<a id>` 锚点（不用标题派生 slug）｜引上游源码 / 文档锁到版本（别指 `main` / `latest` 滚动 ref）
@@ -105,11 +105,11 @@ done
 
 ## 重构已有文档
 
-把一篇已成型的文档（SKILL.md 或 reference）做结构性重排 / 打磨——理顺标题树、章节归属、来源组织，且不丢信息。核心：**先给「改后大纲」供审阅、批准后才动手**，全程对照 [references/checklist.md](references/checklist.md) 的要求逐条过。完整四步流程与大纲格式见 [references/refactor.md](references/refactor.md)。
+把一篇已成型的文档（SKILL.md 或 reference）做结构性重排 / 打磨——理顺标题树、章节归属、来源组织，且不丢信息。核心：**先给「改后大纲」供审阅、批准后才动手**，全程对照 [references/conventions.md](references/conventions.md) 的要求逐条过。完整四步流程与大纲格式见 [references/refactor.md](references/refactor.md)。
 
 ## 审查现有 skills
 
-用户让"审查 / 检查所有 skill 是否合规"时，走跨多 skill 的合规扫描：逐条核对 [references/checklist.md](references/checklist.md) 每项，外加只在审查时做的跨 skill 专项检查（嫁接 LICENSE、是否落后上游、`name` 全局唯一）。默认**只审不改**。完整流程、输出格式与专项检查见 [references/review.md](references/review.md)。
+用户让"审查 / 检查所有 skill 是否合规"时，走跨多 skill 的合规扫描：逐条核对 [references/conventions.md](references/conventions.md) 每项，外加只在审查时做的跨 skill 专项检查（嫁接 LICENSE、是否落后上游、`name` 全局唯一）。默认**只审不改**。完整流程、输出格式与专项检查见 [references/review.md](references/review.md)。
 
 ## Hermes
 
