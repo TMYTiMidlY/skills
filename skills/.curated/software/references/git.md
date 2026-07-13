@@ -2,7 +2,7 @@
 
 面向的场景：工作区里同时躺着**你想提交的改动**和**不该由你带走的改动**（并发会话未提交的脏文件、别人已经 `git add` 的 rename、untracked 文件……），你要在**命令行非交互**地只对其中一处做 commit / stage / discard / stash；以及当你的提交后面又被别人叠了新提交时怎么改它。下面结论基于 git 2.43.0。
 
-## 心智模型：三个位置 + "跟谁比"
+## 三个位置：HEAD / index / worktree
 
 Git 的所有"部分操作"只围绕三个位置：
 
@@ -11,8 +11,6 @@ Git 的所有"部分操作"只围绕三个位置：
 - **worktree / 工作区** —— 磁盘上的当前文件。
 
 `git add -- <path>` 的本质是把该路径**当前工作区内容**写入/更新 index 条目；`git commit`（不带路径）再把整张 index 快照拍成提交。因为 index 按路径分项，add 一个新文件不会改动其它路径的条目，但同一路径若被多个会话同时 stage/commit，仍会互相影响。
-
-每个 `-p`（interactive patch）命令的行为，完全由两件事决定：**拿哪两个位置做 diff（"基准 floor" ↔ 目标）**，以及**把选中的 hunk 往哪个方向应用**。记住"基准是谁"，就能预测它看得见什么、动得了什么、什么会被当成不可改的底座。
 
 ## `git commit` 的本质 = 给 index 拍快照
 
@@ -55,7 +53,7 @@ $ git commit -m "docs: update agent rules" -- AGENTS.md
 |---|---|---|
 | `git commit -m …`（无路径） | 提交整个 index | **有**（index 里就有） |
 | `git commit -- f.txt`（pathspec，**无 -p**） | 忽略 index，只记 HEAD + f.txt 当前内容 | **没有**（隔离干净） |
-| `git commit -p -- f.txt`（pathspec + **-p**） | index 为底座 + 选中 hunk（见下节） | **有**（rename 是底座，搭车） |
+| `git commit -p -- f.txt`（pathspec + **-p**） | index 为底座 + 选中 hunk（见文末「`-p` 系列的真相」） | **有**（rename 是底座，搭车） |
 
 > ⚠️ 反直觉点：给 `git commit` 加了 `-p` **反而破坏了 pathspec 提交本来的隔离性**。`commit -p f.txt` 不是"只提交 f.txt 一处"的隔离方案；`commit f.txt`（不带 -p）才是。`commit -p f.txt` 的价值只在"没有别的东西暂存"时——它省的是 `git add`，不是省"清理别人的暂存内容"。
 
@@ -94,32 +92,9 @@ git commit -m "add new.txt" -- new.txt
 
 同理 `git restore -- <path>`、`git stash push -- <path>`、`git checkout <rev> -- <path>` 等吃路径的命令也建议用 `--` 划清"路径从哪开始"；对同时吃 revision 的命令（checkout/restore/reset）更是刚需。
 
-## `-p` 系列的真相：以某个基准为底座，只能"加"选中的 hunk，减不掉底座
-
-各 `-p` 命令的基准和作用（k.txt 构造：HEAD=`[base]`、index=`[base,STAGED]`、worktree=`[base,STAGED,WORKTREE]`）：
-
-| 命令 | 基准(floor) | 选择器显示 | 选中后干什么 | 已暂存内容的下场 |
-|---|---|---|---|---|
-| `git add -p` | index | 未暂存(index↔worktree) | 加进 index（stage） | 已在 index，是上下文 |
-| `git commit -p [path]` | index | 未暂存 | commit = index + 选中 | **底座，必带走** |
-| `git restore -p [path]` | index | 未暂存 | 从 worktree 丢弃（还原到 index） | **地板，够不到、动不了** |
-| `git restore --staged -p [path]` | HEAD | 已暂存(HEAD↔index) | 从 index 撤出（unstage） | 正是操作对象 |
-| `git restore -SW --source=HEAD -p [path]` | HEAD | 全部(HEAD↔worktree) | index+worktree 都还原到 HEAD | 一起清 |
-| `git stash -p` | HEAD | 全部 | 存进 stash、回滚 worktree | **一起卷走**；且不重置 index |
-
-验证基准的办法：`printf 'q\n' | git commit -p` 只看它列出的 diff。`commit -p` 显示 `@@ -1,2 +1,3 @@`、`STAGED` 行是上下文（行首空格）、只有 `WORKTREE` 是可选的 `+`——证明基准是 index、已暂存内容是不可选的底座。`stash -p` 显示 `@@ -1 +1,3 @@`、`STAGED` 和 `WORKTREE` 都可选——证明基准是 HEAD。
-
-几个容易记错、要点名的行为：
-
-- **`git commit -p [path]`**：commit = `当前 index（底座）+ 你选中的 hunk`。`-p` 后面的 path 只**限制选择器给你看哪些文件的 hunk**，挡不住已暂存内容。所以它"加得上、减不掉"。
-- **`git restore -p`**（默认 = 从 index 还原 worktree）：基准是 index，**只能丢弃未暂存的改动**；已暂存的对它是不可见的地板，丢不掉。要连已暂存的一起清，得 `git restore --staged --worktree --source=HEAD -p <path>`（等价旧写法 `git checkout -p HEAD -- <path>`，提示语 "Discard this hunk from index and worktree"）。
-- **`git stash -p`**：基准是 HEAD，**看得见也能卷走已暂存的内容**；但它**不重置 index**，选走后会留下"index 领先 worktree"的状态（`git status` 里同一文件同时出现在 "Changes to be committed" 和 "Changes not staged"）。这跟裸 `git stash`（会把 index 也一并重置）不同。
-
-一句话总纲：**`commit -p` / `add -p` 往 index 方向加、`restore -p` 从 worktree 方向减、`stash -p` 搬走**；基准=index 的命令只在"未暂存"范围里动，基准=HEAD 的命令（`stash`、`--source=HEAD`）才够得到已暂存内容。
-
 ## 子文件（hunk / 行）级的纯 CLI 非交互做法：补丁手术
 
-Git **没有**非交互的 hunk 选择 porcelain——`-p` 系列本质是 TUI。要脚本化 / 非交互地只处理某个 hunk 或某几行，走 `git diff` 导出补丁 → 裁剪 → `git apply` 打回。方向靠 `git apply` 的参数：
+Git **没有**非交互的 hunk 选择 porcelain——`-p` 系列本质是 TUI（原理见文末两节）。要脚本化 / 非交互地只处理某个 hunk 或某几行，走 `git diff` 导出补丁 → 裁剪 → `git apply` 打回。方向靠 `git apply` 的参数：
 
 | 目的 | 命令 |
 |---|---|
@@ -140,30 +115,6 @@ $ git commit -m "只提交第25行那处"       # 只含 TWENTYFIVE
 ```
 
 没有 `filterdiff` 时，用 `git diff <path> > p.patch` 手工删掉不要的 `@@` 段（每个 hunk 从 `@@` 开始到下一个 `@@` 或文件尾），保留补丁头四行（`diff --git` / `index` / `---` / `+++`），再 `git apply --cached p.patch`。git diff 每个 `@@` 的行号是相对原文件的绝对值，删掉别的 hunk 不影响保留 hunk 的定位。
-
-## TUI（交互选择器）简述 + 与 CLI 的对应
-
-`git add -p` / `git commit -p` / `git restore -p` / `git stash -p` 都进入逐 hunk 的选择器，主要按键：
-
-- `y` 选 / `n` 不选本 hunk；`a` 选本文件剩余全部 / `d` 全不选；`q` 退出；`?` 帮助。
-- `s`（split）：把一个大 hunk 拆成小 hunk——**两处改动之间要有未改动行**才拆得开。能拆时菜单才列出 `s`（`[y,n,q,a,d,s,e,?]`），按下即 "Split into 2 hunks" → 变 (1/2)；紧挨着的改动菜单里**根本没有 `s`**（`[y,n,q,a,d,e,?]`），强按提示 `Sorry, cannot split this hunk`。
-- `e`（edit）：手改当前 hunk 的补丁文本，做**行级**精度——不想进去的 `+` 行删掉；想保留成上下文的 `-` 行，把行首 `-` 改成空格。
-
-TUI 按键 ↔ CLI 补丁手术的对应关系：
-
-| TUI 操作 | 效果 | 非交互 CLI 等价 |
-|---|---|---|
-| `y`/`n` 逐 hunk 取舍 | 选哪些 hunk 进这次操作 | `filterdiff --hunks=…` 或手删补丁里的 `@@` 段 |
-| `s` split | 把大 hunk 拆开再单选 | 补丁里本就是分开的 `@@` 块，直接挑 |
-| `e` edit | 行级精修 | 直接编辑补丁文本（删 `+` 行 / `-` 改空格） |
-
-**脚本化驱动 TUI**：选择器从 **stdin** 读答案，把单字母答案按顺序喂进去即可，等价于依次敲键：
-
-```
-printf 'y\ns\nn\n' | git add -p <path>     # 对第1个hunk: 拆开→留前半→弃后半
-```
-
-依赖 hunk 的顺序和数量，脆但可脚本化。要稳，优先用上一节的 `git diff | filterdiff | git apply`。
 
 ## 后面已经有别人的提交时，如何 amend 旧提交
 
@@ -229,6 +180,55 @@ git update-ref refs/heads/<branch> "$NEW_CHILD" <期望旧tip>
 - **`update-ref <ref> <new> <old>`** 的第三个参数是 CAS（compare-and-swap）：只有 ref 当前值**仍等于** `<old>` 才更新，否则报错退出。意义：并发会话若在你计算的这一瞬又推了新提交、`<old>` 对不上，命令**失败而非覆盖**，不会把别人的提交冲掉。这就是"原子移动"。
 
 代价：手工重建会漏掉 committer date、GPG 签名、合并提交的第二父等细节，只适合线性、无签名的小改；能跑 `rebase -i` 时优先 rebase。
+
+## `-p` 系列的真相：以某个基准为底座，只能"加"选中的 hunk，减不掉底座
+
+每个 `-p`（interactive patch）命令的行为，完全由两件事决定：**拿哪两个位置做 diff（"基准 floor" ↔ 目标）**，以及**把选中的 hunk 往哪个方向应用**。记住"基准是谁"，就能预测它看得见什么、动得了什么、什么会被当成不可改的底座。
+
+各 `-p` 命令的基准和作用（k.txt 构造：HEAD=`[base]`、index=`[base,STAGED]`、worktree=`[base,STAGED,WORKTREE]`）：
+
+| 命令 | 基准(floor) | 选择器显示 | 选中后干什么 | 已暂存内容的下场 |
+|---|---|---|---|---|
+| `git add -p` | index | 未暂存(index↔worktree) | 加进 index（stage） | 已在 index，是上下文 |
+| `git commit -p [path]` | index | 未暂存 | commit = index + 选中 | **底座，必带走** |
+| `git restore -p [path]` | index | 未暂存 | 从 worktree 丢弃（还原到 index） | **地板，够不到、动不了** |
+| `git restore --staged -p [path]` | HEAD | 已暂存(HEAD↔index) | 从 index 撤出（unstage） | 正是操作对象 |
+| `git restore -SW --source=HEAD -p [path]` | HEAD | 全部(HEAD↔worktree) | index+worktree 都还原到 HEAD | 一起清 |
+| `git stash -p` | HEAD | 全部 | 存进 stash、回滚 worktree | **一起卷走**；且不重置 index |
+
+验证基准的办法：`printf 'q\n' | git commit -p` 只看它列出的 diff。`commit -p` 显示 `@@ -1,2 +1,3 @@`、`STAGED` 行是上下文（行首空格）、只有 `WORKTREE` 是可选的 `+`——证明基准是 index、已暂存内容是不可选的底座。`stash -p` 显示 `@@ -1 +1,3 @@`、`STAGED` 和 `WORKTREE` 都可选——证明基准是 HEAD。
+
+几个容易记错、要点名的行为：
+
+- **`git commit -p [path]`**：commit = `当前 index（底座）+ 你选中的 hunk`。`-p` 后面的 path 只**限制选择器给你看哪些文件的 hunk**，挡不住已暂存内容。所以它"加得上、减不掉"。
+- **`git restore -p`**（默认 = 从 index 还原 worktree）：基准是 index，**只能丢弃未暂存的改动**；已暂存的对它是不可见的地板，丢不掉。要连已暂存的一起清，得 `git restore --staged --worktree --source=HEAD -p <path>`（等价旧写法 `git checkout -p HEAD -- <path>`，提示语 "Discard this hunk from index and worktree"）。
+- **`git stash -p`**：基准是 HEAD，**看得见也能卷走已暂存的内容**；但它**不重置 index**，选走后会留下"index 领先 worktree"的状态（`git status` 里同一文件同时出现在 "Changes to be committed" 和 "Changes not staged"）。这跟裸 `git stash`（会把 index 也一并重置）不同。
+
+一句话总纲：**`commit -p` / `add -p` 往 index 方向加、`restore -p` 从 worktree 方向减、`stash -p` 搬走**；基准=index 的命令只在"未暂存"范围里动，基准=HEAD 的命令（`stash`、`--source=HEAD`）才够得到已暂存内容。
+
+## TUI（交互选择器）简述 + 与 CLI 的对应
+
+`git add -p` / `git commit -p` / `git restore -p` / `git stash -p` 都进入逐 hunk 的选择器，主要按键：
+
+- `y` 选 / `n` 不选本 hunk；`a` 选本文件剩余全部 / `d` 全不选；`q` 退出；`?` 帮助。
+- `s`（split）：把一个大 hunk 拆成小 hunk——**两处改动之间要有未改动行**才拆得开。能拆时菜单才列出 `s`（`[y,n,q,a,d,s,e,?]`），按下即 "Split into 2 hunks" → 变 (1/2)；紧挨着的改动菜单里**根本没有 `s`**（`[y,n,q,a,d,e,?]`），强按提示 `Sorry, cannot split this hunk`。
+- `e`（edit）：手改当前 hunk 的补丁文本，做**行级**精度——不想进去的 `+` 行删掉；想保留成上下文的 `-` 行，把行首 `-` 改成空格。
+
+TUI 按键 ↔ CLI 补丁手术的对应关系：
+
+| TUI 操作 | 效果 | 非交互 CLI 等价 |
+|---|---|---|
+| `y`/`n` 逐 hunk 取舍 | 选哪些 hunk 进这次操作 | `filterdiff --hunks=…` 或手删补丁里的 `@@` 段 |
+| `s` split | 把大 hunk 拆开再单选 | 补丁里本就是分开的 `@@` 块，直接挑 |
+| `e` edit | 行级精修 | 直接编辑补丁文本（删 `+` 行 / `-` 改空格） |
+
+**脚本化驱动 TUI**：选择器从 **stdin** 读答案，把单字母答案按顺序喂进去即可，等价于依次敲键：
+
+```
+printf 'y\ns\nn\n' | git add -p <path>     # 对第1个hunk: 拆开→留前半→弃后半
+```
+
+依赖 hunk 的顺序和数量，脆但可脚本化。要稳，优先用前面「补丁手术」那节的 `git diff | filterdiff | git apply`。
 
 ## 相关
 
