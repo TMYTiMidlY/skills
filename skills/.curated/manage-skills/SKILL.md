@@ -113,6 +113,4 @@ done
 
 ## Hermes
 
-Hermes 有独立的 skill 体系。涉及 `hermes skills install / uninstall / search / inspect / tap / external_dirs` 这类操作时，不要把长流程直接堆在这里，转去看 [references/hermes.md](references/hermes.md)。
-
-该 reference 只负责 Hermes 自己的安装与来源管理；如果是在**本仓**整理已有 skill 的边界、命名、引用和 README，同样还是回到本 skill。
+Hermes 有独立于本仓 `.agents/skills` 约定的 skill 体系（`hermes skills install / uninstall / search / inspect / tap`、`external_dirs` 发现）。那套发现与来源管理属于 Hermes runtime 自身，见 `harness` skill 的 Hermes 运行时章节；本 skill 只管本仓已有 skill 的安装、边界、命名、引用和 README。

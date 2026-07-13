@@ -1,6 +1,6 @@
 # Hermes
 
-Hermes 指 [NousResearch/hermes-agent](https://github.com/nousresearch/hermes-agent)，一个 Python CLI 的 agent 框架。以下笔记分两类：**systemd 常驻服务**（gateway / dashboard）和 **terminal backend**（agent 执行命令的环境）。
+Hermes 指 [NousResearch/hermes-agent](https://github.com/nousresearch/hermes-agent)，一个 Python CLI 的 coding agent 框架——和 Copilot CLI / Claude Code / Codex / pi 一样，是「模型 + harness」里那层把模型撑成 agent 的运行壳，特点是把**多后端命令执行**（local / ssh / docker / modal / …）与**常驻服务化**（gateway / dashboard）做进了核心，还自带一套独立的 skill 体系。本篇从 harness 视角覆盖它的运行时全貌：常驻服务与身份（`HERMES_HOME`）、terminal backend（命令执行环境）、provider 接入实测，以及 skill 的发现 / 来源 / 安装 / 预加载。
 
 ## systemd 常驻服务
 
@@ -399,6 +399,22 @@ hermes `gemini` provider 硬编码 `inference_base_url=https://generativelanguag
 - `--category <c>` 决定落到哪个分类子目录；不给就落在 `~/.hermes/skills/` 根。
 - `uninstall` **没有 `--yes` 标志**，需要交互确认 `y`；脚本里用 `yes | hermes skills uninstall <name>` 过。
 - 只管 `hub` 来源；builtin 和 local 不能靠它卸。
+
+### 其余 skill 子命令
+
+install / uninstall 见上，其余子命令补全整个 `hermes skills` 命令面：
+
+| 操作 | 命令 |
+|------|------|
+| 列出已安装 | `hermes skills list [--source all\|hub\|builtin\|local]` |
+| 搜索可装 | `hermes skills search <query>` |
+| 预览（不装） | `hermes skills inspect <identifier>` |
+| 检查更新 | `hermes skills check` |
+| 更新所有 hub skill | `hermes skills update` |
+| 管理额外 registry | `hermes skills tap {list,add,remove}`（`tap add <owner/repo>` 接入更多 GitHub 仓库） |
+| 查看 local 根等路径 | `hermes skills env` |
+
+不确定 skill 名时先 `search` 找、`inspect` 预览再决定装不装；local 根的确切位置以 `hermes skills env` 输出为准。
 
 ### external_dirs：把任意目录当 skill 仓库挂进来
 
