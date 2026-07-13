@@ -138,6 +138,20 @@ wsl --shutdown
 
 如果 `wsl --shutdown` 后立刻恢复，就按 WSL 网络残留处理，不要继续在普通进程列表里找。
 
+> 反过来：若绑定报的是 `10013 AccessDenied`（不是 10048）、且端口**就在** `excludedportrange` 里，那是 Hyper‑V 独占保留、会随开机漂移——见下一个案例，解法是改用低端口而不是 `wsl --shutdown`。
+
+## <a id="bind-10013"></a>固定服务端口绑定报 `WSAEACCES`(10013)，且随开机漂移
+
+> Windows、WSL2 mirrored、Hyper-V 的一般服务端口案例；具体应用现场另存。
+
+固定服务使用49760时，一次开机后直接bind返回`AccessDenied / WSAEACCES 10013`；49000与50000对照可绑定。`netsh int ipv4 show excludedportrange tcp`中49760位于49694–49793非`*`动态块，而带`*`托管块内的50000仍可绑定。不能只凭排除表推断所有条目都同样拒绝bind。
+
+Windows默认动态端口范围49152–65535。HNS、WinNAT与vmcompute可在开机时从该范围预留块，位置会漂移；固定服务是否先绑定也影响当次结果。维护固定监听时优先选实际动态池外、未被占用和保留的端口，并做真实bind检查；49000只是本次通过的样本，仍须查目标系统当前范围。
+
+`10013`与`10048`分开：前者查独占保留及权限；后者查真实占用和WSL网络残留，现有流程见[端口绑定报10048](#bind-10048)。mirrored模式共享宿主网络边界，WSL侧也可能绑定失败；先用`wslinfo --networking-mode`确认模式，不假设必有独立NAT栈。
+
+PowerShell探针读取native中文输出时注意PS5.1编码；可用ASCII标签或明确转码。`.NET TcpListener`真实bind比只看netsh表更直接。`HttpClient.Result`若只给无信息的`RuntimeException`，改用能保留底层错误的探针。
+
 ## Windows 普通 PowerShell 创建文件 symlink 失败
 
 > 2026-04-20 | Windows | PowerShell | symlink 权限
