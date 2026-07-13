@@ -19,6 +19,8 @@ description: 记录排查过的疑难杂症和踩坑经历。当用户遇到类�
   - 关键词：`hashOriginal.toHex is not a function`、`Uint8Array.toHex`、`pdfjs-dist`、`PDF.js v5.6.205`、`htbrowser`、`Chrome 132`、`viewer.mjs:24251`、`pdf.mjs:428`、`patchViewerUI`、`viewsManagerToggleButton`、`sidebarToggleButton`、`LaTeX-Workshop PDF 预览全白`、`merge upstream 后浏览器打不开 PDF`
 - **Windows 端口绑定异常但 Win/WSL 都查不到占用，`wsl --shutdown` 后恢复** → [references/bug-fix.md](references/bug-fix.md)
   - 关键词：`os error 10048`、`端口占用但 netstat 查不到`、`Get-NetTCPConnection 查不到`、`ss 查不到`、`excludedportrange 没有`、`wsl --shutdown`
+- **Windows 固定服务端口落在 Hyper‑V 临时端口保留段 → 绑定 `WSAEACCES`(10013)、随开机漂移（Clash Verge mihomo `mixed-port:49760` 起不来）** → [references/bug-fix.md](references/bug-fix.md)
+  - 关键词：`WSAEACCES`、`os error 10013`、`AccessDenied`、`bind 失败但不是 10048`、`excludedportrange 里有`、`49694-49793`、`动态端口段 49152-65535`、`ephemeral port`、`dynamicportrange`、`Hyper-V 端口保留`、`HNS`、`WinNAT`、`vmcompute`、`保留段每次开机漂移`、`启动抢占赛`、`时好时坏`、`之前能用现在不行`、`Clash Verge Rev`、`verge-mihomo`、`mixed-port 起不来`、`只剩 redir 7892 + dns 53`、`ProxyServer=127.0.0.1:49760`、`ProxyEnable=0`、`系统代理残留`、`Docker Desktop system proxy`、`WSL2 mirrored`、`wslinfo networking-mode`、`改低端口 <49152`、`49000`、`7888`
 - **Windows 普通 PowerShell 创建文件 symlink 失败，给用户授予 `SeCreateSymbolicLinkPrivilege` 后恢复** → [references/bug-fix.md](references/bug-fix.md)
   - 关键词：`Administrator privilege required`、`mklink`、`You do not have sufficient privilege`、`SeCreateSymbolicLinkPrivilege`、`Create symbolic links`、`secedit 扩展错误`、`*SID`、`Developer Mode`、`AGENTS.md`、`CLAUDE.md`
 - **公网 VPS 做 UDP 端口段转发到内网地址时，启用 `nftables.service` 影响 Caddy HTTPS/TCP 服务** → [references/bug-fix.md](references/bug-fix.md)

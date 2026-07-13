@@ -138,6 +138,56 @@ wsl --shutdown
 
 如果 `wsl --shutdown` 后立刻恢复，就按 WSL 网络残留处理，不要继续在普通进程列表里找。
 
+> 反过来：若绑定报的是 `10013 AccessDenied`（不是 10048）、且端口**就在** `excludedportrange` 里，那是 Hyper‑V 独占保留、会随开机漂移——见下一个案例，解法是改用低端口而不是 `wsl --shutdown`。
+
+## Windows 固定服务端口落在 Hyper‑V 临时端口保留段 → 绑定 `WSAEACCES`(10013)，且随开机漂移
+
+> 2026-07-13 | Windows | WSL2 mirrored | Hyper‑V | 端口保留 | Clash Verge / mihomo
+
+> 与上一个案例（10048 但查不到占用、`excludedportrange` 里**没有**、`wsl --shutdown` 恢复）是**同一 Hyper‑V 端口保留现象的两面**：本案是 `WSAEACCES`(10013) + 端口**就在** `excludedportrange` 里。绑定失败先看错误码分流。
+
+## 症状
+
+Windows 上的 Clash Verge Rev（GUI，核心进程 `verge-mihomo`）配了 `mixed-port: 49760`，但"代理用不了"。且**曾经能用，某次开机后就不行了**（时好时坏）。客观现象串：
+
+- `Get-NetTCPConnection` 看 `verge-mihomo` 只在 `[::]:7892`(redir-port) + `[::]:53`(dns)，**没有 49760**。
+- TCP 连 `127.0.0.1:49760` → `ConnectionRefused`；拿它当 HTTP 代理发请求 → 失败。
+- Windows 系统代理注册表 `ProxyServer=127.0.0.1:49760` 但 `ProxyEnable=0`。
+- 直接 bind 实测（pwsh + `.NET TcpListener`，错误码语言中立）：
+
+```text
+WIN bind 49760: FAIL [AccessDenied]   # WSAEACCES / os error 10013
+WIN bind 49000: OK                     # 对照：低端口能绑
+WIN bind 50000: OK                     # 对照：在 excludedportrange 的 * 托管块里，反而能绑
+```
+
+`netsh int ipv4 show excludedportrange tcp` 里 **49760 落在 `49694–49793`** 这个非 `*` 的动态块内。
+
+## 排查关键转折（含走过的弯路）
+
+1. **先分清两个 mihomo**：WSL 里 `mihomo.service`（systemd `--user`，`127.0.0.1:7890`+`:9090`，正常）vs Windows Clash Verge Rev（`verge-mihomo`，配 49760，起不来）。二者**完全独立**。一度把 WSL 的 7890、甚至 Docker Desktop 扯进来当"受害者"，都是干扰项——7890 只是个 WSL user service，Docker 现在是 manual 指 7890、跟 49760 无关。砍掉。
+2. **别只靠 `netsh` 文本推断，直接实测 bind**：绑 49760 → `AccessDenied (WSA10013)`，绑低端口 → OK。**10013「被独占保留」区别于 10048「已被占用」**——这是本案与上一个案例的分水岭。
+3. **别想当然 WSL 是独立 NAT 栈**：`wslinfo --networking-mode` = **mirrored**，WSL 与 Windows 共享 localhost，WSL 侧绑 49760 也失败（`EADDRINUSE`）。→ 下结论前先确认 WSL 网络模式，不存在"Windows 不行 WSL 行"的不对称。
+4. **"在排除表里"≠"一定绑不上"**：`50000`（带 `*` 的托管块）反而 bind OK，只有 49760 所在的非 `*` 动态块才吃 WSAEACCES。
+5. **pwsh 探针两个坑**（详见 `software`/references/windows.md）：① PS 5.1 的 native/中文输出按 GBK，UTF‑8 strict 解码会乱码/炸 channel → 探针标签只用 ASCII，或 native exe 管 `iconv -f gbk`；② `HttpClient.Result` 被 PS 包成无信息的 `RuntimeException` → 改用 `TcpClient` + `Invoke-WebRequest -Proxy` 才拿得到干净结果。
+
+## 根因
+
+- Windows 临时/动态端口段默认 **49152–65535**（`netsh int ipv4 show dynamicportrange tcp`）。这段是给"系统自动分配的短命客户端连接"用的，不适合挂固定服务。
+- 跑 WSL2 / Docker / Hyper‑V 时，**HNS + WinNAT + vmcompute**（实测均 Running）为 NAT 记账，在**开机时**从这段里预先圈走几大块、打独占标记 → 进 `excludedportrange`（如 49694–49793）。
+- **这些块每次开机现圈、位置会漂**，叠加"谁先绑谁赢"的启动抢占赛：
+  - 之前能用 = 某次开机块没盖到 49760，或 `verge-mihomo` 抢在保留之前先绑住了。
+  - 这次不行 = 块 49694–49793 圈住 49760 且 mihomo 没抢先 → bind 吃 WSAEACCES → mixed-port 监听起不来，只剩 redir 7892 + dns 53。
+- Verge 又把 `127.0.0.1:49760` 写进系统代理注册表（残留）。但 `ProxyEnable=0` 时这是**潜在陷阱、非现行故障**：守规矩的程序见开关关着就直连；只有无视开关、硬读 `ProxyServer` 的程序才会撞死端口（Docker Desktop 的 system-proxy 自动探测是历史典型，也因此当初被迫改成 manual 指 7890）。
+
+## 解决
+
+- **根治**：别把固定服务端口挂在 49152–65535。改到**低端口（< 49152）** 即可永久避开 Hyper‑V 圈占。例：Clash Verge `mixed-port` 49760 → 49000（`49000<49152`，实测 bind OK）或 7888。WSL 那个 `mihomo.service` 用 7890 就从没这毛病。
+- **GUI 应用在 GUI 里改**：Clash Verge Rev 是 `verge.yaml` → 生成 `clash-verge.yaml` → 热重载 mihomo。GUI 正开着时直接改底层文件会被覆盖 / 不重载；非要改文件先完全退出 GUI 再改再开。
+- **诊断口诀（绑定失败先看错误码分流）**：
+  - `10013 AccessDenied / WSAEACCES` → 端口被 Hyper‑V **独占保留**，查 `excludedportrange`，改**低端口**（本案）。
+  - `10048 已占用但 netstat / Get-NetTCPConnection / ss 都查不到` → WSL 网络栈残留，`wsl --shutdown` 重建（见上一个案例）。
+
 ## Windows 普通 PowerShell 创建文件 symlink 失败
 
 > 2026-04-20 | Windows | PowerShell | symlink 权限
