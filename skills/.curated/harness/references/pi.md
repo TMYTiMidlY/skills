@@ -568,8 +568,8 @@ README 一句话："用 tmux 起多个 pi 实例"；仓库 `docs/tmux.md` 只讲
 | 工具 | npm · ★ · license | **驱动 pi 的方式**（关键差异） | 传输 · 端口 | 多会话 | 复用 `~/.pi/agent` | 特色 | 短板 |
 |---|---|---|---|---|---|---|---|
 | **agegr/pi-web** | `@agegr/pi-web` · ~1.1k★ · MIT | **SDK 进程内**（`createAgentSessionFromServices`；浏览器真驱动 prompt/steer/切模型/compact/fork） | Next.js · **SSE** · :30141 | 部分 | ✅ | 会话浏览/fork、**git worktree**、diff/图/pdf/docx 预览、skill 开关、context/cost | 无内置终端 |
-| **deflating/tau** | `tau-mirror` · ~275★ · MIT\* | **进程内 pi 扩展**，镜像正在跑的 TUI（`session_start` 自启；浏览器发 prompt→`pi.sendUserMessage`，**双向同步**） | Node `ws` · :3001 · **绑 0.0.0.0** | 一次镜像 1 个活动会话 | ✅（进程内自动继承） | **手机镜像**（`/qr` 二维码 + Tailscale 检测）、可选 Basic Auth | 无终端 / 无 skill / 无 pdf |
-| **BlackBelt/pi-agent-dashboard** | `@blackbelt-technology/pi-agent-dashboard` · ~188★ · MIT | **spawn N×`pi --mode rpc`**（`process-manager.ts`+`rpc-keeper/keeper.cjs`，每会话一 keeper、按行喂 stdin） | Fastify+`ws` · :8000(UI)+:9999(pi 桥) · 另有 **Electron** | **是**（"指挥一支 pi 大军"） | ✅（`auth.json`+`providers.json`，含浏览器内 OAuth 登录） | 内置终端(node-pty/xterm)、Monaco diff、pi-flows/subagents、OpenSpec、**mDNS+zrok 远程** | 重；只支持 pi、不支持 Oh My Pi |
+| **deflating/tau** | `tau-mirror` · ~275★ · MIT\* | **进程内 pi 扩展**，镜像正在跑的 TUI（`session_start` 自启；浏览器发 prompt→`pi.sendUserMessage`，**双向同步**） | Node `ws` · :3001 · **绑 0.0.0.0** | 一次镜像 1 个活动会话 | ✅（进程内自动继承） | **手机镜像**（`/qr` 二维码 + Tailscale 检测）、**PWA 可装主屏**、可选 Basic Auth | 无终端 / 无 skill / 无 pdf |
+| **BlackBelt/pi-agent-dashboard** | `@blackbelt-technology/pi-agent-dashboard` · ~188★ · MIT | **spawn N×`pi --mode rpc`**（`process-manager.ts`+`rpc-keeper/keeper.cjs`，每会话一 keeper、按行喂 stdin；另经 SDK 注册桥扩展） | Fastify+`ws` · :8000(UI)+:9999(pi 桥) · 另有 **Electron** | **是**（"指挥一支 pi 大军"） | ✅（`auth.json` live-sync、浏览器内 OAuth） | 内置终端(node-pty/xterm)、Monaco diff、pi-flows/subagents、OpenSpec、**mDNS+zrok 远程** | 重；只支持 pi、不支持 Oh My Pi |
 
 **三范式数据流**（同一 `~/.pi/agent` 底座、三种驱动一图；均无一依赖被删的 `pi-web-ui` 组件库，全自造前端）：
 
@@ -595,11 +595,44 @@ flowchart TD
     DASH4 --> AGENT
 ```
 
-- **agegr/pi-web**（最像"单人版 CLI 搬进网页"）：`npx @agegr/pi-web@latest` → `http://localhost:30141`（`--port/-p`、`--hostname/-H`）；默认 localhost、无鉴权 token。
-- **deflating/tau**（"给正在跑的会话开第二块屏"）：`pi install npm:tau-mirror` 后正常起 `pi`，状态栏出 URL、终端 `/qr` 出二维码。**默认绑 `0.0.0.0`**，公网/共享网络务必 `TAU_HOST=127.0.0.1` 或设 `TAU_USER/TAU_PASS`。License 仅在 `package.json`/README 声明 MIT、**未随仓库附 `LICENSE` 文件**，故 GitHub 识别为无（表中记 `MIT*`）。
-- **BlackBelt/pi-agent-dashboard**（多 agent 督程 + 全家桶）：`npm i -g @blackbelt-technology/pi-agent-dashboard && pi-dashboard` → :8000（`--port`/`--pi-port`/`--no-tunnel`）；亦有 Electron 桌面版与 Docker。**pocket-pi 安卓内嵌的就是它**（见下节「远程控制与移动端」）。
+三者深潜见下（均 ⬜ 社区、本地 clone 在 `~/projects/readonly-repos/{pi-web,tau,pi-agent-dashboard}`）。
 
-> 均来自本地 clone `~/projects/readonly-repos/{pi-web,tau,pi-agent-dashboard}`：pi-web `lib/rpc-manager.ts`(`startRpcSession`/`AgentSessionWrapper`)、`app/api/agent/[id]/events/route.ts`(SSE)、`bin/pi-web.js`(:30141)、`lib/session-reader.ts`(`getAgentDir`)；tau `extensions/mirror-server.ts`(:3001·`0.0.0.0`·`session_start`·`handleCommand`→`pi.sendUserMessage`)、`package.json`(`pi.extensions`)；dashboard `packages/server/src/{process-manager.ts,rpc-keeper/keeper.cjs,server.ts,cli.ts}`(:8000/:9999)。
+### agegr/pi-web（⬜ SDK 进程内独立服务）
+
+最像"把单人版 CLI 原样搬进网页"。`npx @agegr/pi-web@latest` → `http://localhost:30141`（`bin/pi-web.js` 的 `--port/-p`、`--hostname/-H`；默认 localhost、无鉴权 token）。
+
+- **驱动**：不 spawn 任何 pi 子进程，而在自己的 Next.js server 进程里**两段式**起会话——先 `createAgentSessionServices({cwd, agentDir})`、再 `createAgentSessionFromServices({services,…})`（`lib/rpc-manager.ts` 的 `startRpcSession`/`AgentSessionWrapper`；仓库单测明确断言"不用旧的单调 `createAgentSession`"）。浏览器是真驱动：prompt/steer/切模型/compact/fork 全落到这个进程内会话。
+- **栈与传输**：Next.js 16 + React 19；前端经 **SSE** 收事件——server route 回 `text/event-stream`、client 用自动重连的 `EventSource`（`app/api/agent/[id]/events/route.ts`、`hooks/useAgentSession.ts`）。Markdown/数学/图表齐活：`react-markdown`+`remark-gfm`、`katex`、`mermaid`、`react-syntax-highlighter`。
+- **会话/复用**：读 `~/.pi/agent/sessions`（`PI_CODING_AGENT_DIR` 可改指别处），会话即 `sessions/<编码cwd>/<时间戳>_<uuid>.jsonl`。`SessionSidebar.tsx` 按项目列历史会话树，可从任一历史消息续跑或 **fork 成独立路由**；无需重登。多会话是"可列可切"，非并发多聊。
+- **文件/预览**：`FileViewer.tsx` 一件覆盖 source / diff / image / audio / **PDF** / **DOCX**（`lib/file-types.ts` 的 `DocumentPreviewKind="pdf"|"docx"`，DOCX 经 `mammoth` 转 HTML）；另有 `FileExplorer.tsx` 文件树、`ModelsConfig.tsx`、`SkillsConfig.tsx` **skill 开关**。
+- **git worktree**（独有卖点）：`lib/worktree.ts` + `app/api/worktrees/route.ts` + `docs/worktrees.md`——侧栏列一个项目的全部 worktree，用切换器选 pi-web 在哪个 checkout 上开新活，天然适配"一仓多分支并行"。
+- **依赖**：当前 scope `@earendil-works/pi-coding-agent`+`@earendil-works/pi-ai`（均 `^0.80.6`、钉最新），**不碰**被删的 `pi-web-ui`。**无内置终端**。
+
+> pi-web `lib/rpc-manager.ts`（`startRpcSession`/`AgentSessionWrapper`/两段式 `createAgentSessionServices`→`createAgentSessionFromServices`）、`app/api/agent/[id]/events/route.ts`+`hooks/useAgentSession.ts`（SSE/`EventSource`）、`bin/pi-web.js`（:30141·`-p`/`-H`）、`lib/session-reader.ts`（`getAgentDir`）、`lib/file-types.ts`（`DocumentPreviewKind`）、`lib/worktree.ts`+`app/api/worktrees/route.ts`+`docs/worktrees.md`、`package.json`（`@earendil-works/pi-coding-agent`+`pi-ai@^0.80.6`、`next`16、`react`19、`mammoth`/`mermaid`/`katex`）。
+
+### deflating/tau（⬜ 扩展镜像 TUI + 手机 PWA）
+
+"给正在跑的会话开第二块屏"。`pi install npm:tau-mirror`（或 `pi install git:github.com/deflating/tau`）后正常起 `pi`，状态栏出 URL、终端 `/qr` 出二维码。
+
+- **驱动**：它本身是个 pi 扩展（`package.json` 的 `pi.extensions:["./extensions/mirror-server.ts"]`），随 pi 启动、在 `session_start` 里自启内嵌 HTTP+WS 服务（**非**独立进程）。`pi.on(...)` 订阅**正在跑那个 TUI 会话**的约 15 类事件（`agent_*`/`turn_*`/`message_*`/`tool_execution_*`/`auto_compaction_*`/`auto_retry_*`/`model_select`）`broadcast` 给浏览器；浏览器发的 prompt 经 `handleCommand`→`pi.sendUserMessage` 注入同一会话——**双向、但只镜像当前活动会话**：`/api/sessions/switch` 是 no-op（`{success:true, mirror:true, note:"Session switching is controlled by the TUI in mirror mode"}`），换会话得回终端换；历史会话只读浏览（活动会话打绿点）。
+- **前端/传输**：`public/` 全是**原生 vanilla JS**（`app.js`/`session-sidebar.js`/`tool-card.js`/`message-renderer.js`/`websocket-client.js`… 共 16 个纯文件），零框架零构建；`ws` 只在 `/ws` 升级。带 `manifest.json`+`sw.js`——是个**可装到手机主屏的 PWA**。运行时依赖仅 `ws`+`qrcode`；对 pi 只有 `import type … from "@mariozechner/pi-coding-agent"`（旧 scope、仅类型、运行时零占用）。
+- **手机镜像**（招牌）：`/qr` 开 `/api/qr` 用 `qrcode` 出码；启动时扫网卡找 `100.x.x.x`（Tailscale CGNAT 段）自动检测 Tailscale，检出就并排给 LAN 与 Tailscale 两张 QR；心跳保活移动/Tailscale 连接。多开：`~/.pi/tau-instances/` 注册表 + `/api/instances` 让浏览器发现你其它终端里跑着的 tau 实例（作者 tmux 多窗口用法）。
+- **复用/安全**：进程内自动继承 `~/.pi/agent`（`PI_AGENT_DIR`/`SESSIONS_DIR`/`settings.json`，`ExtensionContext` 由运行中的 pi 会话直接传入，无独立鉴权）。**默认绑 `0.0.0.0`**（方便手机），公网/共享网络务必 `TAU_HOST=127.0.0.1` 或开 Basic Auth（`checkBasicAuth` 比对 `TAU_USER/TAU_PASS`，同挡 HTTP 与 WS，仅 `/api/health` 豁免；配好后 UI 有"Require login"开关、写 `settings.json`）。
+- **短板/许可**：**无终端**（ROADMAP 的"Live Terminal Embed"仍是设想）、无 skill；文件侧只有树 + 图片预览（`/api/file/preview` 仅 PNG/JPEG/GIF/WEBP/SVG/ICO，其余 415）+ 编辑工具**行内 diff**（红绿行），**无 PDF**。License 仅 `package.json`/README 声明 MIT、未附 `LICENSE` 文件，GitHub 识别为无（表中记 `MIT*`）。
+
+> tau `extensions/mirror-server.ts`（`pi.on` 约 15 事件→`broadcast`、`handleCommand`→`pi.sendUserMessage`、`/api/sessions/switch` no-op、`/qr`+`/api/qr`+Tailscale `100.` 检测、`checkBasicAuth`、:3001·`0.0.0.0`）、`package.json`（`pi.extensions`、deps 仅 `ws`+`qrcode`、`import type @mariozechner/pi-coding-agent`）、`public/*`（16 原生 JS + `manifest.json`+`sw.js` PWA）、`ROADMAP.md`（终端仍设想）。
+
+### BlackBelt/pi-agent-dashboard（⬜ 多会话督程 + 全家桶）
+
+主打并行——"从一个标签页指挥一支 pi 大军"。`npm i -g @blackbelt-technology/pi-agent-dashboard && pi-dashboard` → `http://localhost:8000`（`--port`/`--pi-port`/`--no-tunnel`）；另有 Electron 桌面版与 Docker。**pocket-pi 安卓内嵌的就是它**（见下节「远程控制与移动端」）。
+
+- **驱动（keeper 三级）**：server 不直接 spawn pi。每个 headless 会话，server 先 spawn 一个 **keeper sidecar**（`packages/server/src/rpc-keeper/keeper.cjs <sessionId>`），keeper 再 spawn `pi --mode rpc` 并**独占其 stdin**（按行喂命令）。keeper **命比 server 长**：server 重启后扫 UDS socket 重连既有 keeper、会话不掉。另有 `tmux` 策略（tmux 窗口里交互式起 pi、不走 keeper）。同时它把自带**桥接扩展**经 SDK `@earendil-works/pi-coding-agent`（`^0.74.0`）注册进 pi——keeper/RPC 与 SDK 两条腿都用。
+- **服务/端口/栈**：`fastify@5` 起两个独立监听——**:8000 浏览器网关**与 **:9999 pi 桥**（`--port`/`--pi-port`）。传输 WebSocket（`@fastify/websocket`+`ws`+xterm `addon-attach`）。前端 React 19 + Vite 6 + Tailwind 4。它是个 **25+ 包的 npm workspaces monorepo**（`shared`/`extension`/`server`/`client`/`electron` + `flows`/`subagents`/`kb`/`automation`/`roles`… 插件），root peerDeps **对新旧 scope（`@earendil-works/*` 与 `@mariozechner/*`）都 optional**，新旧 pi 均可配。
+- **内置终端/文件**（另两家皆无终端）：真终端 `node-pty` + `@xterm/xterm`（ANSI 色、回滚、keep-alive）；文件侧 **Monaco 编辑器** + `@git-diff-view/react`（并排/统一 diff + 文件树）+ `pdfjs-dist`（PDF 预览）。
+- **全家桶**：`pi-flows` 实时执行面板（agent 卡片/详情/流程图）、**subagents** 检视（`subagents-plugin` + 配套 repo）、**OpenSpec** 集成（`@fission-ai/openspec`，`openspec/specs/` 20+ 规格、轮询、后台起会话）、**mDNS** 局域网发现别的 dashboard（`bonjour-service`）、**zrok** 隧道出公网（`tunnel.enabled`、读 `~/.zrok2/environment.json`）。插件靠 `dashboard-plugin-runtime`（loader + slot 注册）挂载。
+- **复用/绑定**：`auth.json` **live-sync** 到运行中会话、浏览器内 OAuth（`jsonwebtoken`）登 provider、桥扩展注册进 `~/.pi/agent/settings.json`、`piSessionsDir` 默认 `~/.pi/agent/sessions`；dashboard 自身配置另存 `~/.pi/dashboard/config.json`。默认 bind `127.0.0.1`（解析链 `--host`→`PI_DASHBOARD_HOST`→`config.bindHost`→`127.0.0.1`；Docker 才 `0.0.0.0`）。**短板**：重；只支持 pi、不支持 Oh My Pi。
+
+> dashboard `packages/server/src/{process-manager.ts,rpc-keeper/keeper.cjs,server.ts,cli.ts}`（keeper 每会话一个·`pi --mode rpc`·独占 stdin·UDS 重连·:8000/:9999）、`openspec/specs/rpc-keeper-sidecar/spec.md`、`packages/server/package.json`（`@earendil-works/pi-coding-agent@^0.74.0`、`fastify`5、`node-pty`、`@fission-ai/openspec`、`bonjour-service`、`jsonwebtoken`）、`packages/client/package.json`（`react`19、`vite`6、`monaco-editor`、`@xterm/*`、`@git-diff-view/react`、`pdfjs-dist`）、`docs/architecture.md`（bind `127.0.0.1` 解析链）、`README.md`（flows/subagents/OpenSpec/mDNS/zrok、Electron/Docker）。
 
 ### <a id="web-ui-legacy"></a>历史：被删的 `@earendil-works/pi-web-ui`（≠ 网页版 TUI）
 
