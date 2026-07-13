@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 镜像与自建 Forgejo、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Hermes agent、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 命令行精准操作（有并发/无关改动时只提交某处、hunk/行级暂存、后有提交时 amend）与 Git 镜像/自建 Forgejo、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Hermes agent、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
 ---
 
 # Software
@@ -29,6 +29,10 @@ SSH 密钥 passphrase、ssh-agent、非交互环境（CI / `bash -c`）私钥带
 ## 自建 Forgejo（公网 22 SSH relay + CI runner）
 
 无独立公网 IP 的内网 WSL2 机上自建 Forgejo，借唯一公网落点 VPS 做入口。核心做法是 SSH passthrough（公网 sshd 按登录名 `git` vs 运维用户分流，不破坏运维 shell）+ 跨机 relay（key 查询/git 命令经一条 SSH 转发到内网 Forgejo 容器的 `forgejo keys`/`serv`）。覆盖整体三段链路架构、为什么网页端加 SSH key 入口机即认（`AuthorizedKeysCommand` 当场查 Forgejo 数据库、不拷文件）、内网机用 authorized_keys 内联 forced command 转发 keys/serv（不另放脚本）、ControlMaster 复用绕过坑、`serv` stdin 透传、入口机发行版差异（SSH service 名/SELinux/sshd_config.d 因发行版而异）、sshd 幂等 append + 安全兜底、Forgejo Actions runner（DinD 隔离、token 注册三步、job 容器回连 `http://forgejo:3000` 的网络设计）、web 经边缘 Caddy 反代（默认中文 header；WSL/Docker 网络细节转 `network` skill）、session COOKIE_NAME 改名治登录 500、数据卷 `/data` 挂载坑（非 rootless 镜像）、**把 Git server 接到 AI agent 的 MCP 配置**（Gitea 有第一方官方 `gitea.com/gitea/gitea-mcp`、Forgejo 无官方 MCP 故用社区事实标准 `codeberg.org/goern/forgejo-mcp` 及为什么是它、两家 flag/env/优先级对照、Copilot CLI `mcp-config.json` 接入、token 走 env 不走 argv 的安全理由）见 [references/git-server.md](references/git-server.md)。
+
+## Git CLI 精准操作（有并发/无关改动时只提交、暂存、丢弃、amend 一处）
+
+工作区同时躺着"你想提交的改动"和"不该由你带走的改动"（并发会话未提交的脏文件、别人已 `git add` 的 rename、untracked 文件）时，如何在**命令行非交互**地只对一处做 commit/stage/discard/stash，以及提交被别人叠了新提交后怎么改它。覆盖：三位置（HEAD/index/worktree）+ "跟谁比"心智模型；`git commit`（无路径）= 给整个 index 拍快照、暂存区里什么都必带走；**在有其他改动时只提交一处的最稳方案 = `git commit <path>`（不带 -p 的 pathspec 提交，忽略整个 index、只记 HEAD+该文件当前内容，连别人已暂存的 rename 都不搭车）**，及"加了 -p 反而破坏隔离性"的反直觉坑（`commit -p f.txt` 仍带走已暂存内容）；各 `-p` 命令的**基准对照表**（`add/commit/restore -p` 基准=index 只动未暂存、`stash -p` 与 `restore -SW --source=HEAD -p` 基准=HEAD 才够得到已暂存，`stash -p` 还不重置 index）；**子文件 hunk/行级的纯 CLI 非交互做法 = 补丁手术**（`git diff | filterdiff --hunks=N | git apply --cached` 一行式，或手删补丁 `@@` 段、`git apply -R` 反向丢弃/撤暂存）；TUI 选择器（`y/n/a/d/s/e`、split 要有未改动行才拆、edit 到行级）简述及与 CLI 补丁手术的**对应表**、`printf 'y\ns\n' | git add -p` 从 stdin 驱动 TUI；**后面已有提交时如何 amend**——`git rebase -i` 的 `reword`（保 tree 只换消息、被改条及其上子提交全部换新 SHA）语义，以及工作区被并发脏文件占住、rebase 拒绝启动时的 plumbing 等效法（`commit-tree` 复用原 tree 重建 + `update-ref` 带旧值 CAS 原子移分支、不碰 index/worktree）见 [references/git.md](references/git.md)。
 
 ## 包管理器全景 / 分类对比（Nix vs apt、choco/winget/Scoop、npm/pnpm/bun、pip…）
 
