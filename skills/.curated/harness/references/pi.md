@@ -12,45 +12,12 @@
 
 ---
 
-## 0. 速览与高频坑
+## 1. 它是什么 / 设计取向
 
 pi 是 Mario Zechner（`badlogic`，libGDX 作者）2025-08 发布、现由 **Earendil** 维护、Armin Ronacher（`mitsuhiko`）共同维护的**终端编码 agent CLI**。
 核心极小（LLM ↔ 4 个工具 ↔ 会话树），一切工作流靠 TS 扩展与 skill 补齐。官网 <https://pi.dev>，文档 <https://pi.dev/docs/latest>，RFC/路线图 <https://rfc.earendil.com/keyword/pi/>。
 
 > 身份/安装/模型目录：`earendil-works/pi` README 与 `packages/coding-agent/package.json`、`pi.dev/docs/latest/{providers,usage}`；本地 clone HEAD `8479bd84743e8889f728acb21a62794102db0529`；`packages/coding-agent/README.md`（四内置工具、OpenClaw SDK、footer、`PI_CACHE_RETENTION`）；root `README.md:11,47-49`（治理、RFC）。
-
-**先记住这些坑（都经源码核实）**：
-
-- **指令文件只认 `AGENTS.md` / `CLAUDE.md`，没有 `PI.md`**；从 cwd 向上走到**文件系统根**（非 git 根）逐层拼接。
-  > `packages/coding-agent/src/core/resource-loader.ts`:67-120、965-990；`docs/usage.md:99-102`；`.agents/skills` 边界 `src/core/package-manager.ts:427-460`。
-- **上下文长度不是旗标**，是模型属性 `contextWindow`（可在 `models.json` 覆盖）+ 自动压缩，没有 `--context-window`。
-  > `packages/coding-agent/docs/providers.md`:14-22、`docs/{settings.md,models.md,compaction.md}`；`packages/ai/src/models.ts`。
-- **自定义 provider 不会把 `GET /v1/models` 自动导入 `/model`**；`models.json` 里仍须显式列出每个模型。模型列表接口只适合人工/脚本探查，不能当作可信能力目录。
-  > `models.json` 自定义 provider：`packages/coding-agent/docs/{models.md,custom-provider.md}`（`providers.<id>.{baseUrl,api,apiKey,models,compat}`、`api` 取值即 4.1 那 9 种 wire API）；baseUrl 经官方 SDK 拼接——`packages/ai/src/api/openai-completions.ts:532-534`（`new OpenAI({baseURL: model.baseUrl})`，SDK 接 `/chat/completions`）、`anthropic-messages.ts:854`（`baseURL: model.baseUrl`，`@anthropic-ai/sdk` 自补 `/v1/messages`）。
-- **`reasoning:true` 只是能力声明，`compat.thinkingFormat` 才决定请求怎么写**；自定义域名常无法自动识别厂商，漏配后会出现“选 `off` 仍思考 / 选 `low` 仍不思考”。
-  > `packages/ai/src/types.ts`（`ThinkingLevel`/`ModelThinkingLevel`）、`packages/agent/src/types.ts:289`；`packages/ai/src/api/{openai-codex-responses.ts:516-525,anthropic-messages.ts:796-1022,openai-completions.ts:600-668}`；`packages/ai/src/models.ts:408-418`（clamp）；`cli/args.ts`（`--thinking`）。
-- **effort 在 UI 里叫 "thinking level"**（`off|minimal|low|medium|high|xhigh|max`），再由 `thinkingLevelMap` 映射档位、由 `thinkingFormat` 序列化成各家的线格式；不是统一的 `reasoning_effort`。
-  > `packages/ai/src/types.ts`（`ThinkingLevel`/`ModelThinkingLevel`）、`packages/agent/src/types.ts:289`；`packages/ai/src/api/{openai-codex-responses.ts:516-525,anthropic-messages.ts:796-1022,openai-completions.ts:600-668}`；`packages/ai/src/models.ts:408-418`（clamp）；`cli/args.ts`（`--thinking`）。
-- **订阅接入用 pi 自己的 OAuth**，不复用官方 Codex/Copilot CLI 的凭据文件。
-  > `packages/ai/src/utils/oauth/openai-codex.ts`:455-463、536-603；`providers/openai-codex.ts`、`providers/openai-codex.models.ts`；`packages/ai/src/utils/oauth/github-copilot.ts`:251-280；`providers/github-copilot.ts:13-17`；`packages/ai/src/auth/helpers.ts:16-21`；`providers/github-copilot.models.ts`。
-- **信任（trust）不是沙箱**：它只决定是否加载项目级 `.pi/*` 与 `.agents/skills`，不限制工具能干什么；工具以 pi 进程权限读写文件、跑 shell。要隔离请上容器。
-  > `packages/coding-agent/docs/security.md`:5-37（信任门 + "not a sandbox"）。
-- **核心没有内置 Web UI / MCP / sub-agent / 权限弹窗**——都靠扩展或社区包补（`Mode` 只有 `text|json|rpc`）。
-  > `packages/coding-agent/README.md` Philosophy 段；`packages/coding-agent/src/cli/args.ts`:10、74-278；`src/main.ts:100-110`（非 TTY 自动 print）；`src/modes/{print-mode.ts,index.ts}`、`src/core/slash-commands.ts:19-42`。
-
-**能力 / 入口一览**：
-
-| 形态 | 命令 / API | 传输 | 会话持久化 | 典型用途 | 状态 |
-|---|---|---|---|---|---|
-| 交互 TUI | `pi` | 终端 | 是 | 人日常用 | 🟩 |
-| print | `pi -p "…"`（非 TTY 自动进入） | stdout | 可选 | 脚本 / CI | 🟩 |
-| JSON | `pi --mode json -p "…"` | stdout（JSONL 事件） | 可选 | 机器消费 | 🟩 |
-| RPC | `pi --mode rpc` | stdin/stdout（JSONL） | 是 | 编辑器/Web/移动端后端 | 🟩 |
-| SDK | `createAgentSession()` | 进程内 | 是 | 嵌入你的 Node 程序 | 🟩 |
-
----
-
-## 1. 它是什么 / 设计取向
 
 ### 1.1 "Primitives, not features"
 
@@ -229,6 +196,14 @@ export interface SessionEntryBase { type: string; id: string; parentId: string |
 ---
 
 ## 3. 五种调用形态
+
+| 形态 | 命令 / API | 传输 | 会话持久化 | 典型用途 | 状态 |
+|---|---|---|---|---|---|
+| 交互 TUI | `pi` | 终端 | 是 | 人日常用 | 🟩 |
+| print | `pi -p "…"`（非 TTY 自动进入） | stdout | 可选 | 脚本 / CI | 🟩 |
+| JSON | `pi --mode json -p "…"` | stdout（JSONL 事件） | 可选 | 机器消费 | 🟩 |
+| RPC | `pi --mode rpc` | stdin/stdout（JSONL） | 是 | 编辑器/Web/移动端后端 | 🟩 |
+| SDK | `createAgentSession()` | 进程内 | 是 | 嵌入你的 Node 程序 | 🟩 |
 
 `Mode` 类型只有 `"text" | "json" | "rpc"`（`--mode`）；`--print`/`-p` 是**正交**的单发开关。**非交互自动化**：stdin **或** stdout 任一非 TTY 会自动进入 print，即使没给 `-p`。官方 README 把它概括为"四种模式"（interactive、print/JSON、RPC、SDK），本文按更细的 5 行拆开。
 

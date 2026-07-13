@@ -13,7 +13,7 @@
 
 ---
 
-## 1. 速览：自定义模型走 `models.json`，不走 `/login`
+## 1. 自定义模型配在 `models.json`（不在 `/login`）
 
 `/login` 里的 provider 列表是**硬编码的内置 provider**（Amazon Bedrock、Anthropic、DeepSeek… 33 个），**没有“自定义 URL + Key”这一项**——找不到是正常的。任意自定义端点走 `~/.pi/agent/models.json`，热加载（改完打开 `/model` 即生效，不重启）。
 
