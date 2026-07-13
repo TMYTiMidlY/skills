@@ -165,6 +165,31 @@ bunx skills update                             # 更新已安装 skills
 
 想创建自己的 skill？使用 `qiuzhi-skill-creator` 即可通过交互式引导完成。
 
+## 链接检查（pre-commit + lychee）
+
+仓库里的 skill 文档含大量外链，用 [pre-commit](https://pre-commit.com) 框架挂了一个 [lychee](https://github.com/lycheeverse/lychee)（Rust 写的异步链接检查器）hook，在提交前自动检查改动到的 markdown 里链接是否失效。配置见根目录 `.pre-commit-config.yaml`。
+
+pre-commit 是一个管理 git hook 的框架：按 `.pre-commit-config.yaml` 把每个 hook 克隆进隔离缓存（`~/.cache/pre-commit/`）、各自建运行环境、版本锁定在 `rev`，不污染项目与系统。lychee 这个 hook 跑的是自动下载的预编译二进制，无需 Node / cargo / Docker。
+
+启用（一次性）：
+
+```bash
+uv tool install pre-commit   # 或 pixi global install pre-commit / brew install pre-commit
+pre-commit install           # 写入 .git/hooks/pre-commit
+```
+
+装好后每次 `git commit` 会自动对暂存的 markdown 跑 lychee，发现失效链接就阻止提交。手动全量检查：
+
+```bash
+pre-commit run lychee --all-files
+```
+
+几点提醒：
+
+- lychee 默认排除 `example.com` 等示例域名与保留 TLD（如 `.invalid`），这是特性不是漏检。
+- 文档里 github.com 链接多时，`export GITHUB_TOKEN=<无权限 PAT>` 可抬高限额、避免限流。
+- 升级 hook 版本用 `pre-commit autoupdate`（会改写 `.pre-commit-config.yaml` 里的 `rev`）。
+
 ## AGENTS.md
 
 [AGENTS.md](AGENTS.md) 是一份通用的 AI agent 行为规则，涵盖 Python 环境选择、Git 操作约束、工具使用习惯等偏好设置。适用于 Claude Code、GitHub Copilot 等支持 `AGENTS.md` / `CLAUDE.md` 的工具。
