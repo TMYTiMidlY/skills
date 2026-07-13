@@ -211,6 +211,41 @@ access-key-id     = 'AKxxxx'
 secret-access-key = 'xxxxxx'
 ```
 
+#### secrets.toml 必须放桶级受限 key，别用存储 root key
+
+**这是重要的安全边界，别图省事直接填 root key。** S3 兼容对象存储（如 RustFS）一般分两类凭据：
+
+- **root / admin key**——能建桶、发 key、设 bucket policy，对**所有桶**有全权；只在部署那一刻临时用（建桶 + 发受限 key），用完即从客户端删掉，绝不长期留存。
+- **桶级受限 key**——只能读写指定的那**一个**桶，是日常唯一该长期存在的凭据。
+
+git-pages 跑在公网 VPS，S3 后端通常是内网另一台机的对象存储。secrets.toml 一旦塞 root key，**VPS 被拿下 = 攻击者拿到整个对象存储所有桶的读写 / 删除权**（不止 pages 桶）；填受限 key 则把爆炸半径锁死在 `git-pages` 这一个桶内。
+
+**最小权限策略（RustFS 实测，2026-07-14）。** git-pages 会自己往桶里写 `blob/`（内容）、`site/`（manifest 清单）、`meta/`，删站 / 过期还要删对象——所以**读 / 写 / 删 / 列举都得有**，只读不够；罐头策略 `readwrite`/`readonly` 是 `arn:aws:s3:::*`（全桶）不能用。桶未开 versioning 时不需要 `s3:*ObjectVersion` / `s3:*BucketVersioning` 那几个 action。下面 5 个 action 足够（桶名按实际替换）：
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": ["arn:aws:s3:::git-pages/*"] },
+    { "Effect": "Allow",
+      "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+      "Resource": ["arn:aws:s3:::git-pages"] }
+  ]
+}
+```
+
+用 mc 落地（root alias 用完即弃、别留客户端）：
+
+```bash
+mc admin policy create ROOT git-pages git-pages-policy.json
+mc admin user add    ROOT git-pages "$(openssl rand -hex 24)"   # AK=git-pages，SK 随机
+mc admin policy attach ROOT git-pages --user git-pages
+```
+
+**换 key 后必做 crosscheck。** 用受限 key 建个 mc alias，确认①能对本桶 put/get/rm、②对**其它桶** `mc ls`/`mc pipe` 一律 `Access Denied`。RustFS 权限**惰性生效**——git-pages 启动只连不鉴权，日志 `serve: ready` **不代表 key 能用**，真正验证要打一个实际站点请求（读 `site/<domain>/.index` + `blob/`）看到 HTTP 200 有内容才算通。换 key 步骤：备份旧 `secrets.toml` → `install -o git-pages -g git-pages -m 600` 装新文件 → `systemctl restart git-pages` → curl 一个已知站点验 200。
+
 > release 落后 `main` 多少：实测（2026-07-04）**v0.9.1 是目前唯一 release**，`main` 领先约 21 commit，但 `config.example.toml` 的键几乎没动，只多 3 个（`[[wildcard]]` 的 `preview-domain`/`max-preview-lifetime`、`[limits]` 的 `allow-expiration`）。落盘前跑 `git-pages -config <file> -print-config` 验证——能解析就打印 effective 配置、非法键逐条点名。
 
 ### S3 桶内部布局与 serve 心智模型
@@ -396,6 +431,8 @@ flowchart TD
   B -->|私有| D["归档 PUT/PATCH<br/>带 Forge-Authorization token（规则 5/7）<br/>内容在请求体(tar/zip), 不 clone"]
   C -.失败模式.-> E["私有库走 webhook → 服务端匿名 clone 报<br/>401 authentication required"]
 ```
+
+> ⚠️ **坑：仓库"公开"是必要不充分条件。** 上图按仓库可见性分岔，但 forge **实例级**开关 `[service] REQUIRE_SIGNIN_VIEW = true`（Gitea/Forgejo 两家同，默认 `false`）会让**未登录连公开仓库都读不到**——此时 git-pages 匿名 clone 公开库**照样 401**，行为等同私有库，只能走归档 PUT。即"仓库设成 public 了 webhook 却仍 401"的隐形原因。判据：匿名 `curl -sI <clone-url>/info/refs?service=git-upload-pack` 或匿名打 `/api/v1/version` 返回 401/403，就是实例开了这开关（详见 `git-server.md` ③ 登录）。
 
 webhook / PUT-仓库-URL 路径让 git-pages **自己去 clone** 仓库——**对私有库匿名 clone 会 401**。私有库要走**归档 PUT**：CI 有仓库读权限 → 本地打成 tar → 带 forge token PUT 上去（内容在请求体，不 clone）。可直接套用的 Forgejo Action 骨架（从 `main` 直接打包发布，归档模式不经 `pages` 分支）：
 
