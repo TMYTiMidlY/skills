@@ -1,20 +1,46 @@
 # Git CLI 精准操作（在有并发/无关改动时只提交、暂存、丢弃、amend 一处）
 
-面向的场景：工作区里同时躺着**你想提交的改动**和**不该由你带走的改动**（并发会话未提交的脏文件、别人已经 `git add` 的 rename、untracked 文件……），你要在**命令行非交互**地只对其中一处做 commit / stage / discard / stash；以及当你的提交后面又被别人叠了新提交时怎么改它。下面结论基于 git 2.43.0。
+面向的场景：工作区里同时躺着**你想提交的改动**和**不该由你带走的改动**（并发会话未提交的脏文件、别人已经 `git add` 的 rename、untracked 文件……），你要在**命令行非交互**地只对其中一处做 commit / stage / discard / stash；以及当你的提交后面又被别人叠了新提交时怎么改它。下面先讲**地基**（三棵树 + commit 到底拍什么），再按你**想干嘛**分三类：只提交一部分 / 只丢弃·撤出·搬走一部分 / 改一条旧提交。结论基于 git 2.43.0。
 
-## 三个位置：HEAD / index / worktree
+## 地基：改动待在哪、commit 到底拍什么
 
-Git 的所有"部分操作"只围绕三个位置：
+### Git 的三棵树：工作区 / 暂存区(index) / HEAD
 
-- **HEAD** —— 上一次提交的快照（tree）。
-- **index / 暂存区** —— 下一次提交的**草稿快照**。它通常落在 `.git/index`，不是一堆散乱文件，而是一张按路径索引的表：每项记录“这个路径下一次提交应指向哪个 blob（文件内容对象）、文件模式和少量状态标记”。同一 worktree 里的多个终端/agent 共享同一个 index；不同 `git worktree` 各有自己的 index。
-- **worktree / 工作区** —— 磁盘上的当前文件。
+"三棵树（three trees）"是 Git 官方书 [Pro Git 的《Reset Demystified》](https://git-scm.com/book/en/v2/Git-Tools-Reset-Demystified)（git-scm.com 官方托管）给的框架：Git 日常工作就是在**三棵树**之间搬运快照。注意这里的"树（tree）"是宽松说法，指**一整套文件（一份快照）**，不是 Git 的 tree 对象那个数据结构（index 有几处并不严格像 tree，但先这么理解最省事）。
 
-`git add -- <path>` 的本质是把该路径**当前工作区内容**写入/更新 index 条目；`git commit`（不带路径）再把整张 index 快照拍成提交。因为 index 按路径分项，add 一个新文件不会改动其它路径的条目，但同一路径若被多个会话同时 stage/commit，仍会互相影响。
+| 树（tree） | Pro Git 给的角色 | 说人话 |
+|---|---|---|
+| **HEAD** | "Last commit snapshot, next parent" | 上一次提交的快照，也是下一次提交的父 |
+| **Index / 暂存区** | "Proposed next commit snapshot" | 你**提议的下一次提交**——`git commit` 就看它 |
+| **Working Directory / 工作区** | "Sandbox" | 沙盒：磁盘上你正在编辑的真实文件 |
 
-## `git commit` 的本质 = 给 index 拍快照
+- **HEAD**：当前分支引用的指针，指向该分支最后一次提交；最简单就把它当"上次提交的快照"。
+- **Index / 暂存区**：你**提议的下一次提交**，Pro Git 也叫它 "Staging Area"——`git commit` 就是拿它打包。它通常落在 `.git/index`，不是一堆散乱文件，而是一张按路径索引的表：每项记录“这个路径下一次提交应指向哪个 blob（文件内容对象）、文件模式和少量状态标记”。同一 worktree 里的多个终端/agent 共享同一个 index；不同 `git worktree` 各有自己的 index。
+- **Working Directory / 工作区**：另两棵树把内容以高效但不便阅读的方式存在 `.git` 里，工作区把它们**解包成真实文件**方便你编辑；Pro Git 把它比作"沙盒"，改动先在这里试，再进暂存区、最后进历史。
 
-`git commit`（**不带路径**）把**整个 index** 打成一个提交，跟你这一轮 `git add` 了哪些无关——暂存区里有什么就提交什么。这不是 `-p` 特有的，是 commit 的定义。
+三者怎么流转（Pro Git 原文）：`git add` “take content in the working directory and copy it to the index”；`git commit` “takes the contents of the index and saves it as a permanent snapshot”。`git status` 里的红/绿正是**相邻两棵树的 diff**——红（"Changes not staged"）= 工作区↔index 有别，绿（"Changes to be committed"）= index↔HEAD 有别。
+
+所以 `git add -- <path>` 的本质就是把该路径**当前工作区内容**写进/更新 index 条目；因为 index 按路径分项，add 一个新文件不会动其它路径的条目，但同一路径被多个会话同时 stage/commit 仍会互相影响。
+
+### `git commit` 拍的是整个暂存区(index) 的快照
+
+`git commit`（**不带路径**）把**整个 index** 打成一个提交，跟你这一轮 `git add` 了哪些无关——暂存区里有什么就提交什么。这不是 `-p` 特有的，是 commit 的定义。因此只要东西在 index 里就必然被带走；要隔离其它路径，只有两条路——把它们撤出 index（`git restore --staged`），或改用 **pathspec 部分提交**（见[场景一](#场景一只提交其中一部分工作区还有别的改动)）。
+
+### 通用规律：任何"部分操作"都是在两棵树之间做 diff
+
+不管你是想提交、丢弃、撤出还是搬走**一部分**改动，命令的行为都由两件事决定：**拿哪两棵树做 diff（"基准 floor" ↔ 目标）**，以及**把选中的改动往哪个方向搬**。记住"基准是谁"，就能预测一条命令看得见什么、动得了什么、什么会被当成不可改的底座。各命令具体的 floor 见文末[「交互式 `-p` 速查」的基准表](#基准表各--p-的-floor-与效果)。
+
+## 速查：想干嘛 → 用什么 → 去哪节
+
+| 你想…… | 最常用的 | 详见 |
+|---|---|---|
+| 只**提交**一部分，别带走工作区里别人的改动 | `git commit -- <path>`（整文件）/ 补丁手术 / `-p`（一部分） | 场景一 |
+| 只**丢弃 / 从暂存区撤出 / 搬进 stash** 一部分 | `git restore …` / `git stash push -- …` / 补丁手术 / `-p` | 场景二 |
+| **改一条已经不在 HEAD 的旧提交**（后面被别人叠了新提交） | `git rebase -i` reword / `--fixup` / plumbing | 场景三 |
+
+## 场景一：只提交其中一部分（工作区还有别的改动）
+
+反面教材——直接 `git commit` 会把暂存区里别人的东西也带走：
 
 ```
 # 只 add 了 f.txt，但暂存区里别人的 rename 也在
@@ -28,17 +54,13 @@ $ git show --stat --oneline HEAD
  other.txt => renamed.txt | 0        # ← rename 搭车进了 commit
 ```
 
-结论：`git commit` **不带路径时**，只要东西在 index 里就必然带走。要隔离其它路径，只有两条路——把它们撤出 index（`git restore --staged`），或改用下面的 pathspec 部分提交：提交内容不取其它 index 条目，点名路径之外的暂存内容不会搭车。
+### 要整个 / 整几个文件 → `git commit -- <path>`（不带 -p）
 
-## 在有其他改动时只提交一处：`git commit -- <path>`（不带 -p）是最稳的 CLI 方案
-
-`git commit -- <path>...`（**带路径、不带 `-p`**）是"部分提交 / partial commit"。git-commit(1) 原文：以文件为参数（*without --interactive or --patch switch*）时，提交会 **"ignore changes staged in the index, and instead record the current content of the listed files (which must already be known to Git)"**——即忽略整个 index，用 `HEAD + 列出文件的当前工作区内容`临时建一棵树来提交。因此：
+`git commit -- <path>...`（**带路径、不带 `-p`**）是"部分提交 / partial commit"，是最稳的 CLI 方案。git-commit(1) 原文：以文件为参数（*without --interactive or --patch switch*）时，提交会 **“ignore changes staged in the index, and instead record the current content of the listed files (which must already be known to Git)”**——即忽略整个 index，用 `HEAD + 列出文件的当前工作区内容`临时建一棵树来提交。因此：
 
 - 只提交你点名的路径；
 - 别人已暂存的改动（rename、其它文件）、你没点名的 untracked 文件**一个都不搭车**，原封不动留在 index / worktree；
 - 对**已跟踪**文件连 `git add` 都省了（工作区改动直接进这一个提交）；但**全新的 untracked 文件必须先让 Git “认识”这个路径**——否则匹配不到、报 `did not match any files known to git`。不必完整暂存内容，优先用下一小节的 `git add -N`。
-
-`--` 是否必需见本节末小节：对 commit 加不加提交结果相同，但推荐带上以防路径被误当成选项。
 
 ```
 # 工作区: 你改了 AGENTS.md，另有 6 项并发改动(4 modified + 2 untracked)
@@ -53,11 +75,11 @@ $ git commit -m "docs: update agent rules" -- AGENTS.md
 |---|---|---|
 | `git commit -m …`（无路径） | 提交整个 index | **有**（index 里就有） |
 | `git commit -- f.txt`（pathspec，**无 -p**） | 忽略 index，只记 HEAD + f.txt 当前内容 | **没有**（隔离干净） |
-| `git commit -p -- f.txt`（pathspec + **-p**） | index 为底座 + 选中 hunk（见文末「`-p` 系列的真相」） | **有**（rename 是底座，搭车） |
+| `git commit -p -- f.txt`（pathspec + **-p**） | index 为底座 + 选中 hunk（见文末[「基准表」](#基准表各--p-的-floor-与效果)） | **有**（rename 是底座，搭车） |
 
 > ⚠️ 反直觉点：给 `git commit` 加了 `-p` **反而破坏了 pathspec 提交本来的隔离性**。`commit -p f.txt` 不是"只提交 f.txt 一处"的隔离方案；`commit f.txt`（不带 -p）才是。`commit -p f.txt` 的价值只在"没有别的东西暂存"时——它省的是 `git add`，不是省"清理别人的暂存内容"。
 
-### 全新文件：用 `git add -N` 只登记路径，再精准提交
+### 全新 untracked 文件 → `git add -N` 再 `git commit -- <path>`
 
 `git add -N` / `--intent-to-add` 仍然会写 index，但只写一个“这个路径稍后要加入”的标记，不把文件内容暂存进去。git-add(1) 原文：*“An entry for the path is placed in the index with no content.”* 因此更准确的说法是**轻触 index，而不是完全不碰 index**。
 
@@ -74,27 +96,11 @@ git commit -m "add new.txt" -- new.txt
 
 边界：这种隔离保证的是**其它路径**不受影响。若另一会话也在操作 `new.txt` 本身（或已 stage 同一文件的其它 hunk），pathspec 无法区分“同一路径里谁的改动”；应改用独立 worktree，或用临时 index + `commit-tree`。
 
-### `--` 分隔符：加不加提交结果相同，但推荐带上
+### 只要文件里的某些 hunk / 行
 
-`--` 是 git 通用的**选项/路径分隔符**（git-commit(1) 的 SYNOPSIS 就写作 `[--] [<pathspec>...]`），本质是 revision 与 path 的消歧符（gitcli(7)）。对 `git commit`：
+两条路：**非交互 / 脚本化**（补丁手术，确定性、适合 agent）或**交互式 `-p`**（逐 hunk 问你）。
 
-- **提交结果与是否带 `--` 无关**：普通文件名下 `git commit f.txt` 与 `git commit -- f.txt` 产生完全相同的提交（都走上面的 pathspec 部分提交）。`--` 不改变"提交什么"，只消歧义。
-- **`--` 防的是"路径被误当成选项"**：文件名以 `-` 开头时，不带 `--` 会被解析成选项：
-
-  ```
-  $ git commit -m c -x      → error: unknown switch `x'    # -x 被当成选项
-  $ git commit -m c -- -x   → 正常提交名为 -x 的文件         # -- 之后 -x 是路径
-  ```
-
-  `git commit` 不接受 revision 参数，所以"路径名撞分支/标签名"这种歧义**咬不到 commit**（不像 `checkout`/`restore`/`reset`）；但加 `--` 的习惯全 git 一致、无害。
-- **选项要放在 `--` 前面**：`-m` / `-F` 等必须在 `--` 之前；`--` 之后的一切都当路径（把 `-m msg` 放到 `--` 后面会报 `pathspec '-m' did not match`）。
-- **官方建议**：gitcli(7) —— *"When writing a script that is expected to handle random user-input, it is a good practice to make it explicit which arguments are which by placing disambiguating `--` at appropriate places."* 路径来自变量 / 通配符 / 用户输入时显式加 `--` 更稳，所以把 `git commit -- <path>` 作为默认推荐写法。
-
-同理 `git restore -- <path>`、`git stash push -- <path>`、`git checkout <rev> -- <path>` 等吃路径的命令也建议用 `--` 划清"路径从哪开始"；对同时吃 revision 的命令（checkout/restore/reset）更是刚需。
-
-## 子文件（hunk / 行）级的纯 CLI 非交互做法：补丁手术
-
-Git **没有**非交互的 hunk 选择 porcelain——`-p` 系列本质是 TUI（原理见文末两节）。要脚本化 / 非交互地只处理某个 hunk 或某几行，走 `git diff` 导出补丁 → 裁剪 → `git apply` 打回。方向靠 `git apply` 的参数：
+**① 非交互 / 脚本化：补丁手术** —— 这是子文件级操作的**通用工具**（丢弃、撤出也用它，方向见[场景二](#场景二只丢弃--撤出暂存--搬进-stash-一部分)）。Git **没有**非交互的 hunk 选择 porcelain（`-p` 系列都是交互式的），所以走 `git diff` 导出补丁 → 裁剪 → `git apply` 打回，方向靠 `git apply` 的参数：
 
 | 目的 | 命令 |
 |---|---|
@@ -116,11 +122,53 @@ $ git commit -m "只提交第25行那处"       # 只含 TWENTYFIVE
 
 没有 `filterdiff` 时，用 `git diff <path> > p.patch` 手工删掉不要的 `@@` 段（每个 hunk 从 `@@` 开始到下一个 `@@` 或文件尾），保留补丁头四行（`diff --git` / `index` / `---` / `+++`），再 `git apply --cached p.patch`。git diff 每个 `@@` 的行号是相对原文件的绝对值，删掉别的 hunk 不影响保留 hunk 的定位。
 
-## 后面已经有别人的提交时，如何 amend 旧提交
+**② 交互式：`git commit -p` / `git add -p`** —— 逐 hunk 问你 `y/n`。关键：`-p` 和路径是**正交**的两件事——**`-p` 决定"问不问"（问 = 逐 hunk 让你挑），路径只决定"在哪些文件里问"**。所以 `git commit -p f.txt` 会把 f.txt 的每个 hunk 都问你一遍（其它文件不问）；想要 f.txt 全部又不被问，就别加 `-p`、直接 `git commit -- f.txt`。按键和基准详见文末[「交互式 `-p` 速查」](#附交互式--p-速查)。
+
+### `--` 分隔符：加不加提交结果相同，但推荐带上
+
+`--` 是 git 通用的**选项/路径分隔符**（git-commit(1) 的 SYNOPSIS 就写作 `[--] [<pathspec>...]`），本质是 revision 与 path 的消歧符（gitcli(7)）。对 `git commit`：
+
+- **提交结果与是否带 `--` 无关**：普通文件名下 `git commit f.txt` 与 `git commit -- f.txt` 产生完全相同的提交（都走上面的 pathspec 部分提交）。`--` 不改变"提交什么"，只消歧义。
+- **`--` 防的是"路径被误当成选项"**：文件名以 `-` 开头时，不带 `--` 会被解析成选项：
+
+  ```
+  $ git commit -m c -x      → error: unknown switch `x'    # -x 被当成选项
+  $ git commit -m c -- -x   → 正常提交名为 -x 的文件         # -- 之后 -x 是路径
+  ```
+
+  `git commit` 不接受 revision 参数，所以"路径名撞分支/标签名"这种歧义**咬不到 commit**（不像 `checkout`/`restore`/`reset`）；但加 `--` 的习惯全 git 一致、无害。
+- **选项要放在 `--` 前面**：`-m` / `-F` 等必须在 `--` 之前；`--` 之后的一切都当路径（把 `-m msg` 放到 `--` 后面会报 `pathspec '-m' did not match`）。
+- **官方建议**：gitcli(7) —— *“When writing a script that is expected to handle random user-input, it is a good practice to make it explicit which arguments are which by placing disambiguating `--` at appropriate places.”* 路径来自变量 / 通配符 / 用户输入时显式加 `--` 更稳，所以把 `git commit -- <path>` 作为默认推荐写法。
+
+同理 `git restore -- <path>`、`git stash push -- <path>`、`git checkout <rev> -- <path>` 等吃路径的命令也建议用 `--` 划清"路径从哪开始"；对同时吃 revision 的命令（checkout/restore/reset）更是刚需。
+
+## 场景二：只丢弃 / 撤出暂存 / 搬进 stash 一部分
+
+和场景一同构：**要整文件**用 pathspec 命令（不问），**要文件的一部分**用补丁手术（非交互）或 `-p`（交互）；只是换了动作、命令和基准。
+
+### 动作 × 粒度 → 命令
+
+| 动作 | 整个文件（pathspec，不问） | 某些 hunk/行·非交互（补丁手术） | 某些 hunk/行·交互（`-p`） |
+|---|---|---|---|
+| **丢弃**工作区改动（还原到 index） | `git restore -- <path>` | `git apply -R p.patch` | `git restore -p` |
+| 丢弃工作区**且**暂存（还原到 HEAD） | `git restore -SW --source=HEAD -- <path>` | `git apply -R` + `git apply -R --cached` | `git restore -SW --source=HEAD -p` |
+| 从**暂存区撤出**（unstage，还原到 HEAD） | `git restore --staged -- <path>` | `git apply -R --cached p.patch` | `git restore --staged -p` |
+| 搬进 **stash** | `git stash push -- <path>` | 先补丁手术做出改动再 `git stash` | `git stash -p` |
+
+补丁手术里的 `p.patch` = `git diff <path> > p.patch` 裁剪后；命令细节见场景一「[只要文件里的某些 hunk / 行](#只要文件里的某些-hunk--行)」。
+
+### 差异注脚（都是"基准不同"惹的）
+
+- **`git restore -p`**（默认 = 从 index 还原 worktree）：基准是 **index**，**只能丢弃未暂存的改动**；已暂存的对它是够不到的地板。要连已暂存的一起清，得 `git restore --staged --worktree --source=HEAD -p <path>`（等价旧写法 `git checkout -p HEAD -- <path>`，提示语 "Discard this hunk from index and worktree"）。
+- **`git restore --staged -p`**：基准是 **HEAD**，操作的正是已暂存内容（unstage）。
+- **`git stash -p`**：基准是 **HEAD**，**看得见也能卷走已暂存的内容**；但它**不重置 index**，选走后会留下"index 领先 worktree"的状态（`git status` 里同一文件同时出现在 "Changes to be committed" 和 "Changes not staged"，即 `MM`）。这跟裸 `git stash`（会把 index 也一并重置）不同。
+- 各命令完整的 floor 见文末[基准表](#基准表各--p-的-floor-与效果)。
+
+## 场景三：改一条已经不在 HEAD 的旧提交
 
 场景：你提交后，并发会话在你之上又提交了 `<child>`，你的提交**不再是 HEAD**。`git commit --amend` 只能改 HEAD，够不到你的提交。
 
-**正常办法 —— `git rebase -i` 的 reword / edit**：
+### 只改消息 / 内容 → `git rebase -i` 的 reword / edit
 
 ```
 git rebase -i <你的提交>^     # 打开待办清单，把你那行的 pick 改成:
@@ -140,7 +188,7 @@ git rebase -i <你的提交>^     # 打开待办清单，把你那行的 pick �
 
 即 `reword` 是 `--amend` 的推广：`--amend` 只够得到 HEAD，`reword` 能改范围内任意一条的消息，代价是重建其上所有子提交。
 
-### 用 fixup 修正旧提交，稍后再折叠
+### 先记下修正、稍后再折叠 → `--fixup` + autosquash
 
 `git commit --fixup=<target>` **不会立刻改写旧提交**，而是在当前分支顶端新建一条普通提交，标题自动写成 `fixup! <target 的标题>`。等工作告一段落，再由 `git rebase -i --autosquash <target>^` 自动把 fixup 移到目标提交后面并标成 `fixup`：内容并入目标提交，fixup 自己的标题/消息丢弃。
 
@@ -157,7 +205,9 @@ git rebase -i --autosquash <target>^
 
 第 2 步的 `--no-edit` 保留 `fixup! ...` 标题，pathspec 只更新点名路径：其它已暂存文件不会搭车、仍留在 index。amend 后 fixup 自己会换一个新 SHA，这是正常的。若 fixup 已经不再是 HEAD，不能直接 amend（会改到当前 HEAD）；通常再建一条指向同一 `<target>` 的 fixup，最后让 autosquash 一并折叠。
 
-**为什么这里 rebase 也可能用不了**：`git rebase -i` 要求 index 和 worktree 干净（会 checkout、移动 HEAD）。工作区若有并发会话**未提交的脏文件**，rebase 直接拒绝启动（`error: cannot rebase: You have unstaged changes.`）；而你又不能 `git stash` 掉别人的改动。
+### 工作区脏、rebase 用不了 → plumbing 手工重建
+
+`git rebase -i` 要求 index 和 worktree 干净（会 checkout、移动 HEAD）。工作区若有并发会话**未提交的脏文件**，rebase 直接拒绝启动（`error: cannot rebase: You have unstaged changes.`）；而你又不能 `git stash` 掉别人的改动。
 
 **不碰工作区的 plumbing 等效做法（= reword 的手工版）**：用 `commit-tree` 重建提交、`update-ref` 带 CAS 原子移分支，全程零 checkout、不读不写 index / worktree。
 
@@ -181,11 +231,17 @@ git update-ref refs/heads/<branch> "$NEW_CHILD" <期望旧tip>
 
 代价：手工重建会漏掉 committer date、GPG 签名、合并提交的第二父等细节，只适合线性、无签名的小改；能跑 `rebase -i` 时优先 rebase。
 
-## `-p` 系列的真相：以某个基准为底座，只能"加"选中的 hunk，减不掉底座
+## 附：交互式 `-p` 速查
 
-每个 `-p`（interactive patch）命令的行为，完全由两件事决定：**拿哪两个位置做 diff（"基准 floor" ↔ 目标）**，以及**把选中的 hunk 往哪个方向应用**。记住"基准是谁"，就能预测它看得见什么、动得了什么、什么会被当成不可改的底座。
+`-p` 系列（`git add -p` / `commit -p` / `restore -p` / `stash -p`）不是 TUI，而是**交互式行提示**——打印一段 diff、问一行 `Stage this hunk [y,n,q,a,d,s,e,?]?`、从 stdin 读**一整行**答案。谱系（从左到右越来越"重"）：
 
-各 `-p` 命令的基准和作用（k.txt 构造：HEAD=`[base]`、index=`[base,STAGED]`、worktree=`[base,STAGED,WORKTREE]`）：
+> 一次性 CLI（参数吃完就退，`git commit -m`）→ **交互式行提示**（`-p`，逐 hunk 问，管道 / here-string 就能喂答案）→ 全屏 TUI（vim / lazygit，raw mode、光标寻址，需 pty 才能自动化）。
+
+所以 `-p` 是交互程序里**最轻的一档**：能被 `printf 'y\nq\n' | git add -p` 这样的管道驱动（真 TUI 做不到）。再提一遍：**`-p` 决定"问不问"，路径只决定"在哪些文件里问"**，两者正交。
+
+### 基准表：各 `-p` 的 floor 与效果
+
+k.txt 构造：HEAD=`[base]`、index=`[base,STAGED]`、worktree=`[base,STAGED,WORKTREE]`。
 
 | 命令 | 基准(floor) | 选择器显示 | 选中后干什么 | 已暂存内容的下场 |
 |---|---|---|---|---|
@@ -198,40 +254,35 @@ git update-ref refs/heads/<branch> "$NEW_CHILD" <期望旧tip>
 
 验证基准的办法：`printf 'q\n' | git commit -p` 只看它列出的 diff。`commit -p` 显示 `@@ -1,2 +1,3 @@`、`STAGED` 行是上下文（行首空格）、只有 `WORKTREE` 是可选的 `+`——证明基准是 index、已暂存内容是不可选的底座。`stash -p` 显示 `@@ -1 +1,3 @@`、`STAGED` 和 `WORKTREE` 都可选——证明基准是 HEAD。
 
-几个容易记错、要点名的行为：
-
-- **`git commit -p [path]`**：commit = `当前 index（底座）+ 你选中的 hunk`。`-p` 后面的 path 只**限制选择器给你看哪些文件的 hunk**，挡不住已暂存内容。所以它"加得上、减不掉"。
-- **`git restore -p`**（默认 = 从 index 还原 worktree）：基准是 index，**只能丢弃未暂存的改动**；已暂存的对它是不可见的地板，丢不掉。要连已暂存的一起清，得 `git restore --staged --worktree --source=HEAD -p <path>`（等价旧写法 `git checkout -p HEAD -- <path>`，提示语 "Discard this hunk from index and worktree"）。
-- **`git stash -p`**：基准是 HEAD，**看得见也能卷走已暂存的内容**；但它**不重置 index**，选走后会留下"index 领先 worktree"的状态（`git status` 里同一文件同时出现在 "Changes to be committed" 和 "Changes not staged"）。这跟裸 `git stash`（会把 index 也一并重置）不同。
-
 一句话总纲：**`commit -p` / `add -p` 往 index 方向加、`restore -p` 从 worktree 方向减、`stash -p` 搬走**；基准=index 的命令只在"未暂存"范围里动，基准=HEAD 的命令（`stash`、`--source=HEAD`）才够得到已暂存内容。
 
-## TUI（交互选择器）简述 + 与 CLI 的对应
+### 按键 + 与补丁手术对应
 
-`git add -p` / `git commit -p` / `git restore -p` / `git stash -p` 都进入逐 hunk 的选择器，主要按键：
+进入选择器后主要按键：
 
 - `y` 选 / `n` 不选本 hunk；`a` 选本文件剩余全部 / `d` 全不选；`q` 退出；`?` 帮助。
 - `s`（split）：把一个大 hunk 拆成小 hunk——**两处改动之间要有未改动行**才拆得开。能拆时菜单才列出 `s`（`[y,n,q,a,d,s,e,?]`），按下即 "Split into 2 hunks" → 变 (1/2)；紧挨着的改动菜单里**根本没有 `s`**（`[y,n,q,a,d,e,?]`），强按提示 `Sorry, cannot split this hunk`。
 - `e`（edit）：手改当前 hunk 的补丁文本，做**行级**精度——不想进去的 `+` 行删掉；想保留成上下文的 `-` 行，把行首 `-` 改成空格。
 
-TUI 按键 ↔ CLI 补丁手术的对应关系：
+按键 ↔ 非交互补丁手术的对应：
 
-| TUI 操作 | 效果 | 非交互 CLI 等价 |
+| 交互按键 | 效果 | 非交互 CLI 等价 |
 |---|---|---|
 | `y`/`n` 逐 hunk 取舍 | 选哪些 hunk 进这次操作 | `filterdiff --hunks=…` 或手删补丁里的 `@@` 段 |
 | `s` split | 把大 hunk 拆开再单选 | 补丁里本就是分开的 `@@` 块，直接挑 |
 | `e` edit | 行级精修 | 直接编辑补丁文本（删 `+` 行 / `-` 改空格） |
 
-**脚本化驱动 TUI**：选择器从 **stdin** 读答案，把单字母答案按顺序喂进去即可，等价于依次敲键：
+**脚本化驱动交互式 `-p`**：选择器从 **stdin** 读答案，把单字母答案按顺序喂进去即可，等价于依次敲键：
 
 ```
 printf 'y\ns\nn\n' | git add -p <path>     # 对第1个hunk: 拆开→留前半→弃后半
 ```
 
-依赖 hunk 的顺序和数量，脆但可脚本化。要稳，优先用前面「补丁手术」那节的 `git diff | filterdiff | git apply`。
+依赖 hunk 的顺序和数量，脆但可脚本化。要稳，优先用[补丁手术](#只要文件里的某些-hunk--行)的 `git diff | filterdiff | git apply`。
 
 ## 相关
 
+- 三棵树概念：[Pro Git · Reset Demystified](https://git-scm.com/book/en/v2/Git-Tools-Reset-Demystified)（git-scm.com 官方书，HEAD / Index / Working Directory 的定义与流转）。
 - 官方文档：[git-commit(1)](https://git-scm.com/docs/git-commit)（DESCRIPTION 的 "way 3" = pathspec 部分提交忽略 index）、[gitcli(7)](https://git-scm.com/docs/gitcli)（`--` 消歧、revision/path 顺序、通配符转义规则）。
 - 跨设备 git 镜像见 [git-mirror.md](git-mirror.md)；自建 Forgejo / Gitea + MCP 见 [git-server.md](git-server.md)。
 - 删除临时文件 / 补丁残留用 `trash-put`，回收站行为见 [trash.md](trash.md)。
