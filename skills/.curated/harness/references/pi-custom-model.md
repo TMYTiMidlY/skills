@@ -9,11 +9,11 @@
 - **【台】** 平台文档 / 用户转贴（如 USTC 大模型平台用户指南的模型列表、价目、分层）。
 - **【测】** 我方 curl / pi 实测（路由 header、`/model/info`、thinking 开关、图片、枚举探针等）。
 
-> 【pi】本文 §1–§4 的 pi 行为以 [docs/models.md](https://pi.dev/docs/latest/models)、[docs/custom-provider.md](https://pi.dev/docs/latest/custom-provider) 为准，serializer/计费细节文档未覆盖处引 [pi-ai 源码](https://github.com/earendil-works/pi/tree/main/packages/ai/src)；§5.2 的具体端点数据是 2026-07 对 `api.llm.ustc.edu.cn` 与 pi `v0.80.6` 的实测快照，随 ACL / router / 版本变化，引用前复跑。
+> 【pi】本文除实测快照外的 pi 行为以 [docs/models.md](https://pi.dev/docs/latest/models)、[docs/custom-provider.md](https://pi.dev/docs/latest/custom-provider) 为准，serializer/计费细节文档未覆盖处引 [pi-ai 源码](https://github.com/earendil-works/pi/tree/main/packages/ai/src)；[实战快照](#ustc-snapshot) 的具体端点数据是 2026-07 对 `api.llm.ustc.edu.cn` 与 pi `v0.80.6` 的实测快照，随 ACL / router / 版本变化，引用前复跑。
 
 ---
 
-## 1. 自定义模型配在 `models.json`（不在 `/login`）
+## 自定义模型配在 `models.json`（不在 `/login`）
 
 `/login` 里的 provider 列表是**硬编码的内置 provider**（Amazon Bedrock、Anthropic、DeepSeek… 33 个），**没有“自定义 URL + Key”这一项**——找不到是正常的。任意自定义端点走 `~/.pi/agent/models.json`，热加载（改完打开 `/model` 即生效，不重启）。
 
@@ -34,7 +34,7 @@
 }
 ```
 
-`id` 之外全部可省（有默认值，见 §2）。配好后该 provider 出现在 `/model` 列表里（不是 `/login`）。需要 OAuth 或非标准流式协议才写 extension 用 `pi.registerProvider()`。
+`id` 之外全部可省（有默认值，见 [models.json 结构与字段](#models-fields)）。配好后该 provider 出现在 `/model` 列表里（不是 `/login`）。需要 OAuth 或非标准流式协议才写 extension 用 `pi.registerProvider()`。
 
 > 【pi】[docs/custom-provider.md](https://pi.dev/docs/latest/custom-provider)（`registerProvider` 用于 OAuth / 非标准协议）；普通 URL+Key 用 `models.json` 即可。
 
@@ -42,7 +42,7 @@
 
 ---
 
-## <a id="models-fields"></a>2. `models.json` 结构与字段
+## <a id="models-fields"></a>`models.json` 结构与字段
 
 一个 provider 块 = 顶层连接信息 + `models` 数组。
 
@@ -62,7 +62,7 @@
 
 > 【pi】[docs/models.md](https://pi.dev/docs/latest/models)「Provider Configuration」+「Value Resolution」（`apiKey` 三形态与解析顺序）。
 
-### 2.1 两入口对照（openai-completions ↔ anthropic-messages）
+### 两入口对照（openai-completions ↔ anthropic-messages）
 
 这是接自定义端点最容易踩的地方，先摆清：
 
@@ -71,7 +71,7 @@
 | `baseUrl` 写法 | **带 `/v1`**：`https://host/v1` | **不带 `/v1`**：`https://host` |
 | 底层 SDK 拼 path | pi 自己接 `/chat/completions` → `…/v1/chat/completions` | `@anthropic-ai/sdk` 自补 `/v1/messages` |
 | 写错的后果 | 少 `/v1` → 404 | 多写 `/v1` → `…/v1/v1/messages` → **404**【测】 |
-| thinking 控制 | 靠 `compat.thinkingFormat` 选 serializer（见 §3） | **原生 serializer**，无需 `thinkingFormat` |
+| thinking 控制 | 靠 `compat.thinkingFormat` 选 serializer（见 [effort / thinking](#thinking-layers)） | **原生 serializer**，无需 `thinkingFormat` |
 | thinking「关」发什么 | 视 format：默认只发 `reasoning_effort`；`deepseek`/`zai` 发 `thinking:{type:"disabled"}` | 统一发 `thinking:{type:"disabled"}` |
 | 缓存命中 usage 字段 | `prompt_tokens_details.cached_tokens` | `cache_read_input_tokens` / `cache_creation_input_tokens` |
 | 图片消息 | `content` 里 `{type:"image_url", image_url:{url}}`（公网 URL 或 `data:image/png;base64,…`） | `content` 里 `{type:"image", source:{type:"base64", media_type, data}}` |
@@ -82,26 +82,26 @@
 
 两条 anthropic-version 头 pi 会自动带，不用手填。
 
-**配置角度**：只看「配起来省不省心」，`anthropic-messages` 更省事——① thinking 走原生 serializer 自动发对 `thinking:{type:…}`，不用像 openai 侧那样猜 `compat.thinkingFormat`（配错就「off 仍思考 / low 仍不思考」，见 §3.1）；② 缓存 pi **默认自动注入** `cache_control`（`cacheRetention≠none` 即开，见 §4.2），开箱即用、不用手标。但「配着省心」≠「后端真给力」：底模真按档想多久、缓存 / 工具在该端点是否真命中省钱，仍要逐项实测——§5.2 就实测出**此网关 openai 侧缓存全 miss、anthropic 侧反而命中省 ~87%**。按你要的模型 / 功能在哪个入口是一等公民来选。
+**配置角度**：只看「配起来省不省心」，`anthropic-messages` 更省事——① thinking 走原生 serializer 自动发对 `thinking:{type:…}`，不用像 openai 侧那样猜 `compat.thinkingFormat`（配错就「off 仍思考 / low 仍不思考」，见 [thinkingFormat 各方言](#thinking-format)）；② 缓存 pi **默认自动注入** `cache_control`（`cacheRetention≠none` 即开，见 [缓存命中](#cache-hit)），开箱即用、不用手标。但「配着省心」≠「后端真给力」：底模真按档想多久、缓存 / 工具在该端点是否真命中省钱，仍要逐项实测——[实战快照](#ustc-snapshot) 就实测出**此网关 openai 侧缓存全 miss、anthropic 侧反而命中省 ~87%**。按你要的模型 / 功能在哪个入口是一等公民来选。
 
-### 2.2 Model 条目字段（全字段 + 默认值）
+### <a id="model-fields-detail"></a>Model 条目字段（全字段 + 默认值）
 
 | 字段 | 必填 | 默认 | 含义 |
 |---|---|---|---|
 | `id` | 是 | — | 传给 API 的模型 ID |
 | `name` | 否 | `id` | 人读标签，`--model` 模糊匹配也认它 |
 | `api` | 否 | 继承 provider | 单模型覆盖 provider 的 `api` |
-| `reasoning` | 否 | `false` | 是否支持扩展思考（**只是能力声明**，见 §3） |
+| `reasoning` | 否 | `false` | 是否支持扩展思考（**只是能力声明**，见 [effort / thinking](#thinking-layers)） |
 | `thinkingLevelMap` | 否 | 省略 | pi 七档 → 厂商档位映射；`null` 隐藏不支持档 |
 | `input` | 否 | `["text"]` | `["text"]` 或 `["text","image"]` |
 | `contextWindow` | 否 | `128000` | 上下文窗口（token） |
 | `maxTokens` | 否 | `16384` | 最大输出 token |
-| `cost` | 否 | 全 0 | 每百万 token 费率（见 §4） |
+| `cost` | 否 | 全 0 | 每百万 token 费率（见 [cost 与缓存计费](#cost-caching)） |
 | `compat` | 否 | 继承 provider `compat` | 兼容性覆盖，含 `thinkingFormat`、`maxTokensField` 等；与 provider 级 `compat` 合并 |
 
 > 【pi】[docs/models.md](https://pi.dev/docs/latest/models)「Model Configuration」字段表与默认值。
 
-**要点**：`models` 必须显式列——pi **不会**请求 `GET /v1/models` 自动生成条目。列表接口可帮你发现候选 ID，但常混别名 / 占位 / 无权限模型，每个条目的能力、上下文、输出上限仍要独立核验（见 §5）。`pi --list-models <pattern>` 可查 pi 最终解析出的 context/max-out/reasoning/image 元数据。
+**要点**：`models` 必须显式列——pi **不会**请求 `GET /v1/models` 自动生成条目。列表接口可帮你发现候选 ID，但常混别名 / 占位 / 无权限模型，每个条目的能力、上下文、输出上限仍要独立核验（见 [验证 + 实战](#verify)）。`pi --list-models <pattern>` 可查 pi 最终解析出的 context/max-out/reasoning/image 元数据。
 
 > 【pi】[docs/models.md](https://pi.dev/docs/latest/models)「Custom Models」：显式列 `models`，不自动导入 `/v1/models`。
 
@@ -109,7 +109,7 @@
 
 ---
 
-### 2.3 在 pi 里选 / 切模型
+### 在 pi 里选 / 切模型
 
 配好后该 provider/model 出现在 `/model` 列表（不是 `/login`）。
 
@@ -119,7 +119,7 @@
 
 > 【pi】斜杠命令 / 旗标 / 快捷键：[docs/usage.md](https://pi.dev/docs/latest/usage)、[cli/args.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/cli/args.ts)、[core/slash-commands.ts](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/slash-commands.ts)、[docs/keybindings.md](https://pi.dev/docs/latest/keybindings)。
 
-## <a id="thinking-layers"></a>3. effort / thinking：能力、档位、线格式是三件事
+## <a id="thinking-layers"></a>effort / thinking：能力、档位、线格式是三件事
 
 设置入口是 `pi --thinking high`、`pi --model "provider/model:high"`、交互 `Shift+Tab`、`settings.json.defaultThinkingLevel`；七档 `off | minimal | low | medium | high | xhigh | max`。但配自定义模型时要分清**三层**：
 
@@ -132,7 +132,7 @@
 > 【pi】[docs/models.md](https://pi.dev/docs/latest/models)「Model Configuration」「Thinking Level Map」；三层职责由 `reasoning` / `thinkingLevelMap` / `compat.thinkingFormat` 分担。
 > 【pi】源码锚点：档位类型 `packages/ai/src/types.ts`（`ThinkingLevel`/`ModelThinkingLevel`）、`packages/agent/src/types.ts:289`；各家 serializer `packages/ai/src/api/{openai-codex-responses.ts:516-525, anthropic-messages.ts:796-1022, openai-completions.ts:600-668}`；七档→厂商档的 clamp `packages/ai/src/models.ts:408-418`；CLI 旗标 `cli/args.ts`（`--thinking`）。
 
-### 3.1 `thinkingFormat` 各方言发什么（仅 `openai-completions` 用）
+### <a id="thinking-format"></a>`thinkingFormat` 各方言发什么（仅 `openai-completions` 用）
 
 `thinkingFormat` 是 **pi 本地枚举**，字符串本身不发给服务端；它决定 serializer 往请求里写哪个字段：
 
@@ -153,9 +153,9 @@
 - 选 `off` 时默认分支可能什么都不发；底模若默认 thinking=on → 「off 仍思考」。
 - 选 `low` 时只发 `reasoning_effort:"low"`；底模真正开关若是 `enable_thinking` 或 `thinking.type` → 「low 仍不思考」。
 
-修法：给该模型显式写对 `compat.thinkingFormat`（具体端点选哪个见 §5，别在这里假设）。
+修法：给该模型显式写对 `compat.thinkingFormat`（具体端点选哪个见 [验证 + 实战](#verify)，别在这里假设）。
 
-### 3.2 `anthropic-messages` 不用这套枚举
+### `anthropic-messages` 不用这套枚举
 
 anthropic 端有独立 serializer：`off` 发 `thinking:{type:"disabled"}`；开启时对旧式模型发 budget-based thinking、对 `forceAdaptiveThinking` 模型发 adaptive thinking + `output_config.effort`。所以 **anthropic provider 的模型不用配 `thinkingFormat`**。
 
@@ -165,9 +165,9 @@ anthropic 端有独立 serializer：`off` 发 `thinking:{type:"disabled"}`；开
 
 ---
 
-## 4. cost 与缓存计费
+## <a id="cost-caching"></a>cost 与缓存计费
 
-### 4.1 cost 字段
+### cost 字段
 
 `cost` = `{ input, output, cacheRead, cacheWrite }`，**每百万 token 费率**；不填全 0（pi 显示 $0）。可选 `tiers` 做超阈值分档定价。
 
@@ -177,7 +177,7 @@ anthropic 端有独立 serializer：`off` 发 `thinking:{type:"disabled"}`；开
 
 > 【pi】`pi-ai` [models.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/models.ts)：`usage.cost.input = (rate.input / 1000000) * usage.input`（output/cacheRead/cacheWrite 同理，求和为 total）；显示层 `$${cost.toFixed(3)}`，无货币换算。
 
-### 4.2 缓存命中谁说了算：服务端 `usage` 自报
+### <a id="cache-hit"></a>缓存命中谁说了算：服务端 `usage` 自报
 
 pi **不自己判断缓存命不命中**——服务端在每次响应的 `usage` 里报了多少 token 命中缓存，pi 只读数、拆桶、乘费率：
 
@@ -200,13 +200,13 @@ pi **不自己判断缓存命不命中**——服务端在每次响应的 `usage
 **本质**：能否吃到缓存 = openai 侧「端点是否透传缓存 usage」＋ anthropic 侧「pi 是否自动标 `cache_control` 且服务端认」，**跟底模是谁基本无关**——同一 DeepSeek V4 Pro，官方 openai 端省 ~99%、USTC openai 端一分不省。
 
 > 【测】上表 pi 端到端 `--mode json` 实跑 `cacheRead`（deepseek-v4-pro / MiniMax-M3，2026-07-13，raw HTTP 复核字段）。MiniMax「114→11541」是同一前缀连测的冷 / 热两轮，说明首发未必满命中。
-> 【pi】**pi 默认给这俩内置 provider 配的 wire 协议**（§2.2 四选一：`openai-completions` / `openai-responses` / `anthropic-messages` / `google-generative-ai`）——DeepSeek 走 **`openai-completions`**（baseUrl `api.deepseek.com`，[providers/deepseek.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/providers/deepseek.ts)）、MiniMax-cn 走 **`anthropic-messages`**（baseUrl `api.minimaxi.com/anthropic`，[providers/minimax-cn.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/providers/minimax-cn.ts)）。上表差异根因也在 pi 侧：openai 端 pi 仅对 `api.openai.com` baseUrl 发 `prompt_cache_key`、第三方不发，能否命中全看服务端自动缓存并回报 `cached_tokens`/`prompt_cache_hit_tokens`（[openai-completions.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-completions.ts)）；anthropic 端 pi **默认自动注入** `cache_control:ephemeral`（`getCacheControl` 默认 `short`、`≠none` 即开，标在 `system`＋末 `user`＋`tools` 三断点），且 `cacheRead` 从 `message_start`／`message_delta` 两处都读（兼容 USTC 这种把 `cache_read` 塞进 `message_delta` 的非标准网关）（[anthropic-messages.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/anthropic-messages.ts)）。
+> 【pi】**pi 默认给这俩内置 provider 配的 wire 协议**（[Model 条目字段](#model-fields-detail) 四选一：`openai-completions` / `openai-responses` / `anthropic-messages` / `google-generative-ai`）——DeepSeek 走 **`openai-completions`**（baseUrl `api.deepseek.com`，[providers/deepseek.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/providers/deepseek.ts)）、MiniMax-cn 走 **`anthropic-messages`**（baseUrl `api.minimaxi.com/anthropic`，[providers/minimax-cn.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/providers/minimax-cn.ts)）。上表差异根因也在 pi 侧：openai 端 pi 仅对 `api.openai.com` baseUrl 发 `prompt_cache_key`、第三方不发，能否命中全看服务端自动缓存并回报 `cached_tokens`/`prompt_cache_hit_tokens`（[openai-completions.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-completions.ts)）；anthropic 端 pi **默认自动注入** `cache_control:ephemeral`（`getCacheControl` 默认 `short`、`≠none` 即开，标在 `system`＋末 `user`＋`tools` 三断点），且 `cacheRead` 从 `message_start`／`message_delta` 两处都读（兼容 USTC 这种把 `cache_read` 塞进 `message_delta` 的非标准网关）（[anthropic-messages.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/anthropic-messages.ts)）。
 
 ---
 
-### <a id="context-window"></a>4.3 上下文长度与压缩
+### <a id="context-window"></a>上下文长度与压缩
 
-**无 `--context-window` 旗标**——上下文窗口是**模型属性** `contextWindow`（见 §2.2，可用 `modelOverrides` 覆盖某模型）。运行期靠：
+**无 `--context-window` 旗标**——上下文窗口是**模型属性** `contextWindow`（见 [Model 条目字段](#model-fields-detail)，可用 `modelOverrides` 覆盖某模型）。运行期靠：
 
 - **自动压缩**：`settings.json.compaction.{enabled, reserveTokens（默认 16384）, keepRecentTokens（默认 20000）}`，触发条件 `contextTokens > contextWindow − reserveTokens`；手动 `/compact [指令]`。
 - **footer 实时用量**：`↑` 输入 `↓` 输出 `R` 缓存读 `W` 缓存写 `CH` 命中率；`/session` 看 token 与成本。
@@ -214,11 +214,11 @@ pi **不自己判断缓存命不命中**——服务端在每次响应的 `usage
 
 > 【pi】[docs/settings.md](https://pi.dev/docs/latest/settings)（`compaction`）、[docs/models.md](https://pi.dev/docs/latest/models)（`modelOverrides.contextWindow`）、[README](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/README.md)（`PI_CACHE_RETENTION`、footer 用量符号）。
 
-## 5. 验证 + 实战
+## <a id="verify"></a>验证 + 实战
 
-配置只是把字段填对，**端点到底是什么、每个参数真不真吃、模型规格是不是真的**，得靠探针验证。§5.1 是通用方法论（与 pi 无关，换任何工具都能用），§5.2 是一份具体端点的实测快照。
+配置只是把字段填对，**端点到底是什么、每个参数真不真吃、模型规格是不是真的**，得靠探针验证。[通用探针方法论](#probe-method)（与 pi 无关，换任何工具都能用）；[实战快照](#ustc-snapshot) 则是一份具体端点的实测快照。
 
-### 5.1 通用探针方法论（逆向刻画一个 LLM 端点）
+### <a id="probe-method"></a>通用探针方法论（逆向刻画一个 LLM 端点）
 
 **证据梯级**（从强到弱用，别反过来）：
 
@@ -242,7 +242,7 @@ pi **不自己判断缓存命不命中**——服务端在每次响应的 `usage
 
 **网关运营侧泄露清单**（客户端记录审计结果时也应脱敏）：LiteLLM 宽松配置可能在普通 key 可见响应里泄露模型白名单、fallback 路由、credential 名、内部 upstream URL / service DNS、版本、RPM、预算与累计 spend。别把 raw header / body 直接提交进 Git。
 
-### 5.2 实战快照：USTC LiteLLM 网关（2026-07）
+### <a id="ustc-snapshot"></a>实战快照：USTC LiteLLM 网关（2026-07）
 
 以下是对**一个具体校园端点**用上面方法跑出来的结果，**不是 pi 或各底模的永久保证**。USTC 用户指南主推四个底模：DeepSeek-V4-Flash、DeepSeek-V4-Pro、Qwen3.6-35B-A3B、Qwen3.6-27B；`glm-5.2` 是 API 额外开放项。协议页只承诺 OpenAI / Anthropic 兼容，未承诺后者 tool/cache 更优。
 
