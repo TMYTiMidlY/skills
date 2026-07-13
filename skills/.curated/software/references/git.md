@@ -100,16 +100,34 @@ git commit -m "add new.txt" -- new.txt
 
 ### 丢弃 / 撤出暂存 / 搬进 stash 整个文件
 
-同样走 pathspec，只动点名的整文件、别的路径不受影响；只是动作和基准不同：
+同样走 pathspec，只动点名的整文件、别的路径不受影响；只是动作和基准不同。末列标出**可逆性**——不可逆的两行别直接跑，改走下面的 stash 替代：
 
-| 想对整个文件做 | 命令 | 基准 → 结果 |
-|---|---|---|
-| **丢弃**工作区改动（还原到 index） | `git restore -- <path>` | 用 index 覆盖 worktree |
-| 丢弃工作区**且**暂存（还原到 HEAD） | `git restore -SW --source=HEAD -- <path>` | 用 HEAD 覆盖 index + worktree |
-| 从**暂存区撤出**（unstage，还原到 HEAD） | `git restore --staged -- <path>` | 用 HEAD 覆盖 index（worktree 不动） |
-| 搬进 **stash** | `git stash push -- <path>` | 把该路径改动存进 stash 并回滚 worktree |
+| 想对整个文件做 | 命令 | 基准 → 结果 | 可逆性 → 替代 |
+|---|---|---|---|
+| **丢弃**工作区改动（还原到 index） | `git restore -- <path>` | 用 index 覆盖 worktree | **不可逆** → 见下「用 stash 顶替」 |
+| 丢弃工作区**且**暂存（还原到 HEAD） | `git restore -SW --source=HEAD -- <path>` | 用 HEAD 覆盖 index + worktree | **不可逆** → 见下「用 stash 顶替」 |
+| 从**暂存区撤出**（unstage，还原到 HEAD） | `git restore --staged -- <path>` | 用 HEAD 覆盖 index（worktree 不动） | 可逆（不碰 worktree）；等价 `git reset -- <path>` |
+| 搬进 **stash** | `git stash push -- <path>` | 把该路径改动存进 stash 并回滚 worktree | 可逆（`git stash pop`/`apply` 找回） |
 
-`git restore -- <path>` **会丢弃未提交改动**、不可逆，跑之前确认路径没错。想只对文件里的**某些 hunk/行**丢弃/撤出/搬走，见[场景二](#场景二只挑文件里的某些-hunk--行子文件级含交互--p)。
+`git restore -- <path>` / `-SW` **会立即、不可逆地丢弃未提交改动**，跑错路径就没了。想只对文件里的**某些 hunk/行**丢弃/撤出/搬走，见[场景二](#场景二只挑文件里的某些-hunk--行子文件级含交互--p)。
+
+#### 更安全的丢弃：用 stash 顶替 restore
+
+把**立即不可逆丢弃**换成**先搬进 stash 留后悔药**：`git stash push -m <标记> -- <path>` 后工作区即刻干净（= restore 效果），改动仍可 `git stash show -p` 查看、`git stash pop` 原样取回；真要永久删的 `git stash drop` 那一刀不可逆，交由人拍板。
+
+#### stash + drop 的适用范围与安全边界
+
+> ⚠️ **drop 不是无条件安全**：stash 栈是整个 worktree 共享的，`stash@{0}` 是动态栈顶——你 push 后只要又有任何 push（并发会话／同事／你自己），你那条就被挤到 `stash@{1}`，`drop stash@{0}` 会误删别人的；`git stash list` 核对到 drop 之间再来一次 push 也会漂（TOCTOU：检查→使用之间的时间窗竞态）。
+
+**安全 drop 的前提 = 单人 · 无并发 · push→drop 间栈没被动过**。做不到就按稳妥梯度来：
+
+1. **优先不 drop**：只求工作区干净的话 `git stash push` 已达成，那条 stash 留栈里不碍事、不影响任何人。
+2. **要删别用裸 `stash@{0}`**：先 `-m` 打唯一标记 → `git stash list` 认准那条**当前**的 `stash@{n}` → 立刻删（更稳可先 `git rev-parse` 记 SHA、删前比对没变再删）。
+3. **多人共享 worktree 别碰共享栈**：改临时 commit（独立 SHA），或 `git stash create`——只生成快照 commit、**不入栈、不动 `stash@{0}`、也不回滚工作区**，自己记返回的 SHA（`git stash apply <sha>` 取用）；它是**游离对象、不再需要时由 gc 自动回收、压根没有 drop 这一步**，天然免疫上面的误删。
+
+#### 旁注：带 safety-net 的 agent 环境（实测）
+
+`preToolUse` 按命令名拦截的 agent 环境实测：`git restore`（含只 unstage 的 `--staged`，属误拦）与 `git stash drop` 被拦，`git stash push` / `pop`、`git reset -- <path>` 放行。所以此类环境里**丢弃走 stash、撤出用 `git reset -- <path>`**，最后 drop 交人做。
 
 ### `--` 分隔符：加不加提交结果相同，但推荐带上
 
