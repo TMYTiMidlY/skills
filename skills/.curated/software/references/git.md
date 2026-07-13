@@ -337,7 +337,7 @@ trash-put "$TMPIDX"
 
 > 根因：porcelain（`commit` / `add` / `-p` / `rebase`）都架在 **index / worktree 抽象层**上、甩不掉底座、要干净工作区；plumbing 的 `commit-tree` 直接操作 tree / blob 对象、**绕过这层抽象**——「要不要 staged、受不受底座约束、工作区干不干净」在这一层根本不成立。代价就是这层便利全没了：手动、易错、真实 index 变陈旧（见 ⚠️）、并发必须 `update-ref` CAS 兜底防 split-brain。
 
-## 事后归因：并发被踩后用 reflog 认出「谁动了 ref」
+## <a id="post-mortem-reflog"></a>事后归因：并发被踩后用 reflog 认出「谁动了 ref」
 
 多个会话共享同一 `.git` 时，"我的提交被谁冲了"靠 reflog 的 **reason 字段**复盘——它是操作类型的签名，据此就能区分 tip 是被 append 前进、还是被 reset 回退：
 
@@ -352,6 +352,34 @@ trash-put "$TMPIDX"
 - **看「操作发生时间」用 `git reflog show --date=iso <ref>`**：`--format=%ci` 拿到的是**被指向提交自身**的提交时间、不是这次 reflog 操作的时间（会误导时序判断）；`%gi`（reflog 条目时间的占位符）在旧版 git 不认、会原样吐 `%gi`。
 - **HEAD 与各分支各有独立 reflog**：`git reflog show HEAD` 与 `git reflog show <branch>` 对照看，才能还原「HEAD 动了但分支没动」这类局部操作。
 - **捞回被冲掉的提交**：被 `reset` / `amend` 弃掉的旧提交不会消失，用 `git reflog`（近期操作）或 `git fsck --no-reflogs`（列 dangling commit）拿到它的 SHA，再 `git reset --hard <sha>` 或按路径 `git restore --source=<sha>` 取回内容。
+
+## <a id="jj-no-index"></a>jj（Jujutsu）：working copy 即 commit、无暂存区
+
+本文每个场景的难点都绕着同一个底座——**index（暂存区）**：`-p` 系列拿它当基准、别人 `git add` 的东西搭车、要「免 add + 行级 + 隔离」三者兼得只能下沉 [plumbing](#plumbing-commit-tree)。[jj（Jujutsu）](https://github.com/jj-vcs/jj) 换了个模型：**没有 index**，working copy 本身是自动快照的 `@` commit——[git-comparison](https://github.com/jj-vcs/jj/blob/v0.43.0/docs/git-comparison.md) 原文 *“There's no index (staging area). Because the working copy is automatically committed…”*。每条 jj 命令先从**文件系统**快照 `@`（不读 git index）再干活；`jj split` / `jj squash -i` 从「父→`@`」的全量改动里挑子集，**选中的就是提交的全部**——没有第三方对象藏预暂存内容，本文的「index 底座搭车」在 jj 里**结构上不成立**。
+
+下表 jj 行为均在 **jj v0.43.0 实测**；官方措辞链接锁到 v0.43.0：
+
+| 本文场景 | jj 命令 | 实测结果 |
+|---|---|---|
+| [场景一](#scene-whole-file)·只提整文件 | `jj split <path>` | 只切出该文件；别人的文件留在 `@`、不搭车 |
+| 场景一·全新 untracked 文件 | `jj split <newfile>` | jj 自动 track，无需 `add -N` 等价物 |
+| 场景一·丢弃整文件 | `jj restore <path>` → `jj undo` | 可 `jj undo` 完整复原（对照 `git restore` 不可逆） |
+| 场景一·撤出暂存 / stash | `jj new`（搁置为 commit） | 无 index → 无「unstage」；无 stash 栈 → 无 drop 误删 |
+| [场景二](#scene-hunk)·免 add + 行级 + 隔离 | `jj split -i` | 只选一个 hunk、别人的文件天然不进这个提交 |
+| 场景二·丢弃 / 移动某 hunk | `jj diffedit` / `jj squash -i` | 行级选择、可 undo；无 index → 无「基准 floor」二义 |
+| [场景三](#scene-old-commit)·reword / 改内容 / 折叠 | `jj describe -r` / `jj diffedit -r` / `jj squash --into <rev>` | 直接改埋掉的提交，后代自动 rebase、change-id 稳定 |
+| [事后归因](#post-mortem-reflog)·认「谁动了 ref」 | `jj op log` / `jj op restore` | 每操作原子、记录整条命令；可整仓 `jj undo` |
+
+本文说 porcelain 做不到、要下沉 [plumbing](#plumbing-commit-tree) 的两处，jj 各一条命令天然解（均实测）：
+
+- **场景二「三者兼得」**：`jj split -i` 一步选中某文件两处相隔 hunk 里的一个（行级）、`@` 里别人的文件不进这个提交（隔离）、全程没 stage 过（免 add）。git 要 `GIT_INDEX_FILE` 临时 index 才能兼得，jj 无 index 直接白送。
+- **场景三「脏工作区改埋掉的提交」**：`@` 躺着并发会话未提交改动时，`jj describe -r` / `jj diffedit -r` / `jj squash --into <rev>` 直接改埋掉的提交，后代自动 rebase、`@` 脏改动原样保留。git 的 `rebase` 在此会 `error: cannot rebase: You have unstaged changes` 拒绝启动——jj **没有「必须先干净的工作区」这个前置**（working copy 就是 `@`）。
+
+> ⚠️ **代价明确，故只作「另一条路」备案、不改本文 git-first 定位：**
+> - **不跑 git hooks**（实测：装了写标记的 `.git/hooks/pre-commit`，`jj describe/commit/split/new` 零触发，同仓 `git commit` 立刻触发）。[git-compatibility](https://github.com/jj-vcs/jj/blob/v0.43.0/docs/git-compatibility.md) 原文 *“Hooks: No.”*（[issue #405](https://github.com/jj-vcs/jj/issues/405)）——靠 pre-commit / commit-msg 框架的团队会被**静默绕过**。
+> - **colocated 下无视 `.git/index`**（实测：`git add` 的内容被忽略、导出后其 index 条目被改写成空 intent-to-add；jj 常把 git 置于 detached HEAD、`git status` 变乱）。git-compatibility 原文 *“Staging area: Kind of. The staging area will be ignored.”*
+> - **行级非交互脚本化弱**：无 `filterdiff` 式一行管道，行级选择默认走 TUI（需 pty），确定性脚本要自写 diff-editor 工具。
+> - **pre-1.0 实验状态**：on-disk 格式 1.0 前有破坏性变更；无 LFS / submodule。
 
 ## 相关
 
