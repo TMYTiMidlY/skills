@@ -77,7 +77,7 @@
 
 两条 anthropic-version 头 pi 会自动带，不用手填。
 
-**配置角度**：只看「配起来省不省心」，`anthropic-messages` 在 thinking 这一轴更简单——原生 serializer 自动发对 `thinking:{type:…}`，不用像 openai 侧那样猜 `compat.thinkingFormat`（配错就「off 仍思考 / low 仍不思考」，见 §3.1）。但它只省这一件事：不保证后端真按档多想，`tool` / 缓存 / 图片是否更好使仍要逐项实测（见 §5）；缓存反而 openai 侧自动命中、anthropic 侧要显式 `cache_control`。所以按你要的模型 / 功能在哪个入口是一等公民来选，别只图省一个 `thinkingFormat`。
+**配置角度**：只看「配起来省不省心」，`anthropic-messages` 更省事——① thinking 走原生 serializer 自动发对 `thinking:{type:…}`，不用像 openai 侧那样猜 `compat.thinkingFormat`（配错就「off 仍思考 / low 仍不思考」，见 §3.1）；② 缓存 pi **默认自动注入** `cache_control`（`cacheRetention≠none` 即开，见 §4.2），开箱即用、不用手标。但「配着省心」≠「后端真给力」：底模真按档想多久、缓存 / 工具在该端点是否真命中省钱，仍要逐项实测——§5.2 就实测出**此网关 openai 侧缓存全 miss、anthropic 侧反而命中省 ~87%**。按你要的模型 / 功能在哪个入口是一等公民来选。
 
 ### 2.2 Model 条目字段（全字段 + 默认值）
 
@@ -182,6 +182,20 @@ pi **不自己判断缓存命不命中**——服务端在每次响应的 `usage
 
 **推论 / 坑**：整条链全靠**服务端自报**。网关若不报 `cached_tokens`（或报 0），pi 就把全部算成全价 input，哪怕物理上真命中；反过来 pi 也无法验证服务端的缓存账。想确认缓存真省钱，连发两次同长前缀、看 `usage` 的 `cacheRead` 是否跳上去（`/session` 里的 `R` 就是它）。另外 openai 端多数厂商不报 `cache_write_tokens`，写缓存往往折进 `input` 按全价计——所以有的平台价目里只有「缓存命中（读）」折扣、没有单列「写缓存」价。
 
+**跨 provider 横向实测**（2026-07-13，pi `v0.80.6`，紧凑连发两次同前缀、`off`，读 pi 归一后的 `cacheRead`）：
+
+| provider（端点） | 协议 | 底模 | call2 `cacheRead` | 结论 |
+|---|---|---|---:|---|
+| 官方 DeepSeek `api.deepseek.com` | openai-completions | DeepSeek V4 Pro | **7424**（省 ~99%） | 官方自动缓存、透传 `prompt_cache_hit_tokens` ✅ |
+| USTC `…/v1` | openai-completions | **同款** DeepSeek V4 Pro | **0** | 网关不报缓存字段、全价 ❌ |
+| MiniMax-cn `api.minimaxi.com/anthropic` | anthropic-messages | MiniMax-M3 | **11541**（≈100%） | pi 自动 `cache_control` 命中 ✅；**首发常冷启动**（同前缀首轮仅 114、次轮才满） |
+| USTC（不带 `/v1`） | anthropic-messages | DeepSeek V4 Pro | **7168**（省 ~87%） | pi 自动 `cache_control` 命中 ✅ |
+
+**本质**：能否吃到缓存 = openai 侧「端点是否透传缓存 usage」＋ anthropic 侧「pi 是否自动标 `cache_control` 且服务端认」，**跟底模是谁基本无关**——同一 DeepSeek V4 Pro，官方 openai 端省 ~99%、USTC openai 端一分不省。
+
+> 【测】上表 pi 端到端 `--mode json` 实跑 `cacheRead`（deepseek-v4-pro / MiniMax-M3，2026-07-13，raw HTTP 复核字段）。MiniMax「114→11541」是同一前缀连测的冷 / 热两轮，说明首发未必满命中。
+> 【pi】**pi 默认给这俩内置 provider 配的 wire 协议**（§2.2 四选一：`openai-completions` / `openai-responses` / `anthropic-messages` / `google-generative-ai`）——DeepSeek 走 **`openai-completions`**（baseUrl `api.deepseek.com`，[providers/deepseek.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/providers/deepseek.ts)）、MiniMax-cn 走 **`anthropic-messages`**（baseUrl `api.minimaxi.com/anthropic`，[providers/minimax-cn.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/providers/minimax-cn.ts)）。上表差异根因也在 pi 侧：openai 端 pi 仅对 `api.openai.com` baseUrl 发 `prompt_cache_key`、第三方不发，能否命中全看服务端自动缓存并回报 `cached_tokens`/`prompt_cache_hit_tokens`（[openai-completions.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-completions.ts)）；anthropic 端 pi **默认自动注入** `cache_control:ephemeral`（`getCacheControl` 默认 `short`、`≠none` 即开，标在 `system`＋末 `user`＋`tools` 三断点），且 `cacheRead` 从 `message_start`／`message_delta` 两处都读（兼容 USTC 这种把 `cache_read` 塞进 `message_delta` 的非标准网关）（[anthropic-messages.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/anthropic-messages.ts)）。
+
 ---
 
 ### 4.3 上下文长度与压缩
@@ -282,10 +296,12 @@ pi **不自己判断缓存命不命中**——服务端在每次响应的 `usage
 | 图片 | 两个 Qwen 正确读随机多色图 | 同样成功 | 只有两种 Qwen 是 VL；DeepSeek/GLM 纯文本 |
 | auto tool calling | DeepSeek/Qwen 实际执行 `read` 成功 | 同样成功 | 不能说 Anthropic tool 更好 |
 | 强制 `tool_choice` | 某些请求把参数写进 reasoning 而非 `tool_calls` | 某些写进 thinking 而非 `tool_use` | auto 成功不代表 forced 完全兼容 |
-| prompt cache | 二次请求出现 `cached_tokens` | 显式 `cache_control:ephemeral` 后出现 `cache_read_input_tokens` | 两边都能命中，字段不同 |
+| prompt cache | **此网关不报缓存字段** → `cacheRead` 恒 0、全价 | pi 自动加 `cache_control`，紧凑连发即命中（`cacheRead` 7168、省 ~87%） | **反直觉：此端点 anthropic 才省钱、openai 拿不到缓存** |
 | thinking `off/high` | 配 `thinkingFormat`（deepseek/zai）后经 pi 正确切换 | 原生 serializer 正确切换 | serializer 差异，非模型能力差异 |
 
 > 【测】2026-07-13 pi `--mode json` 实跑：五模型 `off` 无 reasoning、`high` 有；两个 Qwen 读对随机四色图；`read` 工具闭环成功。thinking 细节：底模都吃顶层 `thinking:{type:"enabled"|"disabled"}`；顶层 `enable_thinking`（`qwen` 格式）被网关 `400 Unsupported parameter` 拒——所以 openai 侧给 DeepSeek 两款 + 两个 Qwen `reasoner` 配 `thinkingFormat:"deepseek"`、GLM 配 `"zai"`；anthropic 侧不配。
+
+> 【测】2026-07-13 缓存实测（deepseek-v4-pro，raw HTTP + pi `v0.80.6` 端到端双验）：**openai 侧此网关二次请求 usage 里 `cached_tokens`/`prompt_cache_hit_tokens` 一个都不报** → pi `cacheRead` 恒 0、全价（pi 对非 `api.openai.com` 的 baseUrl 也不发 `prompt_cache_key`，源码 [openai-completions.ts](https://github.com/earendil-works/pi/blob/main/packages/ai/src/api/openai-completions.ts)）。**anthropic 侧 pi 默认自动注入 `cache_control`**（`system` + 末条 `user` block + `tools` 三个断点，`getCacheControl` 默认 `short`、`≠none` 即开），紧凑连发两次 call2 `cacheRead=7168`、成本 `¥0.030→¥0.004`（省 ~87%）。两个坑：① USTC 建缓存**不报** `cache_creation`（pi `cacheWrite` 恒 0、价目也无「写缓存」列）；② USTC 把 `cache_read` 塞进 SSE 的 `message_delta`（非标准，Anthropic 标准放 `message_start`）——pi `message_start`/`message_delta` 两处都读故仍拿到，但两发间隔一旦拖过 ephemeral 短 TTL 就 miss（首轮因中间插 openai 调用而漏，紧凑重发即命中）。
 
 **最终配置（两协议各 5 个不同底模）**——`openai-completions` 侧带 `thinkingFormat` + `cost`，`anthropic-messages` 侧同样 5 模型但**不带** `thinkingFormat`（原生 serializer）：
 
