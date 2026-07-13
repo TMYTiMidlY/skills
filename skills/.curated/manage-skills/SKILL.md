@@ -113,4 +113,4 @@ done
 
 ## Hermes
 
-Hermes 有独立于本仓 `.agents/skills` 约定的 skill 体系（`hermes skills install / uninstall / search / inspect / tap`、`external_dirs` 发现）。那套发现与来源管理属于 Hermes runtime 自身，见 `harness` skill 的 Hermes 运行时章节；本 skill 只管本仓已有 skill 的安装、边界、命名、引用和 README。
+Hermes 的 skill 发现机制和本仓这套 `.agents/skills` 软链不一样（走它自己的 `hermes skills` CLI），给 Hermes 装 / 卸 skill 时去 `harness` skill 的 Hermes 运行时章节参考一下。
