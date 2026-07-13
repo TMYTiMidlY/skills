@@ -5,7 +5,7 @@
 > 扩展与 skill 系统与自研插件、多 agent 协同、手机远控，以及生态与社区。
 >
 > **来源基线**：`earendil-works/pi`（原 `badlogic/pi-mono`）@ `8479bd8`（2026-07-11），npm `@earendil-works/pi-coding-agent` v0.80.6，MIT。
-> 本文源码引用均来自本地全量 clone：`~/projects/readonly-repos/{pi,pi-telegram,pi-chat,pi-skills}`，行号对应上述 commit。
+> 本文源码引用均来自本地全量 clone：`~/projects/readonly-repos/{pi,pi-telegram,pi-chat,pi-skills,pi-web,tau,pi-agent-dashboard}`，行号对应上述 commit。
 > ⚠️ 时效：模型名（`gpt-5.6-*`、`claude-sonnet-5`、`claude-opus-4.8`）、版本号、star 数、画廊包数（~5.1k）都会变；标注"快照"处以你查证当时为准。
 >
 > **集成状态图例**（全文用）：🟩 Core（主仓内置） · 🟦 官方示例（`examples/`，需自行拷贝） · 🟨 官方实验包（API 不稳定） · 🟧 独立 first-party 仓库 · ⬜ 社区包/项目。
@@ -23,7 +23,7 @@
 - **effort 在 UI 里叫 "thinking level"**（`off|minimal|low|medium|high|xhigh|max` 七档），不是统一的 `reasoning_effort`。→ 见 [接自定义模型](pi-custom-model.md#thinking-layers)
 - **订阅接入用 pi 自己的 OAuth**，不复用官方 Codex / Copilot CLI 的凭据文件。→ 见 [用 Codex 订阅](#codex-sub)、[用 Copilot 订阅](#copilot-sub)
 - **信任（trust）不是沙箱**：只决定加不加载项目级 `.pi/*` 与 `.agents/skills`，不限制工具能干什么；要隔离请上容器。→ 见 [安全 · 信任 · 隔离](#security-trust)
-- **核心没有内置 Web UI / MCP / sub-agent / 权限弹窗**——都靠扩展或社区包补（`Mode` 只有 `text|json|rpc`）。→ 见 [Primitives, not features](#primitives)、[调用形态](#invocation-modes)
+- **核心没有内置 Web UI / MCP / sub-agent / 权限弹窗**——都靠扩展或社区包补（`Mode` 只有 `text|json|rpc`）。→ 见 [Primitives, not features](#primitives)、[调用形态](#invocation-modes)、[Web 界面](#web-ui)
 
 ---
 
@@ -286,7 +286,7 @@ session.dispose();
 
 > `packages/coding-agent/src/index.ts`:192-219（`core/sdk.ts`）；`examples/sdk/{01-minimal,12-full-control,13-session-runtime}.ts`、`examples/sdk/README.md`。
 
-> **核心无 Web 传输**：没有内置 HTTP server。"Web" 靠 ① `/share` → `pi.dev/session/#<id>` 渲染 HTML；② `--mode rpc` 让外部 Web 后端驱动；③ 社区前端（pocket-pi 的 dashboard 等）。
+> **核心无 Web 传输**：没有内置 HTTP server。"Web" 靠 ① `/share` → `pi.dev/session/#<id>` 渲染 HTML；② `--mode rpc` 让外部 Web 后端驱动；③ 社区前端（pi-web / tau / dashboard，**见 [Web 界面](#web-ui)**）。
 
 > `packages/coding-agent/src/cli/args.ts`:10、74-278；`src/main.ts:100-110`（非 TTY 自动 print）；`src/modes/{print-mode.ts,index.ts}`、`src/core/slash-commands.ts:19-42`；`badlogic/pi-telegram`（README:68-135 + `index.ts:867-875` 配对、events、`telegram_attach`、旧 scope peerDeps）；`earendil-works/pi-chat`（README:176-197 + `index.ts:683-697`、`src/{runtime,gondolin,secrets.ts:10-45}`）；`packages/coding-agent/docs/termux.md:16-100`；社区 `CelestialCreator/pocket-pi`、`a2ajinkya/phone-pi`。
 
@@ -399,7 +399,7 @@ const helloTool = defineTool({
 export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
 ```
 
-### 生命周期事件：33 个，其中 15 个能拦截/改写
+### 生命周期事件（通知 vs 可拦截/改写）
 
 `types.ts` 恰好导出 **33** 个事件；其中 **15** 个具有决策/取消/改写/替换/处理语义（其余为通知）：
 
@@ -561,6 +561,33 @@ README 一句话："用 tmux 起多个 pi 实例"；仓库 `docs/tmux.md` 只讲
 
 ---
 
+## <a id="web-ui"></a>Web 界面 / 在浏览器里用 pi
+
+核心**不内置 Web UI / HTTP server**（`Mode` 只有 `text|json|rpc`，见 [调用形态](#invocation-modes)）。想"像 TUI 一样在浏览器里用 pi"全靠**社区前端**，它们的共同底座是 pi 的三条对外口子——[`--mode rpc`](#rpc)（JSONL/stdio）、[SDK `createAgentSession()`](#sdk)、扩展事件 API（`pi.on(...)`）——外加**直接复用 `~/.pi/agent`**（会话 `sessions/*.jsonl` + `auth.json`/`models.json`，**无需重新登录**）。据此分三种范式，各有代表作（均 ⬜ 社区、★为快照）：
+
+| 工具 | npm · ★ · license | **驱动 pi 的方式**（关键差异） | 传输 · 端口 | 多会话 | 复用 `~/.pi/agent` | 特色 | 短板 |
+|---|---|---|---|---|---|---|---|
+| **agegr/pi-web** | `@agegr/pi-web` · ~1.1k★ · MIT | **SDK 进程内**（`createAgentSessionFromServices`；浏览器真驱动 prompt/steer/切模型/compact/fork） | Next.js · **SSE** · :30141 | 部分 | ✅ | 会话浏览/fork、**git worktree**、diff/图/pdf/docx 预览、skill 开关、context/cost | 无内置终端 |
+| **deflating/tau** | `tau-mirror` · ~275★ · 无 | **进程内 pi 扩展**，镜像正在跑的 TUI（`session_start` 自启；浏览器发 prompt→`pi.sendUserMessage`，**双向同步**） | Node `ws` · :3001 · **绑 0.0.0.0** | 一次镜像 1 个活动会话 | ✅（进程内自动继承） | **手机镜像**（`/qr` 二维码 + Tailscale 检测）、可选 Basic Auth | 无终端 / 无 skill / 无 pdf |
+| **BlackBelt/pi-agent-dashboard** | `@blackbelt-technology/pi-agent-dashboard` · ~188★ · MIT | **spawn N×`pi --mode rpc`**（`process-manager.ts`+`rpc-keeper/keeper.cjs`，每会话一 keeper、按行喂 stdin） | Fastify+`ws` · :8000(UI)+:9999(pi 桥) · 另有 **Electron** | **是**（"指挥一支 pi 大军"） | ✅（`auth.json`+`providers.json`，含浏览器内 OAuth 登录） | 内置终端(node-pty/xterm)、Monaco diff、pi-flows/subagents、OpenSpec、**mDNS+zrok 远程** | 重；只支持 pi、不支持 Oh My Pi |
+
+- **agegr/pi-web**（最像"单人版 CLI 搬进网页"）：`npx @agegr/pi-web@latest` → `http://localhost:30141`（`--port/-p`、`--hostname/-H`）；默认 localhost、无鉴权 token。
+- **deflating/tau**（"给正在跑的会话开第二块屏"）：`pi install npm:tau-mirror` 后正常起 `pi`，状态栏出 URL、终端 `/qr` 出二维码。**默认绑 `0.0.0.0`**，公网/共享网络务必 `TAU_HOST=127.0.0.1` 或设 `TAU_USER/TAU_PASS`。
+- **BlackBelt/pi-agent-dashboard**（多 agent 督程 + 全家桶）：`npm i -g @blackbelt-technology/pi-agent-dashboard && pi-dashboard` → :8000（`--port`/`--pi-port`/`--no-tunnel`）；亦有 Electron 桌面版与 Docker。**pocket-pi 安卓内嵌的就是它**（见下节「远程控制与移动端」）。
+
+> 均来自本地 clone `~/projects/readonly-repos/{pi-web,tau,pi-agent-dashboard}`：pi-web `lib/rpc-manager.ts`(`startRpcSession`/`AgentSessionWrapper`)、`app/api/agent/[id]/events/route.ts`(SSE)、`bin/pi-web.js`(:30141)、`lib/session-reader.ts`(`getAgentDir`)；tau `extensions/mirror-server.ts`(:3001·`0.0.0.0`·`session_start`·`handleCommand`→`pi.sendUserMessage`)、`package.json`(`pi.extensions`)；dashboard `packages/server/src/{process-manager.ts,rpc-keeper/keeper.cjs,server.ts,cli.ts}`(:8000/:9999)。
+
+### <a id="web-ui-legacy"></a>历史：被删的 `@earendil-works/pi-web-ui`（≠ 网页版 TUI，别混）
+
+主仓曾有 `packages/web-ui`（npm `@earendil-works/pi-web-ui`）——**mini-lit 浏览器组件库**（`ChatPanel`/`AgentInterface`/消息渲染/IndexedDB 存储/artifact/JS REPL）。**它不是"在浏览器里驱动本地 pi"的工具**：package.json 无 `pi` 字段（非扩展）、不依赖 `pi-coding-agent`、不碰 `~/.pi/agent`/文件系统；agent **跑在浏览器里**（key 存 IndexedDB、经 CORS 代理直连厂商）。它是 `pi-tui`（终端渲染库）的**网页孪生**，用来搭"自己的 claude.ai 式网页 app"。
+
+- **删除**：2026-05-20 `b141e1fa`——全仓转"无构建 strip-only TS"时，它是唯一需浏览器构建（`tsc`+`tailwind`→`dist/`）的包，被清出；npm 上**未 deprecate**，冻结于 `@mariozechner/pi-web-ui@0.73.1` / `@earendil-works/pi-web-ui@0.75.3`。
+- **真正归宿**：Mario 自己的浏览器扩展产品 **`badlogic/sitegeist`**（~718★ · AGPL-3.0 · sitegeist.ai · Chrome `build:chrome`+`sidepanel.ts`）——其 `package.json` 以 `file:../pi-mono/packages/web-ui` 直连本包、源码 `import … from "@mariozechner/pi-web-ui"`。即 web-ui 是 sitegeist 的 UI 内核；从终端 pi 的 monorepo 移走与 coding agent 无关（`coding-agent` 从不依赖它）。
+
+> `git show a7d8dd3d:packages/web-ui/{package.json,README.md}`（组件库、`dist/`、无 `pi` 字段）；`git show b141e1fa`（删除；同批 AGENTS.md 把 strip-only 规则扩到 `packages/*`、README 删"web-ui 需先 `npm run build`"注）；npm registry（两 scope 冻结、gitHead `a7d8dd3d`）；`badlogic/sitegeist` package.json（`file:` 依赖 + `build:chrome`）。
+
+---
+
 ## 远程控制与移动端
 
 **手机远控电脑上的 pi 可行**，两条主线**都基于扩展事件 API**（不是 RPC）：注入用户消息 + 订阅事件回推。
@@ -596,7 +623,7 @@ Discord 频道 + Telegram，**每频道一个 pi 进程（tmux 隔离）+ 一个
 
 > `badlogic/pi-telegram`（README:68-135 + `index.ts:867-875` 配对、events、`telegram_attach`、旧 scope peerDeps）；`earendil-works/pi-chat`（README:176-197 + `index.ts:683-697`、`src/{runtime,gondolin,secrets.ts:10-45}`）；`packages/coding-agent/docs/termux.md:16-100`；社区 `CelestialCreator/pocket-pi`、`a2ajinkya/phone-pi`。
 
-- ⬜ **pocket-pi**：自打包 APK（Termux+Node+pi+web dashboard），用 **`pi --mode rpc`** 子进程 + BlackBelt 的 `pi-agent-dashboard`（WebView）驱动，并把相机/麦克风/定位/通知/无障碍 UI 自动化等手机能力暴露给 agent。⬜ **phone-pi**：一组移动向 skill/扩展。
+- ⬜ **pocket-pi**：自打包 APK（Termux+Node+pi+web dashboard），用 **`pi --mode rpc`** 子进程 + BlackBelt 的 `pi-agent-dashboard`（WebView，见 [Web 界面](#web-ui)）驱动，并把相机/麦克风/定位/通知/无障碍 UI 自动化等手机能力暴露给 agent。⬜ **phone-pi**：一组移动向 skill/扩展。
   > `badlogic/pi-telegram`（README:68-135 + `index.ts:867-875` 配对、events、`telegram_attach`、旧 scope peerDeps）；`earendil-works/pi-chat`（README:176-197 + `index.ts:683-697`、`src/{runtime,gondolin,secrets.ts:10-45}`）；`packages/coding-agent/docs/termux.md:16-100`；社区 `CelestialCreator/pocket-pi`、`a2ajinkya/phone-pi`。
 
 ### 其他
@@ -611,6 +638,8 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 
 - **维护**：仓库 2025-08-09 建、HEAD 2026-07-11（约 11 个月）、v0.80.6、近日几乎每天提交；~70K★。核心 Mario + Armin + David Brailovsky 等 + 大量外部贡献者。
   > mariozechner.at 博客系列、Armin Ronacher <https://lucumr.pocoo.org/2026/1/31/pi/>、HN <https://news.ycombinator.com/item?id=46844822>、YouTube "Pi Building Pi"。
+- **身份关系**：**Mario Zechner = GitHub `badlogic`**（个人主账号，name "Mario Zechner"、博客 mariozechner.at；个人项目 **sitegeist**/mini-lit/pi-skills/pi-telegram 挂此）。**`earendil-works`** 是承载 pi 的组织（earendil.com；Mario 主导，pi 仓库 3486 提交，第二为 Flask/Jinja 作者 Armin Ronacher 431）。pi 由 `@mariozechner/pi-mono` 迁入组织后成 `@earendil-works/pi`（npm scope 亦随迁）。`github.com/mariozechner` 是较新次要账号（bio "Security defense repo for PI"），非其主账号。
+  > `gh api users/badlogic`（name "Mario Zechner"、blog mariozechner.at）、`orgs/earendil-works`（earendil.com）、`git shortlog -sne`（Mario 3486 / Armin 431）。
 - **CHANGELOG 要点**：0.79.0 加项目信任 + 缓存命中 footer `CH`；0.80.0 pi-ai compat 迁 `@earendil-works/pi-ai/compat` + 修 Codex WebSocket 重连；0.80.3 Claude Sonnet 5 + RPC `get_entries`/`get_tree`；0.80.6 `max` thinking + 输入 token 分级定价；历史上完成 `@mariozechner/*` → `@earendil-works/*` scope 迁移（`pi update --self` 支持）。
   > `packages/coding-agent/CHANGELOG.md`:5-802（0.79.0 / 0.80.0 / 0.80.3 / 0.80.6 / scope 迁移 781-802）。
 - **一手源**：作者博客 mariozechner.at（"…minimal coding agent" 2025-11-30、"…don't need MCP" 2025-11-02、"I've sold out" 2026-04-08）、Armin 的 <https://lucumr.pocoo.org/2026/1/31/pi/>、HN 头版帖（421 分/173 评）、YouTube "Pi Building Pi"。
@@ -641,6 +670,10 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 | [badlogic/pi-skills](https://github.com/badlogic/pi-skills) | first-party skill 集 | 🟧 |
 | [badlogic/pi-telegram](https://github.com/badlogic/pi-telegram) | Telegram 远控 | 🟧 |
 | [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat) | Discord/Telegram 多渠道 + VM 隔离 | 🟧 |
+| [agegr/pi-web](https://github.com/agegr/pi-web) | 网页 UI（SDK 进程内驱动 + 读会话）→ [Web 界面](#web-ui) | ⬜ |
+| [deflating/tau](https://github.com/deflating/tau) | 网页镜像正在跑的 TUI（进程内扩展） | ⬜ |
+| [BlackBeltTechnology/pi-agent-dashboard](https://github.com/BlackBeltTechnology/pi-agent-dashboard) | 多会话网页督程（spawn N×rpc）；pocket-pi 内嵌 | ⬜ |
+| [badlogic/sitegeist](https://github.com/badlogic/sitegeist) | 浏览器 AI 助手（被删 `pi-web-ui` 的真正归宿） | ⬜ |
 | `pi-subagents` / `@tintinweb/pi-subagents` / `@quintinshaw/pi-dynamic-workflows` / `pi-mcp-adapter` / `@hypabolic/pi-hypa` / `pi-web-access` / `context-mode` / `pi-lens` / `@gotgenes/pi-permission-system` … | 见 [生态热门插件](#popular-plugins) | ⬜ |
 | npm `pi-package` keyword · 画廊 <https://pi.dev/packages> · RFC <https://rfc.earendil.com/keyword/pi/> | 发布/发现/路线图 | — |
 
@@ -648,7 +681,7 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 
 ## 置信度
 
-- **高**（本地 clone `8479bd8` 源码直证）：分包、agent loop、会话树与回读 schema、配置/指令发现、五模式与 31 条 RPC 命令、SDK、provider/OAuth、鉴权顺序、thinking level / `thinkingLevelMap` / `thinkingFormat` 的职责与各 serializer 分支、33 事件/15 可改写、扩展与 skill、subagent/orchestrator、远控、信任非沙箱、三种容器化、平台要求。
+- **高**（本地 clone `8479bd8` 源码直证）：分包、agent loop、会话树与回读 schema、配置/指令发现、五模式与 31 条 RPC 命令、SDK、provider/OAuth、鉴权顺序、thinking level / `thinkingLevelMap` / `thinkingFormat` 的职责与各 serializer 分支、33 事件/15 可改写、扩展与 skill、subagent/orchestrator、远控、**三种社区网页前端的驱动方式（SDK 进程内 / 进程内扩展镜像 / N×`--mode rpc`）与端口**、`pi-web-ui` 组件库性质与删除时点/原因及其归宿 sitegeist（git+npm+API 直证）、信任非沙箱、三种容器化、平台要求。
 - **中/快照**：画廊 ~5.1k 包数与各包月下载、popular 排名（随时间变）。
 - **随时间变化**：模型名/上下文窗口/版本号/star 数。
-- **存疑**：`pi-skills` README 的 `{baseDir}` 说法与主仓行为不一致（已在正文标注）；OpenClaw 组织变动仅作者一手推文；Reddit 讨论未抓取核实。
+- **存疑**：`pi-skills` README 的 `{baseDir}` 说法与主仓行为不一致（已在正文标注）；OpenClaw 组织变动仅作者一手推文；Reddit 讨论未抓取核实；`pi-web-ui` 删除后 sitegeist 是否 vendored 源码 / 转私有——其公开仓库停在 2026-03-18，未能核实。
