@@ -140,7 +140,7 @@ TCP from client → mixed-port / TUN
   }
   ```
   于是看你想要的节点在不在外层组的 `.all` 里：① 在 → 直接 PUT 外层组到该节点，一层即可、只影响这一类；② 不在 → 先 PUT 外层组 → 内层主选择器（在它 .all 里），再 PUT 内层主选择器 → 目标节点（在主选择器 .all 里），这就是“改两层”（副作用：改主选择器会牵动所有指向它的分类组）。③ 想让所有分类一起换 → 因为它们多半都指向同一个主选择器，**只改主选择器一层**即可。
-- **切节点只对新建连接生效**。长跑的下载/上传/长连接要重连才走新节点（`curl --no-keepalive` 可强制每次重连验证）。
+- **切节点只对新建连接生效**。长跑的下载/上传/WebSocket 要重连才走新节点；单独启动一个新的 `curl` 进程即可得到新连接。`--no-keepalive` 只关闭 TCP keepalive 探针，并不等于禁止 HTTP 连接复用，别把它当“强制换节点”开关。
 
 ### 3.3 节点组类型
 
@@ -224,7 +224,7 @@ curl -s -o /dev/null --max-time 45 --proxy $P \
 
 海外 VPS 上实测：给 Hysteria2 节点加 `up: "80 Mbps"`/`down: "120 Mbps"`（格式正则 `^(\d+)\s*[KMGT]?[Bb]ps$`，小写 `b`=bit）后，下载上传两向都进 Brutal——但当时链路 ~16 MB/s 下载、~9 MB/s 上传、**几乎无丢包**，加 `up`/`down` 前后吞吐无差异，印证「Brutal 收益要丢包才显现」。
 
-## 4. 运行态控制：REST API 与 Web 面板
+## 4. 运行态控制与连接排障：REST API、链路测试与 Web 面板
 
 ```yaml
 external-controller: 127.0.0.1:9090
@@ -269,7 +269,61 @@ foreach ($n in @("vless-ws-Node","Hysteria2-Node")) {
 
 > **`/delay` 通 ≠ 节点能跑全速**：它只测 1KB 级 RTT。真实吞吐要用 ≥50MB 文件测（前几 MB 在 TCP 慢启动，speed 偏小）；跑大量 KB 级小文件时看 `part/s` 而不是 `MiB/s`。
 
-### 4.1 Web 面板（external-ui / `/ui` 路径）
+### 4.1 节点连接失败的分层诊断（CONNECT 200 / TLS EOF / 长连接）
+
+遇到下面这种输出，**不能**据第一行判断节点或目标网站已经连通：
+
+```text
+HTTP/1.1 200 Connection established
+
+curl: (35) ... SSL routines::unexpected eof while reading
+```
+
+显式 HTTP 代理下，`curl` 先向本地 mixed-port 发送 `CONNECT <target>:443`。Mihomo v1.19.27 的 [`listener/http/proxy.go`](https://github.com/MetaCubeX/mihomo/blob/5184081ac327394d9e15fa5d5f9f4a61e723fd94/listener/http/proxy.go#L68-L75) 会先向客户端写 `200 Connection established`，然后才调用 `tunnel.HandleTCPConn(...)`；后者完成规则/节点解析后，才在 [`tunnel/tunnel.go`](https://github.com/MetaCubeX/mihomo/blob/5184081ac327394d9e15fa5d5f9f4a61e723fd94/tunnel/tunnel.go#L552-L576) 调用真正的 `proxy.DialContext(...)`。
+
+**因此，即使最终出站节点是全球完全不可达（服务停机、防火墙全丢、TCP 一直超时），客户端仍会先收到这个 `200`**；节点是“部分源网络不通”还是“所有网络都不通”，对这个已经写出的状态码没有区别。前提只是客户端连得上本地 Mihomo、代理认证/CONNECT 解析通过，而且 Mihomo 能把响应写回客户端。出站立即失败时，后续常见 EOF/reset；拨号等到超时时，后续也可能直接表现为 `curl` timeout。这个 `200` 只能表示**本地代理接受了隧道请求**，不能作为任何节点健康证据；`curl -I` 的 HEAD 请求此时也尚未抵达目标站。
+
+这个结论特指 **HTTP 代理的 CONNECT 路径**：本地 mixed-port 自身不可达、代理认证失败或 CONNECT 请求未通过时不会得到这个 `200`；普通明文 HTTP 代理请求（非 CONNECT）可在出站失败后返回 `502`，SOCKS 入口则根本没有 HTTP 状态行。
+
+按数据面从近到远分层，不要一上来把所有超时都归为“节点 down”或“被墙”：
+
+1. **确认实际规则链与旧连接**：查 `/proxies` 的逐层 `.now`，再查 `/connections` 的 `host`、`start`、`chains`、`rule`。selector 的 PUT 只改变后续新连接，不会把已有 TCP/WebSocket 迁移到新节点。
+2. **不切主选择器，直接测具体节点**：调用 `/proxies/<urlencoded-node>/delay?url=<urlencoded-real-target>&timeout=10000`，分别用普通连通性目标和实际业务目标。两个都失败才继续向落地入口排查；单一目标失败可能只是目标站风控或分流差异。
+3. **拿落地真实 IP，绕开本机代理测入口**：DNS 必须走 DoH（见 §7.5），避免 fake-ip；随后清除 proxy env、加 `--noproxy '*'`，并用 `--resolve` 同时钉真实 IP、保留正确 Host/SNI：
+
+   ```bash
+   env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+     curl --noproxy '*' -v --connect-timeout 5 \
+     --resolve '<node-domain>:443:<real-ip>' 'https://<node-domain>/<ws-path>'
+   ```
+
+   能完成 TCP/TLS 并收到普通 HTTP `403`，通常只证明 443/TLS/反代前端在线（普通 GET 没带 WebSocket Upgrade 时被拒很正常），**不等于完整 VLESS/WS 鉴权已经验证**。若这里连 TCP 都超时，故障发生在 TLS、WebSocket path 和代理协议之前。
+4. **同 IP 多端口 + 路由对照**：对 22/80/443 等已知监听做短超时 TCP 测试；再用一个已知正常节点作控制组。需要看路径时用 `mtr -T -P 443 <real-ip>`。MTR 没回 hop 不自动等于“本地第一跳丢弃”——中间设备也可能不回 TTL exceeded；要结合控制目标和外部探针判断。
+5. **用真正独立的外部视角**：Check-Host 等多地探针可测 `IP:443` TCP，再测节点域名 HTTPS。若当前网络全超时、境外/邻近地区多点 TCP 与 TLS 都成功，说明 VPS/入口并非全局 down，而是**源网络相关**的出程、回程、ACL、抗 DDoS 或 peering 问题。反过来，多地也全失败才优先查 VPS 电源、服务和防火墙。
+
+Check-Host API 的最小用法（首个请求返回 `request_id`，稍后轮询结果）：
+
+```bash
+curl -sS -H 'Accept: application/json' \
+  'https://check-host.net/check-tcp?host=<real-ip>%3A443&max_nodes=10'
+curl -sS -H 'Accept: application/json' \
+  'https://check-host.net/check-result/<request_id>'
+```
+
+远端机器也可能跑 Mihomo TUN，**不要看到“远端 curl 成功”就当独立旁路**：若 `remote_ip` 或路由落在 `198.18.0.0/16`，那是 fake-ip/TUN；即使用 `--resolve` 钉了真实 IP，TUN 仍可能接管。先在远端看 `ip route get <real-ip>`，确认没有走 Meta/TUN/本机代理，才算独立视角。
+
+快速判读：
+
+| 现象 | 优先结论 |
+|---|---|
+| 当前网络和多地探针都无法 TCP 连接 | VPS、监听、机房防火墙或全局路由故障 |
+| 当前网络所有端口超时，多地 TCP/TLS 正常 | 源网络相关的出程/回程黑洞、ACL、DDoS 策略或 peering；不是 WS path 本身 |
+| TCP/TLS 正常，只有正确 WebSocket/VLESS 失败 | 再查 SNI、证书、Host、path、Upgrade、反代与 UUID |
+| 切节点后旧应用仍工作，新 `curl` 失败 | 旧长连接还钉在切换前的节点；不代表新节点可用 |
+
+最后一行在 Codex/流式 API 上尤其常见。OpenAI 的 [Responses WebSocket mode](https://developers.openai.com/api/docs/guides/websocket-mode) 会复用持久连接；Mihomo selector 改的是**未来连接的选择结果**，不会在线迁移这条 socket。验证时用一个新进程/新连接，并在 `/connections` 里核对它的 `start` 与 `chains`。删除单条或全部 `/connections` 会打断用户业务，只在明确获准时做；诊断阶段优先重启目标应用或另开短连接。
+
+### 4.2 Web 面板（external-ui / `/ui` 路径）
 
 控制面除了裸 REST API，还能让 mihomo **自己托管一个 Web Dashboard**，不用另起 web 服务——配 `external-ui` 即可，浏览器开 `http://<controller>/ui/`：
 
@@ -566,6 +620,19 @@ RackNerd（海外 VPS）的 Hysteria2 主节点跑一段时间后，某天起从
 LisaHost（海外住宅 IP VPS）上**长期稳定使用**的 vless(+ws+TLS) 节点，于 2026-06-25 起被墙。值得注意：这是 **TCP 系 vless、不是 QUIC/Hysteria2**，且已长期暴露使用——说明封锁不限于 QUIC/UDP 那一类特征，长期暴露的 TCP+TLS 节点同样会中招。
 
 归因未坐实：长期固定的域名 / 落地 IP / vless+ws-over-TLS 的流量指纹长期暴露都可能是诱因。
+
+## C. RackNerd 新 IP 仅部分源网络不可达（2026-07-13）
+
+现象：主选择器切到 RackNerd 的 vless+ws 节点后，新建的 `curl -I https://api.github.com` 先收到本地 Mihomo 的 `200 Connection established`，随后报 TLS `unexpected eof`；同一落地的 Hysteria2 节点也失败。与此同时，已经运行的 Codex 仍能继续交互。
+
+分层实测：
+
+- DoH 得到落地真实 IP；当前网络绕开代理直连该 IP 的 22/80/443 全部 TCP timeout，vless/ws 的 443 与 Hysteria2/QUIC 都不可用；控制组 LisaHost 可完成 TCP/TLS。
+- 当前机器存在正常默认路由，但到 RackNerd 的 TCP/ICMP MTR 不返回 hop；到控制节点的 TCP MTR 可完整到达。单凭零 hop 不能定位具体丢弃设备。
+- Check-Host 的 [10 地 TCP:443 探测](https://check-host.net/check-report/444f3075k71) 全部成功；[10 地 HTTPS 探测](https://check-host.net/check-report/444f3f86kffa) 全部完成 TLS/HTTP 并返回普通请求的 `403`。这证明当时 VPS、443 与 TLS/HTTP 前端并未全局 down，但没有单独验证完整 VLESS 鉴权。
+- Codex 连接表显示，其 `responses_websocket` 在切节点前已通过 LisaHost 建立；selector 切到 RackNerd 后，这条既有 socket 的 `chains` 没变，所以它继续工作。针对 RackNerd 新建的 GitHub/ChatGPT delay 都失败。
+
+结论：这次不是“WebSocket 协议能穿过坏节点”，也不能简单归为落地全局被墙；证据只支持**当前源网络到 RackNerd 的双向路径或源地址策略有问题**。要继续区分“客户端/中间上游没把 SYN 送到”与“RackNerd/抗 DDoS 收到后按源丢弃”，决定性实验是在落地同时抓 `tcpdump`：看当前公网源 IP 的 SYN 是否到达、SYN-ACK 是否发出。没有服务端抓包前，归因保持未坐实。
 
 ## 通用对照实验与缓解
 
