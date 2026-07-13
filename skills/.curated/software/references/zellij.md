@@ -65,6 +65,42 @@ zellij 中几个改变 pane 大小 / 占比的操作，均为 **默认（mode �
 
 - **`stacked_resize`（选项，默认 `true`）：resize 压得太狠时自动把 pane 转成堆叠（stack）**。当你不停把一侧撑大、另一侧被压过阈值，zellij 不再硬挤，而是把布局改成一个 stack：pane 竖排，只有聚焦的那个显示完整内容，其余折叠成**一行标题栏**，移动焦点 / 点标题才展开切换。0.41.0 引入、默认开启（`options.rs` 里 `stacked_resize: Option<bool>`；默认配置注释 `// stacked_resize false`，即“默认 true、去掉注释才关”）。它由上面的 resize 触发，所以往回缩（`Ctrl n` 反方向 / `-`）就能退出 stack 回到平铺；想彻底禁用就在 `config.kdl` 写 `stacked_resize false`。
 
+## pane 布局排列（swap layout 切换 / 新建 pane vs stack / 并入 stack）
+
+上一节是「改 pane 大小」，这节是「改 pane 怎么排列 / 堆叠」。键位引自 `0.44.3` 默认配置（`zellij setup --dump-config`，对应 `zellij-utils/assets/config/default.kdl`）；行为结论是起一个独立会话用 `zellij action dump-layout` 实测出来的——`action` 命令与对应键位触发的是**同一个服务端动作**，所以键盘按下去的效果与实测一致。**给 web client 用户：下面全是键盘操作，不用敲终端命令。**
+
+### swap layout 切换（预设布局循环）〔实测 + [官方文档](https://zellij.dev/documentation/swap-layouts.html)〕
+
+- **`Alt+[` = 上一个、`Alt+]` = 下一个 swap layout**（`default.kdl` 197–198 行，绑在 `shared_except "locked"`，即**除锁定模式外任何模式都直接生效**，是最容易误触的键——想打 `[` `]` 时手还压着 Alt 就中招）。官方原文：swap layout 之间 *“switch between them manually (by default with `Alt` + `[]`)”*。
+- **布局会随 pane 数自动跳档**：每个 swap layout 用 `min_panes` / `max_panes` / `exact_panes` 约束，开 / 关 pane 使当前档不满足约束时，zellij 自动切到满足的那档（官方 *Progression and Constraints*）。默认三档：`vertical`（左右分列）、`horizontal`（上下平铺全宽）、`stacked`（左 1 + 右一摞，**`min_panes=5`**）。所以只有 4 个 pane 时根本切不出默认 `stacked` 档，`Alt+[]` 只在左右 / 上下之间转。
+- **误触恢复**：反向按 `Alt+[`（或继续 `Alt+]` 转一圈）切回原排列。若原来的堆叠是 `stacked_resize` 自动压出来的（不是布局档），切不回去，用下面 ④ 的办法重堆。
+
+### 新建 pane：普通 vs stacked〔实测〕
+
+`Ctrl+p` 进 pane 模式后（`default.kdl` 30–33 行；另有全局 `Alt+n` 在 188 行）：
+
+| 按键 | 动作 | 效果（`dump-layout` 实测） |
+|---|---|---|
+| `n` / `d` / `r`，或全局 `Alt+n` | `NewPane` / `NewPane "Down"` / `"Right"` | **分割空间**：`split_direction="vertical" { pane 50%; pane 50% }`，两个独立 pane 各占一半、都可见 |
+| `s` | `NewPane "stacked"` | **不分割、叠加**：当前 pane 原地变成 `stacked=true` 容器，新 pane `expanded=true` 展开、旧的折成一行标题栏 |
+
+### 并入已有 stack（键盘可行）〔实测〕
+
+**焦点落在 stack 内某个 pane 上时**，新建就并入这一摞、不新开第二摞：
+
+- `Ctrl+p`→`s`（stacked 新建）→ 并入同摞（实测 2 层 → 3 层）。
+- 连**普通**新建 `Alt+n` / `Ctrl+p`→`n` → **也并入同摞**（实测 3 层 → 4 层）。即「在 stack 里新建」默认就进这摞。
+
+### 把已散开的独立 pane 收成一摞 / 全 stack〔实测，含一条否定结论〕
+
+- **`MovePane` 不能把独立 pane「追加」进 stack**：焦点在独立 pane 上、`Ctrl+p`→`h/j/k/l`（或 move 模式 `Ctrl+h` 再方向键）朝 stack 方向移动，实测是**位置对调 / 轮转**——被移动的 pane 进 stack 顶部，同时把 stack 原来一个成员顶出到空位，**总数和层数都不变**。指望用移动把散 pane 一个个塞进去让 stack 长高，行不通。
+- **键盘正解**：`Ctrl+n` 进 resize 模式、朝一个方向狂压，越过阈值触发 `stacked_resize`（见上一节），把那一列独立 pane 自动折成一个 stack；或放弃现有的、在 stack 内用 `s` 重建。
+- **想要整个 tab 一摞**：焦点选定一个 pane，反复 `Ctrl+p`→`s` 把内容都叠上去；或 resize 压出来。想让 `Alt+[]` 直接切出「全 stack」档，则要改配置（自定义 swap layout，去掉内置那档的「左 1」和 `min_panes=5`），属配置层、不在键盘范围。
+
+### web client 提醒〔部分待确认〕
+
+zellij web 经 xterm.js 把键盘事件透传给终端，`Ctrl+p`、`Alt+[]`、`Ctrl+n` 等默认键一般都能进 zellij；个别组合可能先被浏览器快捷键截获（没反应多半就是被浏览器吃了），可在 `config.kdl` 改绑或改用鼠标。
+
 ## login token 与 session token
 
 zellij web 的认证是**两层 token**：
