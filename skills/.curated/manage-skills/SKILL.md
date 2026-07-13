@@ -101,7 +101,7 @@ done
 - **内容**：概念优先、说人话｜命令 / 示例优先｜每条说法有据、来源与置信度就近｜踩坑 / 排障紧贴主题｜少写"给 agent 自动执行的操作流程"（reference 只描述目标产物）｜不过度限制、少堆告诫｜个人配置不入正文、脱敏用占位符
 - **引用**：跨 skill 只写 skill 名 + 能力边界、不写任何文件路径｜同 skill 内用相对路径｜章节跳转用显式 `<a id>` 锚点（不用标题派生 slug）｜引上游源码 / 文档锁到版本（别指 `main` / `latest` 滚动 ref）
 - **标题**：命名"这节是什么"、不预告结论 / 计数 / 排名｜不编号、不用 §N 交叉引用｜并列小节靠客观属性区分｜改带 `<a id>` 的标题只改文字
-- **结构**：渐进式披露三层（description → SKILL.md → references）、单文件长度不是拆分理由｜脚本用 `uv` + PEP 723 内联依赖｜不绑定特定 AI 工具名｜frontmatter `name` 全局唯一且与目录名一致｜README 与 skill 状态同步｜嫁接 skill 保留上游 LICENSE、留意是否落后上游
+- **结构**：渐进式披露三层（description → SKILL.md → references）、单文件长度不是拆分理由｜脚本用 `uv` + PEP 723 内联依赖｜不绑定特定 AI 工具名｜frontmatter `name` 与目录名一致｜README 与 skill 状态同步
 
 ## 重构已有文档
 
@@ -109,11 +109,7 @@ done
 
 ## 审查现有 skills
 
-用户让“审查 / 检查所有 skill 是否合规”时，先向用户确认审查范围（如原创、已适配嫁接、实验性、全部），然后逐条核对 [references/checklist.md](references/checklist.md) 里的每项要求。默认**只审不改**：先列出发现交给用户，明确同意后才动手改。
-
-输出格式：按 skill 分段，每段列命中的检查项（带文件 / 行号）与建议；最后给“全部无问题的 skill 清单”，避免用户误以为全仓都有病。
-
-批量修复前先跟用户敲定**改动策略**：统一用哪种新写法、原位置留空壳还是删、是否同步调其他 skill 的交叉引用。
+用户让"审查 / 检查所有 skill 是否合规"时，走跨多 skill 的合规扫描：逐条核对 [references/checklist.md](references/checklist.md) 每项，外加只在审查时做的跨 skill 专项检查（嫁接 LICENSE、是否落后上游、`name` 全局唯一）。默认**只审不改**。完整流程、输出格式与专项检查见 [references/review.md](references/review.md)。
 
 ## Hermes
 
