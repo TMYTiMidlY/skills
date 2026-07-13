@@ -12,14 +12,29 @@
 
 ---
 
-## 1. 它是什么 / 设计取向
+## 与别家 harness 的关键不同 · 上手注意
+
+用 pi 前先记住这几个「和别家不一样、最容易踩」的点（每条的源码/文档实锤见对应正文）：
+
+- **指令文件只认 `AGENTS.md` / `CLAUDE.md`，没有 `PI.md`**；从 cwd 向上走到**文件系统根**（非 git 根）逐层拼接。→ 见 [配置与指令发现](#config-discovery)
+- **上下文长度不是旗标**，是模型属性 `contextWindow`（可在 `models.json` 覆盖）+ 自动压缩，没有 `--context-window`。→ 见 [Provider 与凭据](#provider-creds)、[接自定义模型](pi-custom-model.md#context-window)
+- **自定义 provider 不会把 `GET /v1/models` 自动导入 `/model`**；`models.json` 里必须显式列出每个模型。→ 见 [接自定义模型](pi-custom-model.md#models-fields)
+- **`reasoning:true` 只是能力声明，`compat.thinkingFormat` 才决定请求怎么写**；自定义域名常识别不出厂商，漏配就「选 `off` 仍思考 / 选 `low` 仍不思考」。→ 见 [接自定义模型](pi-custom-model.md#thinking-layers)
+- **effort 在 UI 里叫 "thinking level"**（`off|minimal|low|medium|high|xhigh|max` 七档），不是统一的 `reasoning_effort`。→ 见 [接自定义模型](pi-custom-model.md#thinking-layers)
+- **订阅接入用 pi 自己的 OAuth**，不复用官方 Codex / Copilot CLI 的凭据文件。→ 见 [用 Codex 订阅](#codex-sub)、[用 Copilot 订阅](#copilot-sub)
+- **信任（trust）不是沙箱**：只决定加不加载项目级 `.pi/*` 与 `.agents/skills`，不限制工具能干什么；要隔离请上容器。→ 见 [安全 · 信任 · 隔离](#security-trust)
+- **核心没有内置 Web UI / MCP / sub-agent / 权限弹窗**——都靠扩展或社区包补（`Mode` 只有 `text|json|rpc`）。→ 见 [Primitives, not features](#primitives)、[调用形态](#invocation-modes)
+
+---
+
+## 定位与设计取向
 
 pi 是 Mario Zechner（`badlogic`，libGDX 作者）2025-08 发布、现由 **Earendil** 维护、Armin Ronacher（`mitsuhiko`）共同维护的**终端编码 agent CLI**。
 核心极小（LLM ↔ 4 个工具 ↔ 会话树），一切工作流靠 TS 扩展与 skill 补齐。官网 <https://pi.dev>，文档 <https://pi.dev/docs/latest>，RFC/路线图 <https://rfc.earendil.com/keyword/pi/>。
 
 > 身份/安装/模型目录：`earendil-works/pi` README 与 `packages/coding-agent/package.json`、`pi.dev/docs/latest/{providers,usage}`；本地 clone HEAD `8479bd84743e8889f728acb21a62794102db0529`；`packages/coding-agent/README.md`（四内置工具、OpenClaw SDK、footer、`PI_CACHE_RETENTION`）；root `README.md:11,47-49`（治理、RFC）。
 
-### 1.1 "Primitives, not features"
+### <a id="primitives"></a>"Primitives, not features"
 
 pi 的核心哲学是**中心极小**：给你原语，让你把 agent 适配到工作流，而不是反过来。README 明确列出*故意不做*的东西，每条都给替代方案：
 
@@ -27,8 +42,8 @@ pi 的核心哲学是**中心极小**：给你原语，让你把 agent 适配到
 
 | 故意不内置 | 官方建议替代 |
 |---|---|
-| **No MCP** | 用带 README 的 CLI 工具（见 Skills），或装扩展补 MCP（见 §5.7） |
-| **No sub-agents** | tmux 起多个 pi 实例，或用扩展/社区包自己实现（§7） |
+| **No MCP** | 用带 README 的 CLI 工具（见 Skills），或装扩展补 MCP（见 [MCP 支持](#mcp-adapter)） |
+| **No sub-agents** | tmux 起多个 pi 实例，或用扩展/社区包自己实现（见 [多 agent 协同](#multi-agent)） |
 | **No permission popups** | 跑容器里，或用扩展自建确认流（如示例 `permission-gate`） |
 | **No plan mode** | 计划写进文件，或用扩展（示例 `plan-mode/`） |
 | **No built-in to-dos**（"会干扰模型"） | 用扩展（示例 `todo.ts` / 社区 `rpiv-todo`） |
@@ -40,7 +55,7 @@ pi 的核心哲学是**中心极小**：给你原语，让你把 agent 适配到
 
 > Mario Zechner, "What if you don't need MCP at all?"（2025-11-02）<https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/>；Mario Zechner, "What I learned building an opinionated and minimal coding agent"（2025-11-30）<https://mariozechner.at/posts/2025-11-30-pi-coding-agent/>；`packages/coding-agent/README.md`（四内置工具、OpenClaw SDK、footer、`PI_CACHE_RETENTION`）；root `README.md:11,47-49`（治理、RFC）。
 
-### 1.2 定位与对比
+### 定位与对比
 
 常与 **opencode**、**Codex CLI** 并称终端 agent"第一梯队"，是其中少见的非 VC 出身。与 **Claude Code** 的对比是它的起点：
 
@@ -58,7 +73,7 @@ pi 的核心哲学是**中心极小**：给你原语，让你把 agent 适配到
 
 > mariozechner.at 博客系列、Armin Ronacher <https://lucumr.pocoo.org/2026/1/31/pi/>、HN <https://news.ycombinator.com/item?id=46844822>、YouTube "Pi Building Pi"。
 
-### 1.3 许可与治理
+### 许可与治理
 
 **当下 5 个已发布包全部 MIT**（root `LICENSE` + 各 `packages/*/package.json`）。作者 2026-04 加入 Earendil、仓库迁到 `earendil-works/pi`，
 路线图规划为 **MIT 核心 + Fair Source 增值层 + 专有云层**（尚未落地）。长期计划见 RFC 站点。新贡献者的 issue/PR 默认自动关闭、每日集中审。
@@ -67,9 +82,9 @@ pi 的核心哲学是**中心极小**：给你原语，让你把 agent 适配到
 
 ---
 
-## 2. Runtime 架构
+## Runtime 架构
 
-### 2.1 Monorepo 分包（🟩）
+### Monorepo 分包（🟩）
 
 | npm 包 | 目录 | 职责 |
 |---|---|---|
@@ -77,9 +92,9 @@ pi 的核心哲学是**中心极小**：给你原语，让你把 agent 适配到
 | `@earendil-works/pi-agent-core` | `packages/agent/` | **agent runtime 库**：agent loop、工具执行、context 变换、transport 抽象、prompt 模板 |
 | `@earendil-works/pi-ai` | `packages/ai/` | **统一 LLM API**：35 个 provider、9 种 wire API、OAuth/apiKey 鉴权、模型目录、token/成本核算、thinking level 抽象 |
 | `@earendil-works/pi-tui` | `packages/tui/` | **终端 UI 库**：差分渲染、markdown、宽字符布局 |
-| `@earendil-works/pi-orchestrator`（🟨） | `packages/orchestrator/` | **多实例进程督程**（实验性，API 不稳定，见 §7.1） |
+| `@earendil-works/pi-orchestrator`（🟨） | `packages/orchestrator/` | **多实例进程督程**（实验性，API 不稳定，见 [pi-orchestrator](#pi-orchestrator)） |
 
-### 2.2 数据流与 agent loop
+### 数据流与 agent loop
 
 ```mermaid
 flowchart TD
@@ -110,7 +125,7 @@ flowchart TD
 
 > `packages/agent/src/agent-loop.ts`:169-224、288-314；`harness/agent-harness.ts`:314-385。
 
-### 2.3 会话树（🟩）
+### 会话树（🟩）
 
 追加式 **JSONL**，每条 entry 带 `id` + `parentId` 构成**树**，非破坏式分叉：
 
@@ -128,7 +143,7 @@ export interface SessionEntryBase { type: string; id: string; parentId: string |
 - 斜杠命令：`/new`、`/fork <某条 user 消息>`、`/clone`（当前 leaf 复制）、`/tree`（分支选择器）、`/resume`（选 JSONL 恢复）。
   > `packages/coding-agent/src/core/session-manager.ts`:46-51、861-884、946-980；`docs/session-format.md`。
 
-#### 2.3.1 回读会话做收尾审计
+#### 回读会话做收尾审计
 
 长会话被压缩后，不能只凭当前上下文盘点“做了什么 / 漏了什么”。pi 的 JSONL 本身就是事实源：
 
@@ -140,7 +155,7 @@ export interface SessionEntryBase { type: string; id: string; parentId: string |
 
 现有 `dredge-up` 脚本的数据层只解析 Copilot CLI；在补 pi adapter 前，可直接按上述 schema 写一个只读 JSONL 提取器。渲染层应消费 agent-neutral 中间结构，不要把 pi schema 再复制进每个前端。
 
-### 2.4 配置与指令发现（harness 重点）
+### <a id="config-discovery"></a>配置与指令发现（harness 重点）
 
 配置根默认 `~/.pi/agent/`（`PI_CODING_AGENT_DIR` 可覆盖）。
 
@@ -166,7 +181,7 @@ export interface SessionEntryBase { type: string; id: string; parentId: string |
 | **`AGENTS.md` / `CLAUDE.md` 指令** | **文件系统根**（无 git 感知） | 全局在前，再从根到叶拼接；候选名单只有 AGENTS/CLAUDE 大小写变体，**无 `PI.md`**  |
 
 > `packages/coding-agent/src/core/resource-loader.ts`:67-120、965-990；`docs/usage.md:99-102`；`.agents/skills` 边界 `src/core/package-manager.ts:427-460`。
-| **`.agents/skills/`** | **git 仓库根**（无 git 时到 FS 根） | 见 §5.2 skill 优先级  |
+| **`.agents/skills/`** | **git 仓库根**（无 git 时到 FS 根） | 见 [Skill / prompt / theme](#skill-mechanism) 的 skill 优先级  |
 
 > `packages/coding-agent/src/config.ts`:487-560；`src/core/{settings-manager.ts:131-197,package-manager.ts:172-188}`；`docs/settings.md:12-18,204-210`。
 | **`.pi/SYSTEM.md` / `.pi/APPEND_SYSTEM.md`** | 项目级 | 受信任时项目**整体替换**全局同名文件（不叠加）  |
@@ -177,14 +192,14 @@ export interface SessionEntryBase { type: string; id: string; parentId: string |
 
 > `packages/coding-agent/src/config.ts`:487-560；`src/core/{settings-manager.ts:131-197,package-manager.ts:172-188}`；`docs/settings.md:12-18,204-210`。
 
-### 2.5 工具执行与 TUI
+### 工具执行与 TUI
 
 - **工具执行**：默认**并行**（`Promise.all`，保序），除非全局 `toolExecution:"sequential"` 或某工具声明 `executionMode:"sequential"`。取消经 `AbortSignal` 传到每个 `execute`；bash abort/超时杀整棵进程树。结果**双通道**：`content`（回模型的文本/图像）与 `details`（给 UI/日志的结构化数据）分离。
   > `packages/agent/src/agent-loop.ts`:413-428、491-556；`packages/agent/src/types.ts`:349-361、381-387；`packages/coding-agent/src/core/tools/bash.ts`:82-148。
 - **TUI**：线性 append（非全屏接管），维护 `previousLines` 缓冲、diff 只重绘变化行、整段渲染用同步输出 `CSI ?2026h/l` 消闪；组件级缓存。
   > `packages/tui/src/tui.ts`:292-300、1284-1309、1367-1549。
 
-### 2.6 平台与安装
+### 平台与安装
 
 - **Node ≥ 22.19.0**（root 与 coding-agent 包 `engines`）。
   > `packages/coding-agent/docs/windows.md`:3-16；`docs/settings.md:184-190`（`shellPath`）；`docs/index.md:15-18`；`package.json`/`packages/coding-agent/package.json` `engines.node ">=22.19.0"`。
@@ -195,7 +210,7 @@ export interface SessionEntryBase { type: string; id: string; parentId: string |
 
 ---
 
-## 3. 五种调用形态
+## <a id="invocation-modes"></a>调用形态
 
 | 形态 | 命令 / API | 传输 | 会话持久化 | 典型用途 | 状态 |
 |---|---|---|---|---|---|
@@ -215,14 +230,14 @@ export interface SessionEntryBase { type: string; id: string; parentId: string |
   > `packages/coding-agent/src/cli/args.ts`:10、74-278；`src/main.ts:100-110`（非 TTY 自动 print）；`src/modes/{print-mode.ts,index.ts}`、`src/core/slash-commands.ts:19-42`。
 - **JSON**：`pi --mode json -p "…"`，逐事件 JSONL 到 stdout（`agent_start`/`message_update`/`tool_execution_*`/`agent_end`/`agent_settled`…）。
   > `packages/coding-agent/src/cli/args.ts`:10、74-278；`src/main.ts:100-110`（非 TTY 自动 print）；`src/modes/{print-mode.ts,index.ts}`、`src/core/slash-commands.ts:19-42`。
-- **RPC**（远控/嵌入关键）：见 §3.1。
-- **SDK**（同进程）：见 §3.2。
+- **RPC**（远控/嵌入关键）：见 [RPC 协议](#rpc)。
+- **SDK**（同进程）：见 [SDK 嵌入](#sdk)。
 
 > ⚠️ **print/JSON/RPC 不弹信任提示**。若项目未存过信任决定，项目级 `.pi/*` 资源会被**静默忽略**。自动化里用 `--approve`/`-a`、`--no-approve`/`-na` 或 `settings.json.defaultProjectTrust` 显式表态。
 
 > `packages/coding-agent/src/config.ts`:487-560；`src/core/{settings-manager.ts:131-197,package-manager.ts:172-188}`；`docs/settings.md:12-18,204-210`。
 
-### 3.1 RPC 协议（🟩）
+### <a id="rpc"></a>RPC 协议（🟩）
 
 严格 JSONL（一行一 JSON，只以 `\n` 分隔，刻意不用 `readline` 以免被 JSON 串内 U+2028/2029 切断）。命令带 `type`（可选 `id`），响应 `{type:"response", command, success, data?/error?}`，事件即 `AgentSessionEvent`。入口既可 `pi --mode rpc`，也可专用 `rpc-entry`。
 
@@ -250,7 +265,7 @@ bash:      bash · abort_bash
 
 > `packages/coding-agent/src/modes/rpc/rpc-types.ts`:20-72；`rpc-mode.ts`、`jsonl.ts`、`src/rpc-entry.ts`；`pi.dev/docs/latest/rpc`；`badlogic/pi-telegram`（README:68-135 + `index.ts:867-875` 配对、events、`telegram_attach`、旧 scope peerDeps）；`earendil-works/pi-chat`（README:176-197 + `index.ts:683-697`、`src/{runtime,gondolin,secrets.ts:10-45}`）；`packages/coding-agent/docs/termux.md:16-100`；社区 `CelestialCreator/pocket-pi`、`a2ajinkya/phone-pi`。
 
-### 3.2 SDK 嵌入（🟩）
+### <a id="sdk"></a>SDK 嵌入（🟩）
 
 最高层入口 `createAgentSession()`（`packages/coding-agent/src/index.ts:192-219`，re-export 自 `core/sdk.ts`），整个 agent 跑进程内。**OpenClaw 即以 SDK 方式嵌入 pi**（README 明列）。
 
@@ -277,9 +292,9 @@ session.dispose();
 
 ---
 
-## 4. Provider 凭据与官方订阅（Codex / Copilot）
+## Provider 凭据与订阅接入
 
-### 4.1 Provider 与凭据
+### <a id="provider-creds"></a>Provider 与凭据
 
 `pi-ai` 用统一 `Provider` 抽象，鉴权分 `apiKey`/`oauth`。共 **35 个内置 provider id**；**订阅制（OAuth `/login`）三家**：`openai-codex`（ChatGPT Plus/Pro）、`anthropic`（Claude Pro/Max）、`github-copilot`。其余走 apiKey（openai、azure-openai-responses、google、google-vertex、amazon-bedrock、mistral、groq、cerebras、xai、openrouter、deepseek、nvidia、kimi-coding、minimax(-cn)、moonshotai(-cn)、huggingface、fireworks、together、opencode(-go)、cloudflare-*、zai(-coding-cn)、ant-ling、vercel-ai-gateway、xiaomi* 等）。
 
@@ -297,7 +312,7 @@ session.dispose();
 
 > `packages/ai/README.md:1-4,227-232,1046-1058,1186-1230`；`packages/ai/src/types.ts:15-24,352-372`；`src/utils/json-parse.ts:97-124`；`src/api/{openai-completions.ts:189-192,443-467,bedrock-converse-stream.ts:239-242}`；`src/models.ts:386-405`。
 
-### 4.2 用 OpenAI Codex 官方订阅（ChatGPT Plus/Pro）
+### <a id="codex-sub"></a>用 OpenAI Codex 官方订阅（ChatGPT Plus/Pro）
 
 pi 跑**自己**的 OAuth（不复用官方 Codex CLI 的 `~/.codex/auth.json`）：`pi` → `/login` → 选 **"ChatGPT Plus/Pro (Codex)"**。两种方式：
 
@@ -311,7 +326,7 @@ token 换取后写入 `auth.json`（含 JWT 提取的 `accountId`），base URL 
 
 > `packages/ai/src/utils/oauth/openai-codex.ts`:455-463、536-603；`providers/openai-codex.ts`、`providers/openai-codex.models.ts`。
 
-### 4.3 用 GitHub Copilot 订阅
+### <a id="copilot-sub"></a>用 GitHub Copilot 订阅
 
 `/login` → **"GitHub Copilot"**：
 
@@ -327,15 +342,15 @@ token 换取后写入 `auth.json`（含 JWT 提取的 `accountId`），base URL 
 
 > `packages/ai/src/utils/oauth/github-copilot.ts`:251-280；`providers/github-copilot.ts:13-17`；`packages/ai/src/auth/helpers.ts:16-21`；`providers/github-copilot.models.ts`。
 
-### 4.4 选/切模型 · 上下文 · effort · 自定义 provider → 见 `pi-custom-model.md`
+### 选/切模型 · 上下文 · effort · 自定义 provider → 见 `pi-custom-model.md`
 
 切模型（`Ctrl+L` / `--model` / scoped 循环集）、选上下文长度与压缩、effort 七档 thinking level 的设置与三层机制、以及把任意 OpenAI/Anthropic 兼容端点接进 pi（`models.json` 配置 + 端点真伪探针 + USTC 实测快照）——都整理进专门文档：[**pi-custom-model.md**](pi-custom-model.md)。
 
 ---
 
-## 5. 扩展 / skill / 插件系统
+## 扩展 / skill / 插件系统
 
-### 5.1 扩展（🟩，dev 面向 TS）
+### 扩展（🟩，dev 面向 TS）
 
 一个扩展 = **默认导出工厂函数**的 TS/JS 模块，参数 `ExtensionAPI`；由 **`jiti`** 运行期转译加载（无需预编译）。核心依赖注入方式**随构建不同**：编译成 Bun 单文件时用 `virtualModules`，Node/开发时用指向 `node_modules` 的 alias。
 
@@ -384,7 +399,7 @@ const helloTool = defineTool({
 export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
 ```
 
-### 5.2 生命周期事件：33 个，其中 15 个能拦截/改写
+### 生命周期事件：33 个，其中 15 个能拦截/改写
 
 `types.ts` 恰好导出 **33** 个事件；其中 **15** 个具有决策/取消/改写/替换/处理语义（其余为通知）：
 
@@ -408,7 +423,7 @@ export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
 
 > `packages/coding-agent/src/core/extensions/types.ts`:505-541、661-675、829-833、1049-1112、1170-1211（33 事件、结果契约）；`docs/extensions.md`。
 
-### 5.3 Skill / prompt / theme（🟩 机制）
+### <a id="skill-mechanism"></a>Skill / prompt / theme（🟩 机制）
 
 四类资产各司其职：
 
@@ -442,7 +457,7 @@ export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
 
 > `packages/coding-agent/src/core/skills.ts`:295-306、410-424；`docs/skills.md:24-62`；`CHANGELOG.md:4306`（移除 `{baseDir}`）；`src/core/agent-session.ts:1273`；`src/core/{package-manager.ts:172-183,resource-loader.ts:416-418}`；`badlogic/pi-skills` README + `*/SKILL.md`；`agentskills.io/specification`。
 
-### 5.4 插件发布在哪里 / 怎么发
+### 插件发布在哪里 / 怎么发
 
 - **渠道：npm，打 `pi-package` keyword**（无专属 scope）；官方画廊 <https://pi.dev/packages>（快照约 5.1k 包，按**月**下载排序）。
   > `packages/coding-agent/docs/packages.md`:55-172；`src/package-manager-cli.ts:77-289`；`src/core/package-manager.ts:48-53,614-619,1435-1446`；`pi.dev/packages`（快照）。
@@ -452,16 +467,16 @@ export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
   > `packages/coding-agent/docs/packages.md`:55-172；`src/package-manager-cli.ts:77-289`；`src/core/package-manager.ts:48-53,614-619,1435-1446`；`pi.dev/packages`（快照）。
 - **管理**：`pi list` / `pi update [--all]` / `pi remove` / `pi config`（TUI 开关资源，`-l` 项目级）。
 
-### 5.5 生态热门插件（按月下载 · 快照，会变）
+### <a id="popular-plugins"></a>生态热门插件（按月下载 · 快照，会变）
 
 | 包 | ~月下载 | 作用 | 装 |
 |---|---|---|---|
 | `@hypabolic/pi-hypa` | ~198K | 上下文压缩（确定性压缩 shell 输出、上下文感知文件工具） | `pi install npm:@hypabolic/pi-hypa` |
 | `pi-web-access` | ~136K | 网络搜索（Brave/Tavily/Perplexity/Exa/OpenAI）+ URL/PDF/YouTube/GitHub 抓取 | `pi install npm:pi-web-access` |
-| `pi-mcp-adapter` | ~124K | 接入 MCP server（见 §5.7） | `pi install npm:pi-mcp-adapter` |
+| `pi-mcp-adapter` | ~124K | 接入 MCP server（见 [MCP 支持](#mcp-adapter)） | `pi install npm:pi-mcp-adapter` |
 | `context-mode` | ~117K | MCP + FTS5 知识库 + 沙箱执行，号称省 ~98% 上下文 | `pi install npm:context-mode` |
-| `pi-subagents` | ~111K | 子 agent 委派（见 §6.3） | `pi install npm:pi-subagents` |
-| `@tintinweb/pi-subagents` | ~40K | Claude Code 风子 agent + FleetView（见 §6.3） | `pi install npm:@tintinweb/pi-subagents` |
+| `pi-subagents` | ~111K | 子 agent 委派（见 [社区包](#orchestration-community)） | `pi install npm:pi-subagents` |
+| `@tintinweb/pi-subagents` | ~40K | Claude Code 风子 agent + FleetView（见 [社区包](#orchestration-community)） | `pi install npm:@tintinweb/pi-subagents` |
 | `bigpowers` | ~35K | 73 个工程方法学 skill 包 | `pi install npm:bigpowers` |
 | `@ayulab/pi-rewind` | ~32K | `/rewind` 检查点回溯 | `pi install npm:@ayulab/pi-rewind` |
 | `@plannotator/pi-extension` | ~30K | 交互式计划评审 / PR 评审 | `pi install npm:@plannotator/pi-extension` |
@@ -471,7 +486,7 @@ export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
 | `@gotgenes/pi-permission-system` | ~24K | 工具访问控制 / 权限策略 | `pi install npm:@gotgenes/pi-permission-system` |
 | `pi-simplify` | ~23K | 改动后清晰度/可维护性复审 | `pi install npm:pi-simplify` |
 | `@ff-labs/pi-fff` | ~22K | FFF 模糊文件/内容搜索 | `pi install npm:@ff-labs/pi-fff` |
-| `@quintinshaw/pi-dynamic-workflows` | ~22K | Code-mode 大规模 fan-out + `/deep-research`（见 §6.3） | `pi install npm:@quintinshaw/pi-dynamic-workflows` |
+| `@quintinshaw/pi-dynamic-workflows` | ~22K | Code-mode 大规模 fan-out + `/deep-research`（见 [社区包](#orchestration-community)） | `pi install npm:@quintinshaw/pi-dynamic-workflows` |
 | `pi-hermes-memory` | ~15K | 持久记忆 + 会话搜索 + 密钥扫描 | `pi install npm:pi-hermes-memory` |
 | `cc-safety-net` | ~9K | 拦截破坏性 git/文件系统命令 | `pi install npm:cc-safety-net` |
 
@@ -479,7 +494,7 @@ export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
 
 > `packages/coding-agent/docs/packages.md`:55-172；`src/package-manager-cli.ts:77-289`；`src/core/package-manager.ts:48-53,614-619,1435-1446`；`pi.dev/packages`（快照）。
 
-### 5.6 开发闭环
+### 开发闭环
 
 ```
 写：~/.pi/agent/extensions/x.ts（或项目 .pi/extensions/x.ts）——自动发现
@@ -492,41 +507,41 @@ export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
 
 > `packages/coding-agent/docs/{extensions.md,packages.md}`、`pi.dev/docs/latest/{extensions,packages}`。
 
-### 5.7 MCP 支持（⬜ 靠适配器补）
+### <a id="mcp-adapter"></a>MCP 支持（⬜ 靠适配器补）
 
 核心刻意不内置 MCP。社区 `pi-mcp-adapter`（⬜）以扩展形式把 MCP server 接进来：默认暴露一个 `mcp` 代理工具（search/describe/call，参数走 JSON 串），或用 `directTools` 把选定 MCP 工具注册成 pi 原生工具。装：`pi install npm:pi-mcp-adapter` 后重启。
 
 > `packages/coding-agent/docs/usage.md:303-307`（核心无 MCP）；`nicobailon/pi-mcp-adapter` README + `index.ts:254-363`。
 
-### 5.8 安全 · 信任 · 隔离（harness 必读）
+### <a id="security-trust"></a>安全 · 信任 · 隔离（harness 必读）
 
 - **Project Trust 只是资源加载门**：决定是否加载项目级 `.pi/settings.json`、`.pi/{extensions,skills,prompts,themes}`、`.pi/SYSTEM.md`/`APPEND_SYSTEM.md`、项目 `.agents/skills`、以及缺失的项目包。**它不是沙箱**，不限制模型让工具做什么；内置工具以 pi 进程权限读写文件、跑 shell。
   > `packages/coding-agent/docs/security.md`:5-37（信任门 + "not a sandbox"）。
-- **要真隔离用容器**，官方给三种模式：**Gondolin**（本地 Linux 微 VM，host 跑 pi、内置工具路由进 VM）、**Plain Docker**（整个 pi 进程进容器）、**OpenShell**（带文件/进程/网络/凭据/推理管控的策略沙箱）。§7.2 的 pi-chat 用的就是 Gondolin（模式一）。
+- **要真隔离用容器**，官方给三种模式：**Gondolin**（本地 Linux 微 VM，host 跑 pi、内置工具路由进 VM）、**Plain Docker**（整个 pi 进程进容器）、**OpenShell**（带文件/进程/网络/凭据/推理管控的策略沙箱）。[pi-chat](#pi-chat) 用的就是 Gondolin（模式一）。
   > `packages/coding-agent/docs/containerization.md`:9-82（Gondolin / Plain Docker / OpenShell）。
 
 ---
 
-## 6. 多 agent 协同
+## <a id="multi-agent"></a>多 agent 协同
 
 pi 无内置 sub-agent；生态四条路径，共同不变量：**除非显式 fork，子 agent 都拿全新空上下文**。
 
 > README Philosophy（No sub-agents / No background bash）；`docs/tmux.md`（仅按键编码）。
 
-### 6.1 `@earendil-works/pi-orchestrator`（🟨 实验性）
+### <a id="pi-orchestrator"></a>`@earendil-works/pi-orchestrator`（🟨 实验性）
 
 一个**进程督程**（非 LLM 级编排）：`orchestrator serve` 起 Unix socket（`~/.pi/orchestrator/orchestrator.sock`），`spawn`/`list`/`status`/`stop`/`rpc`/`rpc-stream` 管理一池 `pi --mode rpc` 子进程，把外部 CLI 桥接到它们的 JSONL RPC，可选向 `radius.pi.dev` 注册云端在线态。**只管进程生命周期与 IPC 中继**，不做任务路由/父 agent。README 明标 API 不稳定。
 
 > `packages/orchestrator/{README.md,src/cli.ts,src/rpc-process.ts,src/types.ts,src/ipc/protocol.ts}`。
 
-### 6.2 官方 subagent 示例扩展（🟦）
+### 官方 subagent 示例扩展（🟦）
 
 `examples/extensions/subagent/`：把每个子 agent 做成一个 `pi --mode json -p --no-session` 子进程（全新上下文），父读子进程的 `message_end`/`tool_result_end` 事件实时汇报、abort 经 SIGTERM 传递。三模式：single / parallel（≤8 任务、并发 4）/ chain（顺序，前一步文本填 `{previous}`）。
 agent 用 `.md` frontmatter 定义（`name`/`description`/`tools`/`model`+正文）。发现层**只有**用户级 `~/.pi/agent/agents/*.md` 与最近的项目 `.pi/agents/*.md`；**随仓库附带的 scout/planner/reviewer/worker 是"示例"，需自行拷贝/软链才生效**（默认 user-only，项目级要 `agentScope:"both"|"project"`，属信任边界）。附 `/implement`、`/scout-and-plan`、`/implement-and-review` 预设。
 
 > `packages/coding-agent/examples/extensions/subagent/{index.ts,agents.ts:97-115,agents/*.md,README.md:55-65}`。
 
-### 6.3 社区包（三种编排范式，⬜）
+### <a id="orchestration-community"></a>社区包（三种编排范式，⬜）
 
 | 包 | ~月下载 | 范式 | 亮点 |
 |---|---|---|---|
@@ -538,7 +553,7 @@ agent 用 `.md` frontmatter 定义（`name`/`description`/`tools`/`model`+正文
 
 > npm/GitHub：`nicobailon/pi-subagents`、`tintinweb/pi-subagents`、`QuintinShaw/pi-dynamic-workflows`（README + npm 版本/下载）。
 
-### 6.4 tmux 裸模式
+### tmux 裸模式
 
 README 一句话："用 tmux 起多个 pi 实例"；仓库 `docs/tmux.md` 只讲按键编码。实践即每 agent 一个命名 tmux 会话，人可 `tmux attach` 直接观测/介入（pi-chat 的 `/chat-spawn-all` 就是它的产品化）。
 
@@ -546,13 +561,13 @@ README 一句话："用 tmux 起多个 pi 实例"；仓库 `docs/tmux.md` 只讲
 
 ---
 
-## 7. 远程控制与移动端
+## 远程控制与移动端
 
 **手机远控电脑上的 pi 可行**，两条主线**都基于扩展事件 API**（不是 RPC）：注入用户消息 + 订阅事件回推。
 
 > `badlogic/pi-telegram`（README:68-135 + `index.ts:867-875` 配对、events、`telegram_attach`、旧 scope peerDeps）；`earendil-works/pi-chat`（README:176-197 + `index.ts:683-697`、`src/{runtime,gondolin,secrets.ts:10-45}`）；`packages/coding-agent/docs/termux.md:16-100`；社区 `CelestialCreator/pocket-pi`、`a2ajinkya/phone-pi`。
 
-### 7.1 `badlogic/pi-telegram`（🟧，~253★）——最简单
+### `badlogic/pi-telegram`（🟧，~253★）——最简单
 
 单文件扩展，跑在你桌面/服务器已有的 pi 会话内：起 Telegram Bot 长轮询，把每条 DM 经 `pi.sendUserMessage()` 注入为 user turn，订阅 `message_update`/`agent_end` 把流式输出（节流 750ms 编辑同一条消息）回推手机。
 
@@ -563,7 +578,7 @@ README 一句话："用 tmux 起多个 pi 实例"；仓库 `docs/tmux.md` 只讲
 - 手机能做：发文本/图片/文件、收流式输出、`stop`/`/stop` 打断、`/compact`、`/status`、忙时排队、pi 用 `telegram_attach` 回传文件。
 - ⚠️ 该仓库 `peerDependencies` 仍写旧 scope `@mariozechner/*`（主仓已迁 `@earendil-works/*`），装时留意。
 
-### 7.2 `earendil-works/pi-chat`（🟧）——多渠道 + 强隔离
+### <a id="pi-chat"></a>`earendil-works/pi-chat`（🟧）——多渠道 + 强隔离
 
 Discord 频道 + Telegram，**每频道一个 pi 进程（tmux 隔离）+ 一个 Gondolin 微 VM（Alpine+bash）**，read/write/edit/bash 全路由进 VM 的虚拟文件系统，agent 只见 `/workspace`、`/shared`。
 
@@ -575,7 +590,7 @@ Discord 频道 + Telegram，**每频道一个 pi 进程（tmux 隔离）+ 一个
   2. **Runtime secrets**（`pi.dev/secret` 交换）：agent 调 `chat_request_secret` → 生成临时 RSA-2048 keypair、给 `pi.dev/secret#<hash>` URL → 用户浏览器端 RSA-OAEP+AES-256-GCM 加密 → 回贴 `!secret:<id>:<payload>` → pi-chat 摄入前拦截解密、**明文写 `/workspace/.secrets/<name>` 供 agent 使用**（私钥只在内存）。
 - 远程命令：`stop`/`new`/`compact`/`status`（`parseControlCommand` 于常规摄入前处理）。
 
-### 7.3 Android / Termux 直接跑
+### Android / Termux 直接跑
 
 官方支持：`pkg install nodejs termux-api git`（Node ≥22.19.0）→ **`npm install -g --ignore-scripts @earendil-works/pi-coding-agent`**（`--ignore-scripts` 必需，安卓 ARM64 上原生依赖不可用）→ `pi`。剪贴板走 `termux-clipboard-*`。
 
@@ -584,7 +599,7 @@ Discord 频道 + Telegram，**每频道一个 pi 进程（tmux 隔离）+ 一个
 - ⬜ **pocket-pi**：自打包 APK（Termux+Node+pi+web dashboard），用 **`pi --mode rpc`** 子进程 + BlackBelt 的 `pi-agent-dashboard`（WebView）驱动，并把相机/麦克风/定位/通知/无障碍 UI 自动化等手机能力暴露给 agent。⬜ **phone-pi**：一组移动向 skill/扩展。
   > `badlogic/pi-telegram`（README:68-135 + `index.ts:867-875` 配对、events、`telegram_attach`、旧 scope peerDeps）；`earendil-works/pi-chat`（README:176-197 + `index.ts:683-697`、`src/{runtime,gondolin,secrets.ts:10-45}`）；`packages/coding-agent/docs/termux.md:16-100`；社区 `CelestialCreator/pocket-pi`、`a2ajinkya/phone-pi`。
 
-### 7.4 其他
+### 其他
 
 DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` + 自建 Web/移动前端；Telegram bot 本身即推送通知。
 
@@ -592,7 +607,7 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 
 ---
 
-## 8. 社区与维护
+## 社区与维护
 
 - **维护**：仓库 2025-08-09 建、HEAD 2026-07-11（约 11 个月）、v0.80.6、近日几乎每天提交；~70K★。核心 Mario + Armin + David Brailovsky 等 + 大量外部贡献者。
   > mariozechner.at 博客系列、Armin Ronacher <https://lucumr.pocoo.org/2026/1/31/pi/>、HN <https://news.ycombinator.com/item?id=46844822>、YouTube "Pi Building Pi"。
@@ -603,7 +618,7 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 
 ---
 
-## 附录：命令 · 旗标 · 快捷键速查
+## 附录：命令 · 旗标 · 快捷键
 
 - **内置斜杠命令（22）**：`/settings /model /scoped-models /export /import /share /copy /name /session /changelog /hotkeys /fork /clone /tree /trust /login /logout /new /compact /resume /reload /quit`；另有 `/skill:<name> [args]` 与 prompt 模板 `/<模板名>`。
   > 斜杠命令/CLI 旗标/快捷键：`packages/coding-agent/src/core/slash-commands.ts:19-42`；`src/cli/args.ts:74-278`；`docs/keybindings.md:1-153`；`src/core/keybindings.ts:64-207`。
@@ -626,7 +641,7 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 | [badlogic/pi-skills](https://github.com/badlogic/pi-skills) | first-party skill 集 | 🟧 |
 | [badlogic/pi-telegram](https://github.com/badlogic/pi-telegram) | Telegram 远控 | 🟧 |
 | [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat) | Discord/Telegram 多渠道 + VM 隔离 | 🟧 |
-| `pi-subagents` / `@tintinweb/pi-subagents` / `@quintinshaw/pi-dynamic-workflows` / `pi-mcp-adapter` / `@hypabolic/pi-hypa` / `pi-web-access` / `context-mode` / `pi-lens` / `@gotgenes/pi-permission-system` … | 见 §5.5 生态热门插件 | ⬜ |
+| `pi-subagents` / `@tintinweb/pi-subagents` / `@quintinshaw/pi-dynamic-workflows` / `pi-mcp-adapter` / `@hypabolic/pi-hypa` / `pi-web-access` / `context-mode` / `pi-lens` / `@gotgenes/pi-permission-system` … | 见 [生态热门插件](#popular-plugins) | ⬜ |
 | npm `pi-package` keyword · 画廊 <https://pi.dev/packages> · RFC <https://rfc.earendil.com/keyword/pi/> | 发布/发现/路线图 | — |
 
 ---
