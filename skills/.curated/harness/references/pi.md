@@ -155,7 +155,7 @@ export interface SessionEntryBase { type: string; id: string; parentId: string |
 
 现有 `dredge-up` 脚本的数据层只解析 Copilot CLI；在补 pi adapter 前，可直接按上述 schema 写一个只读 JSONL 提取器。渲染层应消费 agent-neutral 中间结构，不要把 pi schema 再复制进每个前端。
 
-### <a id="config-discovery"></a>配置与指令发现（harness 重点）
+### <a id="config-discovery"></a>配置与指令发现
 
 配置根默认 `~/.pi/agent/`（`PI_CODING_AGENT_DIR` 可覆盖）。
 
@@ -342,7 +342,7 @@ token 换取后写入 `auth.json`（含 JWT 提取的 `accountId`），base URL 
 
 > `packages/ai/src/utils/oauth/github-copilot.ts`:251-280；`providers/github-copilot.ts:13-17`；`packages/ai/src/auth/helpers.ts:16-21`；`providers/github-copilot.models.ts`。
 
-### 选/切模型 · 上下文 · effort · 自定义 provider → 见 `pi-custom-model.md`
+### 自定义 provider
 
 切模型（`Ctrl+L` / `--model` / scoped 循环集）、选上下文长度与压缩、effort 七档 thinking level 的设置与三层机制、以及把任意 OpenAI/Anthropic 兼容端点接进 pi（`models.json` 配置 + 端点真伪探针 + USTC 实测快照）——都整理进专门文档：[**pi-custom-model.md**](pi-custom-model.md)。
 
@@ -457,7 +457,7 @@ export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
 
 > `packages/coding-agent/src/core/skills.ts`:295-306、410-424；`docs/skills.md:24-62`；`CHANGELOG.md:4306`（移除 `{baseDir}`）；`src/core/agent-session.ts:1273`；`src/core/{package-manager.ts:172-183,resource-loader.ts:416-418}`；`badlogic/pi-skills` README + `*/SKILL.md`；`agentskills.io/specification`。
 
-### 插件发布在哪里 / 怎么发
+### 插件发布与分发
 
 - **渠道：npm，打 `pi-package` keyword**（无专属 scope）；官方画廊 <https://pi.dev/packages>（快照约 5.1k 包，按**月**下载排序）。
   > `packages/coding-agent/docs/packages.md`:55-172；`src/package-manager-cli.ts:77-289`；`src/core/package-manager.ts:48-53,614-619,1435-1446`；`pi.dev/packages`（快照）。
@@ -467,7 +467,7 @@ export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
   > `packages/coding-agent/docs/packages.md`:55-172；`src/package-manager-cli.ts:77-289`；`src/core/package-manager.ts:48-53,614-619,1435-1446`；`pi.dev/packages`（快照）。
 - **管理**：`pi list` / `pi update [--all]` / `pi remove` / `pi config`（TUI 开关资源，`-l` 项目级）。
 
-### <a id="popular-plugins"></a>生态热门插件（按月下载 · 快照，会变）
+### <a id="popular-plugins"></a>生态热门插件（快照，会变）
 
 | 包 | ~月下载 | 作用 | 装 |
 |---|---|---|---|
@@ -513,7 +513,7 @@ export default function (pi: ExtensionAPI) { pi.registerTool(helloTool); }
 
 > `packages/coding-agent/docs/usage.md:303-307`（核心无 MCP）；`nicobailon/pi-mcp-adapter` README + `index.ts:254-363`。
 
-### <a id="security-trust"></a>安全 · 信任 · 隔离（harness 必读）
+### <a id="security-trust"></a>安全 · 信任 · 隔离
 
 - **Project Trust 只是资源加载门**：决定是否加载项目级 `.pi/settings.json`、`.pi/{extensions,skills,prompts,themes}`、`.pi/SYSTEM.md`/`APPEND_SYSTEM.md`、项目 `.agents/skills`、以及缺失的项目包。**它不是沙箱**，不限制模型让工具做什么；内置工具以 pi 进程权限读写文件、跑 shell。
   > `packages/coding-agent/docs/security.md`:5-37（信任门 + "not a sandbox"）。
@@ -541,7 +541,7 @@ agent 用 `.md` frontmatter 定义（`name`/`description`/`tools`/`model`+正文
 
 > `packages/coding-agent/examples/extensions/subagent/{index.ts,agents.ts:97-115,agents/*.md,README.md:55-65}`。
 
-### <a id="orchestration-community"></a>社区包（三种编排范式，⬜）
+### <a id="orchestration-community"></a>社区包（编排范式，⬜）
 
 | 包 | ~月下载 | 范式 | 亮点 |
 |---|---|---|---|
@@ -577,7 +577,7 @@ README 一句话："用 tmux 起多个 pi 实例"；仓库 `docs/tmux.md` 只讲
 
 > 均来自本地 clone `~/projects/readonly-repos/{pi-web,tau,pi-agent-dashboard}`：pi-web `lib/rpc-manager.ts`(`startRpcSession`/`AgentSessionWrapper`)、`app/api/agent/[id]/events/route.ts`(SSE)、`bin/pi-web.js`(:30141)、`lib/session-reader.ts`(`getAgentDir`)；tau `extensions/mirror-server.ts`(:3001·`0.0.0.0`·`session_start`·`handleCommand`→`pi.sendUserMessage`)、`package.json`(`pi.extensions`)；dashboard `packages/server/src/{process-manager.ts,rpc-keeper/keeper.cjs,server.ts,cli.ts}`(:8000/:9999)。
 
-### <a id="web-ui-legacy"></a>历史：被删的 `@earendil-works/pi-web-ui`（≠ 网页版 TUI，别混）
+### <a id="web-ui-legacy"></a>历史：被删的 `@earendil-works/pi-web-ui`（≠ 网页版 TUI）
 
 主仓曾有 `packages/web-ui`（npm `@earendil-works/pi-web-ui`）——**mini-lit 浏览器组件库**（`ChatPanel`/`AgentInterface`/消息渲染/IndexedDB 存储/artifact/JS REPL）。**它不是"在浏览器里驱动本地 pi"的工具**：package.json 无 `pi` 字段（非扩展）、不依赖 `pi-coding-agent`、不碰 `~/.pi/agent`/文件系统；agent **跑在浏览器里**（key 存 IndexedDB、经 CORS 代理直连厂商）。它是 `pi-tui`（终端渲染库）的**网页孪生**，用来搭"自己的 claude.ai 式网页 app"。
 
