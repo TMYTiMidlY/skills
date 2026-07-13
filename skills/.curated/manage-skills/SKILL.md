@@ -94,42 +94,22 @@ done
 
 找到断的 → 移回收站 → 按新源路径重链。
 
-## 引用
+## 写 / 改 skill 的规范
 
-**跨 skill 不写任何形式的文件路径**——包括相对路径（`../software/references/copilot.md`）、绝对路径、`~/...`，也不允许“迁移指引”式的链接（“详见 .../X.md”）。需要提示另一个 skill 的能力时，只写 skill 名加能力边界（例：“见 `software` skill 的 GitHub Copilot CLI 章节”）。
+写、改、审查、重构任何 skill 都按 [references/checklist.md](references/checklist.md) 的要求来——那是唯一出处，含完整理由与正反例。**别在这里或别的 skill 里重抄规则，要提就写条目名链过去。** 速览（点进 checklist 看细节）：
 
-理由：被引 skill 内部一旦拆分 / 合并 / 重命名 reference 文件，所有跨 skill 链接都断；只写 skill 名 + 主题名，读者用 grep / SKILL.md 自己定位，永不断链。这是硬规则，没有“对用户更友好就破例”的豁免——不要被“明示目标更顺手”的直觉劝退。
+- **内容**：概念优先、说人话｜命令 / 示例优先｜每条说法有据、来源与置信度就近｜踩坑 / 排障紧贴主题｜少写"给 agent 自动执行的操作流程"（reference 只描述目标产物）｜不过度限制、少堆告诫｜个人配置不入正文、脱敏用占位符
+- **引用**：跨 skill 只写 skill 名 + 能力边界、不写任何文件路径｜同 skill 内用相对路径｜章节跳转用显式 `<a id>` 锚点（不用标题派生 slug）｜引上游源码 / 文档锁到版本（别指 `main` / `latest` 滚动 ref）
+- **标题**：命名"这节是什么"、不预告结论 / 计数 / 排名｜不编号、不用 §N 交叉引用｜并列小节靠客观属性区分｜改带 `<a id>` 的标题只改文字
+- **结构**：渐进式披露三层（description → SKILL.md → references）、单文件长度不是拆分理由｜脚本用 `uv` + PEP 723 内联依赖｜不绑定特定 AI 工具名｜frontmatter `name` 全局唯一且与目录名一致｜README 与 skill 状态同步｜嫁接 skill 保留上游 LICENSE、留意是否落后上游
 
-同一 skill 内部引用自己的 `references/`、`assets/`、`scripts/` 用相对路径（如 `references/foo.md`）；目标必须真实存在，重命名后同步更新。
+## 重构已有文档
 
-### 章节级锚点：标题一改，`#slug` 就失效
-
-上面这条只保证**文件级**链接稳（`references/foo.md` 不管标题怎么改都能打开对文件）。但如果要精确跳到文件里的**某个章节**，别直接写 `references/foo.md#安装步骤` 这种标题派生锚点——GitHub 的标题锚点是从标题文字自动生成 slug，标题一改（哪怕只改几个字），slug 跟着变，链接**不报错、只是跳不到位**（打开文件但停在顶部，容易被忽略）。
-
-稳妥做法：给标题嵌一个和标题文字本身脱钩的显式锚点，链接指向这个锚点而非标题派生的 slug：
-
-```markdown
-## <a id="install-steps"></a>安装步骤
-```
-
-```markdown
-见 [安装步骤](references/foo.md#install-steps)
-```
-
-之后不管标题怎么改写（"安装步骤"→"安装流程"→"部署指南"），只要不动 `<a id="install-steps">` 这一行，链接照样生效——**改标题，不用同步改引用处**。同一份文件内部的目录/章节跳转（如 SKILL.md 自己较长、想在顶部放内部目录）用同一套机制。
-
-- id 命名用英文 kebab-case，且和标题文字脱钩（不要把中文标题转拼音当 id）——这样才不会在改标题时被"顺手把 id 也改一致"的直觉带偏，从而失去这条规则本来要的稳定性。
-- 可行性已用 GitHub 官方 `POST /markdown` 渲染 API 实测确认（非凭印象）：GitHub 会把显式 `id` 统一加上 `user-content-` 前缀防冲突，但对应的 `#id` 链接由 GitHub 同一套机制自动解析到位——这和内置的标题自动锚点（Outline 目录用的那套）走的是同一条路径，写的时候不用理会这个前缀。⚠️ 只验证过 GitHub 渲染；VS Code 预览等其他渲染器通常也认 HTML `id`，但未逐一验证，引用前自行确认目标渲染环境。
-
-## 拆分与整理
-
-- 短小高频的规则直接放 `SKILL.md`；长流程、低频细节、可独立维护的主题放 `references/`。
-- 挪内容时先确认新位置覆盖完整原文，再删旧正文；别留重复。
-- 重命名 skill 后，同步更新 frontmatter `name`、标题、描述和其他 skill 里的纯文本提示。
+把一篇已成型的文档（SKILL.md 或 reference）做结构性重排 / 打磨——理顺标题树、章节归属、来源组织，且不丢信息。核心：**先给「改后大纲」供审阅、批准后才动手**，全程对照 [references/checklist.md](references/checklist.md) 的要求逐条过。完整四步流程与大纲格式见 [references/refactor.md](references/refactor.md)。
 
 ## 审查现有 skills
 
-用户让“审查 / 检查所有 skill 是否合规”时，先向用户确认审查范围（如原创、已适配嫁接、实验性、全部），然后按 [references/audit-checklist.md](references/audit-checklist.md) 执行。默认**只审不改**：先列出发现交给用户，明确同意后才动手改。
+用户让“审查 / 检查所有 skill 是否合规”时，先向用户确认审查范围（如原创、已适配嫁接、实验性、全部），然后逐条核对 [references/checklist.md](references/checklist.md) 里的每项要求。默认**只审不改**：先列出发现交给用户，明确同意后才动手改。
 
 输出格式：按 skill 分段，每段列命中的检查项（带文件 / 行号）与建议；最后给“全部无问题的 skill 清单”，避免用户误以为全仓都有病。
 
