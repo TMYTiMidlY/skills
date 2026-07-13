@@ -1,4 +1,4 @@
-# skills 的要求（检查清单）
+# skills 规范
 
 每个 skill 应满足的要求，逐条可核对，是"写 / 改 / 审查 / 重构 skill"共同的准绳——**这里是唯一出处**，别在 SKILL.md 或别的 skill 里重抄这些规则，要提就写 skill 名 + 条目名指过来。写作时照着做；**审查**（跨 skill 合规扫描）逐条核对，另加 [review.md](review.md) 的跨 skill 专项检查；**重构**（打磨单篇文档）拿它当诊断项。两条流程本身——审查的"只审不改 / 确认范围 / 输出格式 / 批量修复确认点"见 [review.md](review.md)、重构的"先出改后大纲再动手"见 [refactor.md](refactor.md)。
 
