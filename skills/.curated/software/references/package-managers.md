@@ -148,6 +148,30 @@ choco list --local-only  ;  winget list          ;  scoop list
   - **背景变化：2025-12-02 Anthropic 收购 Bun**（[官方公告](https://www.anthropic.com/news/anthropic-acquires-bun-as-claude-code-reaches-usd1b-milestone)，随 Claude Code 达 $1B 里程碑；HN 最高热帖 2192pt，指向 Bun 官方博客，Anthropic 官网那条另有 99pt）——Bun 团队并入 Anthropic、作为 Claude Code 的打包/运行基座。此前"小团队、前途未卜"的顾虑因此缓解；但 JSC≠V8、Node 兼容等**技术性**差异不受收购影响、依旧成立。
 - **中肯定位**：**开发环境**的极速 npm 替代 + TS 脚本 runner 已经很能打；**核心生产服务**建议先小规模灰度、盯版本，别仓促全量迁移。（时间线核对至 2026-07，bun 迭代快，用前请复核最新版本文档。）
 
+**yarn 为何一分为二：Classic (v1) → Berry (v2+)**（理解 yarn 绕不开这道设计断裂，也是它采用度掉队的根源）：
+
+- **历史贡献**：yarn 由 Meta（当年 Facebook）2016 年发布，当年就带来 `yarn.lock`（确定性锁定，同一份清单在哪都装出同样的依赖树）、并行安装、离线缓存、workspaces（monorepo 单仓多包）——很多是 yarn 先趟出来、后来被 npm 逐一吸收。这条 1.x 线如今叫 **Yarn Classic**，已进**维护模式**（只修 bug、不加新功能）。
+- **断裂点**：2020 年的 **Yarn 2（代号 Berry）** 是一次近乎重写的破坏性升级，理念大改，2.x+ 统称 **Yarn Berry / Modern**。"Classic 停更 + Berry 迁移成本高"这道坎，正是不少团队干脆转投 pnpm、yarn 采用度走低的主因（呼应下方下载量快照）。
+
+**Berry 的招牌设计：Plug'n'Play（PnP，即插即用）**：
+
+- **是什么**：PnP **彻底不生成 `node_modules/` 目录**，改用一个 `.pnp.cjs` 文件当"依赖位置索引表"，把包直接从全局 zip 缓存（`.yarn/cache/*.zip`）映射给 Node 的 `require`。
+- **为什么**：`node_modules` 的扁平化提升（hoisting，把嵌套依赖抬到顶层去重）会放出幽灵依赖，且装包要解压海量小文件、慢又占盘。PnP 用一张静态映射表取代磁盘目录树 → 装得快、还能严格拦幽灵依赖。
+- **代价（也是迁移阻力）**：PnP **打破了"包一定躺在 `node_modules` 里"这个全生态默认假设**——很多打包器 / 编辑器 / 老库直接去读 `node_modules`，PnP 下要装编辑器 SDK 补丁才认。所以 Berry 允许**退回传统布局**（`nodeLinker: node-modules`），官方迁移指南也默认先让你保留 `node_modules`、要不要上 PnP 另说。见 [PnP 特性页](https://yarnpkg.com/features/pnp)。
+- **顺带一个 Berry 卖点**：**zero-install（零安装）**——把 `.yarn/cache` 一起提交进 git，`clone` 下来无需 `yarn install` 即可跑。
+
+**关键设计取舍：Berry 砍掉了全局安装（`yarn global`）**：
+
+- Classic 有 `yarn global add <pkg>`（对标 `npm i -g`）。**Berry（v2+）直接移除了 `yarn global` 命令**。官方迁移指南原话：*"Yarn focuses on project management, and managing system-wide packages was deemed to be outside of our scope"*——**"yarn 专注项目管理，管全系统级的包不在我们职责范围内"**（[berry#821](https://github.com/yarnpkg/berry/issues/821)）。
+- 替代品分两种，但都**不是**"常驻全局 CLI"：
+  - 一次性跑：**`yarn dlx <pkg>`**（dlx = download and execute，下载→跑→丢，≈ `npx`）；官方特意注明 dlx **不追踪装了什么、版本也不记**，故意不能拿来当 `yarn add` 用（[dlx 文档](https://yarnpkg.com/cli/dlx)）。
+  - 要长期用的库：老老实实**项目本地** `yarn add`，靠 PnP / `yarn <bin>` 跑。
+- **后果**：把某个 CLI"全局装一份挂到 `PATH`"这个动作，在 npm / pnpm / bun 里都是一等命令（`npm i -g` / `pnpm add -g` / `bun add -g`），**现代 yarn 却没有对等物**——Berry 上敲 `yarn global add` 直接报未知命令，只有还在跑 Classic 的人能用。所以凡是"全局装 CLI 工具"的场景，yarn 常被排除在推荐入口之外（往往只在**卸载**兜底时才提 `yarn global remove`，照顾当年用 Classic 装过的人）。
+
+**版本纪律：Corepack**：因为 Classic 与 Berry 命令 / 行为差异巨大，"这个项目到底该用哪个 yarn"很容易踩错。Node 自带的 **Corepack**（`corepack enable`）读 `package.json` 的 `"packageManager": "yarn@4.x"` 字段，自动切到项目要求的 yarn 版本（对 pnpm 同理），也是官方迁移 Berry 的第一步。
+
+**中肯定位**：yarn 的历史贡献大（lockfile / workspaces / 确定性安装很多是它先趟出来的），但今天夹在"Classic 稳却停更"和"Berry 新却破坏性、迁移贵"之间，通用场景大量流向 pnpm；Berry + PnP + zero-install 在**大型 monorepo** 仍有稳定拥趸。
+
 **四家客户端采用度快照**（npm registry 周下载量，2026-07；**看趋势别抠绝对值**）：
 
 | 客户端 | 周下载量 |
