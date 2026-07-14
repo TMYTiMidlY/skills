@@ -171,6 +171,30 @@ RustFS 跑 HDD 后端时（典型 baremetal / NAS / edge），bucket 级 list / 
 
 工程含义：对“每个逻辑单位几十~几百个小文件”的工作负载，**把小文件聚合成中等大小对象（打 zip / pack）对 HDD 后端是近乎免费的 ~10× 加速**——因为 server-side copy 不省 disk seek（§5），少对象 = 少 seek。后台 scanner 跑完一轮的时间也按对象数缩比例，间接影响 `mc admin info` 用量统计的更新延迟。
 
+### 量桶大小 / 对象数：别 `du` / `ListObjectsV2` 全扫，打 admin `datausageinfo`
+
+只想知道“某桶多大 / 多少对象 / 集群总用量”时，**别用 `mc du` 或 `ListObjectsV2` 累加**——那是 O(对象数) 的全量枚举，在几十万对象的桶上（如 `qatlas-pdf` 18 万、`qatlas-images` 39 万）一次 list 就 30s+ 超时（同 §6：wall-clock ∝ 对象数）。
+
+RustFS（MinIO 协议族）有个 admin 端点直接返回 **scanner 预算好的**每桶用量，免枚举、~O(1) 秒出：
+
+```
+GET /rustfs/admin/v3/datausageinfo        # SigV4 签名，需 root/admin key（service=s3, region=us-east-1）
+# MinIO 兼容别名：GET /minio/admin/v3/datausageinfo
+```
+
+**字段是 snake_case，不是 MinIO madmin 的 camelCase**（最大的坑——拿 MinIO 的 `madmin` 客户端或网上 camelCase 示例去解析会全拿到空）：
+
+| 取什么 | RustFS 字段（snake_case） | MinIO madmin（camelCase，**不适用**） |
+|---|---|---|
+| 每桶大小（字节） | `buckets_usage[<bucket>].size` | `bucketsUsageInfo[<b>].size` |
+| 每桶对象数 | `buckets_usage[<bucket>].objects_count` | `…objectsCount` |
+| 集群总字节 / 总对象 | `objects_total_size` / `objects_total_count` | `objectsTotalSize` / … |
+| 容量 / 已用 / 空闲 | `total_capacity` / `total_used_capacity` / `total_free_capacity` | — |
+
+实测（RustFS，2026-06，mesh root key）：单次请求拿到全 8 个桶的 size+count（含 639GB / 2127 对象的大桶），<1s 返回；对比同桶 `ListObjectsV2` 分页累加直接 40s timeout。
+
+**caveat**：返回的是后台 scanner **最近一轮**的统计（§6 说 scanner 跑完时间 ∝ 对象数），所以**刚写入的对象可能滞后一个扫描周期**才反映进来——要逐字节精确的当下值仍得枚举，但“大致多大 / 量级”用这个最划算。`mc admin info <alias>` / 控制台用量页背后是同一份数据；这里给的是**不依赖 mc、直接签名 HTTP** 的取法（mc 不在 PATH 时尤其有用）。SigV4 签名骨架同 §9 其它 admin 调用：root key + `host;x-amz-content-sha256;x-amz-date` 三头、空 body 的 `sha256` payload hash。
+
 ## 7. mc vs boto3 行为速查
 
 | 操作 | mc | boto3 / AWS SDK | 优选 |
