@@ -50,6 +50,7 @@ sudo systemctl reload caddy
   如果 Caddyfile 里用了 `{env.XYZ}`，先在当前 shell 里手动 `export` 一遍即可；值随便填，`validate` 只检查占位符能否解析。
 - **`reload` 真失败（新配置语法/校验不过）时服务不停**：进程继续跑内存里已加载的旧配置，线上不断——所以改 Caddyfile 优先 `reload`、别用 `restart`。`restart` 会真停进程再起，遇到错配置会直接起不来、真断服（比 reload 失败严重）；改完先 `caddy validate`（nginx 用 `nginx -t`）dry-run 过了再 reload。
 - **判断语法是否通过的锚点：validate 输出里出现 `adapted config to JSON` 这行，就说明 Caddyfile 语法已解析成功。** 后面即便因 `{env.XYZ}` 填的假值在 provision 阶段 `Error: ...` 让整体 exit 1，那也只是运行期配置问题、不是语法错。所以哪怕 `validate` 退出非零，只要看到 `adapted config to JSON` 且没有 adapt 阶段的语法报错，就足以确认 `restart` 不会因语法错起不来——这在**用 `restart`（而非 `reload`）落地时尤其值得先确认**，因为语法错会让 `restart` 直接把服务干趴，而 `reload` 失败还能保留旧配置。
+- **`tls internal` 站点长期停机后，首次启动可能卡在“旧证书已删、renew 仍读旧 key”**：日志先出现 `certificate expired beyond grace period; cleaning up`，随后反复 `open .../<IP>.key: no such file or directory`。这是存储清理与内存续签任务的交错，不是 Caddyfile 语法错误；确认 `caddy validate` 通过后重启一次，让新进程在“旧证书文件已不存在”的干净状态下走 `tls.obtain`，看到 `certificate obtained successfully` 才算恢复。只看到端口 LISTEN 不够，还要实际完成 TLS 握手。
 
 ## 基础反代：先选站点模式
 
