@@ -1,22 +1,9 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 命令行精准操作（有并发/无关改动时只提交某处、hunk/行级暂存、后有提交时 amend）与 Git 镜像/自建 Forgejo、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链 / git-pages 静态站）、本地中文 ASR、OpenList 网盘聚合、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 命令行精准操作（有并发/无关改动时只提交某处、hunk/行级暂存、后有提交时 amend）与 Git 镜像/自建 Forgejo、Commitizen 发版（PEP 440 版本号、CHANGELOG 手改是否被冲、tag 触发 CI 发 PyPI）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链 / git-pages 静态站）、本地中文 ASR、OpenList 网盘聚合、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
 ---
 
 # Software
-
-## 写 / 改 reference 文件的规则
-
-reference 文件的目标：让**任意** agent 或用户照着就能在**自己的**设备上搭起来。改某类问题的 reference 时遵循：
-
-1. **概念优先、说人话**：先讲清“是什么、为什么这么做、解决什么问题”，再给细节；代码黑话/术语只在影响理解时才解释，不重要的略过。
-2. **可复现、不绑定本机**：隐去具体主机名 / IP / 用户名 / 私有路径，用占位符（如 `<入口VPS>`、`<user>`）。路径、目录名这类“换台机器就不同”的东西讲清作用即可，别当硬性要求。
-3. **命令 / 示例文件优先**：能贴一段可直接套用的 compose / 配置 / 脚本 / 命令就贴出来（敏感值留占位符），胜过大段散文。
-4. **每条说法要有据**：自己实测的直接陈述（不用写“实测”二字）；来自官方/外部的**挂可点开的官方文档链接**；拿不准的标注不确定，别凭记忆编。多给客观证据（版本号、命令输出、API 返回等）。
-5. **踩坑 / 排障紧贴主题**：记录真实踩过的坑和诊断/恢复办法，但只留与本主题强相关、对复现有用的；琐碎、一次性、跑题的不写。
-6. **少写“给 agent 自动执行的操作流程”**：用什么 CLI 工具、要不要 sudo、怎么备份回滚、删文件用什么——这些是操作者临场决定的事，不进 reference，reference 只描述**目标产物长什么样**。
-   - **例外：面向人的操作可以写详细。** GUI 点选路径、必须物理接触设备 / 进某台机器桌面才能做的步骤，是**只能由人来做、agent 读了也不会自动执行**的部署说明——这类写具体反而有用（人照着点）。判断标准：这段是给 agent 读了去跑命令的，还是给人读了自己动手的？后者放开写。
-7. **不过度限制、少堆告诫**：陈述事实与权衡（必要时给出被否决的备选及代价），让读者自己判断，少用“绝不能 / 务必”这类防御句；复杂链路优先用 GitHub 能渲染的图（mermaid / 表格 / blockquote）。
 
 ## SSH
 
@@ -33,6 +20,16 @@ SSH 密钥 passphrase、ssh-agent、非交互环境（CI / `bash -c`）私钥带
 ## Git CLI 精准操作（有并发/无关改动时只提交、暂存、丢弃、amend 一处）
 
 工作区同时躺着"你想动的改动"和"不该由你带走的改动"（并发会话未提交的脏文件、别人已 `git add` 的 rename、untracked 文件）时，如何在**命令行非交互**地只对一处做 commit/stage/discard/stash，以及提交被别人叠了新提交后怎么改它。先讲**地基**：Git **三棵树**（工作区/暂存区 index/HEAD，出处 Pro Git《Reset Demystified》）、`git commit`（无路径）= 给整个 index 拍快照（暂存区里什么都必带走）、任何"部分操作"= 拿两棵树做 diff（谁是底座 floor 决定动得了什么）。正文按**粒度**分两大场景——**整文件级**：`git commit -- <path>`（不带 -p 的 pathspec 提交，忽略整个 index、只记 HEAD+该文件当前内容，连别人已暂存的 rename 都不搭车；全新文件先 `git add -N -- <path>` 只写 intent-to-add 标记；丢弃/撤出/搬走整文件用 `git restore -- / --staged -- / -SW --source=HEAD --`、`git stash push --`；`--` 消歧符加不加结果相同但推荐带上）、及"加了 -p 反而破坏隔离性"的反直觉坑（`commit -p f.txt` 仍带走已暂存内容）；**子文件 hunk/行级**：非交互**补丁手术**（`git diff | filterdiff --hunks=N | git apply --cached` 一行式，或手删补丁 `@@` 段、`git apply -R` 反向丢弃/撤暂存），及**交互式 `-p`**（**不是 TUI**，是行式提示、能被 `printf 'y\n' | git add -p` 管道驱动；各 `-p` 命令**基准对照表**：`add/commit/restore -p` 基准=index 只动未暂存、`stash -p` 与 `restore -SW --source=HEAD -p` 基准=HEAD 才够得到已暂存，`stash -p` 不重置 index；`y/n/a/d/s/e` 按键、split 要有未改动行才拆、edit 到行级）；**后面已有提交时如何 amend**——`git rebase -i` 的 `reword`（保 tree 只换消息、被改条及其上子提交全部换新 SHA）语义，以及工作区被并发脏文件占住、rebase 拒绝启动时的 plumbing 等效法（`commit-tree` 复用原 tree 重建 + `update-ref` 带旧值 CAS 原子移分支、不碰 index/worktree）见 [references/git.md](references/git.md)。
+
+## Commitizen（发版：PEP 440 版本号 / CHANGELOG / prerelease / tag-CI）
+
+commitizen（`cz`）按 Conventional Commit 算版本号、打 tag、生成 `CHANGELOG.md`；发布交给
+tag 触发的 CI。覆盖：Python 版本号规范（PEP 440 的 a/b/rc/dev/post 归一化与排序、"预发布默认
+装不到"）、手改 CHANGELOG 会不会被下次 `cz bump` 冲掉（incremental 逐字保留 vs 裸 `cz changelog`
+整篇重写、实测哨兵验证）、prerelease 段与正式段的关系（转正段默认近乎空、`--merge-prerelease`）、
+`pre_bump_hooks` 在版本文件写入之后才跑导致失败后的半途状态与恢复、tag 触发 build + GH Release
+（stable/prerelease 分类、changelog 抽取 vs 重生成）+ PyPI（OIDC、skip-existing、不可变）的流水线
+形态。见 [references/commitizen.md](references/commitizen.md)。
 
 ## 包管理器全景 / 分类对比（Nix vs apt、choco/winget/Scoop、npm/pnpm/bun、pip…）
 
