@@ -58,7 +58,7 @@ description: 会话收尾盘点——把你聊过/承诺过、却被后续任务
 ## 可选输出
 
 - **报告式 HTML 存档**：用户想要可视化留档 / 把会话过程交给别人时，用 `scripts/` 里的 dump 脚本（自身用 `uv run` 跑、PEP723 内联依赖）生成单文件 HTML。
-  - 数据源是 `~/.copilot/session-state/<id>/events.jsonl`（缺失时回退到 `session-store.db` 的 `turns` 表，header 显示警告）——这就是 Copilot CLI 自带 `/share html`（别名 `/export`）消费的同一份事实。所以能还原**完整时间线**：用户消息 / 助手回答 / 推理（reasoning） / 工具调用（按 `callId` 合并 start+complete） / 通知 / 信息 / 错误等全部 entry 类型。
+  - 数据源是 `~/.copilot/session-state/<id>/events.jsonl`（缺失时回退到 `session-store.db` 的 `turns` 表，header 显示警告）——这就是 Copilot CLI 自带 `/share html`（别名 `/export`）消费的同一份事实。所以能还原**完整时间线**：用户消息 / 助手回答 / 推理（reasoning） / 工具调用（按 `callId` 合并 start+complete） / 通知 / 信息 / 错误 / 会话压缩（含注入新窗口的 summary + token 统计） / 任务完成 / 子代理（`subagent.started`+`completed` 按 `toolCallId` 合并成一条，带模型·工具调用数·tokens·耗时） / 技能调用 / 计划变更等 entry 类型——其中**子代理 / 技能 / 计划变更超出官方 `/share html`**（官方只渲染到"错误"及压缩/任务完成那几类），是本 skill 额外从 events.jsonl 补出来的。
   - 视觉**照搬 `/share html`**：暗色 GitHub(Primer) 主题、sticky header、按类型筛选 pill、搜索（`/` 聚焦）、折叠/展开、侧栏目录、上一条/下一条用户消息跳转。CSS/JS 来自从 `@github/copilot` 包里抽出的资产；标签汉化但 `data-type` 保持英文（JS 过滤靠它）。助手消息按 markdown 渲染、用户消息转义。
   - **想在报告顶部钉 agent 总结**：把"做过的事 / 承诺未做"等盘点写成 HTML 片段文件（`<h3>`/`<ul>` 等简单标签即可，精炼别太详），用 `--summary <片段.html>` 注入。总结条目**钉在编号之外**（`data-index="summary"`），真实 #1 仍是真实第一条事件；同时多一个 `总结` 筛选 pill。
   - **两条渲染路径并存**（视觉不同，按场景选）：

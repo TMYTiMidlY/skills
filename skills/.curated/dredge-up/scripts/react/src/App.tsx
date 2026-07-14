@@ -10,6 +10,7 @@ import {
   Brain, Wrench, Info, Bell, Check, X as XIcon, Ban, Hourglass,
   ChevronUp, ChevronDown, Rows3,
   AlertTriangle, Package, Shuffle, CircleDashed, CheckCircle2,
+  Puzzle, ClipboardList,
 } from 'lucide-react'
 import { CodeBlock } from './components/CodeBlock'
 import { cn } from './lib/cn'
@@ -31,17 +32,33 @@ interface BasicEntry {
     | 'user' | 'copilot' | 'reasoning' | 'info' | 'warning' | 'error'
     | 'system_notification' | 'summary'
     | 'group' | 'handoff' | 'compaction' | 'task_complete'
+    | 'subagent' | 'skill' | 'plan'
   text?: string
   agentMode?: string | null
   model?: string | null
   detail?: string | null
-  // group / handoff / compaction / task_complete extra fields:
+  // group / handoff / compaction / task_complete / subagent / skill / plan extra fields:
+  name?: string | null
   title?: string
   completed?: boolean
   repository?: { owner: string; name: string; branch?: string | null }
   summary?: string
   summaryContent?: string
   content?: string
+  agentName?: string | null
+  agentDisplayName?: string | null
+  description?: string | null
+  durationMs?: string | number | null
+  totalTokens?: string | number | null
+  totalToolCalls?: string | number | null
+  source?: string | null
+  trigger?: string | null
+  operation?: string | null
+  preTokens?: number | null
+  postTokens?: number | null
+  messagesRemoved?: number | null
+  tokensRemoved?: number | null
+  durationSec?: number | null
   isError?: boolean
   timestamp?: string | null
   id: string
@@ -74,7 +91,7 @@ const SUMMARY_HTML: string | undefined =
 type PillType =
   | 'summary' | 'user' | 'copilot' | 'tool' | 'reasoning' | 'info'
   | 'warning' | 'error' | 'group' | 'notification' | 'handoff'
-  | 'compaction' | 'task_complete'
+  | 'compaction' | 'task_complete' | 'subagent' | 'skill' | 'plan'
 
 // Order mirrors bundle `y` plus our prepended `summary` (agent-authored).
 const PILL_DEF: Array<{ type: PillType; label: string; Icon: typeof User; color: string }> = [
@@ -87,6 +104,9 @@ const PILL_DEF: Array<{ type: PillType; label: string; Icon: typeof User; color:
   { type: 'warning',       label: '警告',     Icon: AlertTriangle, color: 'text-amber-400' },
   { type: 'error',         label: '错误',     Icon: XIcon,   color: 'text-rose-400' },
   { type: 'group',         label: '组',       Icon: Package, color: 'text-sky-400' },
+  { type: 'subagent',      label: '子代理',   Icon: Bot,     color: 'text-violet-400' },
+  { type: 'skill',         label: '技能',     Icon: Puzzle,  color: 'text-amber-400' },
+  { type: 'plan',          label: '计划',     Icon: ClipboardList, color: 'text-sky-400' },
   { type: 'notification',  label: '通知',     Icon: Bell,    color: 'text-sky-400' },
   { type: 'handoff',       label: '交接',     Icon: Shuffle, color: 'text-sky-400' },
   { type: 'compaction',    label: '压缩',     Icon: CircleDashed, color: 'text-sky-400' },
@@ -104,6 +124,52 @@ function itemPillType(it: Item): PillType | null {
 function firstLine(t?: string): string {
   const line = (t || '').split('\n').find((l) => l.trim())?.trim() || ''
   return line.length > 90 ? line.slice(0, 90) + '…' : line
+}
+
+function formatCount(n: number): string {
+  return n.toLocaleString()
+}
+
+function safeNumber(v: string | number | null | undefined): number | null {
+  if (v == null || v === '') return null
+  const n = typeof v === 'number' ? v : Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+function subagentStats(entry: BasicEntry): string {
+  const parts: string[] = []
+  if (entry.model) parts.push(`模型 ${entry.model}`)
+  const toolCalls = safeNumber(entry.totalToolCalls)
+  if (toolCalls != null) parts.push(`${formatCount(toolCalls)} 次工具调用`)
+  const tokens = safeNumber(entry.totalTokens)
+  if (tokens != null) parts.push(`${formatCount(tokens)} tokens`)
+  const durationMs = safeNumber(entry.durationMs)
+  if (durationMs != null) parts.push(`耗时 ${formatCount(Math.floor(durationMs / 1000))}s`)
+  return parts.join(' · ')
+}
+
+function planLabel(operation?: string | null): string {
+  const op = operation === 'create' ? '创建'
+    : operation === 'update' ? '更新'
+    : operation || ''
+  return `计划已${op}`
+}
+
+function compactionStats(entry: BasicEntry): string {
+  const parts: string[] = []
+  if (entry.preTokens != null && entry.postTokens != null) {
+    parts.push(`${formatCount(entry.preTokens)}→${formatCount(entry.postTokens)} tokens`)
+  }
+  if (entry.messagesRemoved != null) {
+    parts.push(`移除 ${formatCount(entry.messagesRemoved)} 条消息`)
+  }
+  if (entry.tokensRemoved != null) {
+    parts.push(`释放 ${formatCount(entry.tokensRemoved)} tokens`)
+  }
+  if (entry.durationSec != null) {
+    parts.push(`耗时 ${formatCount(entry.durationSec)}s`)
+  }
+  return parts.join(' · ')
 }
 
 /* ─────────────────────────────────────────── markdown wrapper ─────────── */
@@ -235,6 +301,9 @@ function BasicCard({
     handoff: 'border-l-sky-500',
     compaction: 'border-l-sky-500',
     task_complete: 'border-l-emerald-500',
+    subagent: 'border-l-violet-500',
+    skill: 'border-l-amber-500',
+    plan: 'border-l-sky-500',
   }[entry.type] || 'border-l-[var(--line)]'
 
   let body: React.ReactNode
@@ -276,10 +345,57 @@ function BasicCard({
       )
       break
     }
-    case 'compaction':
-      body = <p>{entry.summaryContent || ''}</p>
+    case 'compaction': {
+      const stats = compactionStats(entry)
+      const summary = entry.summaryContent || ''
+      body = (
+        <div className="space-y-3">
+          {stats && <p className="m-0 text-sm text-[var(--mut)]">{stats}</p>}
+          {summary.trim() ? (
+            <pre className="m-0 whitespace-pre-wrap break-words rounded-md bg-[var(--panel2)] p-3 font-mono text-xs leading-relaxed text-[var(--mut)]">
+              {summary}
+            </pre>
+          ) : (
+            <em className="text-sm text-[var(--mut)]">（无摘要内容）</em>
+          )}
+        </div>
+      )
+      break
+    }
+    case 'subagent': {
+      const stats = subagentStats(entry)
+      const desc = entry.description || ''
+      body = (
+        <div className="space-y-3">
+          {stats && <p className="m-0 text-sm text-[var(--mut)]">{stats}</p>}
+          {desc && <p className="m-0 whitespace-pre-wrap text-sm leading-relaxed">{desc}</p>}
+        </div>
+      )
+      break
+    }
+    case 'skill': {
+      const meta = [
+        entry.source ? `来源 ${entry.source}` : '',
+        entry.trigger ? `触发 ${entry.trigger}` : '',
+      ].filter(Boolean).join(' · ')
+      body = (
+        <div className="space-y-3">
+          {entry.description && <p className="m-0">{entry.description}</p>}
+          {meta && <p className="m-0 text-sm text-[var(--mut)]">{meta}</p>}
+        </div>
+      )
+      break
+    }
+    case 'plan':
+      body = <p className="m-0">{planLabel(entry.operation)}</p>
       break
   }
+
+  const collapsedPreview = entry.type === 'compaction'
+    ? compactionStats(entry) || firstLine(entry.summaryContent || '')
+    : entry.type === 'subagent'
+    ? subagentStats(entry) || firstLine(entry.description || '')
+    : firstLine(entry.text || entry.content || entry.summaryContent || entry.title || '')
 
   return (
     <Collapsible.Root open={open} onOpenChange={onToggle} id={`entry-${idx}`}
@@ -293,10 +409,13 @@ function BasicCard({
             : entry.type === 'handoff' ? '会话交接'
             : entry.type === 'compaction' ? '对话已压缩'
             : entry.type === 'task_complete' ? '任务完成'
+            : entry.type === 'subagent' ? (entry.agentDisplayName || entry.agentName || '子代理')
+            : entry.type === 'skill' ? (entry.name || '技能')
+            : entry.type === 'plan' ? planLabel(entry.operation)
             : M.label}
         </span>
         <span className="flex-1 truncate text-sm text-[var(--mut)]">
-          {!open && firstLine(entry.text || entry.content || entry.summaryContent || entry.title || '')}
+          {!open && collapsedPreview}
         </span>
         <span className="shrink-0 text-xs text-[var(--mut)]">{time}</span>
       </Collapsible.Trigger>

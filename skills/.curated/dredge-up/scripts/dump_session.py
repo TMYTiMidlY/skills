@@ -91,6 +91,13 @@ def fetch_db_turns(db, sid):
 #   tool.execution_complete   -> {type:tool_call_completed, callId, result}
 #   system.notification       -> {type:system_notification, text, detail?}
 #   session.model_change      -> {type:info, text:"切换到模型 X"}
+#   session.compaction_start  -> stashed, paired with the matching complete
+#   session.compaction_complete -> {type:compaction, summaryContent, stats}
+#                                (summaryContent is the recap text injected
+#                                 into the fresh post-compaction window)
+#   subagent.started/completed -> {type:subagent, metadata + stats}
+#   skill.invoked             -> {type:skill, metadata}
+#   session.plan_changed      -> {type:plan, operation}
 # hook.* / assistant.turn_* / session.start / system.message (long system
 # prompt) are dropped — they would be noise in the report.
 def parse_events_jsonl(path):
@@ -98,6 +105,8 @@ def parse_events_jsonl(path):
     dicts ready for iFs+nJn rendering."""
     entries = []
     session_start = None
+    pending_compaction_start = None
+    pending_subagents = {}
     eid = 0
 
     def new_id():
@@ -210,10 +219,89 @@ def parse_events_jsonl(path):
                     "timestamp": ts, "id": new_id(),
                 })
 
+            elif t == "session.compaction_start":
+                # The start event carries only pre-compaction token counts;
+                # the summary itself lands on the matching complete event.
+                # Stash the start ts so the merged entry can show duration.
+                pending_compaction_start = ts
+
+            elif t == "session.compaction_complete":
+                # A compaction trims the *in-context* window; events.jsonl is
+                # append-only, so every pre-compaction turn still survives on
+                # disk above this point. This entry marks WHERE a compaction
+                # happened and carries `summaryContent` — the recap text
+                # injected into the fresh window as the new conversation seed.
+                # render_compaction + the React `compaction` case both consume
+                # these fields (they were dead code until this branch existed).
+                duration_sec = None
+                if ts and pending_compaction_start:
+                    duration_sec = int((ts - pending_compaction_start).total_seconds())
+                entries.append({
+                    "type": "compaction",
+                    "success": d.get("success", True),
+                    "summaryContent": d.get("summaryContent") or "",
+                    "preTokens": d.get("preCompactionTokens"),
+                    "postTokens": d.get("postCompactionTokens"),
+                    "messagesRemoved": d.get("messagesRemoved"),
+                    "tokensRemoved": d.get("tokensRemoved"),
+                    "durationSec": duration_sec,
+                    "timestamp": ts, "id": new_id(),
+                })
+                pending_compaction_start = None
+
+            elif t == "session.task_complete":
+                entries.append({
+                    "type": "task_complete",
+                    "content": d.get("summary") or "",
+                    "isError": not d.get("success", True),
+                    "timestamp": ts, "id": new_id(),
+                })
+
+            elif t == "subagent.started":
+                entry = {
+                    "type": "subagent",
+                    "agentName": d.get("agentName"),
+                    "agentDisplayName": d.get("agentDisplayName"),
+                    "description": d.get("agentDescription"),
+                    "model": d.get("model"),
+                    "durationMs": None,
+                    "totalTokens": None,
+                    "totalToolCalls": None,
+                    "timestamp": ts, "id": new_id(),
+                }
+                entries.append(entry)
+                tcid = d.get("toolCallId")
+                if tcid:
+                    pending_subagents[tcid] = entry
+
+            elif t == "subagent.completed":
+                tgt = pending_subagents.pop(d.get("toolCallId"), None)
+                if tgt is not None:
+                    tgt["durationMs"] = d.get("durationMs")
+                    tgt["totalTokens"] = d.get("totalTokens")
+                    tgt["totalToolCalls"] = d.get("totalToolCalls")
+
+            elif t == "skill.invoked":
+                entries.append({
+                    "type": "skill",
+                    "name": d.get("name"),
+                    "description": d.get("description"),
+                    "source": d.get("source"),
+                    "trigger": d.get("trigger"),
+                    "timestamp": ts, "id": new_id(),
+                })
+
+            elif t == "session.plan_changed":
+                entries.append({
+                    "type": "plan",
+                    "operation": d.get("operation"),
+                    "timestamp": ts, "id": new_id(),
+                })
+
             # other types (hook.*, assistant.turn_*, system.message,
-            # session.start, session.model_change) are intentionally
-            # dropped: hook noise, turn boundaries, the 67KB system prompt,
-            # and the per-turn model_change (we use the higher-quality
+            # session.start, session.model_change) are intentionally dropped:
+            # hook noise, turn boundaries, the 67KB system prompt, and the
+            # per-turn model_change (we use the higher-quality
             # session.info(infoType=model) entry instead).
 
     return entries, session_start
@@ -452,6 +540,15 @@ def share_format(dt):
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def safe_int(v):
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 # ────────────── per-type entry renderers (mirror nJn + sFs) ──────────────────
 def _entry_shell(*, etype, border, collapsed, idx, eid, icon, label,
                  time_str, body, extra_cls=""):
@@ -664,10 +761,45 @@ def render_handoff(e, idx, time_str):
 
 
 def render_compaction(e, idx, time_str):
+    """Compaction marker + the summary injected into the fresh window.
+
+    A compaction only trims the *in-context* window; every pre-compaction
+    turn still renders above this entry (events.jsonl is append-only). The
+    `summaryContent` shown here is verbatim the seed text handed to the new
+    window, rendered in a <pre> block so its structure survives
+    (<overview>/<history>/<next_steps>… with newlines intact). The key
+    stats ride in the label so they're visible while collapsed."""
+    ok = e.get("success", True)
+    head = "对话已压缩" if ok else "对话压缩失败"
+    bits = []
+    pre, post = e.get("preTokens"), e.get("postTokens")
+    if pre is not None and post is not None:
+        bits.append(f"{pre:,}\u2192{post:,} tokens")
+    if e.get("messagesRemoved") is not None:
+        bits.append(f'移除 {e["messagesRemoved"]} 条消息')
+    label = head + (f' \u00b7 {" \u00b7 ".join(bits)}' if bits else "")
+
+    meta = []
+    if e.get("tokensRemoved") is not None:
+        meta.append(f'释放 {e["tokensRemoved"]:,} tokens')
+    dur = e.get("durationSec")
+    if dur is not None and dur >= 0:
+        meta.append(f"耗时 {dur}s")
+    meta_html = (f'<div class="text-muted" style="margin-bottom:8px">'
+                 f'{esc(" \u00b7 ".join(meta))}</div>' if meta else "")
+
+    summary = e.get("summaryContent", "")
+    if summary.strip():
+        summary_html = ('<div class="compaction-summary">'
+                        '<div class="md-code-block"><pre><code>'
+                        f'{esc(summary)}</code></pre></div></div>')
+    else:
+        summary_html = '<em class="text-muted">（无摘要内容）</em>'
+
     return _entry_shell(
         etype="compaction", border="info", collapsed=True, idx=idx,
-        eid=e["id"], icon="&#x25CC;", label="对话已压缩", time_str=time_str,
-        body=f'<p>{esc(e.get("summaryContent", ""))}</p>',
+        eid=e["id"], icon="&#x25CC;", label=esc(label), time_str=time_str,
+        body=meta_html + summary_html,
     )
 
 
@@ -677,6 +809,63 @@ def render_task_complete(e, idx, time_str):
         etype="task_complete", border="info", collapsed=False, idx=idx,
         eid=e["id"], icon="&#x2713;", label="任务完成", time_str=time_str,
         extra_cls=extra, body=md_to_html(e.get("content", "")),
+    )
+
+
+def render_subagent(e, idx, time_str):
+    meta = []
+    if e.get("model"):
+        meta.append(f'模型 {e["model"]}')
+    tool_calls = safe_int(e.get("totalToolCalls"))
+    if tool_calls is not None:
+        meta.append(f"{tool_calls} 次工具调用")
+    tokens = safe_int(e.get("totalTokens"))
+    if tokens is not None:
+        meta.append(f"{tokens:,} tokens")
+    duration_ms = safe_int(e.get("durationMs"))
+    if duration_ms is not None:
+        meta.append(f"耗时 {duration_ms // 1000}s")
+
+    meta_html = (f'<div class="text-muted" style="margin-bottom:8px">'
+                 f'{esc(" \u00b7 ".join(meta))}</div>' if meta else "")
+    desc = e.get("description") or ""
+    desc_html = (f'<div class="reasoning-text">{esc(desc)}</div>'
+                 if desc else "")
+    label = esc(e.get("agentDisplayName") or e.get("agentName") or "子代理")
+    return _entry_shell(
+        etype="subagent", border="info", collapsed=True, idx=idx,
+        eid=e["id"], icon="&#x1F916;", label=label, time_str=time_str,
+        body=meta_html + desc_html,
+    )
+
+
+def render_skill(e, idx, time_str):
+    desc = e.get("description") or ""
+    desc_html = f"<p>{esc(desc)}</p>" if desc else ""
+    meta = []
+    if e.get("source"):
+        meta.append(f'来源 {e["source"]}')
+    if e.get("trigger"):
+        meta.append(f'触发 {e["trigger"]}')
+    meta_html = (f'<div class="text-muted">{esc(" \u00b7 ".join(meta))}</div>'
+                 if meta else "")
+    return _entry_shell(
+        etype="skill", border="info", collapsed=True, idx=idx, eid=e["id"],
+        icon="&#x1F9E9;", label=esc(e.get("name") or "技能"),
+        time_str=time_str, body=desc_html + meta_html,
+    )
+
+
+def render_plan(e, idx, time_str):
+    op = e.get("operation")
+    op_label = {"create": "创建", "update": "更新"}.get(
+        op, esc(str(op or ""))
+    )
+    body = f"<p>操作：{esc(str(op))}</p>" if op else ""
+    return _entry_shell(
+        etype="plan", border="info", collapsed=True, idx=idx, eid=e["id"],
+        icon="&#x1F4CB;", label=f"计划已{op_label}", time_str=time_str,
+        body=body,
     )
 
 
@@ -694,6 +883,9 @@ RENDERERS = {
     "handoff": render_handoff,
     "compaction": render_compaction,
     "task_complete": render_task_complete,
+    "subagent": render_subagent,
+    "skill": render_skill,
+    "plan": render_plan,
 }
 
 
@@ -722,6 +914,9 @@ PILL_ORDER = [
     ("warning", "警告"),
     ("error", "错误"),
     ("group", "组"),
+    ("subagent", "子代理"),
+    ("skill", "技能"),
+    ("plan", "计划"),
     ("notification", "通知"),
     ("handoff", "交接"),
     ("compaction", "压缩"),
@@ -858,6 +1053,35 @@ def render_text(name, sid, cwd, repo, branch, entries):
         elif e["type"] == "tool_call_completed":
             r = e.get("result") or {}
             lines.append(f"-> {r.get('type')} : {(r.get('log') or '')[:200]}")
+        elif e["type"] == "compaction":
+            lines.append(
+                f"[{e.get('preTokens')}\u2192{e.get('postTokens')} tokens, "
+                f"{e.get('messagesRemoved')} msgs removed] injected summary:"
+            )
+            lines.append((e.get("summaryContent") or "").rstrip())
+        elif e["type"] == "task_complete":
+            lines.append("[task complete]")
+            lines.append((e.get("content") or "").rstrip())
+        elif e["type"] == "subagent":
+            lines.append(
+                f"{e.get('agentDisplayName') or e.get('agentName') or '子代理'}"
+                f" | model={e.get('model')}"
+                f" | tools={e.get('totalToolCalls')}"
+                f" | tokens={e.get('totalTokens')}"
+                f" | durationMs={e.get('durationMs')}"
+            )
+            if e.get("description"):
+                lines.append(e["description"].rstrip())
+        elif e["type"] == "skill":
+            lines.append(
+                f"{e.get('name') or '技能'}"
+                f" | source={e.get('source')}"
+                f" | trigger={e.get('trigger')}"
+            )
+            if e.get("description"):
+                lines.append(e["description"].rstrip())
+        elif e["type"] == "plan":
+            lines.append(f"plan operation={e.get('operation')}")
     return "\n".join(lines)
 
 

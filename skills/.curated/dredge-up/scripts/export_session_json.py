@@ -31,15 +31,25 @@ def to_iso(dt):
     return dt.isoformat() if isinstance(dt, datetime) else dt
 
 
+def normalise_datetimes(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: normalise_datetimes(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalise_datetimes(v) for v in value]
+    return value
+
+
 def serialise(entries):
     """Convert datetime fields to ISO strings."""
     out = []
     for item in entries:
         if item["kind"] == "skip":
             continue
-        e = dict(item["entry"])
-        if "timestamp" in e:
-            e["timestamp"] = to_iso(e["timestamp"])
+        e = normalise_datetimes(dict(item["entry"]))
+        if item["kind"] == "merged-tool":
+            e.setdefault("type", "tool")
         out.append({"kind": item["kind"], "entry": e})
     return out
 
