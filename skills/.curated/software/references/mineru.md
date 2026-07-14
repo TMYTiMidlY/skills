@@ -106,6 +106,20 @@ z-library / Anna's Archive / 一些扫描书常见 owner-password 加密：限�
 
 **判断是否加密**：用空密码 `pypdf.PdfReader(p).is_encrypted` 即可。整本 PDF 不需要拆（≤200 页且能直接走 batch / URL 方式）的场景，根本不用碰 pypdf，直接丢给 MinerU 最省事。
 
+**主动去限制（可选）**：若需要一份干净无限制的完整 PDF（比如不走拆分、要归档原件），最省事一行：
+
+```bash
+qpdf --decrypt in.pdf out.pdf          # 无 qpdf 时用下面的 pypdf 等价写法
+```
+
+```python
+from pypdf import PdfReader, PdfWriter
+r = PdfReader("in.pdf"); r.decrypt("")   # 空密码解开
+w = PdfWriter(); w.append(r); w.write("out.pdf")   # 写出的 out.pdf 默认不加密、无限制
+```
+
+**能否无痛剥离的判据**：`PdfReader(p).decrypt("")` 的返回值——`1`（pypdf 的 `PasswordType.USER_PASSWORD`，空字符串即开卷密码）说明这是"仅 owner 限制"型，限制可一键剥掉；`2`（`OWNER_PASSWORD`）同样可开；只有 `0`（`NOT_DECRYPTED`）才是真需要开卷密码的加密，空密码打不开、也别指望本地处理。实测 z-library / 扫描书几乎都是 `1`。
+
 ## 轮询结果
 
 ```bash
