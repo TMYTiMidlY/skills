@@ -101,6 +101,14 @@ cd "$env:USERPROFILE\mihomo"
 
 CLI 跑起来要**终端一直挂着**，关了就停；要常驻就做成 service（Linux systemd / Windows 服务）。TUN 模式通常要管理员/sudo 启动（创建管理虚拟网卡）。
 
+### 2.4 GUI 客户端（Clash Verge Rev）：配置链与改端口
+
+GUI 客户端不直接用 mihomo 的 `config.yaml`，而是自己生成一份运行时配置喂给内嵌内核——直接改底层文件会被覆盖或不重载。以 Clash Verge Rev（核心进程 `verge-mihomo`）为例：
+
+- **配置链**：基础 `config.yaml` + 当前 profile/merge/script → 生成 `clash-verge.yaml` → GUI 经命名管道 `\\.\pipe\verge-mihomo` 推给核心热重载。
+- **改端口**：`verge.yaml` 的 `verge_mixed_port` 普通启动时并不驱动运行时端口；真正生效的是**基础 `config.yaml` 的 `mixed-port`**（`clash-verge.yaml` 启动时会被从 `config.yaml` 重新生成覆盖，单改无效）。先完全退出 GUI 再改，重启后核心日志出现 `Mixed(http+socks) proxy listening at: [::]:<port>` 即成功。
+- **核心由 SYSTEM 服务托管**：`verge-mihomo` 归 `clash-verge-service` 管，非提权 shell 杀不掉（`Stop-Process` 报拒绝访问）；靠重启 GUI 让服务重拉核心。
+
 ## 3. 流量链路：入口、规则与节点组
 
 ### 3.1 入口方式
