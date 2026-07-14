@@ -386,4 +386,5 @@ trash-put "$TMPIDX"
 - 三棵树概念：[Pro Git · Reset Demystified](https://git-scm.com/book/en/v2/Git-Tools-Reset-Demystified)（git-scm.com 官方书，HEAD / Index / Working Directory 的定义与流转）。
 - 官方文档：[git-commit(1)](https://git-scm.com/docs/git-commit)（DESCRIPTION 的 "way 3" = pathspec 部分提交忽略 index）、[gitcli(7)](https://git-scm.com/docs/gitcli)（`--` 消歧、revision/path 顺序、通配符转义规则）。
 - 跨设备 git 镜像见 [git-mirror.md](git-mirror.md)；自建 Forgejo / Gitea + MCP 见 [git-server.md](git-server.md)。
+- gh 登录认证 vs git 提交身份（`user.name`/`user.email`）易混——`gh` 登录不会自动设置提交署名——见 [git-identity.md](git-identity.md)。
 - 删除临时文件 / 补丁残留用 `trash-put`，回收站行为见 [trash.md](trash.md)。
