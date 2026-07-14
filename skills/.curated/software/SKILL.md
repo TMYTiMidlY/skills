@@ -110,10 +110,6 @@ MinerU（mineru.net）提供 VLM 模型将 PDF 转为 Markdown/JSON，支持公�
 
 [NousResearch/hermes-agent](https://github.com/nousresearch/hermes-agent)：Python CLI agent 框架。systemd 常驻服务（gateway / dashboard）配置、`HERMES_HOME` 与身份管理、terminal backend（local / ssh / docker / modal / daytona / singularity）切换、provider 兼容性踩坑、skill 体系（builtin / hub / local 三种来源、install/uninstall、`external_dirs` 挂载外部目录、按项目激活 skill 的缺失与近似解、跨 backend 的 symlink 差异、`--skills` 预加载）见 [references/hermes.md](references/hermes.md)。
 
-## Coolify（自托管 PaaS）
+## Coolify 与 Dokploy（自托管 PaaS）
 
-[Coolify](https://coolify.io) 与 Dokploy 的宿主约束、端口所有权、上游反代、控制面/工作负载边界及分层清理先见 [references/coolify-dokploy.md](references/coolify-dokploy.md)。Coolify 专篇按 v4.1.2 源码说明运行架构、端口与入口、协议识别、实时路由、代理配置持久性、SSH 目标部署、访问延迟诊断、管理员账号、本地化、前置反代、对外应用发布和产品专有清理，见 [references/coolify.md](references/coolify.md)。WSL/mesh 入站 portproxy 相关见 `network` skill 的 WSL 章节；边缘 Caddy 服务端配置见 `vps-maintenance` skill。
-
-## Dokploy（自托管 PaaS，Coolify 竞品）
-
-[Dokploy](https://dokploy.com) 的共性部署判断同样先见 [references/coolify-dokploy.md](references/coolify-dokploy.md)。产品专篇区分 v0.29.8 的 Swarm 编排和入口代理源码，与特定日期抓取的滚动安装脚本；并记录非标准运行态、非官方 socat 控制面桥接、多服务宿主选型和产品专有清理。见 [references/dokploy.md](references/dokploy.md)。
+[Coolify](https://coolify.io) 与 [Dokploy](https://dokploy.com) 的宿主约束、端口所有权、上游反代、控制面/工作负载边界、分层清理及产品专有架构统一见 [references/coolify-dokploy.md](references/coolify-dokploy.md)。其中 Coolify 部分按 v4.1.2 源码覆盖运行架构、实时路由、配置持久性和对外应用发布；Dokploy 部分区分 v0.29.8 锁定源码、滚动安装脚本、官方默认入口与非官方 socat workaround。WSL/mesh 入站 portproxy 相关见 `network` skill 的 WSL 章节；边缘 Caddy 服务端配置见 `vps-maintenance` skill。
