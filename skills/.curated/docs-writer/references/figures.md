@@ -30,7 +30,8 @@
 细分建议：
 
 - **数据图** → matplotlib/SciencePlots 或 PGFPlots 出终稿；想用声明式 JSON 走 Altair/Vega-Lite + vl-convert；图内要 LaTeX 公式才上 Plotly + Kaleido。
-- **示意图** → TikZ（质量）或 Typst + CeTZ（省心）；想"设计"图又不想开浏览器用 HTML→WeasyPrint；要现代 CSS 全套（渐变/阴影/KaTeX）用 Playwright（字体是 Type 3，矢量无损，一般不影响投稿）。
+- **含公式的流程图 / 示意图（如目标 S）** → **首选在 LaTeX 里用 TikZ 直接内联生成**（`tikzpicture` 写进论文 `.tex`），公式、字体、线宽全与正文一致，免导出转换。
+- **其余示意图** → TikZ（质量）或 Typst + CeTZ（省心）；想"设计"图又不想开浏览器用 HTML→WeasyPrint；要现代 CSS 全套（渐变/阴影/KaTeX）用 Playwright（字体是 Type 3，矢量无损，一般不影响投稿）。
 - **图论/流程** → Graphviz/Mermaid 出图快；终稿升级到 TikZ。
 - **插画/实景/概念图** → codex-image 纯图像生成，画面内不放文字。
 
@@ -202,8 +203,9 @@ Plotly 是唯一原生支持坐标轴/刻度里 LaTeX 公式的主流 JS 库。�
 ## 示意图 / 框图 / 图论图
 
 ### TikZ
-全 LaTeX 数学、字体完美、摆放随心。啰嗦但 LLM 极熟，实测出图一流，是示意图的传统标杆。中文标签改用 `xelatex` +
-`\usepackage{ctex}`（或 fontspec 设中文字体）编译。下面是实测那张 5 框资源账本示意图（目标 S）的完整源：
+全 LaTeX 数学、字体完美、摆放随心。啰嗦但 LLM 极熟，实测出图一流，是示意图的传统标杆。
+**含公式的流程图/示意图（如目标 S）建议直接把 `tikzpicture` 内联进论文正文**（去掉下面的 `standalone` 外壳、只留 `tikzpicture` 环境）：公式随正文引擎渲染、字体线宽与正文完全统一，也省去导出/转换。需要独立文件（预编译、或不含公式的图）时再用 `standalone` 出 PDF。中文标签改用 `xelatex` +
+`\usepackage{ctex}`（或 fontspec 设中文字体）编译。下面是实测那张 5 框资源账本示意图（目标 S）的完整（standalone）源：
 
 ```latex
 \documentclass[border=2pt]{standalone}
