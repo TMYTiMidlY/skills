@@ -30,7 +30,7 @@
 细分建议：
 
 - **数据图** → matplotlib/SciencePlots 或 PGFPlots 出终稿；想用声明式 JSON 走 Altair/Vega-Lite + vl-convert；图内要 LaTeX 公式才上 Plotly + Kaleido。
-- **示意图** → TikZ（质量）或 Typst + CeTZ（省心）；想"设计"图又不想开浏览器用 HTML→WeasyPrint；要现代 CSS 全套（渐变/阴影/KaTeX）用 Playwright（注意 Type 3 字体）。
+- **示意图** → TikZ（质量）或 Typst + CeTZ（省心）；想"设计"图又不想开浏览器用 HTML→WeasyPrint；要现代 CSS 全套（渐变/阴影/KaTeX）用 Playwright（字体是 Type 3，矢量无损，一般不影响投稿）。
 - **图论/流程** → Graphviz/Mermaid 出图快；终稿升级到 TikZ。
 - **插画/实景/概念图** → codex-image 纯图像生成，画面内不放文字。
 
@@ -390,9 +390,9 @@ HTML(string=html).write_pdf("fig.pdf")     # 再：pdfcrop --margins 2 fig.pdf f
 
 ### HTML/CSS → Playwright（Chromium `page.pdf()`）
 全套现代 CSS（flexbox、渐变、阴影、`@font-face`、KaTeX/MathJax）。实测出图观感最强
-（渐变卡片 + 柔和阴影），适合 slides/博客，很多场合投稿也可。**实测坑（`pdffonts` 查出）**：
-Chromium 把文字嵌成 **Type 3 字体**。Type 3 仍是矢量，但**部分 arXiv/期刊 preflight 会拦 Type 3**——
-严格终稿优先 WeasyPrint/TikZ/matplotlib，或后处理转换。容器里需 `--no-sandbox`。
+（渐变卡片 + 柔和阴影），适合 slides/博客，投稿也可。一个细节（`pdffonts` 查得）：
+Chromium 把文字嵌成 **Type 3 字体**。Type 3 是**矢量、观感无损**，作为插图完全够用；只是文本不易选中/检索，
+且极个别严格 preflight（如某些 PDF/A 校验）会给 Type 3 warning——真遇到再后处理（Ghostscript 重蒸馏，或改用 WeasyPrint/TikZ/matplotlib），**不必为此弃用 Playwright**。容器里需 `--no-sandbox`。
 关键手法（量元素尺寸 → 把页面设成正好那么大）：
 
 ```python
@@ -513,7 +513,7 @@ codex-image 出的图属于"AI 生成 / AI 辅助"。标注要**明确但不占�
 | 工具 | 观感 | 矢量/字体 | 字体匹配 | agent 成本 | 备注 |
 |---|---|---|---|---|---|
 | **TikZ** | ★★★★★ | Type 1 LM | 原生 CM | 中（啰嗦） | 综合最佳，传统标杆 |
-| **HTML→Playwright** | ★★★★★ | 矢量但 **Type 3** | LM（Type 3） | 低–中 | 观感最强；严格投稿有 Type-3 顾虑 |
+| **HTML→Playwright** | ★★★★★ | 矢量（Type 3） | LM（Type 3） | 低–中 | 观感最强；Type 3 矢量无损，通常可接受 |
 | **HTML→WeasyPrint** | ★★★★☆ | CID/Type0C 子集 | LM | 低–中 | 无浏览器 HTML→PDF |
 | **Typst + CeTZ** | ★★★★☆ | Type0C New CM | New CM | **低** | 现代、编译快、报错友好 |
 | **Graphviz** | ★★★☆☆ | 矢量 | Arial（可改） | 低 | 图论图强；记得设 fontname |
@@ -528,7 +528,7 @@ codex-image 出的图属于"AI 生成 / AI 辅助"。标注要**明确但不占�
 | **Vega-Lite → vl-convert** | ★★★☆☆ | Type0C LM | 仅 unicode | 中–高（标注啰嗦） | 标准图适用 |
 | **Typst cetz-plot** | ★★★☆☆ | Type0C New CM | Typst 数学 | 中 | 对数轴别扭，简单图适用 |
 
-八份 PDF 均经 `pdffonts`/`pdfimages` 确认为真矢量；只有 Chromium 那份用了 Type 3 字体。
+八份 PDF 均经 `pdffonts`/`pdfimages` 确认为真矢量；Chromium 那份是 Type 3（矢量、观感无损）。
 
 ---
 
@@ -576,7 +576,7 @@ Typst `@preview` 包首次用需联网；容器里 Chromium 起不来就退回 W
 |---|---|---|
 | `\includegraphics` 打不开 `.svg` | pdf/xelatex 不读 SVG | 进 LaTeX 前先把 SVG 转 PDF（`inkscape`/`rsvg-convert`/`cairosvg`） |
 | 字体像"贴上去的"、大小不对 | 没按栏宽出图 | 按 ~85 mm / `\columnwidth` 出图，别在 `\includegraphics` 里缩放 |
-| arXiv/preflight 拦字体 | **Chromium `page.pdf` 出 Type 3** | 改用 WeasyPrint/TikZ/matplotlib，或重蒸馏；`pdffonts` 自查 |
+| 介意 Type 3（文本不可选 / 个别 preflight warning） | Chromium `page.pdf` 用 Type 3（矢量、观感无损） | 无所谓就照用；要 Type 1/TrueType 就改 WeasyPrint/TikZ/matplotlib，或 Ghostscript 重蒸馏 |
 | 图糊 | 嵌进去的是 PNG 截图 | 出矢量 PDF，或 PNG ≥300 DPI |
 | HTML 截图空白/半张 | 渲染/字体没就绪就截 | `page.evaluate("document.fonts.ready")` + 略等 |
 | WeasyPrint 布局塌 | 不支持 flexbox/JS | 用绝对定位/表格；连接线用内联 SVG；无 JS |
