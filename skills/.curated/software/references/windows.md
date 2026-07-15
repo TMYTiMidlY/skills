@@ -133,3 +133,32 @@ Windows 的“回收站”只对 `Shell:RecycleBinFolder` 协议（资源管理�
 WSL 端要恢复 `/mnt/c/...` 误删，应在 WSL 里用 `trash-put` 而不是 `rm`，事后 `trash-restore` 恢复；Windows 资源管理器看不到这些条目，但从 WSL 视角文件可恢复，比 `rm` 安全得多。
 
 > `trash-put` 在 NTFS 卷根建卷内回收站的通用机制、trash-cli 与 `gio trash` 同规范互通、`trash-rm` 匹配规则、坏 `.trashinfo` 的正确处置等见 [trash.md](trash.md)。
+
+## WSL `/tmp` 每次 `wsl --shutdown` 后清空 —— 是 systemd-tmpfiles 的 `D` 规则，不是 tmpfs
+
+**现象**：往 `/tmp`（如 `/tmp/clipboard`）放文件，`wsl --shutdown` 再进去就空了。
+
+**容易猜错的原因**：以为 `/tmp` 是 tmpfs（内存盘）所以重启丢。**不一定**。实测这台 WSL 的 `/tmp` 根本不是独立挂载，就是持久 ext4 根盘 `/dev/sdd` 上的普通目录（`/tmp`、`$HOME`、仓库同一 device id，`fstab` 里无 `/tmp` 项）：
+
+```bash
+findmnt -no SOURCE,FSTYPE,TARGET /tmp   # 无输出 = /tmp 不是单独挂载点，归属 /
+stat -c%d /tmp "$HOME"                    # 两个 device id 相同 = 同一文件系统
+```
+
+**真正的机制是 systemd-tmpfiles 在每次 boot 主动清空 `/tmp`**，跟底层是不是 tmpfs 无关：
+
+1. 规则用的是**大写 `D`**：`/usr/lib/tmpfiles.d/tmp.conf` → `D /tmp 1777 root root 30d`
+2. boot 服务带 `--remove`：`systemctl cat systemd-tmpfiles-setup.service` → `ExecStart=systemd-tmpfiles --create --remove --boot --exclude-prefix=/dev`（`static`，由 `sysinit.target` 拉起）
+3. `man 5 tmpfiles.d`：**`D` — Similar to d, but in addition the contents of the directory will be removed when `--remove` is used.**
+
+`wsl --shutdown` 终止整个 WSL2 VM，下次启动 systemd 冷启 → `systemd-tmpfiles-setup.service` 跑 `--remove` → `D /tmp` 把 `/tmp` 内容清掉。这就是「重启后 `/tmp` 空了」的根因。
+
+- **`30d` 是给周期清理的、跟 boot 清空无关**：age 字段只对 `systemd-tmpfiles-clean.timer` 的 `--clean`（按 mtime 删超 30 天的）生效；boot 时的 `--remove` 是**全量清**，不看年龄。所以别指望「放 29 天还在」。
+- **判据别看 tmpfs**：`/tmp` 在磁盘上 ≠ 重启保命。决定清不清的是有没有 `D`/`R` 规则 + boot `--remove`，而不是挂载类型。查规则：`grep -rE '^\s*[a-zA-Z]+\s+/tmp\b' /usr/lib/tmpfiles.d/ /etc/tmpfiles.d/`。
+- **例外**：`tmp.conf` 里 `x`/`X` 前缀排除的子目录（`/tmp/systemd-private-*`、`/tmp/snap-private-tmp` 等）不被清。
+- **区分 `wsl --shutdown` 与关终端窗口**：只关窗口 distro 没停（除非 `vmIdleTimeout` 到点），`/tmp` 还在；只有整机 shutdown / distro 重启才触发 tmpfiles 清空。
+
+**实践结论**：
+
+- 要跨 `wsl --shutdown` 保命的东西**别放 `/tmp`**，放 `$HOME` 下（家目录在持久盘、无 `D` 清空规则）。
+- `trash-put /tmp/xxx` 能"救"文件：回收站在 `~/.local/share/Trash/`（家目录），不受 `/tmp` 的 `D` 规则影响、也不自动过期（要手动 `trash-empty`）。且因 `/tmp` 与 `$HOME` 同一文件系统，trash 是**瞬时 rename 不拷贝**，几百 MB 也秒删。相关见 [trash.md](trash.md)。

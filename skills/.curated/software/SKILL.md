@@ -75,7 +75,7 @@ RustFS（Rust 实现的 S3 兼容对象存储，github.com/rustfs/rustfs）+ Min
 
 ## Windows / WSL 宿主侧速记
 
-跑在 Windows 宿主上的小经验：PowerShell 5.1 vs 7（pwsh）的运行时与默认 encoding 差异、为什么从 WSL/agent shell 调 PowerShell 优先用 pwsh 7 避开中文 GBK decode 炸 channel、从 WSL 弹 UAC 拿管理员权限（`Start-Process -Verb RunAs` + 文件标记跨上下文传结果）、cmd.exe 不接 UNC 当 CWD、Windows 回收站与 `trash-put` 的关系见 [references/windows.md](references/windows.md)。
+跑在 Windows 宿主上的小经验：PowerShell 5.1 vs 7（pwsh）的运行时与默认 encoding 差异、为什么从 WSL/agent shell 调 PowerShell 优先用 pwsh 7 避开中文 GBK decode 炸 channel、从 WSL 弹 UAC 拿管理员权限（`Start-Process -Verb RunAs` + 文件标记跨上下文传结果）、cmd.exe 不接 UNC 当 CWD、Windows 回收站与 `trash-put` 的关系、**WSL `/tmp` 每次 `wsl --shutdown` 后被清空的真因（systemd-tmpfiles `D /tmp` 规则 + boot `--remove`，不是 tmpfs；`30d` age 只管周期清理不管 boot 全清；保命放 `$HOME`/`trash-put`）** 见 [references/windows.md](references/windows.md)。
 
 ## Windows / Office 激活
 
