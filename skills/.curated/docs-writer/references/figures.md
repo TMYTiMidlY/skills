@@ -531,26 +531,52 @@ pdftoppm -png -r 200 fig.pdf preview    # -> preview-1.png 逐张读图核验
 
 ## 环境搭建（无 sudo）
 
-无 root 时避开 `apt`，全部装到用户空间：
+无 root 时不用 `apt`，按 AGENTS.md 的 Python 环境优先级 **Pixi > uv** 装进隔离环境；**不写系统 Python**（不用 `pip install` / `uv pip install`）。
+
+纯 Python 出图（matplotlib / SciencePlots / altair / vl-convert / typst / cairosvg，均为 PyPI wheel）用 **uv**：
+
+- 单脚本：依赖写进 PEP 723 内联元数据，`uv run fig.py` 自动起临时环境；临时加包 `uv run --with <pkg> fig.py`。
+
+```python
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["matplotlib", "SciencePlots", "numpy"]
+# ///
+import matplotlib.pyplot as plt
+import scienceplots  # noqa: F401
+# ... 画图并 fig.savefig("fig.pdf")
+```
+
+- 反复迭代多张图就起项目级环境（`uv add`，不要 `uv pip install` / `uv run pip`）：
 
 ```bash
-# 1) Python 工具装进 venv（uv 绕开 python3-venv/ensurepip 依赖）
-uv venv --system-site-packages ~/.figvenv
-uv pip install --python ~/.figvenv/bin/python \
-    matplotlib SciencePlots altair vl-convert-python weasyprint playwright typst pandas cairosvg
-~/.figvenv/bin/python -m playwright install chromium   # 装到用户缓存，无需 sudo
+uv init figs && cd figs
+uv add matplotlib SciencePlots altair vl-convert-python typst pandas cairosvg playwright
+uv run playwright install chromium      # Chromium 装到用户缓存
+uv run python make_fig.py
+```
 
-# 2) 从 TeX Live 取 Latin Modern / New Computer Modern（给 HTML/matplotlib 用，无需 sudo）
+要**系统库 / CLI**（uv 装不了的）用 **pixi**（conda-forge，装进隔离环境、无 root）：WeasyPrint 依赖 `pango`/`cairo`/`gdk-pixbuf`；PDF 预览要 poppler 的 `pdftoppm`/`pdftocairo`；再加 `graphviz`、`inkscape`、Node 版 mermaid-cli 等。Python 包在同一环境一起 `pixi add`：
+
+```bash
+pixi init figs && cd figs
+pixi add pango cairo gdk-pixbuf poppler graphviz inkscape   # 系统库 + CLI
+pixi add matplotlib pandas cairosvg weasyprint              # Python 包走 conda-forge
+pixi add --pypi scienceplots vl-convert-python typst        # conda-forge 没有的转 PyPI
+pixi run python make_fig.py
+```
+
+字体（给 HTML/matplotlib 用，无 sudo）：从 TeX Live 取 Latin Modern / New Computer Modern 到用户字体目录：
+
+```bash
 mkdir -p ~/.local/share/fonts/fig
 cp "$(kpsewhich lmroman10-regular.otf)" "$(kpsewhich lmsans10-regular.otf)" \
    "$(kpsewhich NewCM10-Regular.otf)"  "$(kpsewhich NewCMMath-Regular.otf)" \
    ~/.local/share/fonts/fig/ && fc-cache -f ~/.local/share/fonts
-# fc-list | grep -i "latin modern\|new computer modern"  # 验证
-
-# 3) PDF 工具：pdftoppm/pdftocairo（poppler）+ pdfcrop（TeX Live）通常已装。
+# fc-list | grep -i "latin modern\|new computer modern"   # 验证
 ```
-说明：WeasyPrint 需 libpango/libcairo/libgdk-pixbuf（多数环境预装，本次直接可用）；
-Typst `@preview` 包首次用需联网；容器里 Chromium 起不来就退回 WeasyPrint（无浏览器）。
+
+说明：`pdfcrop` 随 TeX Live；Typst `@preview` 包首次用需联网；容器里 Chromium 起不来就退回 WeasyPrint（无浏览器）。
 
 ---
 
