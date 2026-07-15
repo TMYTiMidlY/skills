@@ -195,6 +195,10 @@ pptx 内嵌图同理，用 python-pptx 的 `slide.part.rels` 遍历替换。
 
 ## 配图与 AI 标注（跨模式）
 
+> 配图有**两条路线**，按图的性质选：
+> - **图像模型"画"图（codex-image，见下）**：概念示意、实景插画、信息图底 —— 追求美感，画面内不放精确文字。
+> - **代码/spec 出图（`references/figures.md`）**：坐标图、示意流程图、框图、图论图 —— 追求精确、可复现、**矢量 PDF**、字体与正文一致；投 LaTeX 论文（模式 A）的科研图走这条线。该 reference 含 matplotlib/PGFPlots/TikZ/Typst/HTML→PDF/Vega/Graphviz/Mermaid 的实测选型、配方（含可跑示例代码）与坑。
+
 ### 配图与示意图生成（codex-image）
 
 论文/汇报/PPT 需要原创配图（概念示意、流程图、实景插画、数据信息图）时，用 **codex-image** 生成。要点：
@@ -561,6 +565,7 @@ for k, n in key_to_num.items():
 - `references/doc-report.md` — 模式 B：docx 小汇报/短文（python-docx cookbook、二次核验、AI 写作常见坑）
 - `references/presentation.md` — 模式 C：演示文稿（与 docx/论文共享能力的衔接；完整 PPT 工程归 `ppt-master`）
 - `references/similarity-report-parsing.md` — 知网查重报告 PDF/HTML → Markdown 的方案对比与已知问题
+- `references/figures.md` — 科研配图工具链（代码/spec 出图 → 矢量 PDF，投 LaTeX 论文）：按图类型选工具、matplotlib/PGFPlots/TikZ/Typst/HTML→PDF/Vega/Graphviz/Mermaid 实测配方（含内联可跑示例）、矢量 PDF 与字体（含 Chromium Type-3）坑、无 sudo 环境搭建
 - `assets/GBT7714-2015.md` — GB/T 7714-2015 完整规范全文
 - `assets/GBT7714-2015.pdf` — GB/T 7714-2015 原版 PDF；当 md 中半角/全角字符分辨不清，或怀疑 md 格式有误时回查此文件
 - `scripts/thesis_to_chapters.py` — 学位论文 .doc/.docx → 分章 Markdown（内联脚注；`-o output` 可直接产到 `output/<论文名>/`）—— 模式 A 用
