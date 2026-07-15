@@ -200,7 +200,7 @@ pptx 内嵌图同理，用 python-pptx 的 `slide.part.rels` 遍历替换。
 - **codex-image 生成式配图**：概念示意、实景插画、信息图底 —— 图像模型真正"画"图，追求美感，画面内不放精确文字（会乱码）。
 - **代码/spec 出图**：坐标图、示意流程图、框图、图论图 —— 追求精确、可复现、**矢量 PDF**、字体与正文一致；投 LaTeX 论文的科研图走这条线（matplotlib / PGFPlots / TikZ / Typst / HTML→PDF / Vega / Graphviz / Mermaid）。
 
-AI 生成 / 辅助的图需按 [AI 标注措辞分档](references/figures.md#annotation) 就地标注。
+AI 生成 / 辅助的图需按 [AI 标注](references/figures.md#annotation) 简单注明。
 
 ---
 
@@ -514,7 +514,7 @@ for k, n in key_to_num.items():
 - `references/doc-report.md` — 模式 B：docx 小汇报/短文（python-docx cookbook、二次核验、AI 写作常见坑）
 - `references/presentation.md` — 模式 C：演示文稿（与 docx/论文共享能力的衔接；完整 PPT 工程归 `ppt-master`）
 - `references/similarity-report-parsing.md` — 知网查重报告 PDF/HTML → Markdown 的方案对比与已知问题
-- `references/figures.md` — 配图与 AI 标注（跨模式）：codex-image 生成式配图 + 代码/spec 出图（matplotlib/PGFPlots/TikZ/Typst/HTML→PDF/Vega/Graphviz/Mermaid → 矢量 PDF）的实测选型、配方（含内联可跑示例）、各工具实测对比、AI 标注措辞分档、矢量 PDF 与字体注记（Chromium Type-3 矢量无损）、无 sudo 环境搭建
+- `references/figures.md` — 配图与 AI 标注（跨模式）：codex-image 生成式配图 + 代码/spec 出图（matplotlib/PGFPlots/TikZ/Typst/HTML→PDF/Vega/Graphviz/Mermaid → 矢量 PDF）的实测选型、配方（含内联可跑示例）、各工具实测对比、AI 标注、矢量 PDF 与字体注记（Chromium Type-3 矢量无损）、无 sudo 环境搭建
 - `assets/GBT7714-2015.md` — GB/T 7714-2015 完整规范全文
 - `assets/GBT7714-2015.pdf` — GB/T 7714-2015 原版 PDF；当 md 中半角/全角字符分辨不清，或怀疑 md 格式有误时回查此文件
 - `scripts/thesis_to_chapters.py` — 学位论文 .doc/.docx → 分章 Markdown（内联脚注；`-o output` 可直接产到 `output/<论文名>/`）—— 模式 A 用
