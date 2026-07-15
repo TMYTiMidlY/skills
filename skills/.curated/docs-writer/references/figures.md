@@ -1,22 +1,81 @@
-# 科研配图工具链（代码/spec 出图 → 矢量 PDF，投 LaTeX 论文用）
+# 配图与 AI 标注（生成式插画 · 代码/spec 矢量图）
 
-面向**模式 A（论文 / 期刊投稿 / 长篇综述）**的配图工具选型与实操。目标产物几乎总是
-**矢量 PDF**，直接 `\includegraphics` 进 LaTeX。
+论文 / 汇报 / PPT 的原创配图，按图的性质走**两条路线**：
 
-> 与《配图与 AI 标注》里 **codex-image**（图像模型"画"插画/实景/概念图）是**两条互补路线**：
-> - **codex-image**：概念示意、实景插画、信息图底 —— 追求美感，画面内**不放精确文字**（会乱码）。
-> - **本 reference（代码/spec 出图）**：坐标图、示意流程图、框图、图论图 —— 追求**精确、可复现、矢量、字体与正文一致**。含精确数字/公式的科研图走这条线，不要用图像模型画。
+- **codex-image 生成式配图**：概念示意、实景插画、信息图底 —— 图像模型真正"画"图，追求美感，画面内**不放精确文字**（会乱码）。
+- **代码/spec 出图**：坐标图、示意流程图、框图、图论图 —— 追求**精确、可复现、矢量、字体与正文一致**。含精确数字/公式的科研图走这条线，别用图像模型画。投 LaTeX 论文（模式 A）时目标产物几乎总是**矢量 PDF**。
 
-> 本文结论与内联示例均为**实测所得**：用 7 条工具链**并行**复现某物理论文（QCFD 容错资源估计综述）的两张代表图，
+> 代码/spec 部分的结论与内联示例为**实测所得**：用 7 条工具链**并行**复现某物理论文（QCFD 容错资源估计综述）的两张代表图，
 > 各导出 PDF，`pdftoppm` 转 PNG 后逐张读图评判，`pdffonts`/`pdfimages` 验矢量与字体。
 > 两张代表图：**(S)** 5 框"资源账本"示意图（竖向流程 + 侧注框 + 少量数学），
-> **(P)** 带阴影带与标注框的 log–log 折线图。§5 的排名表来自这次对比。下面各工具的示例代码就是这两张图的实测源。
+> **(P)** 带阴影带与标注框的 log–log 折线图。各工具实测好坏见 [各工具出图实测对比](#benchmark)，下面每个工具的示例代码就是这两张图的实测源。
 > 版本（2026-07）：TeX Live 2025、matplotlib 3.11 + SciencePlots 2.2、Typst 0.15（cetz 0.5.2 / cetz-plot 0.1.4）、
 > Altair 6.2 + vl-convert 1.9、WeasyPrint 69、Playwright 1.61。
 
 ---
 
-## 0. 先记住的铁律
+## 配图路线与选型
+
+先按"要不要精确文字/数据"分两条路线（见上），再在代码/spec 路线内按图类型选工具：
+
+| 图类型 | 首选 | 也不错 | 投稿慎用 |
+|---|---|---|---|
+| **数据图**（折线/散点/柱/箱线、对数轴、误差棒） | **matplotlib + SciencePlots**（原生矢量 PDF、CM 字体） | **PGFPlots**（LaTeX 原生）、**Altair/Vega-Lite → vl-convert**（声明式） | Chromium 截图 PNG |
+| **示意图 / 流程 / 框图** | **TikZ** 或 **Typst + CeTZ/Fletcher** | **HTML/CSS → WeasyPrint**（无浏览器）；**HTML/CSS → Playwright**（现代 CSS 全套） | D2（PDF 是栅格） |
+| **图 / 树 / DAG / 自动机** | **Graphviz**（`-Tpdf`） | TikZ（`graphs`/`forest`） | — |
+| **流程图、快速迭代** | **Mermaid**（`mmdc`） | D2、Graphviz | Mermaid 直接投终稿（字体不搭） |
+| **交换图 / 费曼图 / 电路** | **TikZ**（`tikz-cd`、CircuiTikZ）或 **Typst Fletcher** | schemdraw（电路，Python） | — |
+| **概念插画 / 实景 / 信息图底** | **codex-image**（纯图像生成） | — | 精确数字/公式（会乱码） |
+
+细分建议：
+
+- **数据图** → matplotlib/SciencePlots 或 PGFPlots 出终稿；想用声明式 JSON 走 Altair/Vega-Lite + vl-convert；图内要 LaTeX 公式才上 Plotly + Kaleido。
+- **示意图** → TikZ（质量）或 Typst + CeTZ（省心）；想"设计"图又不想开浏览器用 HTML→WeasyPrint；要现代 CSS 全套（渐变/阴影/KaTeX）用 Playwright（注意 Type 3 字体）。
+- **图论/流程** → Graphviz/Mermaid 出图快；终稿升级到 TikZ。
+- **插画/实景/概念图** → codex-image 纯图像生成，画面内不放文字。
+
+---
+
+## <a id="codex-image"></a>codex-image 生成式配图
+
+论文/汇报/PPT 需要原创配图（概念示意、流程图、实景插画、数据信息图）时，用 **codex-image** 生成。要点如下。
+
+### 用图像生成模型而非拼代码
+
+**调 codex-image 的唯一目的，是让它用图像生成模型真正"画"出图**。不要让它退化成"写一段 SVG/matplotlib/PIL 代码拼图"的方案——那种产物美感差、像模板、文字易重叠，失去用 codex 的意义。prompt 里要明确"生成精美的插画/信息图"，需要时直接点明"用图像生成"。
+
+> 例外的现实约束：**纯图像模型画中文/数字几乎必然乱码**。所以"含大量精确中文文字的数据图"是少数可以接受"AI 出精美视觉底 + 程序精确叠字"的折中场景，但也要把"视觉要精致、文字间距充足不重叠"写成硬要求，并逐张核验。其余概念图/实景图/图标，一律走纯图像生成、画面内**不要任何文字**（避免乱码）。
+
+### prompt 要给足的背景
+
+codex 是 agent，会基于背景自行决定构图。**prompt 要长、要完整**，至少包含：
+
+- **场景与用途**：什么课题、这张图放在论文/PPT 的哪一部分、要论证什么观点。
+- **画面内容**：主体、元素、隐喻、各部分关系（越具体越好，但把"怎么构图好看"留给它）。
+- **风格与配色**：写实/扁平/科技插画、主色调、是否统一系列风格。
+- **尺寸**：横版/竖版、像素（如半屏插图 1280×800，不要整页满版）。
+- **硬约束**：无文字/无品牌标识、背景要求（见下）、不要乱码。
+- 让它**完成后自检并报告**（尺寸、是否 RGBA、四角 alpha、有无文字）。
+
+### 并行生成
+
+codex-image **一次调用出一张图**。多张图时**并行发起多个调用**（同一轮多个工具调用），不要串行等。注意：单次让它一口气做多张容易超时；**一张一调、并行多调**最稳。个别调用报 MCP 超时不代表失败，图常已落盘，核验文件即可。
+
+### 透明背景
+
+线条/图标/示意类、主体是图形而非照片的，让 codex 输出**带 alpha 透明通道的 PNG**（无背景色、无背景矩形），方便直接叠在 PPT 任意底色上。codex 有时去底不净（图标自带白圈时），可补一步程序去底：从四角 flood-fill 去连通背景色、保留图标内部白色，再合成到深色底验证干净。
+
+### 生图后逐张核验
+
+生图后**逐张 view 核验**，别只信 codex 自报：构图是否达意、有没有该透明却白底、数据图数字对不对、有无文字重叠/乱码、中心图形是否规整。不合格就带着**具体缺陷描述**重做（如"左侧 Y 轴标题与刻度数字重叠""中心圆画成了土豆形"），codex 据此修。
+
+> 浏览器/反爬抓真实图、生成图工作流的更多细节见 `browser-use` skill。
+
+---
+
+## 出图通用原则
+
+以下针对代码/spec 出图（矢量图投 LaTeX）：
 
 1. **只交矢量 PDF，别交截图。** 文字仍是文字、线条仍是矢量。栅格 PNG 只在期刊强制时兜底（≥300 DPI）。
 2. **按栏宽出图。** 单栏 ≈ 85 mm（`\columnwidth`），字号 8–9 pt。在生成阶段就定好物理尺寸，
@@ -29,21 +88,9 @@
 
 ---
 
-## 1. 按图类型选工具（TL;DR）
+## 数据图（坐标图）
 
-| 图类型 | 首选 | 也不错 | 投稿慎用 |
-|---|---|---|---|
-| **数据图**（折线/散点/柱/箱线、对数轴、误差棒） | **matplotlib + SciencePlots**（原生矢量 PDF、CM 字体） | **PGFPlots**（LaTeX 原生）、**Altair/Vega-Lite → vl-convert**（声明式） | Chromium 截图 PNG |
-| **示意图 / 流程 / 框图** | **TikZ**（金标准）或 **Typst + CeTZ/Fletcher**（对 agent 友好） | **HTML/CSS → WeasyPrint**（无浏览器、字体干净）；**HTML/CSS → Playwright**（设计感最强） | D2（PDF 是栅格） |
-| **图 / 树 / DAG / 自动机** | **Graphviz**（`-Tpdf`） | TikZ（`graphs`/`forest`） | — |
-| **流程图、快速迭代** | **Mermaid**（`mmdc`） | D2、Graphviz | Mermaid 直接投终稿（字体不搭） |
-| **交换图 / 费曼图 / 电路** | **TikZ**（`tikz-cd`、CircuiTikZ）或 **Typst Fletcher** | schemdraw（电路，Python） | — |
-
----
-
-## 2. 数据图（坐标图）
-
-### 2.1 matplotlib + SciencePlots —— 推荐默认
+### matplotlib + SciencePlots
 原生矢量 PDF、无需浏览器、`usetex` 可得真 Computer Modern、控制力最强。本次实测出图最佳，
 基本等同手工期刊图。matplotlib 太常用，这里不贴完整脚本，只说清一张 LaTeX-ready 图该怎么配：
 
@@ -58,8 +105,8 @@
 即：**SciencePlots 样式 + LM/CM 字体 + 按栏宽尺寸 + savefig 到 PDF**，其余就是常规 matplotlib 画线/标注。
 （本次实测还画了第二张"量子优势交叉点"图，用 `transData.transform` 算屏幕角度做沿线旋转贴标，思路同上。）
 
-### 2.2 PGFPlots（TikZ）—— LaTeX 原生、整合最好
-图由 LaTeX 亲自绘制 → 字体/线宽与正文**完美一致**、零转换。略啰嗦，但 LLM 很熟。
+### PGFPlots（TikZ）
+图由 LaTeX 亲自绘制 → 字体/线宽与正文一致、零转换。略啰嗦，但 LLM 很熟。
 `latexmk -pdf fig.tex` 编译；可**内联**进论文（字体绝对一致），或把 standalone PDF `\includegraphics`。
 图多时用 PGFPlots `externalize` 或预编译 standalone，避免拖慢论文构建。下面是实测那张 log–log 图（目标 P）的完整源：
 
@@ -131,7 +178,7 @@
 \end{document}
 ```
 
-### 2.3 Altair / Vega-Lite → vl-convert —— 声明式、无浏览器
+### Altair / Vega-Lite → vl-convert
 适合想用纯 JSON spec 的场景。`vl_convert.vegalite_to_pdf` **直接产真矢量 PDF**（不用浏览器）。
 实测：正确、干净，但在 Vega-Lite 里**逐个手工摆标注框很啰嗦**，比 matplotlib 费劲；且无原生数学
 （用 unicode，个别 `≳`/上标会触发字体回退）。标准图很合适，重标注图不如 matplotlib。
@@ -146,16 +193,16 @@ open("fig.png","wb").write(vlc.vegalite_to_png(spec, scale=3))
 ```
 对数轴：`"scale":{"type":"log","domain":[…],"nice":false}`。Python 侧可写 `altair` 再 `chart.to_dict()`。
 
-### 2.4 Plotly + Kaleido —— 只在坐标轴要 LaTeX 公式时才用
-Plotly 是唯一原生支持坐标轴/刻度里 LaTeX 的主流 JS 库。但 Kaleido v1 现在需**外部 Chrome**（CI 更重）。
-除非图内要放公式，否则优先 2.1–2.3。
+### Plotly + Kaleido
+Plotly 是唯一原生支持坐标轴/刻度里 LaTeX 公式的主流 JS 库。但 Kaleido v1 现在需**外部 Chrome**（CI 更重）。
+除非图内要放公式，否则优先 matplotlib / PGFPlots / Vega-Lite 那几种。
 
 ---
 
-## 3. 示意图 / 框图 / 图论图
+## 示意图 / 框图 / 图论图
 
-### 3.1 TikZ —— 示意图金标准
-全 LaTeX 数学、字体完美、摆放随心。啰嗦但 LLM 极熟，实测出图一流。中文标签改用 `xelatex` +
+### TikZ
+全 LaTeX 数学、字体完美、摆放随心。啰嗦但 LLM 极熟，实测出图一流，是示意图的传统标杆。中文标签改用 `xelatex` +
 `\usepackage{ctex}`（或 fontspec 设中文字体）编译。下面是实测那张 5 框资源账本示意图（目标 S）的完整源：
 
 ```latex
@@ -215,8 +262,8 @@ Plotly 是唯一原生支持坐标轴/刻度里 LaTeX 的主流 JS 库。但 Kal
 \end{document}
 ```
 
-### 3.2 Typst + CeTZ / Fletcher —— 2026 对 agent 最友好的折中
-语法比 LaTeX 简单得多、编译亚秒级、报错友好，单个二进制直接出矢量 **PDF**（内置 New Computer Modern）。
+### Typst + CeTZ / Fletcher
+语法比 LaTeX 简单、编译亚秒级、报错友好，单个二进制直接出矢量 **PDF**（内置 New Computer Modern）。
 Python 调用（无需 CLI）：`import typst; typst.compile("f.typ", output="f.pdf")`（或 `output="f.png", ppi=300`）。
 `@preview` 包首次编译**联网**下载、缓存到 `~/.cache/typst`。中文：`#set text(font: "Noto Serif CJK SC")`。
 带标签箭头/交换图用 **Fletcher**（`@preview/fletcher`）。
@@ -311,7 +358,7 @@ Python 调用（无需 CLI）：`import typst; typst.compile("f.typ", output="f.
 })
 ```
 
-### 3.3 HTML/CSS → WeasyPrint —— 无浏览器的 HTML→PDF，字体干净
+### HTML/CSS → WeasyPrint
 让 agent 用 HTML/CSS "设计"图，得到**真矢量 PDF**、OTF 子集正确内嵌，**不需要浏览器**。
 实测干净、对齐好。**注意**：不支持 JS；**flexbox 不稳** → 用绝对定位 / CSS table / `inline-block`；
 `box-shadow` 偏弱；箭头/连接线用**内联 SVG** 最稳。中文直接写进 HTML、`font-family` 设中文字体即可。
@@ -341,8 +388,8 @@ body { font-family:'Latin Modern Sans','Latin Modern Roman',sans-serif; color:#1
 HTML(string=html).write_pdf("fig.pdf")     # 再：pdfcrop --margins 2 fig.pdf fig.pdf
 ```
 
-### 3.4 HTML/CSS → Playwright（Chromium `page.pdf()`）—— 设计感最强
-全套现代 CSS（flexbox、渐变、阴影、`@font-face`、KaTeX/MathJax）。实测出图最惊艳
+### HTML/CSS → Playwright（Chromium `page.pdf()`）
+全套现代 CSS（flexbox、渐变、阴影、`@font-face`、KaTeX/MathJax）。实测出图观感最强
 （渐变卡片 + 柔和阴影），适合 slides/博客，很多场合投稿也可。**实测坑（`pdffonts` 查出）**：
 Chromium 把文字嵌成 **Type 3 字体**。Type 3 仍是矢量，但**部分 arXiv/期刊 preflight 会拦 Type 3**——
 严格终稿优先 WeasyPrint/TikZ/matplotlib，或后处理转换。容器里需 `--no-sandbox`。
@@ -363,7 +410,7 @@ with sync_playwright() as p:
     b.close()
 ```
 
-### 3.5 Graphviz（`dot`）—— 自动布局图论图
+### Graphviz（`dot`）
 依赖图、树、DAG、自动机的不二之选。`dot -Tpdf g.dot -o g.pdf` 即真矢量。实测忠实还原竖向流程
 （`rank=same` + 虚线侧边），"简单三工具"里标签控制最好——**但**默认字体是 Arial/Helvetica（不搭）。
 设 `fontname="Latin Modern Roman"`（已装）或 `"Times-Roman"`，用 HTML-like label 做粗体标题 + 副标题。
@@ -399,7 +446,7 @@ digraph S {
 }
 ```
 
-### 3.6 Mermaid（`mmdc`）—— 上手最快、精修最弱
+### Mermaid（`mmdc`）
 `flowchart TD` 对 agent 极易写，`mmdc -i s.mmd -o s.pdf` 出 PDF/SVG（`mmdc` 靠 Puppeteer/Chromium）。
 实测能用，但排版较通用、需布局 hack（用透明 `ghost` 节点把侧框摆到右边）、字体是 Arial（不搭）。
 适合草稿/文档；直出 PDF 有问题时用 `cairosvg` 把 SVG 转 PDF。终稿优先 TikZ/Typst/WeasyPrint。实测源：
@@ -437,42 +484,55 @@ flowchart TD
 
 ---
 
-## 4. AI 标注
+## <a id="annotation"></a>AI 标注措辞分档
 
-代码/spec 出的图属于"作者自绘 / 作者据真实数据制图"，标注措辞参见 SKILL.md《AI 标注的措辞 gradient》：
-- 纯代码手绘、无 AI 介入 → **不标 AI**（"作者自绘"）。
-- agent 据真实数据用代码制图 → "数据来源：文献[X]；作者据 X 数据制图（AI 辅助）"。
-- 用了 HTML→Playwright/codex 做视觉排版 → "作者编辑 + AI 排版"。
+**学校规范常要求"AI 生成/产生的部分必须明确标注"**。代码/spec 出的图属于"作者自绘 / 作者据真实数据制图"，
+codex-image 出的图属于"AI 生成 / AI 辅助"。标注要**明确但不占题注篇幅**，按"AI 介入程度"分 4 档：
+
+| 介入程度 | 措辞示例 | 何时用 |
+|------|------|------|
+| **完全 AI 生成** | "（AI 辅助生成）" / "（AI 生成）" | codex-image 概念示意图、装饰性插画、无真实数据的信息图 |
+| **AI 据真实数据制图** | "数据来源：文献[X]；作者据 X 数据制图（AI 辅助）" | 数据图（柱状/折线/饼） —— 数据真，排版/渲染由 AI 完成 |
+| **真实数据 + AI 排版** | "数据来源：文献[X]；作者编辑 + AI 排版" | 复合信息图、HTML→Playwright/codex 做视觉布局，作者主导数据选择 |
+| **真实数据 + 手工制图** | "数据来源：文献[X]；作者自绘" | 纯代码手绘、无 AI 介入的传统制图，**不要标 AI** |
+
+原则：
+
+- **不要"一刀切全部标 AI"** —— 会让真实手工图也被怀疑。
+- **不要"一律不标"** —— 违规。
+- **题注内一句话表达完**，不要为 AI 说明开新段。
+- **页脚兜底**：可统一加一句 "部分图表/排版借助 AI 工具生成，已就地标注"。
+- **默认偏短措辞** —— "（AI 辅助生成）" 比 "（本图由 AI 辅助完成，作者校对）" 更优。
 
 ---
 
-## 5. 实测排名（本次对比）
+## <a id="benchmark"></a>各工具出图实测对比
 
-**示意图（目标 S），按出图质量 + LaTeX 契合度：**
+**示意图（目标 S）：**
 
-| 工具 | 观感 | 矢量/字体 | 字体匹配 | agent 成本 | 结论 |
+| 工具 | 观感 | 矢量/字体 | 字体匹配 | agent 成本 | 备注 |
 |---|---|---|---|---|---|
-| **TikZ** | ★★★★★ | Type 1 LM | 原生 CM | 中（啰嗦） | 综合最佳，金标准 |
-| **HTML→Playwright** | ★★★★★ | 矢量但 **Type 3** | LM（Type 3） | 低–中 | 最漂亮；严格投稿有 Type-3 顾虑 |
-| **HTML→WeasyPrint** | ★★★★☆ | CID/Type0C 子集 | LM | 低–中 | 无浏览器 HTML→PDF 最佳 |
-| **Typst + CeTZ** | ★★★★☆ | Type0C New CM | New CM | **低** | 现代折中，很香 |
+| **TikZ** | ★★★★★ | Type 1 LM | 原生 CM | 中（啰嗦） | 综合最佳，传统标杆 |
+| **HTML→Playwright** | ★★★★★ | 矢量但 **Type 3** | LM（Type 3） | 低–中 | 观感最强；严格投稿有 Type-3 顾虑 |
+| **HTML→WeasyPrint** | ★★★★☆ | CID/Type0C 子集 | LM | 低–中 | 无浏览器 HTML→PDF |
+| **Typst + CeTZ** | ★★★★☆ | Type0C New CM | New CM | **低** | 现代、编译快、报错友好 |
 | **Graphviz** | ★★★☆☆ | 矢量 | Arial（可改） | 低 | 图论图强；记得设 fontname |
 | **Mermaid** | ★★★☆☆ | 矢量 | Arial | **最低** | 草稿/文档，非终稿 |
 
-**数据图（目标 P），按出图质量 + LaTeX 契合度：**
+**数据图（目标 P）：**
 
-| 工具 | 观感 | 矢量/字体 | 数学 | agent 成本 | 结论 |
+| 工具 | 观感 | 矢量/字体 | 数学 | agent 成本 | 备注 |
 |---|---|---|---|---|---|
-| **matplotlib + SciencePlots** | ★★★★★ | Type 1 LM | mathtext/usetex | 低–中 | 数据图默认最佳 |
-| **PGFPlots** | ★★★★★ | Type 1 LM | 全 LaTeX | 中 | LaTeX 整合最佳 |
-| **Vega-Lite → vl-convert** | ★★★☆☆ | Type0C LM | 仅 unicode | 中–高（标注啰嗦） | 标准图不错 |
-| **Typst cetz-plot** | ★★★☆☆ | Type0C New CM | Typst 数学 | 中 | 对数轴别扭，简单图 OK |
+| **matplotlib + SciencePlots** | ★★★★★ | Type 1 LM | mathtext/usetex | 低–中 | 数据图默认 |
+| **PGFPlots** | ★★★★★ | Type 1 LM | 全 LaTeX | 中 | LaTeX 原生整合 |
+| **Vega-Lite → vl-convert** | ★★★☆☆ | Type0C LM | 仅 unicode | 中–高（标注啰嗦） | 标准图适用 |
+| **Typst cetz-plot** | ★★★☆☆ | Type0C New CM | Typst 数学 | 中 | 对数轴别扭，简单图适用 |
 
 八份 PDF 均经 `pdffonts`/`pdfimages` 确认为真矢量；只有 Chromium 那份用了 Type 3 字体。
 
 ---
 
-## 6. 验收与收尾
+## 验收与收尾
 
 ```bash
 pdffonts fig.pdf        # 每个字体 emb=yes；留意 "Type 3"（Chromium）
@@ -485,7 +545,7 @@ pdftoppm -png -r 200 fig.pdf preview    # -> preview-1.png 逐张读图核验
 
 ---
 
-## 7. 环境搭建（无 sudo 也能装）
+## 环境搭建（无 sudo）
 
 无 root 时避开 `apt`，全部装到用户空间：
 
@@ -510,7 +570,7 @@ Typst `@preview` 包首次用需联网；容器里 Chromium 起不来就退回 W
 
 ---
 
-## 8. 常见坑与修法
+## 常见坑与修法
 
 | 现象 | 原因 | 修法 |
 |---|---|---|
@@ -520,16 +580,9 @@ Typst `@preview` 包首次用需联网；容器里 Chromium 起不来就退回 W
 | 图糊 | 嵌进去的是 PNG 截图 | 出矢量 PDF，或 PNG ≥300 DPI |
 | HTML 截图空白/半张 | 渲染/字体没就绪就截 | `page.evaluate("document.fonts.ready")` + 略等 |
 | WeasyPrint 布局塌 | 不支持 flexbox/JS | 用绝对定位/表格；连接线用内联 SVG；无 JS |
+| codex-image 出图有乱码 | 纯图像模型画中文/数字 | 画面内不放精确文字；要文字走"AI 底 + 程序叠字"并逐张核验 |
 | 论文里 D2 图发虚 | D2 的 PDF 是 PNG 套壳 | 论文别用 D2；非要用则 D2→SVG（纯文本标签）→Inkscape→PDF |
 | Mermaid/Graphviz 文字≠正文字体 | 默认 Arial/Helvetica | 设 `fontname="Latin Modern Roman"`/`"Times-Roman"`；或改用 TikZ/Typst |
 | Vega `≳`/上标显示成方块 | 所选字体缺字形 | 用普通 unicode，或换含该字形的字体；先 `register_font_directory` |
 | 大片白边 | 工具页面 ≠ 内容 | `pdfcrop --margins 2` |
 | matplotlib `usetex` 慢/报错 | 构建环境没 LaTeX | 去掉 `usetex`，`font.serif=LM` + `pdf.fonttype=42`，走 mathtext |
-
----
-
-## 9. 一句话选型
-
-- **数据图** → matplotlib/SciencePlots 或 PGFPlots（终稿）；要声明式 JSON 用 Altair/Vega-Lite + vl-convert；图内要公式才上 Plotly+Kaleido。
-- **示意图** → TikZ（质量）或 Typst+CeTZ（省心）；想"设计"图又不想开浏览器用 HTML→WeasyPrint；要最强视觉用 Playwright（注意 Type 3）。
-- **图论/流程** → Graphviz/Mermaid 图快；终稿升级到 TikZ。
