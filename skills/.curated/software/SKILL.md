@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 命令行精准操作（有并发/无关改动时只提交某处、hunk/行级暂存、后有提交时 amend）、gh 认证 vs git 提交身份（user.name/email）、Git 镜像/自建 Forgejo、git-pages 静态站托管（Forgejo/Gitea 的 GitHub Pages 替代服务、Codeberg Pages 后端、不可猜路径、DNS Challenge 鉴权）、Commitizen 发版（PEP 440 版本号、CHANGELOG 手改是否被冲、tag 触发 CI 发 PyPI）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Coolify 与 Dokploy 自托管 PaaS（端口所有权、前置反代、工作负载边界与清理）、Go 工具链（模块 / `go install` / 依赖解析 / GOPROXY）、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 命令行精准操作（有并发/无关改动时只提交某处、hunk/行级暂存、后有提交时 amend）、gh 认证 vs git 提交身份（user.name/email）、Git 镜像/自建 Forgejo、git-pages 静态站托管（Forgejo/Gitea 的 GitHub Pages 替代服务、Codeberg Pages 后端、不可猜路径、DNS Challenge 鉴权）、Commitizen 发版（PEP 440 版本号、CHANGELOG 手改是否被冲、tag 触发 CI 发 PyPI）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Docker Engine 安装（官方 apt 仓库法）与多用户共用（docker 组、`sg`/重登生效、组≈免密 root 的安全取舍）、Coolify 与 Dokploy 自托管 PaaS（端口所有权、前置反代、工作负载边界与清理）、Go 工具链（模块 / `go install` / 依赖解析 / GOPROXY）、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
 ---
 
 # Software
@@ -114,6 +114,10 @@ OpenList（AList 的活跃 fork）的 **REST API 编程接入**（两种 token�
 ## MinerU PDF→Markdown 转换
 
 MinerU（mineru.net）提供 VLM 模型将 PDF 转为 Markdown/JSON，支持公式和表格识别。默认使用云端 API / Open API；未经用户明确允许，不要在本机安装或部署 MinerU。详细流程见 [references/mineru.md](references/mineru.md)。
+
+## Docker（安装 + 多用户共用）
+
+Ubuntu 上装 Docker Engine 的**官方推荐方式**（apt 仓库法，非 `get.docker.com` 便捷脚本）与让多个非 root 用户共用见 [references/docker.md](references/docker.md)：官方 apt 仓库法完整步骤（modern `signed-by` keyring、arch/codename 动态取、Engine+CLI+containerd+buildx+compose 五件套）、多用户共用（`usermod -aG docker` 把用户加进包安装时自动建好的 `docker` 组 = 免 sudo 读写 `/var/run/docker.sock`）、**组变更生效时机的坑**（`usermod -aG` 只改组数据库、已登录会话要**重登**才生效，`newgrp`/`sg docker -c` 可不重登临时激活并顺带验证，`id -nG <user>` 查库 vs 无参 `id -nG` 查当前会话的区别）、以及**安全取舍**（docker 组 ≈ 免密 root，`-v /:/host` 一行提权；可信开发机常规做法 / 给 sudoer 加风险不变 / 给非 sudoer 加 = 变相发 root，替代方案 rootless Docker、`sudo docker`、细粒度 sudoers）。含一次 HFNL（Ubuntu 24.04）实操记录。
 
 ## Coolify 与 Dokploy（自托管 PaaS）
 
