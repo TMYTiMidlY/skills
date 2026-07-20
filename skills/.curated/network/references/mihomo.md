@@ -118,6 +118,7 @@ GUI 客户端不直接用 mihomo 的 `config.yaml`，而是自己生成一份运
 
 - **配置链**：基础 `config.yaml` + 当前 profile/merge/script → 生成 `clash-verge.yaml` → GUI 经命名管道 `\\.\pipe\verge-mihomo` 推给核心热重载。
 - **改端口**：`verge.yaml` 的 `verge_mixed_port` 普通启动时并不驱动运行时端口；真正生效的是**基础 `config.yaml` 的 `mixed-port`**（`clash-verge.yaml` 启动时会被从 `config.yaml` 重新生成覆盖，单改无效）。先完全退出 GUI 再改，重启后核心日志出现 `Mixed(http+socks) proxy listening at: [::]:<port>` 即成功。
+- **系统代理端口与核心端口错位**：实测 Windows 上 `verge_mixed_port` 可能仍被 Verge 用作系统代理的目标端口，而核心实际监听的是基础 `config.yaml` / 生成配置里的另一个 `mixed-port`。两者不一致时，Windows 系统代理会指向无人监听的旧端口；表现为所有 profile 都无法联网，很容易误判成订阅或节点故障。先用 `curl.exe -x http://127.0.0.1:<核心端口> https://www.gstatic.com/generate_204` 直测核心：若返回 `204`，再对照 `verge.yaml` 的 `verge_mixed_port`、`clash-verge.yaml` 的 `mixed-port`、`Get-NetTCPConnection -State Listen` 的实际监听端口，以及注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings` 的 `ProxyEnable` / `ProxyServer`。修复时完全退出 GUI，把 `verge_mixed_port` 与核心端口对齐后重启；若系统代理原本关闭，旧 `ProxyServer` 只是残留值，要重新打开系统代理才会生效。
 - **核心由 SYSTEM 服务托管**：`verge-mihomo` 归 `clash-verge-service` 管，非提权 shell 杀不掉（`Stop-Process` 报拒绝访问）；靠重启 GUI 让服务重拉核心。
 
 ## 3. 流量链路：入口、规则与节点组
