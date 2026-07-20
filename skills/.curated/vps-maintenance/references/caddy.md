@@ -174,6 +174,31 @@ https://<主 IP>:<对外端口> {
   }
   ```
 
+### `:80` catch-all 兜底：一条规则兜住所有域名的 HTTP→HTTPS
+
+上面每个 `http://<域名> { redir ... }` 是给**单个**域名手写跳转。域名一多、或要给 on_demand 签发的**没有显式站点**的野域名做跳转时，逐个写很烦。可以用一条**不带 host 限定**的 `:80` catch-all 一次兜住：
+
+```caddyfile
+:80 {
+    redir https://{host}{uri} 308
+}
+```
+
+**`{host}` / `{uri}` 是运行时占位符（placeholder），不是写死的字符串。** 每个请求进来，Caddy 用该请求**自己的**值替换：
+
+- `{host}` = 请求 Host 头里的域名（不含端口），是 `{http.request.host}` 的简写。
+- `{uri}` = 请求的完整路径 + 查询串，是 `{http.request.uri}` 的简写（如 `/status?id=3`）。
+
+所以 `redir https://{host}{uri} 308` 对**每个**请求跳到“同域名、同路径、同参数的 https 版”——保留一切、只把 `http` 换成 `https`，与 Caddy 内建自动跳转逻辑一致。写死成 `redir https://a.example.com/ 308` 才是“只能跳一个固定 URL”；占位符版避免了这点。
+
+**优先级**：`:80`（无 host）优先级最低，任何 `http://<具体域名> { }` 专属 block 都更具体、会先匹配。所以加这条 catch-all 后，现有专属 http block 行为不变，它只兜“没写专属 block”的域名（含未来新增、含 on_demand 野域名）——与 `:443 { }` catch-all + 具体 https 站点共存是同一套机制。
+
+**为什么对“域名 + IP 共存”模式特别好用**：机器上一旦有 IP+非标端口站点，就**必须**全局 `auto_https disable_redirects`（否则 :80 自动跳会把明文请求乱指到字典序最小的端口，见上文）。关掉后域名侧也“连累”着没了自动 http→https。这条 `:80` catch-all 正好把域名侧补回来，而它**只监听 :80**，完全不碰各 IP+非标端口独占的 TLS 监听——域名侧靠它统一跳转，IP+非标端口侧仍是“要求访问方显式写 `https://`”（同口跳不了，见上文约束），两边互不干扰。
+
+**如果没有任何 IP 站点**（纯域名、都走标准 443）：本就不需要 `auto_https disable_redirects`，让 Caddy 自动跳转即可，此时这条手写 catch-all 与默认自动跳转**基本等价**。差别只有一处：默认自动跳转只为**已显式定义**的域名生成 :80 跳转，覆盖不到 on_demand 签发的**未显式定义**野域名；手写 `:80` catch-all 对任意 Host 都跳，连野域名也兜。所以只要用到 on_demand 野域名，这条仍比默认自动跳转覆盖更全。
+
+> 典型场景：一台边缘 Caddy 同时跑域名站点（标准 443 + on_demand 野域名）和若干 IP+非标端口站点，全局开 `auto_https disable_redirects`；在所有业务块之外放一条 `:80 { redir https://{host}{uri} 308 }`，把所有域名的明文访问统一 308 升级到 https，IP+非标端口站点各自独占端口、不受影响。
+
 ### 导入 Caddy local root CA（仅 `tls internal` 场景）
 
 使用 `tls internal` 时，Caddy 的本机 PKI 默认放在：
@@ -240,6 +265,35 @@ global options 里见到的：
 - 跟 `default_sni` **不冲突也不互斥**：`default_sni` 管"没带 SNI 时拿哪个名字选证书"，`on_demand_tls ask` 管"某个陌生名字能不能现签"。
 
 ⚠️ **on-demand 必须配 permission（`ask` 或 internal）**：否则任意 SNI 都能让你签 = 被打爆 ACME 限额 / 占内存，官方强制要求。
+
+### 通配证书（DNS-01）vs on-demand 单域证书：两条签发路径
+
+同样是"真 Let's Encrypt 证书"，拿到手的路径有两条，直接决定**要不要 DNS 密钥、首访会不会卡、子域名单露不露**。根子在 **ACME 的三种 challenge**（挑战，CA 用来验证"你真的控制这个名字"；Caddy `acme {…}` 块里可开关，`acmeissuer.go:431-442`）：
+
+| challenge | 怎么证明控制 | 前提 | 能签通配 `*.x` |
+|---|---|---|---|
+| **HTTP-01** | 在 `:80/.well-known/acme-challenge/…` 放应答文件 | 80 端口公网可达 | ❌ |
+| **TLS-ALPN-01** | 在 `:443` TLS 握手里用特制 ALPN 应答 | 443 端口公网可达 | ❌ |
+| **DNS-01** | 在域名下写一条 `_acme-challenge` TXT 记录 | **DNS 服务商 API 密钥**（Caddy 里 `tls { dns <provider> … }`；没配报 `DNS challenge enabled, but no DNS provider configured`，`acmeissuer.go:216`） | ✅ **只有它行** |
+
+**为什么通配只能走 DNS-01**：签 `*.foo.com` 等于声明"整个 foo.com 命名空间归我"，HTTP/TLS-ALPN 只能证明你控制**某一个** host，证不了整段，所以 Let's Encrypt 规定 wildcard **必须** DNS-01。于是分成两条路：
+
+- **通配证书 `*.foo.com`（DNS-01）**：一张证书覆盖所有一级子域（`a.foo`/`b.foo`… 共用）。提前签好、缓存 → 任意子域**首访即时**、与连接来路无关。代价：得给 Caddy 配 DNS provider 的 **API 密钥**；好处：省 LE 限额（1 张顶多域）、**藏子域名单**（公开 CT 日志只露 `*.foo.com`）。注意通配只吃**一级**——`*.foo.com` 覆盖 `a.foo.com`，**不**覆盖 `a.b.foo.com`（那要另配 `*.b.foo.com`）。
+
+- **on-demand 单域（HTTP-01 / TLS-ALPN-01）**：不预签，**某 host 第一次 TLS 握手时**才现签一张**只含它自己**的单域证书（见上一节 `on_demand_tls`）。好处：不用 DNS 密钥、新域名 DNS 一指过来 + 门卫放行就能用、零配置扩容。代价：① 首访要等签发（几十 ms～数秒），② 每域一次 ACME 订单 → 吃 LE 限流（**50 证书/注册域/周**），③ 每个 host 逐个进 CT 公开日志。
+
+**on-demand 天生强制一道门卫**（这就是上一节 `ask` 的由来）：Caddy 源码里，只要自动化策略是"通配或默认（无显式 subject = 无边界）"且用公网 issuer 却没配 permission 模块，就**开不起来**——直接报 `on-demand TLS cannot be enabled without a permission module to prevent abuse`（`automation.go:296-306`；"无边界"判定 `isWildcardOrDefault()` 见 `:463-474`）。放行逻辑：每遇一个没预签的名字就调 `permission.CertificateAllowed(name)`（`automation.go` 的 `DecisionFunc` → `ondemand.go` 的 `PermissionByHTTP`：GET `ask` 端点带 `?domain=<SNI>`，2xx 才签）。道理很直白：on-demand 等于"谁来握手都可能触发签发"，不设门卫会被随便打的 SNI 刷爆 ACME 配额。
+
+**怎么看一个在跑的 Caddy 用的哪种**（看证书 SAN 一眼区分）：
+
+```bash
+echo | openssl s_client -connect <edge_ip>:443 -servername <host> 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -ext subjectAltName
+# 通配： X509v3 Subject Alternative Name: DNS:*.foo.com
+# 单域： X509v3 Subject Alternative Name: DNS:host.foo.com   ← on-demand 典型长这样
+```
+
+**实测坑（on-demand 特有）**：on-demand 证书是"首次握手现签"，若第一次访问走的是**签不出来的路径**，握手会直接失败（`curl` 退出码 35 = SSL 握手错）而非超时。典型：用 `curl --resolve <host>:443:127.0.0.1` 从**环回**打一个全新 on-demand 域——本机根本没这张证书、ACME 挑战又没法在环回路径上完成，握手就挂；换**真实公网路径**（DNS 真解析到边缘、80/443 可达）打一次，证书当场签出来、之后即正常。通配证书无此问题（证书早在缓存里，与连接从哪来无关）。
 
 ### 可复用的错误页 snippet
 
@@ -1169,6 +1223,7 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 | 能登、能跳回来，但一个角色都没有 → 403 / 无限跳 | 改了 provider `realm` 没同步 `transform user match realm` | 「callback URL 与字段映射」改 realm 的连带 |
 | 某用户能登、也有角色，改过权限后却仍 403（`role is valid, but not allowed by access list`） | 旧 token 角色早于配置变更，`authorize` 不重算、只等 `exp` | 「改权限不即时生效」 |
 | 证书签不出 / ACME 反复失败 / 垃圾子域名狂签 | DNS 没指过来，或 on-demand `ask` 太宽 | 本节「reload 卡住」第 3 条 + 「`on_demand_tls`」节 |
+| `tls internal` 站点长停后重启，日志 `certificate expired beyond grace period` + 反复 `open .../<IP>.key: no such file` | 旧证书清理与内存续签任务交错 | 本节「`tls internal` 站点长停后首启卡在旧证书清理 / 续签」 |
 | docs-share viewer 渲染 / 下载 / 缓存异常 | viewer 壳子 / Markdeep / SigV4 细节 | docs-share「这套方案踩过的坑」 |
 | 大陆 Aliyun ECS 未备案 SNI 被封 | 备案 / SNI 封锁 | [icp-filing.md](icp-filing.md) |
 
@@ -1247,6 +1302,8 @@ JWT_SHARED_KEY=0000000000000000000000000000000000000000000000000000000000000000 
   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
 
+> **`validate` 退出非零不一定是语法错**：输出里出现 `adapted config to JSON` 就说明 Caddyfile 语法已解析成功；之后即便 `{env.XYZ}` 填的假值在 provision 阶段 `Error: ...` 让整体 exit 1，那也只是运行期配置问题、不是语法错。所以只要看到 `adapted config to JSON` 且没有 adapt 阶段的语法报错，就能确认 `restart` 不会因语法错起不来——**用 `restart`（而非 `reload`）落地前尤其值得先确认**。
+
 ### 共享端口 `bind` 劫持白屏
 
 **现象**：`:443` 上挂着的一批域名**集体白屏**——浏览器拿到 **`200` 但 body 为空**；偏偏在服务器本机 `curl` 自查往往正常，极隐蔽。
@@ -1283,6 +1340,14 @@ example.com {
 ```
 
 这属于「独占端口用 `bind`」的正当用法（为什么独占端口 bind 安全、共享端口 bind 危险，见「`bind` 与 listener 分组」节）。
+
+### `tls internal` 站点长停后首启卡在旧证书清理 / 续签
+
+**现象**：`tls internal` 自签站点**长期停机**后首次启动，端口 LISTEN 了但 HTTPS 握不上手；日志先出现 `certificate expired beyond grace period; cleaning up`，随后反复 `open .../<IP>.key: no such file or directory`。
+
+**根因**：旧证书过期被清理任务删掉，内存里的续签任务却还在读旧 key——存储清理与续签任务交错，**不是 Caddyfile 语法错误**。
+
+**修复**：确认 `caddy validate` 通过后 `sudo systemctl restart caddy` 一次，让新进程在「旧证书文件已不存在」的干净状态下走 `tls.obtain`；日志看到 `certificate obtained successfully` 才算恢复。**只看端口 LISTEN 不够，要实际完成一次 TLS 握手**（`curl -kIv https://<IP>:<port>/`）验证。
 
 ### WebSocket / 长连接反代的连接泄漏与 `stream_timeout`
 

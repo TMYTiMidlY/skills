@@ -9,11 +9,15 @@ agent runtime / harness（运行壳）相关问题看这里：一个 coding agen
 
 ## 名词解释：harness / agent harness
 
-- **harness 本义**：英文指马具 / 挽具、束线束——套在动力源（马、成捆线缆）外面、把它的力**约束并引导**为我所用的那层装置；动词 to harness ＝ 驾驭、为我所用。
-- **agent harness（在 AI 里）**：**包在 LLM 外面、把"只会输出 token 的模型"撑成"会 plan、会调工具、会改文件、带 session 的 agent"的那层执行框架 / 基础设施**——agentic loop（一轮轮循环）、prompt 拼装、tool-calling 胶水、上下文 / 记忆管理、sandbox、权限、会话存储都在这层。关键：**harness 不是"在外面驱动 agent 的那层"，它本身就是把模型撑成 agent 的那层**——一个 coding agent ≈ 模型 + 它的 harness。（类比：LLM 是发动机，harness 是底盘 + 传动 + 控制系统，把发动机变成整车。）
-- **三个同指的标准词**：`agent scaffolding`（脚手架）/ `harness`（运行壳）/ `elicitation`（把模型能力"引出来"）——指的都是模型外面这层执行框架。用词随圈子：agent 评测圈（METR / Epoch）爱说 scaffolding / elicitation，实践者 / 博客圈说 harness，厂商侧 Anthropic 说 agentic systems / orchestration、GitHub 产品线叫 coding agent。所以 harness 是个**广为理解、但非某家厂商官方**的词。
-- **为什么这层重要**：被反复引用的实测——**同一个模型，只换 harness，SWE-bench 分数能差出 20+ 个百分点**（有对比给到 46% vs 80% 这种量级）。故有 "the harness is the real differentiator"、"LLM is the smallest part of an agent system" 的说法：决定一个 agent 好不好用的，往往是这层壳而不是模型本身。（具体数字随评测 / 来源浮动，引用前自己再核。）
-- **在本 skill 里**：讲的就是各家 coding agent（Copilot / Claude Code / Codex）的这层壳怎么运转、怎么被程序驱动、怎么调试；以及当你要从**外部**接上 / 驱动它们时，在 CLI 子进程 / SDK client / extension host / JSON-RPC / HTTP 几种**接入形态**间怎么取舍。
+"harness" 在 agent 语境下被重载成两种指向不同层的用法，先分清；**本 skill 讲的是 ① agent harness**，② 只为消歧。
+
+- **harness 本义**：英文指马具 / 挽具、束线束——套在动力源外面、把它的力**约束并引导**为我所用的那层装置；动词义即"驾驭、为我所用"（to harness ＝ to put to use）。下面两种引申都由此而来。
+- **① agent harness / coding harness（向内，本 skill 主要用这个义）**：把模型撑成 agent 的那层执行框架——agentic loop（多轮工具循环）、prompt 拼装、tool-calling 胶水与参数校验、上下文 / 记忆管理、sandbox、权限、会话存储。一句话 **模型 + harness ＝ agent**，"没有 harness 只有建议，有 harness 才有执行"（OpenAI DevEx 的 [Codex = Model + Harness + Surfaces](https://www.linkedin.com/pulse/how-i-think-codex-gabriel-chua-ukhic)；Pi 作者 Armin 称 Pi / Claude Code 为 "coding harness"，说 harness ["校验参数、执行编辑、把结果喂回模型"](https://lucumr.pocoo.org/2026/7/4/better-models-worse-tools/)）。
+- **② test / evaluation harness（向外，经典软件义）**：从外部驱动、运行被测物的 runner。经典软件工程里 [test harness](https://en.wikipedia.org/wiki/Test_harness) 即"stubs + drivers 组成、模拟运行环境、自身不含测试内容"的外层基础设施；用在 LLM 上就是 EleutherAI 的 [`lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness/tree/f4d4b3de3ee6741a7151a9fe74945ee515262f4c)、SWE-bench 的 [`swebench.harness.run_evaluation`](https://github.com/SWE-bench/SWE-bench/tree/f7bbbb2ccdf479001d6467c9e34af59e44a840f9)——**拿 agent 产物评分、把 agent 当黑盒外部件**；SEC-bench 更直接命名 ["Evaluation harness for OpenCode agent"](https://github.com/SEC-bench/SEC-bench-Pro/blob/f497600d25b300c3e81db6fc0e570dc754a8f20f/harness/eval_opencode.py)（起容器、跑 agent、收结果）。
+- **两义靠限定词分**：几乎没人在一篇里明说二者之别，全靠限定词——带 "evaluation / test" 的指向外 runner，不带限定或说 "agent / coding harness" 的指向内 scaffolding。所以"从外面驱动一个 agent 的那层"是真概念，但准确叫法是 **orchestrator / runner**（评测场景叫 evaluation harness），不叫 "agent harness"。本 skill 的 [sdk.md](references/sdk.md) 讲的 CLI 子进程 / SDK client / extension host 等**接入形态**，就是你的 orchestrator 从外部接上一个自带 ①义 harness 的 agent；而用 API SDK 自写循环时，你是在造一个自定义的 ①义 harness——如 [CompileBench](https://simonwillison.net/2025/Sep/22/compilebench/) 在 OpenAI Go 库上写 agentic loop + 一个工具。
+- **近义词**：`scaffolding`（脚手架，研究 / 评测圈如 METR 常用）≈ ①义 harness（实践者常用）；`ACI`（agent-computer interface，SWE-agent 提出）特指 ①义里"工具接口"那块；`elicitation`（METR）是"不断调 scaffolding 把模型能力引出来"的**过程**、非 scaffolding 本身。厂商侧：Anthropic 说 "agentic systems / orchestration"、GitHub 叫 "coding agent"。harness 广为理解、但非厂商官方词。
+- **为什么这层重要**：同一模型只换 ①义 harness，agent 实测能力能差出一大截——工具 schema、编辑工具、循环设计都影响成败（见上文 Armin 分析与 METR 的 elicitation 研究）。决定 agent 好不好用的，往往是这层壳而非模型本身。
+- **在本 skill 里**：讲各家 coding agent（Copilot / Claude Code / Codex）这层壳（①义）怎么运转、怎么被程序驱动、怎么调试；以及从外部接上 / 驱动它们时，在 CLI 子进程 / SDK client / extension host / JSON-RPC / HTTP 几种**接入形态**间怎么取舍。
 
 ## 范围
 

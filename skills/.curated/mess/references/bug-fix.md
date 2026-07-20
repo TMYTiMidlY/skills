@@ -138,6 +138,20 @@ wsl --shutdown
 
 如果 `wsl --shutdown` 后立刻恢复，就按 WSL 网络残留处理，不要继续在普通进程列表里找。
 
+> 反过来：若绑定报的是 `10013 AccessDenied`（不是 10048）、且端口**就在** `excludedportrange` 里，那是 Hyper‑V 独占保留、会随开机漂移——见下一个案例，解法是改用低端口而不是 `wsl --shutdown`。
+
+## <a id="bind-10013"></a>固定服务端口绑定报 `WSAEACCES`(10013)，且随开机漂移
+
+> Windows、WSL2 mirrored、Hyper-V 的一般服务端口案例；具体应用现场另存。
+
+固定服务使用49760时，一次开机后直接bind返回`AccessDenied / WSAEACCES 10013`；49000与50000对照可绑定。`netsh int ipv4 show excludedportrange tcp`中49760位于49694–49793非`*`动态块，而带`*`托管块内的50000仍可绑定。不能只凭排除表推断所有条目都同样拒绝bind。
+
+Windows默认动态端口范围49152–65535。HNS、WinNAT与vmcompute可在开机时从该范围预留块，位置会漂移；固定服务是否先绑定也影响当次结果。维护固定监听时优先选实际动态池外、未被占用和保留的端口，并做真实bind检查；49000只是本次通过的样本，仍须查目标系统当前范围。
+
+`10013`与`10048`分开：前者查独占保留及权限；后者查真实占用和WSL网络残留，现有流程见[端口绑定报10048](#bind-10048)。mirrored模式共享宿主网络边界，WSL侧也可能绑定失败；先用`wslinfo --networking-mode`确认模式，不假设必有独立NAT栈。
+
+PowerShell探针读取native中文输出时注意PS5.1编码；可用ASCII标签或明确转码。`.NET TcpListener`真实bind比只看netsh表更直接。`HttpClient.Result`若只给无信息的`RuntimeException`，改用能保留底层错误的探针。
+
 ## Windows 普通 PowerShell 创建文件 symlink 失败
 
 > 2026-04-20 | Windows | PowerShell | symlink 权限
@@ -654,3 +668,56 @@ cd <项目目录> && docker compose down && docker compose up -d
 - 一台机器上一次性检查"是不是所有存量网络都中招"很值——本次三个项目一起中招，如果只查 forgejo 一个，会漏掉 dmp/qatlas-postgres 也需要顺手修。
 
 关键词：`Docker 内置 DNS`、`127.0.0.11`、`no such host`、`hostname resolving error`、`lookup db`、`getent hosts` 解析失败但 IP 直连通、`docker network create` 新网络正常、存量网络 DNS 损坏、`docker compose down/up` 重建网络修复、`tried to kill container, but did not receive an exit event`、`docker kill` 被 bash 工具拦截、Forgejo 500 内部错误、Docker Desktop WSL2 睡眠唤醒
+
+## 手动 `source` 工作区 `.envrc` → symlink 分发钻进子目录（配 anchored excludesFile 只挡根层而漏进 `git status`）
+
+> 2026-07-10 | direnv + git `core.excludesFile` | 工作区根 `.envrc` 向各子仓库分发 Copilot 配置软链
+
+工作区根有个 direnv `.envrc`，里面 `link_into_subdirs` 把根上的 `.agents/skills`、`.mcp.json`、`.github/hooks/safety-net.json`、`.github/instructions/global.instructions.md` 软链分发到**每个直接子目录**（`for sub in "$PWD"/*/`），让每个子仓库各有一份配置。这些分发链本应被工作区级 `core.excludesFile`（`<workspace-root>/.timidly-excludes`）忽略、不进任何 git diff。
+
+## 症状
+
+- 在某个子仓库 `<child-repo>` 里 `git status`，冒出**几十个 untracked**：`<subdir>/.agents/`、`<subdir>/.github/`，遍布该仓库**每一个子目录**，全是本该被忽略的分发软链。
+- `core.excludesFile` 确认生效（`git config --show-origin core.excludesFile` 指向 `.timidly-excludes`），但 `git check-ignore -v <subdir>/.agents/skills` 返回 **NOT ignored**。
+
+## 排查关键转折
+
+1. **anchored pattern**：`.timidly-excludes` 里的忽略项大多**含斜杠**（`.agents/skills`、`.github/hooks/safety-net.json`…）。gitignore 语义下，含斜杠的 pattern **锚定到仓库根**——只匹配 `<repo>/.agents/skills`，匹配不到 `<repo>/<subdir>/.agents/skills`。唯一不含斜杠的 `.mcp.json` 是 unanchored、匹配任意深度，所以子目录里的 `.mcp.json` 软链**没**进 `git status`——这一对照正好点出"斜杠=锚定"是漏出主因。
+2. **软链指向暴露触发方式**：漏出的软链指向 `<child-repo>/.agents/skills`（上一层），说明 `link_into_subdirs` 是以 `$PWD=<child-repo>` 跑的。但 `<child-repo>` 自己没有 `.envrc`。→ 只可能是**有人在 `<child-repo>` 里手动 `source <workspace-root>/.envrc`**：direnv 正常加载会先 cd 到 `.envrc` 所在目录（`$PWD`=工作区根，只分发到各子仓库根这一层），而手动 `source` 保持 cwd 不变、`$PWD` 停在子仓库里，于是 `for sub in "$PWD"/*/` 把链铺进了子仓库的**每个子目录**，深了一层。
+
+## 根因
+
+两层叠加：
+
+- `link_into_subdirs` 用 `$PWD` 定分发目标；手动 `source` 从子目录执行时 `$PWD` 被错设成该子目录 → 链铺深一层。
+- 工作区 `core.excludesFile` 的忽略项 anchored（含斜杠）、只覆盖仓库根那一层 → 深一层的分发链没被忽略 → 漏进 `git status`（unanchored 的 `.mcp.json` 反而被正确挡住，是旁证）。
+
+## 解决
+
+**清理**：先确认要删的全是软链（`find <subdir>/.agents <subdir>/.github -type f` 输出为空 = 无独有实体文件），再 `trash-put` 掉这些 `.agents`/`.github`/`.mcp.json`，根级 canonical 不动。
+
+**防复发**：给 `link_into_subdirs` 加 early-return guard——用 `${BASH_SOURCE[0]}` 解析出 `.envrc` **自身所在目录**，只有当前 `pwd -P` 等于它才分发，否则跳过并打一行提示：
+
+```bash
+link_into_subdirs() {
+  local src="$1" rel="$2" sub target root
+  [[ -e "$src" ]] || return 0
+  root="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+  if [[ -n "$root" && "$(pwd -P)" != "$root" ]]; then
+    [[ -n "$_warned" ]] || { echo "envrc: cwd '$(pwd -P)' != workspace root '$root'; skip link_into_subdirs" >&2; _warned=1; }
+    return 0
+  fi
+  for sub in "$PWD"/*/; do ... done
+}
+```
+
+- direnv 正常加载：cd 到 `.envrc` 目录 → `pwd==root` → 照常分发。
+- 手动 `source` 从子目录：`pwd!=root` → 跳过 + 提示，不再乱铺。
+- **fail-safe**：`${BASH_SOURCE[0]}` 取不到 → `root` 空 → 条件为假 → 落到"照常跑"，绝不误伤正常 direnv 流程。
+- guard 放函数内，未来新增的分发调用自动受保护。
+
+### 测试踩坑（重要）
+
+验证 guard 时若**从一个空临时目录** `source` 真 `.envrc`，会得到假的"没跳过也没分发"假象——因为函数在 guard **之前**有 `[[ -e "$src" ]] || return 0`，空目录里 `$PWD/.github/...` 不存在 → 到达 guard 前就早退了。必须**构造带真实 `.github/hooks/safety-net.json` 等源文件 + 一个 child 子目录**的假仓库来测：source 真文件（cwd≠真根）应打印提示且 child 下 0 链；source 副本（cwd=副本自身根）应无提示且 child 下生成 4 条链。
+
+关键词：`.envrc`、`direnv`、`手动 source 从子目录`、`link_into_subdirs`、`$PWD 被错设`、`BASH_SOURCE guard`、`pwd -P`、`core.excludesFile`、`gitignore 含斜杠 anchored`、`check-ignore NOT ignored`、`.mcp.json 反而被忽略`、`symlink 分发深一层`、`.agents/skills`、`.github/instructions`、`git status 冒出大量 untracked`、`测试假象 [[ -e "$src" ]] 早退`
