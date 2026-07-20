@@ -293,7 +293,7 @@ echo | openssl s_client -connect <edge_ip>:443 -servername <host> 2>/dev/null \
 # 单域： X509v3 Subject Alternative Name: DNS:host.foo.com   ← on-demand 典型长这样
 ```
 
-**实测坑（on-demand 特有）**：on-demand 证书是"首次握手现签"，若第一次访问走的是**签不出来的路径**，握手会直接失败（`curl` 退出码 35 = SSL 握手错）而非超时。典型：用 `curl --resolve <host>:443:127.0.0.1` 从**环回**打一个全新 on-demand 域——本机根本没这张证书、ACME 挑战又没法在环回路径上完成，握手就挂；换**真实公网路径**（DNS 真解析到边缘、80/443 可达）打一次，证书当场签出来、之后即正常。通配证书无此问题（证书早在缓存里，与连接从哪来无关）。
+**实测坑（on-demand 特有）**：on-demand 证书是"首次握手现签"，签发失败时，触发它的首次握手会直接失败（`curl` 退出码 35 = SSL 握手错）而非超时。**触发连接与 ACME 验证是两条独立链路**：`curl --resolve <host>:443:127.0.0.1` 只把这次客户端连接钉到本机、用正确 SNI 触发签发；CA 随后仍按公网 DNS 独立访问该域名的 80/443 完成 HTTP-01 / TLS-ALPN-01。只要公网 DNS 指向这台 Caddy、验证端口可达，本地环回触发也能成功；若失败，应查 Caddy 的 ACME 日志、公网 DNS、80/443 入站与 challenge 是否被其他服务截走，**不能归因于 `--resolve` 本身把挑战带进了环回路径**。换公网访问后成功，说明当时公网验证链路已可用，不代表 CA 会沿着 curl 的连接路径验证。通配证书无此首访问题（证书早在缓存里，与连接从哪来无关）。
 
 ### 可复用的错误页 snippet
 
