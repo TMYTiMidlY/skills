@@ -15,13 +15,24 @@ Claude、Codex 的官方 agent SDK。事实快照更新于 **2026-07-14**；上�
 | 层 | 接到的对象 | 已提供 | 仍需调用方负责 |
 |---|---|---|---|
 | **API SDK** | 模型的 HTTP API | 鉴权、请求类型、流式 token、重试等客户端能力 | 规划循环、工具、文件系统、shell、权限、会话与 sandbox |
-| **编排框架** | 自定义 agent workflow | 状态机、handoff、guardrail、工具注册等编排原语 | coding-agent 工具集与具体 runtime；例如 LangGraph / OpenAI Agents SDK 本身不等于 Codex CLI |
+| **编排框架** | 自定义 agent workflow | 状态机、handoff、guardrail、工具注册等编排原语 | coding-agent 工具集与具体 runtime；编排框架本身不等于某个 coding-agent CLI（具体产品见下方[相邻概念表](#adjacent-concepts)） |
 | **agent SDK** | 完整 coding-agent runtime | 多轮工具循环、文件与命令执行、结构化事件、会话控制 | runtime 生命周期、权限策略、隔离、持久化与产品 UI |
 | **托管 cloud agent API** | 厂商托管的远程任务 | 远程环境、branch / PR 级自动化 | 本机工作区、细粒度 tool event、本地 shell 控制 |
 | **扩展或工具协议** | 已存在宿主的扩展点 | 给宿主增加工具、命令、面板或外部服务 | 从外部拥有并驱动整个 agent runtime；MCP 属于工具协议，不是 agent SDK |
 
 Agent SDK 不是“API SDK 再加几个工具函数”。它绑定的是一套具体 harness：模型之外还有 loop、
 工具实现、权限模型、上下文管理和会话存储。
+
+### <a id="adjacent-concepts"></a>相邻但不是本地 agent runtime 的东西
+
+上表是分层视角；下面把最常被误当成“本地 agent SDK”的具体产品点名，标清各自适合与不适合，选型时对号入座。
+
+| 名称 | 分类 | 适合 | 不适合 |
+|---|---|---|---|
+| OpenAI / Anthropic 官方 API SDK | API SDK（裸 HTTP client） | 完全自写工具、loop、history、session、权限与 sandbox | 直接替代 `copilot -p` / Claude Code / Codex CLI |
+| OpenAI Agents SDK / LangGraph / LangChain / Vercel AI SDK | 编排框架（orchestration SDK） | 自定义工具函数、状态机、handoff / guardrail | 需要现成 coding-agent 文件编辑 + shell runtime 时仍要另补 harness 与 toolset |
+| GitHub Copilot Cloud Agent API | 托管 cloud agent API | 让 GitHub 托管环境接 issue / prompt 后自动改 branch / PR | 本地 daemon 细粒度接管 tool event、改本机 checkout、跑本机 shell |
+| Copilot Extensions / MCP | 扩展 / 工具协议 | 让 Copilot 或别的 agent 调用你的服务 / 工具 | 从你的 daemon 内部驱动一个 coding-agent runtime |
 
 ### <a id="runtime-ownership"></a>运行时所有权
 
@@ -250,7 +261,10 @@ SDK 已经解决“如何驱动一个 agent runtime”，但 Web 服务还要解
 ### <a id="streaming-events"></a>流式输入与事件转发
 
 - 优先用 SDK 原生的长期 session API。Claude `query()` 也接受 `AsyncIterable` prompt，可用持续输入流
-  维持双向会话；这是一项 provider-specific 能力，不应假定所有 `query()` 都可这样使用。
+  维持双向会话；这是一项 provider-specific 能力，不应假定所有 `query()` 都可这样使用。当 SDK 只给一次性
+  流式 `query()` 时，可传一个永不结束的 async iterator 把它“骗”成长连接：用一个单槽 async 队列（有消费者
+  在等就直接投递、否则缓冲一条），输入流永不说完、agent 循环就一直活着，每 `push()` 一条用户消息唤醒
+  一轮，无需依赖 SDK 自带的 resume 机制。
 - 对前端只转发产品需要的事件：user / assistant message、turn start / end、tool start / complete、
   permission、idle、error。原始 `session.error`、stack 与 tool output 可能泄露内部路径或凭据，
   应在服务边界脱敏。

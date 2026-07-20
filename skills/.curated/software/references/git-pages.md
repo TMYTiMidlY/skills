@@ -100,6 +100,7 @@ Codeberg 官方在用的是 **git-pages**。另外三个是跟 Codeberg 无关�
 - **deadnews/gitea-pages**——极简派：4 个环境变量、单静态二进制 distroless、无缓存每次实时读 Gitea，适合只托管静态 HTML、由 `gh-pages` 分支发布的场景。代价是没有访问鉴权（服务端 token 能读取的仓库可被任何访客访问），不适合直接暴露在不受保护的公网入口，也没有自定义域名或动态能力。
 - **d7z-project/gitea-pages**——比名字强得多的**准应用服务器**：按路由挂 Goja JS 处理器 / 反代 / 模板 / 重定向，另带 WebSocket、SSE、受限 `fetch`、按 repo 隔离的 KV，私有页走 Gitea OAuth。想要"静态站 + 少量动态 / 鉴权"时最全。代价：配置面大、依赖重。
 - **Forge-Pages**——四个里唯一和 git-pages 一样"推产物、不挂公开分支"的第三方（`POST /deploy` + tar.gz）；用 workflow token 校验写权限，`additional_base_path` 给"一仓多版本 / PR 预览"各自独立不可猜路径，私有页走 OAuth2。URL 是 `https://<owner>.<base>/<repo>/*`，需通配 DNS。
+- **`gh-pages` 分支名只是惯例、且可配**：两个 gitea-pages 沿用了 GitHub Pages 的默认分支名（`gh` = GitHub、与 GitHub 平台本身无关，那个分支就躺在你自己的 Gitea/Forgejo 仓库里）；deadnews 用环境变量 `GITEA_PAGES_BRANCH`、d7z 用 `config.yaml` 的 `page.default_branch` 改它，默认都是 `gh-pages`（Codeberg 官方 git-pages 则另用 `pages` 分支）。
 
 ---
 

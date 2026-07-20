@@ -186,3 +186,5 @@ uv run scripts/thesis_to_chapters.py <论文文件.docx> -o output  # 纳入项�
 ```
 
 项目内的 `.md`/`.txt` 文件可能既包含论文正文，也包含参考文献原文（来自 OCR、PDF 转录、`mineru/`、`sources/` 等）；动手前先与用户对齐目录约定，**避免把文献原文当作论文正文修改**。
+
+> 需要新增/补全参考文献（下载、判断 OCR、解析 PDF 成 md、大文件拆分、加密 PDF 去限制）时，处理流程见 `software` skill 的 `references/mineru.md`——本 skill 只负责用这些解析产物写作，不重复其处理方法。

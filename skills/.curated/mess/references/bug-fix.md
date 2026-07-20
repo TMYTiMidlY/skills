@@ -138,6 +138,56 @@ wsl --shutdown
 
 如果 `wsl --shutdown` 后立刻恢复，就按 WSL 网络残留处理，不要继续在普通进程列表里找。
 
+> 反过来：若绑定报的是 `10013 AccessDenied`（不是 10048）、且端口**就在** `excludedportrange` 里，那是 Hyper‑V 独占保留、会随开机漂移——见下一个案例，解法是改用低端口而不是 `wsl --shutdown`。
+
+## Windows 固定服务端口落在 Hyper‑V 临时端口保留段 → 绑定 `WSAEACCES`(10013)，且随开机漂移
+
+> 2026-07-13 | Windows | WSL2 mirrored | Hyper‑V | 端口保留 | Clash Verge / mihomo
+
+> 与上一个案例（10048 但查不到占用、`excludedportrange` 里**没有**、`wsl --shutdown` 恢复）是**同一 Hyper‑V 端口保留现象的两面**：本案是 `WSAEACCES`(10013) + 端口**就在** `excludedportrange` 里。绑定失败先看错误码分流。
+
+## 症状
+
+Windows 上的 Clash Verge Rev（GUI，核心进程 `verge-mihomo`）配了 `mixed-port: 49760`，但"代理用不了"。且**曾经能用，某次开机后就不行了**（时好时坏）。客观现象串：
+
+- `Get-NetTCPConnection` 看 `verge-mihomo` 只在 `[::]:7892`(redir-port) + `[::]:53`(dns)，**没有 49760**。
+- TCP 连 `127.0.0.1:49760` → `ConnectionRefused`；拿它当 HTTP 代理发请求 → 失败。
+- Windows 系统代理注册表 `ProxyServer=127.0.0.1:49760` 但 `ProxyEnable=0`。
+- 直接 bind 实测（pwsh + `.NET TcpListener`，错误码语言中立）：
+
+```text
+WIN bind 49760: FAIL [AccessDenied]   # WSAEACCES / os error 10013
+WIN bind 49000: OK                     # 对照：低端口能绑
+WIN bind 50000: OK                     # 对照：在 excludedportrange 的 * 托管块里，反而能绑
+```
+
+`netsh int ipv4 show excludedportrange tcp` 里 **49760 落在 `49694–49793`** 这个非 `*` 的动态块内。
+
+## 排查关键转折（含走过的弯路）
+
+1. **先分清两个 mihomo**：WSL 里 `mihomo.service`（systemd `--user`，`127.0.0.1:7890`+`:9090`，正常）vs Windows Clash Verge Rev（`verge-mihomo`，配 49760，起不来）。二者**完全独立**。一度把 WSL 的 7890、甚至 Docker Desktop 扯进来当"受害者"，都是干扰项——7890 只是个 WSL user service，Docker 现在是 manual 指 7890、跟 49760 无关。砍掉。
+2. **别只靠 `netsh` 文本推断，直接实测 bind**：绑 49760 → `AccessDenied (WSA10013)`，绑低端口 → OK。**10013「被独占保留」区别于 10048「已被占用」**——这是本案与上一个案例的分水岭。
+3. **别想当然 WSL 是独立 NAT 栈**：`wslinfo --networking-mode` = **mirrored**，WSL 与 Windows 共享 localhost，WSL 侧绑 49760 也失败（`EADDRINUSE`）。→ 下结论前先确认 WSL 网络模式，不存在"Windows 不行 WSL 行"的不对称。
+4. **"在排除表里"≠"一定绑不上"**：`50000`（带 `*` 的托管块）反而 bind OK，只有 49760 所在的非 `*` 动态块才吃 WSAEACCES。
+5. **pwsh 探针两个坑**（详见 `software`/references/windows.md）：① PS 5.1 的 native/中文输出按 GBK，UTF‑8 strict 解码会乱码/炸 channel → 探针标签只用 ASCII，或 native exe 管 `iconv -f gbk`；② `HttpClient.Result` 被 PS 包成无信息的 `RuntimeException` → 改用 `TcpClient` + `Invoke-WebRequest -Proxy` 才拿得到干净结果。
+
+## 根因
+
+- Windows 临时/动态端口段默认 **49152–65535**（`netsh int ipv4 show dynamicportrange tcp`）。这段是给"系统自动分配的短命客户端连接"用的，不适合挂固定服务。
+- 跑 WSL2 / Docker / Hyper‑V 时，**HNS + WinNAT + vmcompute**（实测均 Running）为 NAT 记账，在**开机时**从这段里预先圈走几大块、打独占标记 → 进 `excludedportrange`（如 49694–49793）。
+- **这些块每次开机现圈、位置会漂**，叠加"谁先绑谁赢"的启动抢占赛：
+  - 之前能用 = 某次开机块没盖到 49760，或 `verge-mihomo` 抢在保留之前先绑住了。
+  - 这次不行 = 块 49694–49793 圈住 49760 且 mihomo 没抢先 → bind 吃 WSAEACCES → mixed-port 监听起不来，只剩 redir 7892 + dns 53。
+- Verge 又把 `127.0.0.1:49760` 写进系统代理注册表（残留）。但 `ProxyEnable=0` 时这是**潜在陷阱、非现行故障**：守规矩的程序见开关关着就直连；只有无视开关、硬读 `ProxyServer` 的程序才会撞死端口（Docker Desktop 的 system-proxy 自动探测是历史典型，也因此当初被迫改成 manual 指 7890）。
+
+## 解决
+
+- **根治**：别把固定服务端口挂在 49152–65535。改到**低端口（< 49152）** 即可永久避开 Hyper‑V 圈占。例：Clash Verge `mixed-port` 49760 → 49000（`49000<49152`，实测 bind OK）或 7888。WSL 那个 `mihomo.service` 用 7890 就从没这毛病。
+- **改 Clash Verge Rev 的端口**：GUI 的配置链（`config.yaml`→`clash-verge.yaml`→命名管道）、端口要改基础 `config.yaml` 的 `mixed-port` 而非 `verge.yaml`、核心由 SYSTEM 服务 `clash-verge-service` 托管杀不掉 → 见 `network`/references/mihomo.md §2.4。
+- **诊断口诀（绑定失败先看错误码分流）**：
+  - `10013 AccessDenied / WSAEACCES` → 端口被 Hyper‑V **独占保留**，查 `excludedportrange`，改**低端口**（本案）。
+  - `10048 已占用但 netstat / Get-NetTCPConnection / ss 都查不到` → WSL 网络栈残留，`wsl --shutdown` 重建（见上一个案例）。
+
 ## Windows 普通 PowerShell 创建文件 symlink 失败
 
 > 2026-04-20 | Windows | PowerShell | symlink 权限
@@ -689,3 +739,56 @@ cd <项目目录> && docker compose down && docker compose up -d
 - 一台机器上一次性检查"是不是所有存量网络都中招"很值——本次三个项目一起中招，如果只查 forgejo 一个，会漏掉 dmp/qatlas-postgres 也需要顺手修。
 
 关键词：`Docker 内置 DNS`、`127.0.0.11`、`no such host`、`hostname resolving error`、`lookup db`、`getent hosts` 解析失败但 IP 直连通、`docker network create` 新网络正常、存量网络 DNS 损坏、`docker compose down/up` 重建网络修复、`tried to kill container, but did not receive an exit event`、`docker kill` 被 bash 工具拦截、Forgejo 500 内部错误、Docker Desktop WSL2 睡眠唤醒
+
+## 手动 `source` 工作区 `.envrc` → symlink 分发钻进子目录（配 anchored excludesFile 只挡根层而漏进 `git status`）
+
+> 2026-07-10 | direnv + git `core.excludesFile` | 工作区根 `.envrc` 向各子仓库分发 Copilot 配置软链
+
+工作区根有个 direnv `.envrc`，里面 `link_into_subdirs` 把根上的 `.agents/skills`、`.mcp.json`、`.github/hooks/safety-net.json`、`.github/instructions/global.instructions.md` 软链分发到**每个直接子目录**（`for sub in "$PWD"/*/`），让每个子仓库各有一份配置。这些分发链本应被工作区级 `core.excludesFile`（`<workspace-root>/.timidly-excludes`）忽略、不进任何 git diff。
+
+## 症状
+
+- 在某个子仓库 `<child-repo>` 里 `git status`，冒出**几十个 untracked**：`<subdir>/.agents/`、`<subdir>/.github/`，遍布该仓库**每一个子目录**，全是本该被忽略的分发软链。
+- `core.excludesFile` 确认生效（`git config --show-origin core.excludesFile` 指向 `.timidly-excludes`），但 `git check-ignore -v <subdir>/.agents/skills` 返回 **NOT ignored**。
+
+## 排查关键转折
+
+1. **anchored pattern**：`.timidly-excludes` 里的忽略项大多**含斜杠**（`.agents/skills`、`.github/hooks/safety-net.json`…）。gitignore 语义下，含斜杠的 pattern **锚定到仓库根**——只匹配 `<repo>/.agents/skills`，匹配不到 `<repo>/<subdir>/.agents/skills`。唯一不含斜杠的 `.mcp.json` 是 unanchored、匹配任意深度，所以子目录里的 `.mcp.json` 软链**没**进 `git status`——这一对照正好点出"斜杠=锚定"是漏出主因。
+2. **软链指向暴露触发方式**：漏出的软链指向 `<child-repo>/.agents/skills`（上一层），说明 `link_into_subdirs` 是以 `$PWD=<child-repo>` 跑的。但 `<child-repo>` 自己没有 `.envrc`。→ 只可能是**有人在 `<child-repo>` 里手动 `source <workspace-root>/.envrc`**：direnv 正常加载会先 cd 到 `.envrc` 所在目录（`$PWD`=工作区根，只分发到各子仓库根这一层），而手动 `source` 保持 cwd 不变、`$PWD` 停在子仓库里，于是 `for sub in "$PWD"/*/` 把链铺进了子仓库的**每个子目录**，深了一层。
+
+## 根因
+
+两层叠加：
+
+- `link_into_subdirs` 用 `$PWD` 定分发目标；手动 `source` 从子目录执行时 `$PWD` 被错设成该子目录 → 链铺深一层。
+- 工作区 `core.excludesFile` 的忽略项 anchored（含斜杠）、只覆盖仓库根那一层 → 深一层的分发链没被忽略 → 漏进 `git status`（unanchored 的 `.mcp.json` 反而被正确挡住，是旁证）。
+
+## 解决
+
+**清理**：先确认要删的全是软链（`find <subdir>/.agents <subdir>/.github -type f` 输出为空 = 无独有实体文件），再 `trash-put` 掉这些 `.agents`/`.github`/`.mcp.json`，根级 canonical 不动。
+
+**防复发**：给 `link_into_subdirs` 加 early-return guard——用 `${BASH_SOURCE[0]}` 解析出 `.envrc` **自身所在目录**，只有当前 `pwd -P` 等于它才分发，否则跳过并打一行提示：
+
+```bash
+link_into_subdirs() {
+  local src="$1" rel="$2" sub target root
+  [[ -e "$src" ]] || return 0
+  root="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+  if [[ -n "$root" && "$(pwd -P)" != "$root" ]]; then
+    [[ -n "$_warned" ]] || { echo "envrc: cwd '$(pwd -P)' != workspace root '$root'; skip link_into_subdirs" >&2; _warned=1; }
+    return 0
+  fi
+  for sub in "$PWD"/*/; do ... done
+}
+```
+
+- direnv 正常加载：cd 到 `.envrc` 目录 → `pwd==root` → 照常分发。
+- 手动 `source` 从子目录：`pwd!=root` → 跳过 + 提示，不再乱铺。
+- **fail-safe**：`${BASH_SOURCE[0]}` 取不到 → `root` 空 → 条件为假 → 落到"照常跑"，绝不误伤正常 direnv 流程。
+- guard 放函数内，未来新增的分发调用自动受保护。
+
+### 测试踩坑（重要）
+
+验证 guard 时若**从一个空临时目录** `source` 真 `.envrc`，会得到假的"没跳过也没分发"假象——因为函数在 guard **之前**有 `[[ -e "$src" ]] || return 0`，空目录里 `$PWD/.github/...` 不存在 → 到达 guard 前就早退了。必须**构造带真实 `.github/hooks/safety-net.json` 等源文件 + 一个 child 子目录**的假仓库来测：source 真文件（cwd≠真根）应打印提示且 child 下 0 链；source 副本（cwd=副本自身根）应无提示且 child 下生成 4 条链。
+
+关键词：`.envrc`、`direnv`、`手动 source 从子目录`、`link_into_subdirs`、`$PWD 被错设`、`BASH_SOURCE guard`、`pwd -P`、`core.excludesFile`、`gitignore 含斜杠 anchored`、`check-ignore NOT ignored`、`.mcp.json 反而被忽略`、`symlink 分发深一层`、`.agents/skills`、`.github/instructions`、`git status 冒出大量 untracked`、`测试假象 [[ -e "$src" ]] 早退`

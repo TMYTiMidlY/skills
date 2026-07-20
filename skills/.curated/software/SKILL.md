@@ -1,13 +1,13 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 命令行精准操作（有并发/无关改动时只提交某处、hunk/行级暂存、后有提交时 amend）、gh 认证 vs git 提交身份（user.name/email）、Git 镜像/自建 Forgejo、Commitizen 发版（PEP 440 版本号、CHANGELOG 手改是否被冲、tag 触发 CI 发 PyPI）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链 / git-pages 静态站）、本地中文 ASR、OpenList 网盘聚合、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 命令行精准操作（有并发/无关改动时只提交某处、hunk/行级暂存、后有提交时 amend）、gh 认证 vs git 提交身份（user.name/email）、Git 镜像/自建 Forgejo、git-pages 静态站托管（Forgejo/Gitea 的 GitHub Pages 替代服务、Codeberg Pages 后端、不可猜路径、DNS Challenge 鉴权）、Commitizen 发版（PEP 440 版本号、CHANGELOG 手改是否被冲、tag 触发 CI 发 PyPI）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Coolify 与 Dokploy 自托管 PaaS（端口所有权、前置反代、工作负载边界与清理）、Go 工具链（模块 / `go install` / 依赖解析 / GOPROXY）、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
 ---
 
 # Software
 
 ## SSH
 
-SSH 密钥 passphrase、ssh-agent、非交互环境（CI / `bash -c`）私钥带 passphrase 又无解锁 agent 导致 `Server accepts key` 却 `Permission denied` 的诊断与复用常驻 agent 解法、RemoteForward 代理转发、主机密钥校验（known_hosts、`CheckHostIP` 默认及 OpenSSH 与 asyncssh 等第三方库对 IP 的处理差异——同一主机换 IP 后 OpenSSH 沉默而第三方库报 `Host key is not trusted` 的根因与修复）、ControlMaster 连接复用、裸 ssh/scp 跑命令与交互式 sudo（`ssh -t`）及远端文件编辑等通用 SSH 用法见 [references/ssh.md](references/ssh.md)。
+SSH 密钥 passphrase、ssh-agent、非交互环境（CI / `bash -c`）私钥带 passphrase 又无解锁 agent 导致 `Server accepts key` 却 `Permission denied` 的诊断与复用常驻 agent 解法、RemoteForward 代理转发、主机密钥校验（known_hosts、`CheckHostIP` 默认及 OpenSSH 与 asyncssh 等第三方库对 IP 的处理差异——同一主机换 IP 后 OpenSSH 沉默而第三方库报 `Host key is not trusted` 的根因与修复）、ControlMaster 连接复用、裸 ssh/scp 跑命令与交互式 sudo（`ssh -t`）及远端文件编辑、sshd 服务端进程模型（root 主监听 + 特权分离）与配置生效（reload 优先 restart、逐连接认证指令即时生效）等通用 SSH 用法见 [references/ssh.md](references/ssh.md)。
 
 ## Git 镜像仓库
 
@@ -39,13 +39,17 @@ tag 触发的 CI。覆盖：Python 版本号规范（PEP 440 的 a/b/rc/dev/post
 
 "包管理器"是差异极大的一大类工具的统称，按**管谁的包**分五类——系统级（apt/dpkg、dnf/rpm、pacman、Homebrew、Windows 的 choco/winget/Scoop）、语言级（pip/PyPI、npm、cargo、go、gem、nuget、composer、maven、vcpkg/Conan）、跨发行版声明式（Nix/Guix）、应用沙箱分发（Flatpak/Snap/AppImage）、跨语言环境与版本管理器（conda/mamba/pixi/uv、asdf/mise）。覆盖：一套横向**对比维度**（管谁的包 / 全局共享单版本 vs 哈希隔离多版本 / 命令式 vs 声明式 / 中心 registry vs 去中心化 vs distro repo / 预编译 vs 源码构建 / 有无 lockfile）；**Nix vs apt** 深入对照（`/nix/store` 哈希隔离怎么白送多版本共存·原子回滚·可复现·免 root·精确 GC，代价是磁盘膨胀与非 FHS 二进制难跑）；**Windows choco / winget / Scoop 三家**（社区 NuGet+PowerShell 脚本 vs 微软官方 winget-pkgs manifest vs Scoop 便携解压到 `~/scoop/` 免管理员，前两者只是静默跑 installer 的自动化壳、不隔离，winget 另有 DSC 声明式 Configuration）；**npm / pip(PyPI)** 与 **npm/pnpm/yarn/bun 四家客户端对照**（同一 registry、差别在 `node_modules` 布局·lockfile·速度，corepack 按项目切版本；pnpm 的 `node_modules/.pnpm` 虚拟 store + 全局 CAS 硬链接怎么同时省盘与防幽灵依赖；**bun 两极分化**——install 快~25×·一体化工具链 vs Node 兼容坑·JSC≠V8·生产内存·历史 `bun.lockb` 二进制锁与 Windows 迟到，逐条标已修复/仍成立；npm 依赖树多版本嵌套共存 = 跟 apt 全局单版本的根本区别；pip 的 wheel vs sdist、venv 隔离、无原生 lock、PEP 668 externally-managed 与系统 Python 打架）；**conda/pixi/uv 环境管理器 + asdf/mise 版本管理器**与本仓 `Pixi > uv > pip` 优先级；**绕过包管理器的 `curl|sh` 与 PowerShell `irm|iex`**（= `Invoke-RestMethod|Invoke-Expression`，执行未审计远程代码的取舍与先落地再审阅）；**把 npm/包管理器借用作跨平台原生二进制"安装器"的壳包 + 平台专属 optionalDependencies（os/cpu/libc 门控、musl 分叉判据，及"静态链接可只发一个 musl 通吃、故没分叉≠非原生"的反向陷阱）模式**（esbuild/swc/biome/turbo 等泛例；三大 coding agent 的工具链/安装方案/软弃用/采用度普查已拆到 harness skill 的 install.md）；**npm/pnpm/yarn/bun 四家客户端采用度快照**（周下载量 + 系统性偏差提醒 + HN 风向）；以及系统级/语言级两张"想干嘛×各家"命令速查与踩坑合集见 [references/package-managers.md](references/package-managers.md)。Go 模块生态"无中心仓库、import 路径即源码地址"的细节见 [references/go.md](references/go.md)。
 
-## Go 工具链 / go install / 模块生态
+## Go 工具链（去中心化模块 / `go install` / 解析与版本 / cgo 坑）
 
-Go 的包生态是**去中心化**的：没有 PyPI/npm/crates.io 那样的中心注册仓库，import 路径**就是**源码地址（`github.com/…`、`gitea.com/…`、`codeberg.org/…/v2`），`go install pkg@version` 直接从对应 VCS host 拉源码编译成二进制丢进 `$GOBIN`；`proxy.golang.org` 只是惰性缓存镜像不是注册中心，"发版"= 推一个 git tag。覆盖：`go` 无中心仓库的事实与对 PyPI/npm 的对照、原生装法 `go install` / `go run pkg@version`（版本选择 `@latest`/`@vX`/`@commit`、`GOBIN`/`GOPATH`、从源码编译要 Go 工具链、`/vN` 主版本进路径）、`go install` 遇 `replace` 指令为何失败（replace 只对主模块生效）、从 module proxy 装 vs 本地 clone build 的 `vcs.*` 戳/`+dirty` 判别、以及 **`pixi global install go`（conda-forge 包）的 cgo 坑**（`DefaultCC=x86_64-conda-linux-gnu-cc` 被编译期烧进 go 二进制、缺配套编译器致 cgo 构建失败，判别四连 + 修法 `pixi global install --environment go c-compiler`）见 [references/go.md](references/go.md)。
+Go 的包生态是**去中心化**的：没有 PyPI/npm/crates.io 那样的中心注册仓库，import 路径**就是**源码地址（`github.com/…`、`gitea.com/…`、`codeberg.org/…/v2`），`go install pkg@version` 直接从对应 VCS host 拉源码编译成二进制丢进 `$GOBIN`；`proxy.golang.org` 只是惰性缓存镜像不是注册中心，"发版"= 推一个 git tag。覆盖：`go` 无中心仓库的事实与对 PyPI/npm 的对照、原生装法 `go install` / `go run pkg@version`（`@latest`/`@vX`/`@commit` 版本选择、`GOBIN`/`GOPATH`、`@ver` 时忽略当前 `go.mod` 不污染项目依赖、Go 1.16 起装工具专用它、`/vN` 主版本进路径）、**导入路径→仓库的解析机制**（已知托管站规则 / `.git` 后缀 / vanity 路径 `?go-get=1` + `<meta name="go-import">` 重定向 + Go 1.25 subdir + `mod` 代理变体）、**版本模型**（SemVer、`/vN` 共存、伪版本、MVS 最小版本选择）、`go.mod`/`go.sum`/模块缓存、GOPROXY/GOSUMDB/GOPRIVATE（默认 `proxy.golang.org` + `sum.golang.org`、`direct` 回落、私有模块绕过、墙内换 `goproxy.cn`）、`go install` 遇 `replace` 指令为何失败（replace 只对主模块生效）、从 module proxy 装 vs 本地 clone build 的 `vcs.*` 戳/`+dirty` 判别、以及 **`pixi global install go`（conda-forge 包）的 cgo 坑**（`DefaultCC=x86_64-conda-linux-gnu-cc` 被编译期烧进 go 二进制、缺配套编译器致 cgo 构建失败，判别四连 + 修法 `pixi global install --environment go c-compiler`）见 [references/go.md](references/go.md)。
 
 ## Zellij
 
 Zellij Web client、HTTPS 证书要求、login token/session token、反代注入 Cookie、`default_shell`、Web/xterm 主题分层、给特定软件写 OSC 10/11 颜色 wrapper、Codex 输入框颜色、鼠标选区颜色、pane 大小相关操作（全屏 `Ctrl p`→`f`、resize 模式 `Ctrl n`、`stacked_resize` 只由无方向的 `+`/`=` 与 `-` 触发）、pane 布局排列（swap layout 切换 `Alt [`/`Alt ]` 及随 pane 数自动跳档、新建普通 pane vs stacked pane `Ctrl p`→`s`、焦点在 stack 内新建即并入、`MovePane` 只对调不增长 stack）与 WSL systemd service 写法见 [references/zellij.md](references/zellij.md)。
+
+## uv（Python 包 / 环境管理器）
+
+[uv](https://github.com/astral-sh/uv)（Astral 的快速 Python 包 / venv 管理器）使用与排障。重点记一个**不是 uv 本身、而是 snap 版 uv** 的坑：`ExecStart=/snap/bin/uv run …` 的 systemd 服务，被 uv 拉起的应用日志**在 `journalctl -u <service>` 里完全看不到**——snapd 把进程重挪进 `snap.astral-uv.uv-<uuid>.scope` cgroup，journald 按 cgroup 归属日志，应用输出挂在 snap scope 名下而非服务单元名下（`classic` confinement 也一样）；绕过是按 `journalctl -t <SyslogIdentifier>` 查，治本是把 `ExecStart` 换成非 snap 的 uv。另附 `uv run` 下 Python 块缓冲需 `PYTHONUNBUFFERED=1` 的实测。见 [references/uv.md](references/uv.md)。
 
 ## Service / systemd
 
@@ -110,3 +114,7 @@ OpenList（AList 的活跃 fork）的 **REST API 编程接入**（两种 token�
 ## MinerU PDF→Markdown 转换
 
 MinerU（mineru.net）提供 VLM 模型将 PDF 转为 Markdown/JSON，支持公式和表格识别。默认使用云端 API / Open API；未经用户明确允许，不要在本机安装或部署 MinerU。详细流程见 [references/mineru.md](references/mineru.md)。
+
+## Coolify 与 Dokploy（自托管 PaaS）
+
+[Coolify](https://coolify.io) 与 [Dokploy](https://dokploy.com) 的宿主约束、端口所有权、上游反代、控制面/工作负载边界、分层清理及产品专有架构统一见 [references/coolify-dokploy.md](references/coolify-dokploy.md)。其中 Coolify 部分按 v4.1.2 源码覆盖运行架构、实时路由、配置持久性和对外应用发布；Dokploy 部分区分 v0.29.8 锁定源码、滚动安装脚本、官方默认入口与非官方 socat workaround。WSL/mesh 入站 portproxy 相关见 `network` skill 的 WSL 章节；边缘 Caddy 服务端配置见 `vps-maintenance` skill。

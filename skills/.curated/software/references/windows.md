@@ -107,6 +107,7 @@ WSL 里直接调 `powershell.exe` 起的是**当前用户态非 admin** PowerShe
 注意：
 
 - 触发 UAC 的是 `Start-Process -Verb RunAs`，与 5.1 / pwsh 无关；外层用 5.1 调 pwsh 7 也可以。
+- **多行命令不要硬塞进 `Start-Process ... -Command`**：Bash、外层 PowerShell、`ArgumentList` 和内层 PowerShell 会连续解释引号、换行与 here-string，稍复杂就会在内层报 `ParserError`。把命令写成 `C:\Temp\<task>\run.ps1`，再用 `Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-File','C:\Temp\<task>\run.ps1'`；脚本本身仍按下一条约定写 `result.txt` / `done.txt`。代价只是多一个临时文件，但可审查、可复跑，远比堆转义稳定。
 - 父进程（WSL 这边）拿不到 admin 子进程的 stdout——它已经在另一个用户上下文里。**结果靠落盘**：在被弹起的命令里 `... | Out-File C:\Temp\<task>\result.txt -Encoding utf8 ; Write-Output DONE | Out-File C:\Temp\<task>\done.txt`，WSL 端轮询 `done.txt` 文件出现即视为完成，再读 `result.txt`。
 - `Out-File` 路径不要写 `\\wsl.localhost\Ubuntu\...` —— Windows admin 进程不能用 UNC 当 CWD，也不能很流畅地写 WSL 文件系统。固定写 `C:\Temp\<task>\` 之类的本地路径，WSL 端读 `/mnt/c/Temp/<task>/result.txt`。
 

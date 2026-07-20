@@ -19,6 +19,8 @@ description: 记录排查过的疑难杂症和踩坑经历。当用户遇到类�
   - 关键词：`hashOriginal.toHex is not a function`、`Uint8Array.toHex`、`pdfjs-dist`、`PDF.js v5.6.205`、`htbrowser`、`Chrome 132`、`viewer.mjs:24251`、`pdf.mjs:428`、`patchViewerUI`、`viewsManagerToggleButton`、`sidebarToggleButton`、`LaTeX-Workshop PDF 预览全白`、`merge upstream 后浏览器打不开 PDF`
 - **Windows 端口绑定异常但 Win/WSL 都查不到占用，`wsl --shutdown` 后恢复** → [references/bug-fix.md](references/bug-fix.md)
   - 关键词：`os error 10048`、`端口占用但 netstat 查不到`、`Get-NetTCPConnection 查不到`、`ss 查不到`、`excludedportrange 没有`、`wsl --shutdown`
+- **Windows 固定服务端口落在 Hyper‑V 临时端口保留段 → 绑定 `WSAEACCES`(10013)、随开机漂移（Clash Verge mihomo `mixed-port:49760` 起不来）** → [references/bug-fix.md](references/bug-fix.md)
+  - 关键词：`WSAEACCES`、`os error 10013`、`AccessDenied`、`bind 失败但不是 10048`、`excludedportrange 里有`、`49694-49793`、`动态端口段 49152-65535`、`ephemeral port`、`dynamicportrange`、`Hyper-V 端口保留`、`HNS`、`WinNAT`、`vmcompute`、`保留段每次开机漂移`、`启动抢占赛`、`时好时坏`、`之前能用现在不行`、`Clash Verge Rev`、`verge-mihomo`、`mixed-port 起不来`、`只剩 redir 7892 + dns 53`、`ProxyServer=127.0.0.1:49760`、`ProxyEnable=0`、`系统代理残留`、`Docker Desktop system proxy`、`WSL2 mirrored`、`wslinfo networking-mode`、`改低端口 <49152`、`49000`、`7888`
 - **Windows 普通 PowerShell 创建文件 symlink 失败，给用户授予 `SeCreateSymbolicLinkPrivilege` 后恢复** → [references/bug-fix.md](references/bug-fix.md)
   - 关键词：`Administrator privilege required`、`mklink`、`You do not have sufficient privilege`、`SeCreateSymbolicLinkPrivilege`、`Create symbolic links`、`secedit 扩展错误`、`*SID`、`Developer Mode`、`AGENTS.md`、`CLAUDE.md`
 - **公网 VPS 做 UDP 端口段转发到内网地址时，启用 `nftables.service` 影响 Caddy HTTPS/TCP 服务** → [references/bug-fix.md](references/bug-fix.md)
@@ -35,5 +37,7 @@ description: 记录排查过的疑难杂症和踩坑经历。当用户遇到类�
   - 关键词：`Docker 内置 DNS`、`127.0.0.11`、`no such host`、`hostname resolving error`、`lookup db`、`getent hosts` 解析失败但 IP 直连通、`docker network create` 新网络正常、存量网络 DNS 损坏、`docker compose down/up` 重建网络修复、`tried to kill container, but did not receive an exit event`、`docker kill` 被 bash 工具拦截、Forgejo 500 内部错误、Docker Desktop WSL2 睡眠唤醒
 - **Postgres 崩溃恢复卡在 checkpoint「像是死了」，其实是 NAS iSCSI LUN 上的 fsync 巨慢（不是真卡死，诊断方法本身有局限）** → [references/nas.md](references/nas.md)
   - 关键词：`Postgres checkpoint 卡住`、`end-of-recovery checkpoint`、`Ds 状态`、`不可中断磁盘睡眠`、`docker stats BlockIO 不变`、`iSCSI LUN`、`NAS-backed 存储`、`WAL fsync 慢`、`wsl --mount`、`崩溃恢复耗时长`、`checkpoint complete sync=727s`、`误判为死锁`、`pg_isready`、`大表 + 慢速存储 checkpoint 正常耗时`
+- **手动 `source` 工作区 `.envrc` → symlink 分发钻进子仓库每个子目录；配 anchored `core.excludesFile` 只挡根层而漏进 `git status`** → [references/bug-fix.md](references/bug-fix.md)
+  - 关键词：`.envrc`、`direnv`、`手动 source 从子目录`、`link_into_subdirs`、`$PWD 被错设`、`BASH_SOURCE guard`、`pwd -P`、`core.excludesFile`、`gitignore 含斜杠 anchored`、`check-ignore NOT ignored`、`.mcp.json 反而被忽略`、`symlink 分发深一层`、`.agents/skills`、`.github/instructions`、`git status 大量 untracked`、`测试假象 [[ -e "$src" ]] 早退`
 
 > Copilot CLI 相关的调研笔记已迁移到 `harness` skill（包括 bash 工具 env 黑名单、`COPILOT_ALLOW_ALL` vs `--yolo`、`/rewind` 非 git 拒绝、Walk-Up（向上查找）机制总览、Custom Instructions（AGENTS.md / `.github/instructions` 嵌套查找）、Safety Net 双 bug、项目级 hook 不向上查、`.mcp.json` 上溯停在 git root、`.mcp.json` headers `${VAR}` 不展开、Skills 发现、`GIT_CONFIG_COUNT` 注入 credential helper、`gh repo fork` SSH 身份错配、Copilot SDK 与 session export 等）。
