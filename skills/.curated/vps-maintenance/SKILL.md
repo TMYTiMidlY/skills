@@ -100,6 +100,17 @@ PubkeyAuthentication yes
 EOF
 ```
 
+模板里 `PermitRootLogin no` 是最严选择。该指令四个取值：`yes`（密码或密钥都可，最松）、`prohibit-password`（旧名 `without-password`，仅密钥、禁密码）、`forced-commands-only`（仅密钥且只能跑 `authorized_keys` 里 `command=` 指定的命令）、`no`（root 完全禁止 SSH 登录）。
+
+因为本流程已同时 `PasswordAuthentication no`（root 密码登录一并被堵），`no` 与 `prohibit-password` 的实际差别只在 **root 的密钥登录**：
+
+| 取值 | root 密码登录 | root 密钥登录 | 说明 |
+|---|---|---|---|
+| `no` | ❌ | ❌ | root 完全进不来，要 root 就普通账户登录后 `sudo`。最严、默认推荐 |
+| `prohibit-password` | ❌ | ✅（需 root 装了公钥） | 保留一条 root 密钥应急通道 |
+
+若机器有物理/控制台访问且普通账户 sudo 可靠，用 `no`；想留 SSH 应急入口则用 `prohibit-password`，并给 `/root/.ssh/authorized_keys` 放公钥。
+
 可选：如果需要通过远程端口转发将本地服务暴露到公网（`ssh -R`），在配置中加入 `GatewayPorts yes`。默认不开启。
 
 上面用 `sudo tee` 写入的文件默认已是 root 所有、644 权限。如果用其他方式写入，需要手动确保权限正确：
