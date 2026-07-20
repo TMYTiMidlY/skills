@@ -1,6 +1,6 @@
 ---
 name: manage-skills
-description: 安装、卸载、创建、拆分、重命名、审查或维护本地 skills 时使用；关注 skill 边界、触发描述、跨 skill 引用规范、渐进式披露三层结构（description → SKILL.md → references），以及个人配置与 skill 正文分离。
+description: 安装、卸载、创建、拆分、重命名、审查、解决分叉分支的合并冲突，或维护本地 skills 时使用；关注 skill 边界、触发描述、跨 skill 引用规范、渐进式披露三层结构（description → SKILL.md → references），以及个人配置与 skill 正文分离。
 ---
 
 # Manage Skills
@@ -110,6 +110,10 @@ done
 ## 审查现有 skills
 
 用户让"审查 / 检查所有 skill 是否合规"时，走跨多 skill 的合规扫描：逐条核对 [references/conventions.md](references/conventions.md) 每项，外加只在审查时做的跨 skill 专项检查（嫁接 LICENSE、是否落后上游、`name` 全局唯一）。默认**只审不改**。完整流程、输出格式与专项检查见 [references/review.md](references/review.md)。
+
+## 解决合并冲突
+
+把两条分叉的 skill 文档分支合到一起（双向分叉、两边各自重构同一大文件、术语 / 定义分歧）时，别当成机械删冲突标记——核心是**理解两边意图后，重建一份一致、不丢信息、无重复的知识**。要点：动手前勘定环境 + 无损预演冲突清单；三方溯源看意图（别急着否掉一侧）；给冲突分类套手法（纯并集 / 干净超集 / 结构分叉选底本 splice / 术语分叉查一手来源）；通读结构抓自动合并在冲突标记之外制造的静默重复；splice 后修交叉引用；只收本次合并该带的、隔离并发 / 脏改动；reference 先于 SKILL.md；大改走重构流程；解决即验。完整方法见 [references/merge.md](references/merge.md)。
 
 ## Hermes
 
