@@ -8,7 +8,7 @@
 
 | Skill | 说明 |
 | --- | --- |
-| `manage-skills` | 创建、拆分、审查、维护本仓库里 skill 的规范与工作流 |
+| `manage-skills` | 创建、拆分、审查、合并、维护本仓库里 skill 的规范与工作流 |
 | `harness` | Agent harness / runtime 架构知识库：Copilot CLI / SDK / MCP / session export、Claude Code / Codex 对照、CLI subprocess / SDK client / extension host / JSON-RPC 取舍、Hermes agent（systemd / backend / provider / skill 体系） |
 | `software` | SSH、systemd、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享客户端、Windows/macOS 操作与激活、远程桌面 / WSL 网络、EasyTier 客户端 |
 | `vps-maintenance` | VPS 初始化、Caddy（含 caddy-security）、EasyTier、网络质量检测 |
