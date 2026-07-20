@@ -124,7 +124,32 @@ Codeberg 官方文档把站点分成用户 / 组织主站和项目站（[固定�
 
 **Forgejo Actions + 官方 Action**（适合静态站生成器）：CI 里用 [`git-pages/action@v2.2.0`](https://codeberg.org/git-pages/action/src/commit/2b24bbb7ff943d3c8fe1df91326adec66daea6dd/action.yml)，`with: { site, token: ${{ forge.token }}, source }`，把构建产物推上去；Forgejo Actions 的自动 token 就够，无需手建。
 
+在 `.forgejo/workflows/publish.yaml` 的构建步骤后加入：
+
+```yaml
+- uses: https://codeberg.org/git-pages/action@v2.2.0
+  with:
+    site: 'https://${{ forge.repository_owner }}.codeberg.page/<repo>/'
+    token: ${{ forge.token }}
+    source: _site/
+  # 只发布 main，避免草稿或功能分支覆盖线上站点。
+  if: ${{ forge.ref == 'refs/heads/main' }}
+```
+
+`<repo>` 换成仓库名；仓库名为 `pages` 时，`site` 改成 `https://${{ forge.repository_owner }}.codeberg.page/`。`source` 指生成器产物目录；`forge.token` 由 Forgejo Actions 自动注入。
+
 **git-pages-cli 手推**（本地 / 脚本一次性发）：[`git-pages-cli` v1.10.0](https://codeberg.org/git-pages/git-pages-cli/src/commit/a63042dcc9c1419967ded3ce389dae1bab39724e/README.md#L58-L81) 用 `--upload-dir <目录>` 直接上传本地目录。
+
+```bash
+go install codeberg.org/git-pages/git-pages-cli@v1.10.0
+git-pages-cli 'https://<username>.codeberg.page/<repo>/' \
+  --token '<forge-token>' \
+  --upload-dir ./_site
+```
+
+`<forge-token>` 是对目标仓库有写权限的 Codeberg access token；鉴权机制和自建场景见 [Forge token 授权](#archive-auth)。
+
+上述方式发布的是一棵**当前站点内容树**，不是某个分支的实时镜像。新一次完整发布会替换旧站点状态；git-pages 不提供历史版本浏览，也没有旧 v2 那种 `@branch` 多分支访问入口。不同版本需要同时在线时，应使用不同站点主机名或路径。底层 PUT / PATCH 行为见 [发布路径与客户端](#publishing-api)。
 
 ### <a id="codeberg-custom-domain"></a>自定义域名与 DNS 授权
 
