@@ -1,8 +1,8 @@
 # Git CLI 精准操作（在有并发/无关改动时只提交、暂存、丢弃、amend 一处）
 
-面向的场景：工作区里同时躺着**你想动的改动**和**不该由你带走的改动**（并发会话未提交的脏文件、别人已经 `git add` 的 rename、untracked 文件……），你要在**命令行非交互**地只对其中一处做 commit / stage / discard / stash；以及当你的提交后面又被别人叠了新提交时怎么改它。下面先讲**地基**（三棵树 + commit 到底拍什么），再按**粒度**分：整文件级、子文件 hunk/行级，最后是改一条旧提交。结论基于 git 2.43.0。
+面向的场景：工作区里同时躺着**你想动的改动**和**不该由你带走的改动**（并发会话未提交的脏文件、别人已经 `git add` 的 rename、untracked 文件……），你要在**命令行非交互**地只对其中一处做 commit / stage / discard / stash；以及当你的提交后面又被别人叠了新提交时怎么改它。下面先讲**三棵树 + commit 到底拍什么**，再按**粒度**分：整文件级、子文件 hunk/行级，最后是改一条旧提交。结论基于 git 2.43.0。
 
-## 地基：改动待在哪、commit 到底拍什么
+## 三棵树与 commit 的快照范围
 
 ### Git 的三棵树：工作区 / 暂存区(index) / HEAD
 
@@ -22,15 +22,15 @@
 
 所以 `git add -- <path>` 的本质就是把该路径**当前工作区内容**写进/更新 index 条目；因为 index 按路径分项，add 一个新文件不会动其它路径的条目，但同一路径被多个会话同时 stage/commit 仍会互相影响。
 
-### `git commit` 拍的是整个暂存区(index) 的快照
+### `git commit`（无路径）与 index 快照
 
 `git commit`（**不带路径**）把**整个 index** 打成一个提交，跟你这一轮 `git add` 了哪些无关——暂存区里有什么就提交什么。这不是 `-p` 特有的，是 commit 的定义。因此只要东西在 index 里就必然被带走；要隔离其它路径，只有两条路——把它们撤出 index（`git restore --staged`），或改用 **pathspec 部分提交**（见[场景一](#scene-whole-file)）。
 
-### 通用规律：任何"部分操作"都是在两棵树之间做 diff
+### 部分操作的基准：两棵树间的 diff
 
 不管你是想提交、丢弃、撤出还是搬走**一部分**改动，命令的行为都由两件事决定：**拿哪两棵树做 diff（"基准 floor" ↔ 目标）**，以及**把选中的改动往哪个方向搬**。记住"基准是谁"，就能预测一条命令看得见什么、动得了什么、什么会被当成不可改的底座。各命令具体的 floor 见[场景二的基准表](#patch-baseline)。
 
-## 速查：想干嘛 → 用什么 → 去哪节
+## 速查：场景 → 命令 → 章节
 
 | 你想…… | 最常用的 | 详见 |
 |---|---|---|
@@ -337,7 +337,7 @@ trash-put "$TMPIDX"
 
 > 根因：porcelain（`commit` / `add` / `-p` / `rebase`）都架在 **index / worktree 抽象层**上、甩不掉底座、要干净工作区；plumbing 的 `commit-tree` 直接操作 tree / blob 对象、**绕过这层抽象**——「要不要 staged、受不受底座约束、工作区干不干净」在这一层根本不成立。代价就是这层便利全没了：手动、易错、真实 index 变陈旧（见 ⚠️）、并发必须 `update-ref` CAS 兜底防 split-brain。
 
-## <a id="post-mortem-reflog"></a>事后归因：并发被踩后用 reflog 认出「谁动了 ref」
+## <a id="post-mortem-reflog"></a>reflog 归因：辨认移动 ref 的操作
 
 多个会话共享同一 `.git` 时，"我的提交被谁冲了"靠 reflog 的 **reason 字段**复盘——它是操作类型的签名，据此就能区分 tip 是被 append 前进、还是被 reset 回退：
 
@@ -353,7 +353,7 @@ trash-put "$TMPIDX"
 - **HEAD 与各分支各有独立 reflog**：`git reflog show HEAD` 与 `git reflog show <branch>` 对照看，才能还原「HEAD 动了但分支没动」这类局部操作。
 - **捞回被冲掉的提交**：被 `reset` / `amend` 弃掉的旧提交不会消失，用 `git reflog`（近期操作）或 `git fsck --no-reflogs`（列 dangling commit）拿到它的 SHA，再 `git reset --hard <sha>` 或按路径 `git restore --source=<sha>` 取回内容。
 
-## <a id="jj-no-index"></a>jj（Jujutsu）：working copy 即 commit、无暂存区
+## <a id="jj-no-index"></a>jj（Jujutsu）：无 index 的替代模型
 
 本文每个场景的难点都绕着同一个底座——**index（暂存区）**：`-p` 系列拿它当基准、别人 `git add` 的东西搭车、要「免 add + 行级 + 隔离」三者兼得只能下沉 [plumbing](#plumbing-commit-tree)。[jj（Jujutsu）](https://github.com/jj-vcs/jj) 换了个模型：**没有 index**，working copy 本身是自动快照的 `@` commit——[git-comparison](https://github.com/jj-vcs/jj/blob/v0.43.0/docs/git-comparison.md) 原文 *“There's no index (staging area). Because the working copy is automatically committed…”*。每条 jj 命令先从**文件系统**快照 `@`（不读 git index）再干活；`jj split` / `jj squash -i` 从「父→`@`」的全量改动里挑子集，**选中的就是提交的全部**——没有第三方对象藏预暂存内容，本文的「index 底座搭车」在 jj 里**结构上不成立**。
 
