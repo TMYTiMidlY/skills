@@ -1,10 +1,10 @@
-# jj（Jujutsu）：working copy 即 commit、操作日志、一等冲突、与 Git 互操作
+# jj（Jujutsu）：工作副本模型、操作日志、一等冲突与 Git 互操作
 
 [jj（Jujutsu）](https://github.com/jj-vcs/jj) 是个 Git 兼容的版本控制器：用 Git 仓库当后端存对象，协作者甚至不知道你没在用 `git`。本文讲 jj **自身的模型**，以及几个容易踩错认知的点——操作日志、一等冲突、冲突与 change-id **在 Git 层怎么落地**、哪些数据留在本地不出机器、以及"改动不丢失"到底靠什么、边界在哪。
 
 本文与本 skill [git-surgery.md 的 jj 小节](git-surgery.md#jj-no-index) 同源但侧重不同：那边把 jj 当作"当 git 精准手术做不到时的另一条路"来对照；这里从 jj 自己的模型讲起，偏重操作日志、冲突表示与文件持久性。**下文 jj 行为均在 jj 0.43.0 实测**；官方文档链接锁到 v0.43.0。
 
-## <a id="model"></a>工作副本即 commit：`@` 与没有暂存区
+## <a id="model"></a>工作副本 `@` 与暂存区
 
 jj **没有暂存区（index）**。工作副本本身就是一个**自动提交**的 commit，记作 `@`；每跑一条 jj 命令，它先把当前文件系统状态快照进 `@` 再干活。
 
@@ -43,7 +43,7 @@ jj 有两条互相独立的历史，别混：
 
 > 附带好处：操作日志给了**无锁并发**——多个 jj 命令（甚至跨机器经分布式文件系统）同时跑不会损坏仓库，冲突会在随后的 `jj st` / `jj log` 里以 divergent 提示出来。见 [operation-log](https://github.com/jj-vcs/jj/blob/v0.43.0/docs/operation-log.md)。
 
-## <a id="conflicts"></a>一等冲突与延迟解决
+## <a id="conflicts"></a>一等冲突（first-class conflicts）
 
 Git 撞冲突会**当场阻塞**：`git rebase` 停在半途、进入模态 `rebase in progress`、退出码非 0，逼你 `git add` + `git rebase --continue` 或 `--abort`，否则寸步难行。
 
@@ -122,7 +122,7 @@ C2
   Error: Won't push commit <id> since it has no description
   ```
 
-  > 校验器完整拒推理由在源码 [`cli/src/commands/git/push.rs`](https://github.com/jj-vcs/jj/blob/v0.43.0/cli/src/commands/git/push.rs) 的 `CommitsValidator`：`has no description`（除非 `--allow-empty-description`）、`has conflicts`、`is private`（按 `git.private-commits`，除非 `--allow-private`）、`has no author and/or committer set`。注意这只是 `jj git push` 的**客户端**校验——colocated 下用**纯 `git push`** 推同一个冲突 commit **不受此拦**（实测 `git push` 退出 0、远端收到了，带着 `.jjconflict-*` 那套表示）。
+  > 校验器完整拒推理由在源码 [`cli/src/commands/git/push.rs#L737-L752`](https://github.com/jj-vcs/jj/blob/v0.43.0/cli/src/commands/git/push.rs#L737-L752) 的 `CommitsValidator`：`has no description`（除非 `--allow-empty-description`）、`has conflicts`、`is private`（按 `git.private-commits`，除非 `--allow-private`）、`has no author and/or committer set`。注意这只是 `jj git push` 的**客户端**校验——colocated 下用**纯 `git push`** 推同一个冲突 commit **不受此拦**（实测 `git push` 退出 0、远端收到了，带着 `.jjconflict-*` 那套表示）。
 
 **跨机复制两条路，差别巨大（实测）：**
 
