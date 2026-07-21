@@ -35,3 +35,23 @@ ExecStart=/usr/local/bin/myservice -secrets ${CREDENTIALS_DIRECTORY}/secrets.tom
 - `ExecStart` 里**显式**传绝对路径 `-secrets /etc/myservice/secrets.toml`，不依赖 `$CREDENTIALS_DIRECTORY`。
 
 （`git-pages` 就是这套：`-secrets` 默认读 `$CREDENTIALS_DIRECTORY/secrets.toml`，原生适配 systemd 凭据机制。）
+
+## 用户级 systemd 服务（`systemctl --user`）与 linger 常驻
+
+system 级服务放 `/etc/systemd/system/`、由 PID 1 的 system manager 托管，跟机器生命周期走；**user 级服务**放 `~/.config/systemd/user/`、由每个用户自己的 `systemd --user` 实例（user manager）托管，用 `systemctl --user …` / `journalctl --user -u <unit>` 操作。不需要 root，unit 里能用 `%h`（家目录）这类 specifier，适合“归属某个普通用户、又不想写进系统单元”的服务（mkdocs 文档站、rclone 挂载、个人 agent 等）。
+
+**核心坑：user manager 的生命周期默认绑在 login session 上。** SSH 登录 → 拉起该用户的 `systemd --user` 及其 user units；**最后一个 session 退出 → user manager 连同所有 user units 一起被杀**；机器重启后若没人登录该用户，服务也不自启。表现就是“人一登出 / 断开 SSH，服务就挂；重启后不拉起”。
+
+**解法：`loginctl enable-linger <user>`。** linger 直译“逗留 / 滞留”——让该用户的 user manager 在**没有任何 login session 时也继续赖着运行**（开机即被 `systemd-logind` 预启动、登出也不回收），user units 才能 7×24 常驻并开机自启。
+
+```bash
+sudo loginctl enable-linger <user>     # 开启（需 root）
+loginctl show-user <user> -p Linger    # 校验 → Linger=yes
+sudo loginctl disable-linger <user>    # 关闭
+```
+
+底层就是在 `/var/lib/systemd/linger/` 下放一个以用户名命名的空文件当标记，logind 据此在开机时预启动该用户的 manager。
+
+**没 sudo 开不了 linger 时**（WSL 内、受限账号等）：只能在该用户 session 活着时跑，session 一断服务就停；重进 session 后服务随 `default.target` 自动起——rclone@ 在 WSL 里的这种处理见 [mount.md](mount.md)。
+
+**user service vs system service 怎么选**：要 root 能力、与登录完全无关、开机必起 → 直接写 system service（不碰 linger）；归属某普通用户、要用其 `~` 下的运行时 / 凭据、又要求登出后仍在跑 → user service + `enable-linger`。
