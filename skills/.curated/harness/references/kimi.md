@@ -28,7 +28,7 @@ Moonshot 官方的终端编码 agent，**MIT 开源**，TypeScript monorepo（pn
 ├── sessions/  logs/  telemetry/  updates/  user-history/
 ```
 
-`config.toml` 里托管 provider 长这样（`/login` 自动写出，见 [oauth-files](#oauth-files)）：
+`config.toml` 骨架速览如下；`/login` 写出的**完整** OAuth 版见 [OAuth 登录后的文件状态](#oauth-files)、不登录的**静态 key 自建**版见 [不登录：静态 API key 直连](#no-oauth)：
 
 ```toml
 default_model = "kimi-code/k3"
@@ -90,6 +90,64 @@ key = "oauth/kimi-code"
 - **登出 / 失效不删文件，写 tombstone**：refresh_token 被 401/403 拒后，凭证文件仍在但字段清空（`access_token:"" , refresh_token:"", expires_at:0`），用来区分"登录过、需重登" vs "从没登录"。
   > [token-state.ts](https://github.com/MoonshotAI/kimi-code/blob/5cc194956f6f9752d172aa4994385d2d2e7a066f/packages/oauth/src/token-state.ts)。
 
+**`/login`（默认 host）实际写出的 `config.toml`** 🔬——拿它跟 [不登录：静态 API key 直连](#no-oauth) 那份逐字段对比就能看出两套鉴权差在哪：
+
+```toml
+# ~/.kimi-code/config.toml —— /login（Kimi Code OAuth）自动写出
+default_model = "kimi-code/k3"
+
+[providers."managed:kimi-code"]            # provider key 固定 managed:kimi-code
+type     = "kimi"
+api_key  = ""                              # 空 → 用下面的 oauth 块取 token
+base_url = "https://api.kimi.com/coding/v1"
+[providers."managed:kimi-code".oauth]      # 默认 host 时就这两行
+storage  = "file"
+key      = "oauth/kimi-code"
+
+[models."kimi-code/k3"]                     # 别名前缀固定 kimi-code/
+provider = "managed:kimi-code"
+model    = "k3"
+max_context_size = 1048576
+capabilities     = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]
+display_name     = "K3"
+support_efforts  = [ "low", "high", "max" ]
+default_effort   = "high"
+# 另有 kimi-code/kimi-for-coding、kimi-code/kimi-for-coding-highspeed 两个别名，结构同
+
+[thinking]
+enabled = true
+effort  = "high"
+
+[services.moonshot_search]                  # 内置 web 搜索，同样挂 oauth
+base_url = "https://api.kimi.com/coding/v1/search"
+api_key  = ""
+[services.moonshot_search.oauth]
+storage  = "file"
+key      = "oauth/kimi-code"
+
+[services.moonshot_fetch]                   # 内置网页抓取，同上
+base_url = "https://api.kimi.com/coding/v1/fetch"
+api_key  = ""
+[services.moonshot_fetch.oauth]
+storage  = "file"
+key      = "oauth/kimi-code"
+```
+
+**与自建静态 key 版的字段差异**：
+
+| 维度 | OAuth 托管（`/login` 写出） | 静态 key 自建（手写，见 [下节](#no-oauth)） |
+|---|---|---|
+| provider key | 固定 `managed:kimi-code` | 任意，如 `kimi-key` |
+| `api_key` | `""`（空，走 oauth 块） | `"sk-..."` |
+| `[….oauth]` 块 | 有 | 无 |
+| 模型别名前缀 | `kimi-code/*` | `<provider>/*`（如 `kimi-key/*`） |
+| `[services.*]`（搜索/抓取） | 有，挂 oauth | 一般不写 |
+| 凭证来源 | `credentials/kimi-code.json` 的 OAuth token（15 分钟刷新） | config 里明文 `api_key`（不过期） |
+| `kimi provider list` | `source=oauth` | `source=inline` |
+| TUI 余额面板 | 有 | 无（见 [面板取数路径](#tui-usage-oauth)） |
+
+> `oauth` 块的 `oauthHost` 只在 host 非默认时才写：`key` 是默认 `oauth/kimi-code` 且 host 是默认 `auth.kimi.com` 时 `persistedOAuthHost` 返回 `undefined`、这行省略；用 `KIMI_CODE_OAUTH_HOST` 覆盖后会多一行 `oauthHost = "…"`。[managed-kimi-code.ts `persistedOAuthHost` / `managedOAuthRef`](https://github.com/MoonshotAI/kimi-code/blob/5cc194956f6f9752d172aa4994385d2d2e7a066f/packages/oauth/src/managed-kimi-code.ts#L265-L291)。
+
 ## <a id="no-oauth"></a>不登录：静态 API key 直连
 
 官方**明确支持**"分发 API key"直连托管端点，不走 OAuth——源码把这种叫 "a hand-configured provider using a distributed API key instead of OAuth"，并为它单独留了刷新模型目录的路径。
@@ -140,13 +198,19 @@ curl -s -H "Authorization: Bearer $key" https://api.kimi.com/coding/v1/usages | 
 响应字段（解析器对拼写/大小写很宽容）：
 
 - `user.membership.level`（如 `LEVEL_ADVANCED`）、`user.region`、`subType`（如 `TYPE_PURCHASE`）。
-- `usage`：主窗口（周）`{ limit, used, remaining, resetTime }`。
-- `limits[]`：更短的滚动窗口（`window.duration`+`timeUnit`，如 5 分钟）各自的 `detail`。
+- `usage`：主窗口（周）`{ limit, used, remaining, resetTime }`——`used + remaining = limit`，两字段都给。
+- `limits[]`：更短的滚动窗口，各自 `{ window:{duration,timeUnit}, detail:{limit,remaining,resetTime} }`。`duration` 的单位由 `timeUnit` 定：`duration:300` + `TIME_UNIT_MINUTE` = **300 分钟 = 5 小时**（不是 5 分钟；源码 `limitLabel` 把它显示成 `5h limit`）。此窗口**只给 `remaining`、无 `used`**——`toUsageRow` 缺 `used` 时按 `used = limit − remaining` 推。
 - `parallel.limit`：并发上限。
 - `boosterWallet.balance`：有充值钱包时的现金余额，`amount`/`amountLeft` 是 **1e6 定点数**（÷1e6 → 分）；无钱包则不返回（订阅账号的"余额"就是上面各窗口的 `remaining`）。
   > 载荷形状与解析 [managed-usage.ts 顶部注释 + `parseManagedUsagePayload`/`parseBoosterWallet`](https://github.com/MoonshotAI/kimi-code/blob/5cc194956f6f9752d172aa4994385d2d2e7a066f/packages/oauth/src/managed-usage.ts#L1-L160)。
 
 **探测踩坑** 🔬：只有 `/usages`（复数）对；`/coding/v1/meta`、`/coding/v1/usage`（单数）、`/coding/v1/{me,account,subscription,user_profiles}` 全 404；`/chat/completions` 的**响应头不含**任何额度字段（`x-get-balance` 只是二进制里的无关字符串）。所以查额度只能打 `/usages`。
+
+**`used` / `remaining` 的方向与计量** 🔬（往账号打请求消耗额度、连续 poll `/usages` 实测）：
+
+- **方向一致、不反向**：消耗时周 `used` **↑**、周 `remaining` **↓**、5h `remaining` **↓**——`used`=已用、`remaining`=剩余。周窗返 `used`+`remaining` 两个字段、5h 只返 `remaining`，是**字段子集不同、不是含义相反**（若反向，消耗该让 `remaining` 变大，实测没有）。
+- **按用量取整计，不是"每请求 +1"**：4 个小请求（各 ~30–40 token）→ 两窗零变化；2 个重请求（输出 766 + 1481 token）→ 两窗各 **−1**。那个 `limit`（如 100）是**用量额度点**（与 token/算力挂钩、取整），小请求四舍五入≈0（精确 token↔点比例未标定）。
+- **结算有延迟且两窗不同步**：5h 窗 ~数秒即扣、周窗 ~1–2 分钟才动。所以打完请求立刻查 `used` 常常看不到变化，别据此以为"不计费"。
 
 ## <a id="tui-usage-oauth"></a>TUI 余额面板的取数路径
 
