@@ -5,7 +5,40 @@
 - Web client: <https://zellij.dev/documentation/web-client.html>
 - Options: <https://zellij.dev/documentation/options.html>
 
-## Web client
+## 安装与数据目录
+
+官方在 [zellij.dev/documentation/installation](https://zellij.dev/documentation/installation) 对 Windows 只说一句“从 release 页下载 binary，解压后运行 `zellij.exe`”，没规定安装路径。但每个 release 实际同时提供 4 个 Windows asset：
+
+| 文件名（`<ver>` 为版本号，如 `0.44.3`） | 含 web client | 形态 |
+|---|---|---|
+| `zellij-x86_64-pc-windows-msvc.zip` | 是 | 便携 zip |
+| `zellij-x86_64-pc-windows-msvc-installer.msi` | 是 | **MSI 安装包** |
+| `zellij-no-web-x86_64-pc-windows-msvc.zip` | 否 | 便携 zip |
+| `zellij-no-web-x86_64-pc-windows-msvc-installer.msi` | 否 | **MSI 安装包** |
+
+推荐用 **MSI**：装完会进“添加/删除程序”、per-user 独立、卸载干净；比 zip 便于排查、比 `cargo install --locked zellij` 省事（后者要 perl/strawberry/MSVC build tools，zellij 0.43 之前 Windows 还标 experimental）。MSI 不会写 PATH，要么用绝对路径调用，要么手动把安装目录加进用户 PATH。
+
+### 关键路径速查
+
+| 类别 | 路径 | 备注 |
+|---|---|---|
+| **可执行文件**（MSI 默认） | `%LOCALAPPDATA%\Zellij\zellij.exe`，即 `C:\Users\<USER>\AppData\Local\Zellij\zellij.exe` | MSI per-user 安装的默认位置 |
+| **数据目录**（含 `tokens.db`、配置等） | `%APPDATA%\Zellij\`，即 `C:\Users\<USER>\AppData\Roaming\Zellij\` | 由 [`directories` crate](https://docs.rs/directories) 的 `ProjectDirs::from("", "", "Zellij")` 决定，与是否走 MSI 无关；`tokens.db` 具体在 `%APPDATA%\Zellij\data\tokens.db` |
+| 自编译产物（参考） | `<repo>\target\release\zellij.exe` | `cargo install --locked zellij` 或源码 `cargo build` 出来的位置；MSI 与之独立 |
+
+可执行文件落在 `Local`、数据目录在 `Roaming`——**两个分散在不同根目录**，不要假设它们同父。这一点和 Linux/macOS 不一样：
+
+| 平台 | 数据目录（`tokens.db` 在 `<data>/tokens.db`） |
+|---|---|
+| Linux | `~/.local/share/zellij/` |
+| macOS | `~/Library/Application Support/org.Zellij Contributors.Zellij/` |
+| Windows | `%APPDATA%\Zellij\data\` |
+
+### 第三方 Windows 包管理器
+
+`docs/THIRD_PARTY_INSTALL.md` **不列任何 Windows 渠道**（只列 Arch / Fedora / macOS Homebrew / MacPorts / Void）。winget / scoop / chocolatey 上的 zellij 都是社区维护，zellij 团队不背书。要稳定就 MSI。
+
+## Web client（启用、HTTPS 与共享）
 
 Zellij 内置 Web server，默认关闭。手动启动：
 
@@ -32,7 +65,7 @@ default_shell "/bin/bash"
 
 `web_sharing "on"` 表示新建 session 默认通过 Web server 共享；只想在需要时显式共享可用 `"off"`，完全禁用共享可用 `"disabled"`。
 
-## 普通启动与 Web 共享前提
+### 普通启动与 Web 共享前提
 
 输入 `zellij` 会启动普通 Zellij session；session 会持续存在，后续可用 `zellij attach` 恢复。这个命令本身不等同于打开 Web client。
 
@@ -44,62 +77,6 @@ web_sharing "on"
 ```
 
 如果 Web server 使用独立配置（例如 systemd service 通过 `zellij -c ~/.config/zellij/web.kdl web` 启动），而普通交互式 `zellij` 读取的是默认配置，则要分别确认两份配置。否则可能出现 Web server 已运行，但普通 `zellij` 新建的 session 没有自动共享、Web 页面看不到的情况。
-
-## 配置选项的几个反直觉点
-
-审查 zellij 配置时几个名字和行为不一致的点（均基于 `0.44.x` 源码）：
-
-- **`keybinds clear-defaults=true { ... }` 会把键位冻结在生成时的版本**。`clear-defaults=true` 表示丢弃全部内置默认键位、只用列出的；而 `zellij setup --dump-config` 导出的配置正是当时版本默认键位的全量快照。升级 zellij 后，上游新增/改动的默认键位不会自动出现，需要重新 dump 或手动合并。表现是静默的——不报错，只是用不到新键位。
-
-- **`default_cwd` 只有在同时设了 `default_shell` 时才改变新 pane 的工作目录**。新 pane 默认继承当前 pane 的 cwd；`default_cwd` 只作为“无法确定 cwd 时”的兜底，唯一强制生效的路径是经过 `default_shell`（`pty.rs` 的 `fill_cwd` 仅在 cwd 为 None 时回填）。所以 `default_shell` 注释掉时，`default_cwd` 对交互式新 pane 基本不起作用，只影响 Web 新建 session 的首个 pane。反过来：一旦取消注释 `default_shell`（例如启用某个 shell wrapper），`default_cwd` 会随之激活，把“继承父 pane 目录”的行为改成固定打开 `default_cwd`。
-
-- **`web_client { ... }` 只被 Web server 读**。普通交互式 `zellij`（读 `config.kdl`）不使用这一段，只有 `zellij web`（读 web.kdl）才生效。写在交互 `config.kdl` 里的 `web_client` 块不起作用，调浏览器端外观应改 web.kdl。
-
-## pane 大小相关的操作（全屏 / resize / stacked_resize）
-
-zellij 中几个改变 pane 大小 / 占比的操作，均为 **默认（mode 键位）** 行为；键位引自 `0.44.x` 默认配置 `zellij-utils/assets/config/default.kdl`，都是 toggle 或可逆操作，pane 内容不会丢。
-
-- **`Ctrl p` 进 pane 模式 → `f`：聚焦全屏（`ToggleFocusFullscreen`）**。把当前 pane 临时铺满整个 tab、隐藏其余 pane（不是关闭，数据都在），状态栏显示 `FULLSCREEN`；再按一次 `Ctrl p` `f` 还原。（`default.kdl`：`Ctrl p`→Pane 在 206 行，pane 模式 `f` 在 35 行。tmux 兼容模式 `Ctrl b` 然后 `z` 同效，166 行。）
-
-- **`Ctrl n` 进 resize 模式 → 方向键 / `h j k l` / `+ - =`：调整当前 pane 大小**。方向映射是 **`h/j/k/l` = 左/下/上/右**（方向键同理），表示朝该方向 Increase；大写 `H/J/K/L` 表示朝左/下/上/右 Decrease。这些**带方向**的操作每按一步移动分隔线 **5%**（源码 `pub const RESIZE_PERCENT: f64 = 5.0`，`zellij-server/src/panes/tiled_panes/tiled_pane_grid.rs:18`），压到边界就停。`=`/`+` = 无方向 Increase、`-` = 无方向 Decrease；默认开启 `stacked_resize` 时走下面单独的自动堆叠算法，不是同一套 5% 定向 resize。`Ctrl n` 再按一次退出模式。（`default.kdl` 12–21 行；`Ctrl n`→Resize 在 209 行。）
-
-- **`stacked_resize`（选项，默认 `true`）：只处理无方向的 `=`/`+` 与 `-`**。源码 `resize_active_pane()` 的门槛是 `stacked_resize && strategy.direction.is_none()`；因此 `h/j/k/l` 和方向键都**不会**触发自动 stack，压到底只会停住（Zellij 0.44.3 Web client 实测亦如此）。反复按 `=`/`+` 时，Zellij 先尝试自动扩大当前 pane，空间不足时再把相邻 pane 转成 stack；`-` 用于缩小或拆回先前的堆叠状态。具体先动哪一侧受焦点和当前几何布局影响。0.41.0 引入、默认开启（`options.rs` 里 `stacked_resize: Option<bool>`；默认配置注释 `// stacked_resize false`，即“默认 true、去掉注释才关”）；想彻底禁用就在 `config.kdl` 写 `stacked_resize false`。
-
-## pane 布局排列（swap layout 切换 / 新建 pane vs stack / 并入 stack）
-
-上一节是「改 pane 大小」，这节是「改 pane 怎么排列 / 堆叠」。键位引自 `0.44.3` 默认配置（`zellij setup --dump-config`，对应 `zellij-utils/assets/config/default.kdl`）；行为结论是起一个独立会话用 `zellij action dump-layout` 实测出来的——`action` 命令与对应键位触发的是**同一个服务端动作**，所以键盘按下去的效果与实测一致。**给 web client 用户：下面全是键盘操作，不用敲终端命令。**
-
-### swap layout 切换（预设布局循环）〔实测 + [官方文档](https://zellij.dev/documentation/swap-layouts.html)〕
-
-- **`Alt+[` = 上一个、`Alt+]` = 下一个 swap layout**（`default.kdl` 197–198 行，绑在 `shared_except "locked"`，即**除锁定模式外任何模式都直接生效**，是最容易误触的键——想打 `[` `]` 时手还压着 Alt 就中招）。官方原文：swap layout 之间 *“switch between them manually (by default with `Alt` + `[]`)”*。
-- **布局会随 pane 数自动跳档**：每个 swap layout 用 `min_panes` / `max_panes` / `exact_panes` 约束，开 / 关 pane 使当前档不满足约束时，zellij 自动切到满足的那档（官方 *Progression and Constraints*）。默认三档：`vertical`（左右分列）、`horizontal`（上下平铺全宽）、`stacked`（左 1 + 右一摞，**`min_panes=5`**）。所以只有 4 个 pane 时根本切不出默认 `stacked` 档，`Alt+[]` 只在左右 / 上下之间转。
-- **误触恢复**：反向按 `Alt+[`（或继续 `Alt+]` 转一圈）切回原排列。若原来的堆叠是 `stacked_resize` 自动压出来的（不是布局档），切不回去，用下面 ④ 的办法重堆。
-
-### 新建 pane：普通 vs stacked〔实测〕
-
-`Ctrl+p` 进 pane 模式后（`default.kdl` 30–33 行；另有全局 `Alt+n` 在 188 行）：
-
-| 按键 | 动作 | 效果（`dump-layout` 实测） |
-|---|---|---|
-| `n` / `d` / `r`，或全局 `Alt+n` | `NewPane` / `NewPane "Down"` / `"Right"` | **分割空间**：`split_direction="vertical" { pane 50%; pane 50% }`，两个独立 pane 各占一半、都可见 |
-| `s` | `NewPane "stacked"` | **不分割、叠加**：当前 pane 原地变成 `stacked=true` 容器，新 pane `expanded=true` 展开、旧的折成一行标题栏 |
-
-### 并入已有 stack（键盘可行）〔实测〕
-
-**焦点落在 stack 内某个 pane 上时**，新建就并入这一摞、不新开第二摞：
-
-- `Ctrl+p`→`s`（stacked 新建）→ 并入同摞（实测 2 层 → 3 层）。
-- 连**普通**新建 `Alt+n` / `Ctrl+p`→`n` → **也并入同摞**（实测 3 层 → 4 层）。即「在 stack 里新建」默认就进这摞。
-
-### 把已散开的独立 pane 收成一摞 / 全 stack〔实测，含一条否定结论〕
-
-- **`MovePane` 不能把独立 pane「追加」进 stack**：焦点在独立 pane 上、`Ctrl+p`→`h/j/k/l`（或 move 模式 `Ctrl+h` 再方向键）朝 stack 方向移动，实测是**位置对调 / 轮转**——被移动的 pane 进 stack 顶部，同时把 stack 原来一个成员顶出到空位，**总数和层数都不变**。指望用移动把散 pane 一个个塞进去让 stack 长高，行不通。
-- **键盘路径**：`Ctrl+n` 进 resize 模式，反复按无方向的 `=`/`+` 让 `stacked_resize` 自动扩大 / 堆叠；不要用 `h/j/k/l`，它们只做定向 resize。结果受焦点和当前几何布局影响，必要时先把焦点移到想保留展开的 pane；`-` 可逐步拆回。
-- **想要整个 tab 一摞**：默认没有一个把任意现存独立 pane 全部强制合并的直接键位；可尝试用 `Ctrl+n`→`=`/`+` 让 `stacked_resize` 按当前几何逐步收拢。`Ctrl+p`→`s` 只会**新建** pane 并叠到当前 pane，不会搬运已经存在的 pane。想让 `Alt+[]` 直接切出「全 stack」档，则要改配置（自定义 swap layout，去掉内置那档的「左 1」和 `min_panes=5`），属配置层、不在键盘范围。
-
-### web client 键盘透传〔Zellij 0.44.3 实测〕
-
-当前 Web client 已确认 `Ctrl+p`、`Ctrl+n`、`Alt+[` / `Alt+]`、`Alt+n` 以及 resize 模式的 `h/j/k/l`、`=`/`+` 都能正常进入 Zellij，未被浏览器截获；`h/j/k/l` 的实际方向是左/下/上/右，压到底不会自动 stack，而 `=`/`+` 会触发自动 stack。两者差异来自 Zellij 的动作分流规则，不是浏览器吃键。不同浏览器若某组合完全没反应，才考虑浏览器快捷键冲突。
 
 ## login token 与 session token
 
@@ -131,14 +108,14 @@ SESSION_TOKEN=$(echo "$RESPONSE" | grep -oP 'session_token=\K[^;]+')
 echo "会话令牌: $SESSION_TOKEN"
 ```
 
-### session_token 为什么会过期、谁说了算
+### session_token 的过期机制
 
 - **真理由是 server 端 sqlite 那一行 `expires_at`**：`validate_session_token` 的 SQL 就是 `SELECT COUNT(*) FROM session_tokens WHERE session_token_hash='<hash>' AND expires_at > datetime('now')`，过期立刻 401。
 - **cookie 的 `Max-Age=2419200`（28 天）只是同一个数往浏览器抄了一份**：Caddy 注入固定 Cookie 跳过浏览器的反代场景里它**完全不起作用**，过期完全由 DB 决定。
 - `create_session_token` 每次进入还会顺手调 `cleanup_expired_sessions()` 把所有 `expires_at <= now` 的行**物理 DELETE**。所以过期的 session_token 在 DB 里**会消失**，不是只是被打无效标记。
 - CLI 和配置文件**都没暴露这个 TTL**——不重编译 / 不改 DB 没法改有效期。
 
-### 判断是不是 session_token 过期
+### session_token 过期的判断
 
 直接打 zellij 自己的 `/ws/control`（WebSocket 升级端点），对照伪造 token：
 
@@ -163,7 +140,7 @@ curl --noproxy '*' -sk -o /dev/null -m 4 -w "fake=%{http_code}\n" \
 
 `--noproxy '*'` 不可省：很多 dev 机 shell 环境里有 `http_proxy=http://127.0.0.1:7890`，curl 默认会把 `localhost` 也送进 proxy 导致请求被吃掉，必须强制绕开。`curl < 7.86` 还会把 zellij WebSocket 后续帧当 “HTTP/0.9” 报错，把测试机 curl 升一下（或换 Python `socket` 直连）就稳。
 
-### 让 session_token 永不过期：直接改 DB
+### session_token 永不过期：改 DB expires_at
 
 CLI 没暴露 TTL，要彻底免维护就改 DB 里那行 `expires_at`。**保留 hash 即可，session_token 明文继续用**，不需要重新生成：
 
@@ -197,14 +174,15 @@ c = sqlite3.connect(db); c.execute(
   ('2099-12-31 00:00:00', h)); c.commit(); c.close()
 ```
 
-### 长期替代方案：systemd timer 自动续期
+### systemd timer 自动续期
 
 如果不想动 DB schema 直接挂死，正路是定期用还活着的 login token 重新跑 `/command/login` 拿新 `session_token` → 写回 Caddy（或其它反代）→ reload。login token 永久有效是这套方案的前提。坑：reload Caddy 通常要 sudo / root 写 Caddyfile，得给 timer 一条窄 sudoers 口子（`NOPASSWD: /bin/systemctl reload caddy, /usr/bin/sed …`），或把这条 Cookie 拆到非 root 的 include 文件里再让 timer 自己改。
 
-## Caddyfile 示例
+## Caddy 反代（Caddyfile 示例）
+
 Caddy 反代 Zellij Web 时，常见场景分为两类：本机部署和远程部署。`header_up Cookie "session_token=..."` 仅用于把登录后得到的 `session_token` 透传给 Zellij，本身不决定反代拓扑。
 
-本机部署：Caddy 与 Zellij 在同一台机器上。此时通常保持 `zellij web` 的默认本地监听方式，即仅监听 `127.0.0.1:8082`，由本机 Caddy 负责外层 HTTPS 与访问控制。`LisaHost`、`RackNerd` 这类部署适合使用以下配置：
+本机部署：Caddy 与 Zellij 在同一台机器上。此时通常保持 `zellij web` 的默认本地监听方式，即仅监听 `127.0.0.1:8082`，由本机 Caddy 负责外层 HTTPS 与访问控制：
 
 ```caddyfile
 zellij.<HOST> {
@@ -248,7 +226,9 @@ zellij attach https://<HOST>:<PORT>/<SESSION_NAME> --ca-cert /path/to/ca.pem
 
 `--insecure` 只用于可信开发网络。
 
-## WSL service 写法
+## 作为后台服务运行
+
+### WSL / Linux：systemd service
 
 当前 WSL systemd service（`<USERNAME>` 替换为实际系统用户名）：
 
@@ -282,42 +262,9 @@ WantedBy=multi-user.target
 
 如需新增端口，可使用独立 config，或在配置中显式设置 `web_server_port <PORT>`。反代前应先对该端口重新生成并登录，拿到新的 `session_token` 后再写入 `header_up Cookie`。
 
-重启 `zellij.service` 会让 Web 配置重新下发；如果该 service cgroup 中已有活跃 session/pane/agent 进程，可能中断现有会话，执行前先提醒用户。
+重启这个 service 前先掂量代价：systemd 默认 `KillMode=control-group`，一重启会杀掉该 service cgroup 内的**所有**进程——不只是 web-server，还有它下面挂的每个会话/pane/agent。而且多数 `web.kdl` 改动其实不需要重启（新开会话即生效），详见 [web.kdl 改动的生效时机](#reload-timing)。
 
-## Windows 安装与数据目录
-
-官方在 [zellij.dev/documentation/installation](https://zellij.dev/documentation/installation) 对 Windows 只说一句“从 release 页下载 binary，解压后运行 `zellij.exe`”，没规定安装路径。但每个 release 实际同时提供 4 个 Windows asset：
-
-| 文件名（`<ver>` 为版本号，如 `0.44.3`） | 含 web client | 形态 |
-|---|---|---|
-| `zellij-x86_64-pc-windows-msvc.zip` | 是 | 便携 zip |
-| `zellij-x86_64-pc-windows-msvc-installer.msi` | 是 | **MSI 安装包** |
-| `zellij-no-web-x86_64-pc-windows-msvc.zip` | 否 | 便携 zip |
-| `zellij-no-web-x86_64-pc-windows-msvc-installer.msi` | 否 | **MSI 安装包** |
-
-推荐用 **MSI**：装完会进“添加/删除程序”、per-user 独立、卸载干净；比 zip 便于排查、比 `cargo install --locked zellij` 省事（后者要 perl/strawberry/MSVC build tools，zellij 0.43 之前 Windows 还标 experimental）。MSI 不会写 PATH，要么用绝对路径调用，要么手动把安装目录加进用户 PATH。
-
-### 关键路径速查
-
-| 类别 | 路径 | 备注 |
-|---|---|---|
-| **可执行文件**（MSI 默认） | `%LOCALAPPDATA%\Zellij\zellij.exe`，即 `C:\Users\<USER>\AppData\Local\Zellij\zellij.exe` | MSI per-user 安装的默认位置 |
-| **数据目录**（含 `tokens.db`、配置等） | `%APPDATA%\Zellij\`，即 `C:\Users\<USER>\AppData\Roaming\Zellij\` | 由 [`directories` crate](https://docs.rs/directories) 的 `ProjectDirs::from("", "", "Zellij")` 决定，与是否走 MSI 无关；`tokens.db` 具体在 `%APPDATA%\Zellij\data\tokens.db` |
-| 自编译产物（参考） | `<repo>\target\release\zellij.exe` | `cargo install --locked zellij` 或源码 `cargo build` 出来的位置；MSI 与之独立 |
-
-可执行文件落在 `Local`、数据目录在 `Roaming`——**两个分散在不同根目录**，不要假设它们同父。这一点和 Linux/macOS 不一样：
-
-| 平台 | 数据目录（`tokens.db` 在 `<data>/tokens.db`） |
-|---|---|
-| Linux | `~/.local/share/zellij/` |
-| macOS | `~/Library/Application Support/org.Zellij Contributors.Zellij/` |
-| Windows | `%APPDATA%\Zellij\data\` |
-
-### 第三方 Windows 包管理器
-
-`docs/THIRD_PARTY_INSTALL.md` **不列任何 Windows 渠道**（只列 Arch / Fedora / macOS Homebrew / MacPorts / Void）。winget / scoop / chocolatey 上的 zellij 都是社区维护，zellij 团队不背书。要稳定就 MSI。
-
-### Windows 上做后台 service
+### Windows：NSSM / 登录脚本 / --daemonize
 
 Windows 上没有 systemd 对等物。常见做法：
 
@@ -325,11 +272,114 @@ Windows 上没有 systemd 对等物。常见做法：
 - 用户登录脚本 `Start-Process -WindowStyle Hidden zellij.exe web`（不解耦，注销/锁屏可能受影响）。
 - `zellij.exe web --daemonize` 直接后台化：Unix 走 pipe 信号，**Windows 走 TCP 探测启动完成**，所以 `--server-startup-timeout`（默认 10s）只在 Windows 起作用，慢机/冷启动可能要调大。
 
+## 配置项（web.kdl）的作用范围与编写
+
+### 选项的作用范围与生效条件
+
+审查 zellij 配置时几个名字和行为不一致的点（均基于 `0.44.x` 源码）：
+
+- **`default_cwd` 只有在同时设了 `default_shell` 时才改变新 pane 的工作目录**。新 pane 默认继承当前 pane 的 cwd；`default_cwd` 只作为“无法确定 cwd 时”的兜底，唯一强制生效的路径是经过 `default_shell`（`pty.rs` 的 `fill_cwd` 仅在 cwd 为 None 时回填）。所以 `default_shell` 注释掉时，`default_cwd` 对交互式新 pane 基本不起作用，只影响 Web 新建 session 的首个 pane。反过来：一旦取消注释 `default_shell`（例如启用某个 shell wrapper），`default_cwd` 会随之激活，把“继承父 pane 目录”的行为改成固定打开 `default_cwd`。
+
+- **`web_client { ... }` 只被 Web server 读**。普通交互式 `zellij`（读 `config.kdl`）不使用这一段，只有 `zellij web`（读 web.kdl）才生效。写在交互 `config.kdl` 里的 `web_client` 块不起作用，调浏览器端外观应改 web.kdl。
+
+### keybinds：clear-defaults 全量 vs 合并叠加
+
+- **`keybinds clear-defaults=true { ... }` 会把键位冻结在生成时的版本**。`clear-defaults=true` 表示丢弃全部内置默认键位、只用列出的；而 `zellij setup --dump-config` 导出的配置正是当时版本默认键位的全量快照。升级 zellij 后，上游新增/改动的默认键位不会自动出现，需要重新 dump 或手动合并。表现是静默的——不报错，只是用不到新键位。
+
+- **只想加/改几个键、又不想背上 `clear-defaults` 的全量维护，就用不带 `clear-defaults` 的合并块**。`keybinds { ... }`（`clear-defaults` 默认 `false`）是**叠加**语义：保留全部内置默认键位，块里只写增量——`bind` 新增或覆盖某键、`unbind` 撤掉某个默认键。好处是文件极小、只带增量，且自动继承上游对默认键位的更新（正好补上上一条 `clear-defaults` 冻结的缺陷）；代价是没把整套键位「钉死」。**坑**：合并模式下「给某动作绑一个新键」并不会自动解绑该动作**原来的默认键**——结果两个键都生效。要把一个绑定从默认键「搬」到新键，必须**同时 `unbind` 旧键**。`unbind` 必须放在与默认绑定**相同的 mode / 组**里才对得上（`Ctrl q` 默认绑在 `shared_except "locked"`，就在同名组里 `unbind`），放错组撤不掉。合并块的 `keybinds` 节点可置于 `web.kdl` 任意根级位置；`zellij -c <file> setup --check` 打印 `[CONFIG FILE]: Well defined.` 即解析通过（注意它只校验语法、不校验键位语义）。
+
+下面这个合并块给 Web 端加了两条翻页键（`Alt u`/`Alt d` 向当前 pane 写 PageUp/PageDown 转义序列，绕开浏览器对翻页键的拦截），并把退出键从默认 `Ctrl q` 搬到 `Alt q`——只写 `bind "Alt q"` 不写 `unbind "Ctrl q"` 的话，`Ctrl q` 和 `Alt q` 会都能退出：
+
+```kdl
+keybinds {
+    shared_except "locked" {
+        bind "Alt u" { Write 27 91 53 126; } // PageUp
+        bind "Alt d" { Write 27 91 54 126; } // PageDown
+        bind "Alt q" { Quit; }
+        unbind "Ctrl q"
+    }
+}
+```
+
+### <a id="reload-timing"></a>web.kdl 改动的生效时机（新会话重读 vs 重启 web server）
+
+判断某项 `web.kdl` 改动要不要重启 web-server service，取决于该配置是「web-server 进程启动时读一次并常驻内存」还是「每次新建会话时由 server 端从磁盘重读」。源码依据：zellij 源码 @ commit [`68362d4cf`](https://github.com/zellij-org/zellij/tree/68362d4cf)（main，略超前 0.44.1；web 配置装载架构与在跑的 0.44.3 一致）。
+
+**前提：zellij 不监听（watch）配置文件。** 没有 inotify/文件监视，外部编辑器改 `web.kdl` 不会被自动发现——只在下面这些时机才被读到。（仓库里的 `watch` 代码是**插件**的文件系统监视，与主配置无关。）
+
+**① 无需重启 service，新开一个 session 即生效**（改完 `web.kdl`，在 Web 里新建会话就带上新配置；已存在的会话不受影响、也不会变）：
+
+- `keybinds`、`themes` / `theme`、`plugins` / `load_plugins`、`env`、layout 等**会话侧**配置。
+- 机制：浏览器新建会话 → server 收到 `FirstClientConnected` → `CliAssets::load_config_and_layout()` → `Config::from_path(web.kdl)` **当场从磁盘重读**（[`cli_assets.rs` `load_config_and_layout`](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-utils/src/input/cli_assets.rs#L28)、[`lib.rs` `FirstClientConnected`](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-server/src/lib.rs#L934)）。
+- 附着到**已存在**会话（`AttachClient`）走的是 `session_configuration.saved_config`，只 merge 运行时 `options`，**不重读磁盘全量配置**（[`lib.rs` `AttachClient`](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-server/src/lib.rs#L1127)）。所以老会话/老 tab 不会长出新键位，必须新建会话。
+
+**② 必须重启 `zellij … web`（这个 service）才生效：**
+
+- **监听相关**：`web_server_ip`、`web_server_port`、`web_server_cert`、`web_server_key`、`enforce_https_for_localhost`——只在 web-server 启动时读一次，用来 bind TCP listener + 建 TLS（[`web_client/mod.rs` 启动路径](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-client/src/web_client/mod.rs#L95-L175)）。
+- **浏览器外观 `web_client { }`**（theme / font / cursor / base_url 等）：新浏览器连进来时下发的首个 `SetConfig` 取自 `state.config`（`SetConfigPayload::from(&*state.config.lock())`）——即 **web-server 启动时装载、常驻内存的那份**（[`websocket_handlers.rs`](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-client/src/web_client/websocket_handlers.rs#L54)；base_url 见 [`http_handlers.rs`](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-client/src/web_client/http_handlers.rs#L40)）。改 `web_client` 外观，即使新开会话也不变，必须重启 service。
+
+**③ 应用内「重配置」会热更新，但外部编辑触发不了：**
+
+- 存在一条热重载链路：`ServerToClientMsg::ConfigFileUpdated` → web-server 重读磁盘（`Config::from_path`）并把新主题/外观实时推给所有浏览器（[`server_listener.rs`](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-client/src/web_client/server_listener.rs#L203)）。
+- 但它由 `ServerInstruction::ConfigWrittenToDisk` / `Reconfigure` 触发——即 **zellij 自己在应用内写配置 / 重配置**（如 Configuration 设置界面保存）时才发；**外部编辑器改 `web.kdl` 不会触发**（无文件监视）。
+
+> 实务：给 Web 端加 `Alt u`/`Alt d` 这类 `keybinds` 改动属于 ①，**不用重启 service**——在跑着多个 agent 会话的机器上尤其重要（重启会连坐杀掉 cgroup 内所有会话和 agent，见上「作为后台服务运行」的 `KillMode` 说明）。直接在 Web 里新建一个 session 即可用上新键位，老会话保持不动。只有改「监听端口 / 证书 / IP」或「`web_client` 浏览器外观」才必须重启。
+
+## pane 大小相关的操作（全屏 / resize / stacked_resize）
+
+zellij 中几个改变 pane 大小 / 占比的操作，均为 **默认（mode 键位）** 行为；键位引自 `0.44.x` 默认配置 `zellij-utils/assets/config/default.kdl`，都是 toggle 或可逆操作，pane 内容不会丢。
+
+- **`Ctrl p` 进 pane 模式 → `f`：聚焦全屏（`ToggleFocusFullscreen`）**。把当前 pane 临时铺满整个 tab、隐藏其余 pane（不是关闭，数据都在），状态栏显示 `FULLSCREEN`；再按一次 `Ctrl p` `f` 还原。（`default.kdl`：`Ctrl p`→Pane 在 206 行，pane 模式 `f` 在 35 行。tmux 兼容模式 `Ctrl b` 然后 `z` 同效，166 行。）
+
+- **`Ctrl n` 进 resize 模式 → 方向键 / `h j k l` / `+ - =`：调整当前 pane 大小**。方向映射是 **`h/j/k/l` = 左/下/上/右**（方向键同理），表示朝该方向 Increase；大写 `H/J/K/L` 表示朝左/下/上/右 Decrease。这些**带方向**的操作每按一步移动分隔线 **5%**（源码 `pub const RESIZE_PERCENT: f64 = 5.0`，`zellij-server/src/panes/tiled_panes/tiled_pane_grid.rs:18`），压到边界就停。`=`/`+` = 无方向 Increase、`-` = 无方向 Decrease；默认开启 `stacked_resize` 时走下面单独的自动堆叠算法，不是同一套 5% 定向 resize。`Ctrl n` 再按一次退出模式。（`default.kdl` 12–21 行；`Ctrl n`→Resize 在 209 行。）
+
+- **`stacked_resize`（选项，默认 `true`）：只处理无方向的 `=`/`+` 与 `-`**。源码 `resize_active_pane()` 的门槛是 `stacked_resize && strategy.direction.is_none()`；因此 `h/j/k/l` 和方向键都**不会**触发自动 stack，压到底只会停住（Zellij 0.44.3 Web client 实测亦如此）。反复按 `=`/`+` 时，Zellij 先尝试自动扩大当前 pane，空间不足时再把相邻 pane 转成 stack；`-` 用于缩小或拆回先前的堆叠状态。具体先动哪一侧受焦点和当前几何布局影响。0.41.0 引入、默认开启（`options.rs` 里 `stacked_resize: Option<bool>`；默认配置注释 `// stacked_resize false`，即“默认 true、去掉注释才关”）；想彻底禁用就在 `config.kdl` 写 `stacked_resize false`。
+
+## pane 布局排列（swap layout 切换 / 新建 pane vs stack / 并入 stack）
+
+上一节是「改 pane 大小」，这节是「改 pane 怎么排列 / 堆叠」。键位引自 `0.44.3` 默认配置（`zellij setup --dump-config`，对应 `zellij-utils/assets/config/default.kdl`）；行为结论是起一个独立会话用 `zellij action dump-layout` 实测出来的——`action` 命令与对应键位触发的是**同一个服务端动作**，所以键盘按下去的效果与实测一致。**给 web client 用户：下面全是键盘操作，不用敲终端命令。**
+
+### swap layout 切换（预设布局循环）
+
+实测，并对照 [官方文档](https://zellij.dev/documentation/swap-layouts.html)。
+
+- **`Alt+[` = 上一个、`Alt+]` = 下一个 swap layout**（`default.kdl` 197–198 行，绑在 `shared_except "locked"`，即**除锁定模式外任何模式都直接生效**，是最容易误触的键——想打 `[` `]` 时手还压着 Alt 就中招）。官方原文：swap layout 之间 *“switch between them manually (by default with `Alt` + `[]`)”*。
+- **布局会随 pane 数自动跳档**：每个 swap layout 用 `min_panes` / `max_panes` / `exact_panes` 约束，开 / 关 pane 使当前档不满足约束时，zellij 自动切到满足的那档（官方 *Progression and Constraints*）。默认三档：`vertical`（左右分列）、`horizontal`（上下平铺全宽）、`stacked`（左 1 + 右一摞，**`min_panes=5`**）。所以只有 4 个 pane 时根本切不出默认 `stacked` 档，`Alt+[]` 只在左右 / 上下之间转。
+- **误触恢复**：反向按 `Alt+[`（或继续 `Alt+]` 转一圈）切回原排列。若原来的堆叠是 `stacked_resize` 自动压出来的（不是布局档），切不回去，用 [把已散开的独立 pane 收成一摞](#collect-into-stack) 的办法重堆。
+
+### 新建 pane：普通 vs stacked
+
+`Ctrl+p` 进 pane 模式后（`default.kdl` 30–33 行；另有全局 `Alt+n` 在 188 行），下表为 `dump-layout` 实测：
+
+| 按键 | 动作 | 效果（`dump-layout` 实测） |
+|---|---|---|
+| `n` / `d` / `r`，或全局 `Alt+n` | `NewPane` / `NewPane "Down"` / `"Right"` | **分割空间**：`split_direction="vertical" { pane 50%; pane 50% }`，两个独立 pane 各占一半、都可见 |
+| `s` | `NewPane "stacked"` | **不分割、叠加**：当前 pane 原地变成 `stacked=true` 容器，新 pane `expanded=true` 展开、旧的折成一行标题栏 |
+
+### 并入已有 stack
+
+实测键盘可行。**焦点落在 stack 内某个 pane 上时**，新建就并入这一摞、不新开第二摞：
+
+- `Ctrl+p`→`s`（stacked 新建）→ 并入同摞（实测 2 层 → 3 层）。
+- 连**普通**新建 `Alt+n` / `Ctrl+p`→`n` → **也并入同摞**（实测 3 层 → 4 层）。即「在 stack 里新建」默认就进这摞。
+
+### <a id="collect-into-stack"></a>把已散开的独立 pane 收成一摞 / 全 stack
+
+实测，含一条否定结论：
+
+- **`MovePane` 不能把独立 pane「追加」进 stack**：焦点在独立 pane 上、`Ctrl+p`→`h/j/k/l`（或 move 模式 `Ctrl+h` 再方向键）朝 stack 方向移动，实测是**位置对调 / 轮转**——被移动的 pane 进 stack 顶部，同时把 stack 原来一个成员顶出到空位，**总数和层数都不变**。指望用移动把散 pane 一个个塞进去让 stack 长高，行不通。
+- **键盘路径**：`Ctrl+n` 进 resize 模式，反复按无方向的 `=`/`+` 让 `stacked_resize` 自动扩大 / 堆叠；不要用 `h/j/k/l`，它们只做定向 resize。结果受焦点和当前几何布局影响，必要时先把焦点移到想保留展开的 pane；`-` 可逐步拆回。
+- **想要整个 tab 一摞**：默认没有一个把任意现存独立 pane 全部强制合并的直接键位；可尝试用 `Ctrl+n`→`=`/`+` 让 `stacked_resize` 按当前几何逐步收拢。`Ctrl+p`→`s` 只会**新建** pane 并叠到当前 pane，不会搬运已经存在的 pane。想让 `Alt+[]` 直接切出「全 stack」档，则要改配置（自定义 swap layout，去掉内置那档的「左 1」和 `min_panes=5`），属配置层、不在键盘范围。
+
+### web client 键盘透传
+
+Zellij 0.44.3 实测：当前 Web client 已确认 `Ctrl+p`、`Ctrl+n`、`Alt+[` / `Alt+]`、`Alt+n` 以及 resize 模式的 `h/j/k/l`、`=`/`+` 都能正常进入 Zellij，未被浏览器截获；`h/j/k/l` 的实际方向是左/下/上/右，压到底不会自动 stack，而 `=`/`+` 会触发自动 stack。两者差异来自 Zellij 的动作分流规则，不是浏览器吃键。不同浏览器若某组合完全没反应，才考虑浏览器快捷键冲突。
+
 ## Zellij Web 浅色主题与终端颜色
 
-以下是 Zellij Web 浅色化中确认过的事实（最初在 `0.44.0` 排障，背景色那部分已在 `0.44.3` 由官方修复，见末尾「终端默认背景（OSC 11）」一节）。遇到类似问题先按层级判断，不要直接改 `.bashrc`。
+以下是 Zellij Web 浅色化中确认过的事实（最初在 `0.44.0` 排障，背景色那部分已在 `0.44.3` 由官方修复，见 [终端默认背景（OSC 11）](#osc11-background)）。遇到类似问题先按层级判断，不要直接改 `.bashrc`。
 
-### 用户偏好
+### 颜色修复的落点原则
 
 - 颜色类持久修复优先放 Zellij KDL：`web.kdl`、layout、theme。
 - 不把 OSC 颜色修复永久写进 `.bashrc`。
@@ -342,24 +392,24 @@ Windows 上没有 systemd 对等物。常见做法：
 2. **Zellij Web xterm theme**：`web_client { theme { ... } }`，管浏览器 xterm.js 的背景、前景、xterm 自己的 selection 等。官方说明它和 Zellij theme 分离，不能写成继承 `pencil-light`，必须写具体 RGB。
 3. **pane/终端默认颜色**：程序可通过 OSC 10/11 查询默认前景/背景。Codex 输入框背景走这一层，而不是 Codex `tui.theme`。
 
-因此，单独设置 `theme "pencil-light"` 不会自动改变 Web xterm 的视觉主题。`web_client.theme` 与 pane 的 OSC 11 默认背景的关系按版本不同：`≤0.44.2` 两者独立，`≥0.44.3` 起 `web_client.theme.background` 会被 seed 到 OSC 11（见下面「终端默认背景（OSC 11）」一节）。
+因此，单独设置 `theme "pencil-light"` 不会自动改变 Web xterm 的视觉主题。`web_client.theme` 与 pane 的 OSC 11 默认背景的关系按版本不同：`≤0.44.2` 两者独立，`≥0.44.3` 起 `web_client.theme.background` 会被 seed 到 OSC 11（见 [终端默认背景（OSC 11）](#osc11-background)）。
 
 `pencil-light` 的主色来自内置主题：
 
 - foreground `66 66 66` = `#424242`
-- background `241 241 241` = `#f1f1f1`（官方值；本模板把这一“白/底色”统一提到 `255 255 255` = `#ffffff`，对齐 Copilot CLI `github` 浅色主题，详见「模板差异」）
+- background `241 241 241` = `#f1f1f1`（官方值；本模板把这一“白/底色”统一提到 `255 255 255` = `#ffffff`，对齐 Copilot CLI `github` 浅色主题，详见 [模板差异](#template-diff)）
 
-### 浅色模式设置参考
+### <a id="light-mode-config"></a>浅色模式设置参考
 
 当前推荐的浅色 Web 主题名为 `pencil-light-select-blue`：整体沿用 `pencil-light` 的浅色背景，鼠标/列表选中态改为蓝底白字，Web 终端使用 VS Code Modern Light 风格的竖线光标。
 
-`web_client.theme` 需要写具体 RGB；`themes { pencil-light-select-blue { ... } }` 应从内置 `pencil-light` 复制完整结构，再重点把 `text_selected`、`table_cell_selected`、`list_selected` 改成蓝底白字。具体改动见下一节的模板差异，不要只抄片段。
+`web_client.theme` 需要写具体 RGB；`themes { pencil-light-select-blue { ... } }` 应从内置 `pencil-light` 复制完整结构，再重点把 `text_selected`、`table_cell_selected`、`list_selected` 改成蓝底白字。具体改动见 [模板差异](#template-diff)，不要只抄片段。
 
 浏览器 Console 中 `term.options.theme` 会显示 camelCase 字段，例如 `selectionBackground`。若这里已有 `rgb(0, 120, 215)`，说明 `web_client.theme` 已正确下发。
 
 Codex 在 Zellij 中渲染空输入占位文本时会使用 ANSI `white`，所以浅色模式要显式设置 `white` / `bright_white`，避免占位提示变成白字贴白底。
 
-### 模板差异
+### <a id="template-diff"></a>模板差异
 
 不要只写精简版 palette（例如只写 `fg/bg/blue` 这类字段）。Zellij `0.44.x` 的内置主题实际使用 `text_*`、`ribbon_*`、`frame_*` 等完整段落；如果自定义主题只补 `text_selected` 或简单颜色，普通选区可能变好，但 tab/status/compact-bar 等插件栏颜色和状态可能异常。
 
@@ -447,7 +497,9 @@ layout {
 }
 ```
 
-### 终端默认背景（OSC 11）：Web 模式黑底，v0.44.3 已修复
+### <a id="osc11-background"></a>终端默认背景（OSC 11）
+
+`≤0.44.2` 的 Web 模式下这里是黑底，`v0.44.3` 已由官方修复。
 
 **问题**：靠 OSC 11（查询终端默认背景）判明暗的 TUI——Codex 输入框、Copilot CLI 主题——在 Zellij `≤0.44.2` 的 Web 浅色主题下会把背景误判成黑，于是用深色模式配色（浅色文字）贴在浅底上，表现为输入框黑块、正文字发淡。深色 zellij 主题时碰巧“对”，只有浅色主题才暴露。
 
@@ -462,7 +514,7 @@ layout {
 | `zellij-server/src/host_query.rs`（新增 ~180 行） | 新增 host-query 模块：pane 的 OSC 10/11/4 查询走“用 seeded 缓存应答，否则转发宿主”的路径 |
 | `zellij-server/src/panes/grid.rs`（±587） | OSC 查询分支重构，新增 `pending_forwarded_queries`，OSC 11 query 命中 seeded 背景即回浅色 |
 
-效果：升级到 `≥0.44.3` 后，只要 `web_client.theme.background` 设了浅色（见上面的浅色模式配置），OSC 11 就会返回该背景，**所有 pane（含 split / 复活）统一生效**，不再必须依赖 layout `default_bg`、`set-pane-color` 或 Codex OSC wrapper 这些兜底（保留也无害）。升级后已存在的会话要重新 attach 一次，让 seed 重新下发。
+效果：升级到 `≥0.44.3` 后，只要 `web_client.theme.background` 设了浅色（见上面的 [浅色模式设置参考](#light-mode-config)），OSC 11 就会返回该背景，**所有 pane（含 split / 复活）统一生效**，不再必须依赖 layout `default_bg`、`set-pane-color` 或 Codex OSC wrapper 这些兜底（保留也无害）。升级后已存在的会话要重新 attach 一次，让 seed 重新下发。
 
 ### 终端能力响应漏到 shell
 
@@ -490,7 +542,7 @@ text_selected {
 
 内置 `pencil-light` 的 `text_selected.background` 也是 `241 241 241`，和普通背景一样，因此鼠标拖选会像白底贴白底。解决方式：复制 `pencil-light` 为自定义主题，只改 Zellij 选中态，例如：
 
-具体改动见“模板差异”。重点是 `text_selected`、`list_selected`、`table_cell_selected` 都要改为蓝底白字，同时保留 `pencil-light` 的其余完整 theme 段落。
+具体改动见 [模板差异](#template-diff)。重点是 `text_selected`、`list_selected`、`table_cell_selected` 都要改为蓝底白字，同时保留 `pencil-light` 的其余完整 theme 段落。
 
 官方 mouse 兼容建议：`mouse_mode true` 时 Zellij 接管鼠标；按住 `Shift` 可让终端处理选择/链接/复制/滚动。也可设置：
 
@@ -498,4 +550,4 @@ text_selected {
 mouse_mode false
 ```
 
-但这会减少 Zellij 鼠标能力，例如点击 pane 聚焦、拖边框 resize、滚轮 scrollback、链接/路径点击、hover 效果等。用户倾向保留 `mouse_mode`，通过自定义 Zellij theme 修正 Zellij 自己的选区颜色。
+但这会减少 Zellij 鼠标能力，例如点击 pane 聚焦、拖边框 resize、滚轮 scrollback、链接/路径点击、hover 效果等。更常见的取舍是保留 `mouse_mode`，通过自定义 Zellij theme 修正 Zellij 自己的选区颜色。
