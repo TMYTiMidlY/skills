@@ -535,6 +535,42 @@ alias copilot='copilot --allow-all-paths'   # 或 --yolo
 
 ---
 
+### 按 tool 授权/禁用：`--allow-tool` / `--deny-tool` / `--available-tools` / `--excluded-tools`
+
+Copilot CLI 能「直接开关某个 tool」，官方分**两层**（[allowing-tools](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/allowing-tools)）：
+
+- **第一层 · 限制模型能看到哪些 tool**（值逗号分隔）：`--available-tools='a,b'` 白名单（其余全禁）、`--excluded-tools='a,b'` 黑名单（只禁列出的）；两者同给时 available 生效、excluded 被忽略。不在 available 里的 tool 模型压根看不到，`--allow-tool` 也救不回。
+- **第二层 · 给具体 tool 批/拒权限**：`--allow-tool='shell(git:*)'` 预批准（不再弹权限）、`--deny-tool='shell(git push)'` / `--deny-tool=write` 直接拒。**deny 压过 allow，连 `--allow-all` / `--yolo`、连 `permissions-config.json` 存过的放行都压得住**；`--allow-tool` / `--deny-tool` 只作用当前 session、不写盘。
+
+#### ⚠️ 两层用的是两套 tool 名，写错只 warn 不报错
+
+官方一条示例点破：`--available-tools='bash,edit,view,grep,glob' --allow-tool='shell(git:*)' --deny-tool='shell(git push)'`。
+
+- **第一层（available / excluded）吃 runtime tool `.name`**：`bash`、`powershell`、`view`、`edit`、`create`、`grep`、`glob`、`web_fetch`、`web_search`、`task`、`ask_user`、`update_todo`……**本机命令执行工具在这层叫 `bash`（不是 `shell`）**。
+- **第二层（allow / deny-tool）吃权限 kind**：`shell`（可 `shell(git:*)` / `shell(git push)` 细分）、`read`、`write`（可 `write(<path>)`）、MCP 的 `<server>` / `<server>(tool)`。命令执行在这层叫 `shell`。
+- 第三处又不同：preToolUse hook 的 payload `toolName` 用 `bash` / `powershell`（Claude runtime 名，和第一层一致、和第二层的 `shell` 不同）。
+- **写错是静默的**：`--available-tools` / `--excluded-tools` 给了未知名字，只 emit 一条 `session.info`「Unknown tool name in the tool {allow,excluded}list: "x"」**警告后照跑（fail-open，等于没排除）**，不报错、不退出。实测（`--log-level debug`）：`--excluded-tools bash` → `● Disabled tools: bash`（真生效）；`--excluded-tools shell` → `● Unknown tool name in the tool excludedlist: "shell"`（无效）。**关本机命令执行 = `--excluded-tools='bash'` 或 `--deny-tool='shell'`，别写 `--excluded-tools=shell`；务必看 `Disabled tools:` 那行确认。**
+
+#### 这四个 flag 都无 env、也不是 settings.json 的合法键
+
+- 全 bundle 只有 `--allow-all-tools` 挂了 `.env("COPILOT_ALLOW_ALL")`（`grep '.env(' app.js` 仅此一条）；四个 tool flag 都是纯 `.option("--excluded-tools [tools...]", …)`，无 env fallback；全量 `process.env.COPILOT_*` 里也没有任何 tool / deny / exclude / available 项。
+- 合法 settings 键表（[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)）里 user 级与 repo 级 `.github/copilot/settings.json` 都**不含**按 tool 授权/禁用的键（repo 级只认 `deniedUrls` / `disabledMcpServers` / `disabledSkills` / `hooks` / `model` 等固定子集）；`permissions-config.json` 官方明说「不支持 deny 规则」，让你改用 `--deny-tool` / `--excluded-tools`。
+- **推论**：想「进某目录就自动禁掉某个本机 tool」，env 与 committed settings 都做不到，只能启动带 flag（PATH-shim wrapper / `-p` 脚本；官方明确反对用 alias 常开 `--yolo`），或改用 preToolUse hook（在权限系统之前跑、不吃 env 也不吃 flag、任何启动方式都拦，见 [copilot-discovery.md](copilot-discovery.md) 的 Hooks 节）。
+
+#### 源码 / 文档锚点（基线 `@github/copilot` 1.0.73 `app.js`）
+
+- 注册：`.option("--available-tools [tools...]","Only these tools will be available to the model").option("--excluded-tools [tools...]","These tools will not be available to the model")`；`--allow-tool` / `--deny-tool` 同为纯 `.option()`。唯一 env 绑定：`.env("COPILOT_ALLOW_ALL")`。
+- 匹配：`function Wfr(t,e,r){return e?e.includes(t):r?!r.includes(t):!0}`（available 优先、其次 excluded、按 `.name` 精确匹配，非 glob）。
+- 校验警告：`Unknown tool name in the tool {allow,excluded}list: "${n}"`（`emitEphemeral("session.info", …)`，非致命）。
+- 官方 [allowing-tools](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/allowing-tools)（两层控制、`shell(git:*)` / `write(<path>)` / `MyMCP(tool)` 示例、deny 优先级）、[cli-command-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference)（tool kind 列表）、[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)（settings 键表、`permissions-config.json` 不支持 deny）。
+
+#### 教训
+
+- **「直接关 tool」有两套名字**：available / excluded 用 runtime `.name`（命令执行＝`bash`）；allow / deny 用权限 kind（命令执行＝`shell`，可 `shell(cmd:*)` 细分）。写错只 warn 不报错、静默 fail-open，务必 `--log-level debug` 看 `Disabled tools:` 那行确认真生效。
+- **这层控制无 env、无 settings 键**：唯一权限类 env 是 `COPILOT_ALLOW_ALL`（只能开 allow-all，方向相反）。要「按目录禁某个 tool」只能靠启动 flag 或 preToolUse hook。
+
+---
+
 ### `/rewind` 在非 git cwd 直接拒绝
 
 #### 症状
