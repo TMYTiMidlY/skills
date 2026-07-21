@@ -1,6 +1,6 @@
 # Kimi Code CLI（Moonshot 官方编码 agent：runtime / 鉴权 / 额度）
 
-> **harness skill 的 reference。** 面向要在服务器上跑、或不想走官方 OAuth、直接用 API key 驱动 Kimi Code CLI 的工程师。覆盖：它是什么与分发形态、`~/.kimi-code` 数据目录与 `config.toml`、两套鉴权（Kimi Code 托管 **OAuth** vs 静态 **API key**）与 provider 选型、`/login` 后落地的文件状态、**不登录只用 key 直连**的配置、以及**用 key 查额度 / 余额**（`/usages` 端点）与"为什么 TUI 余额面板必须 OAuth"。
+> **harness skill 的 reference。** 面向要在服务器上跑、或不想走官方 OAuth、直接用 API key 驱动 Kimi Code CLI 的工程师。覆盖：它是什么与分发形态、`~/.kimi-code` 数据目录与 `config.toml`、两套鉴权（Kimi Code 托管 **OAuth** vs 静态 **API key**）与 provider 选型、`/login` 后落地的文件状态、**不登录只用 key 直连**的配置、**用 key 查额度 / 余额**（`/usages` 端点）与"为什么 TUI 余额面板必须 OAuth"，以及**审批 / 权限模式**（默认 / YOLO / Auto / Plan）的差别。
 >
 > 源码引用锚定 [`MoonshotAI/kimi-code`](https://github.com/MoonshotAI/kimi-code) tag `@moonshot-ai/kimi-code@0.27.0`（commit [`5cc1949`](https://github.com/MoonshotAI/kimi-code/tree/5cc194956f6f9752d172aa4994385d2d2e7a066f)，与本文实测的二进制同版本）；标 🔬 的是本机实测结论、标 📄 的引官方文档。
 
@@ -223,3 +223,17 @@ curl -s -H "Authorization: Bearer $key" https://api.kimi.com/coding/v1/usages | 
 - 就算把 key 塞进 `managed:kimi-code` 的 `api_key` → `/usage` 仍走 `ensureFresh` 取 OAuth token（**不 fallback 到 api_key**），没登录就报错。
 
 一句话：**面板依赖 OAuth（用 key 恢复不了），但余额本身可用 key 通过 `/usages` REST 查**。要 TUI 面板就 OAuth 登录该账号；只想知道数字就用上面那条 curl。
+
+## <a id="approval-modes"></a>审批 / 权限模式：默认 / YOLO / Auto / Plan
+
+📄 官方交互文档口径（docs 站为滚动 `en/`，2026-07 核）：
+
+- **默认模式**：有副作用的工具调用（改文件、跑命令）弹审批面板；方向键或 `1`/`2`/`3` 选择，`Esc` / `Ctrl-C` / `Ctrl-D` 均视为拒绝。面板带 "Approve for this session"（本会话内同类调用自动放行）；永久规则写 `config.toml` 的 allow/deny 条目。
+- **YOLO（`/yolo`）**：自动批准**常规**工具调用，但三处仍会停——① 访问敏感文件（`.env`、SSH 私钥等）仍要确认；② 退出 Plan 模式仍需确认；③ agent 仍可向你提问。
+- **Auto（`/auto`）**：完全无人值守——所有审批自动通过（**含敏感文件**），Plan 退出也自动批准（转录里标 "Auto-approved"），agent **不向你提任何问题**、全部自行决定。
+- **Plan（`Shift-Tab` / `/plan`）**：先出计划、批准后动手；`/plan clear` 清空（仅空闲时）。注意与上面两个模式的叠加关系：YOLO 下退出 Plan 仍要确认，Auto 下才自动。
+
+⚠️ 官方警告：YOLO 跳过文件写入与命令执行的确认，只在信任的工作目录用；Auto 更激进（连 `.env` / SSH key 这类敏感访问也不拦），在服务器上跑批量任务时掂量。
+
+**未验证点**：`config.toml` 的 allow/deny 永久规则与各模式的优先级（deny 能否压住 YOLO/Auto 的自动批准），官方交互页未写明。
+> 📄 [Interaction and input](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/interaction.html)（"Approval flow" / "Mode switching" 节）。
