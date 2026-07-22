@@ -7,6 +7,10 @@ description: 处理本机与远端的网络互通、WSL网络、远程接入与�
 
 本 skill 索引本机与远端的网络互通、远程接入及私网组网。
 
+## 共享 Linux 节点部署
+
+在共享 Linux 节点上组合 EasyTier、双层 Caddy/caddy-security，以及按 UID 分配端口的多用户 Zellij Web / VS Code Serve Web；包含 OAuth Cookie 隔离、Zellij token 注入、systemd 模板与黑屏排障，见 [references/setup.md](references/setup.md)。
+
 ## 远程接入（RDP / 向日葵 / serve-web）
 
 从别的设备接入控制本机、或把本机开发环境暴露到浏览器：RDP / 向日葵远程桌面、会话管理（tsdiscon / logoff）、RDP 缩放修复、VS Code serve-web（浏览器访问本机开发环境，含 WSL NAT 下的远程访问链路）见 [references/remote.md](references/remote.md)。WSL 入站 portproxy 链路细节在 wsl.md。

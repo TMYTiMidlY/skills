@@ -17,6 +17,30 @@ ExecStart=/bin/sh -c 'exec /usr/bin/myservice --port $((BASE_PORT + $(id -u %i) 
 
 其中 `BASE_PORT` 替换为实际的基准端口号，`%i` 是实例名（即用户名）。启用方式：`systemctl enable --now myservice@username`。
 
+### system manager specifier 与服务用户
+
+`%i` 来自模板实例名，适合传用户名；`%u` / `%U` 的语义不同——它们表示**运行 service manager 的用户 / UID**，不是 unit 中 `User=` 指定的运行用户。system-level unit 由 PID 1 的 system manager 解析，所以 `%u=root`、`%U=0`。这一点见 Ubuntu 24.04（systemd 255）的 [`systemd.unit` Specifiers](https://manpages.ubuntu.com/manpages/noble/man5/systemd.unit.5.html#specifiers)。
+
+因此下面的写法不会得到实例用户 UID：
+
+```ini
+[Service]
+User=%i
+Environment=RUNTIME_DIR=/tmp/myservice-%U
+```
+
+无论实例是哪个用户，`RUNTIME_DIR` 都会先被 system manager 展开成 `/tmp/myservice-0`。若目录为 root 的 `0700`，普通用户进程会报 `Permission denied`。
+
+需要实例用户 UID 时，在 `ExecStart` 的 shell 中按 `%i` 查询：
+
+```ini
+[Service]
+User=%i
+ExecStart=/bin/sh -c 'uid=$(id -u %i); exec /usr/bin/myservice --runtime-dir "/tmp/myservice-$uid"'
+```
+
+如果程序本身会根据当前进程 UID / HOME / XDG runtime 选择安全目录，直接不覆盖该目录通常更稳。
+
 ## systemd LoadCredential 注入密钥
 
 服务要读 S3 key、API token 这类密钥时，别把明文写进 unit 文件或世界可读的配置。systemd 的 `LoadCredential=` 能把一个凭据文件**只挂给这个服务的私有运行时目录**（`$CREDENTIALS_DIRECTORY`，通常在 `/run/credentials/<unit>/` 下，`0400`、仅该服务可读、进程退出即消失、不落持久化明文）：
