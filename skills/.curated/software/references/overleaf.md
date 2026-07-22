@@ -193,8 +193,7 @@ USTC 构建保留了这些能力：
 - 创建 Track Changes 修订的命令
 - Accept / Reject 修订的命令
 
-`upload <file>` 一次只接收一个文件；批量修改走 `push` / `sync`。上游自己的
-Git remote 文档提醒：远端并发编辑可能冲突，push 会上传本地版本
+上游自己的 Git remote 文档提醒：远端并发编辑可能冲突，push 会上传本地版本
 （[Limitations](https://github.com/aloth/olcli/blob/6efd99e9c94df600546d3b69f2f119b6638cd00c/docs/GIT-REMOTE.md#L70-L74)）。
 
 ### <a id="project-creation"></a>项目创建
@@ -234,12 +233,62 @@ const projectId = response.body.project_id
 （[`client.ts`](https://github.com/aloth/olcli/blob/6efd99e9c94df600546d3b69f2f119b6638cd00c/src/client.ts#L389-L440)），
 只是编译后 JavaScript 仍可访问；这不属于稳定的 `olcli` 公共 API。
 
-### <a id="figures"></a>构建产物与图片
+### 编译与产物下载
 
-`output <type>` 不是只支持 `bbl`：它先编译，再从项目实际返回的输出中按
-type 或扩展名匹配。没有 bibliography 的项目本来就不会出现 `.bbl`。
+`compile`、`pdf`、`output` 都会触发 Overleaf 编译，但拿回来的东西不同
+（[命令实现](https://github.com/aloth/olcli/blob/6efd99e9c94df600546d3b69f2f119b6638cd00c/src/cli.ts#L632-L722)）：
 
-上传相对路径会保留目录结构
+| 命令 | 行为 |
+| --- | --- |
+| `olcli compile [project]` | 触发编译，只打印主 PDF URL，不把文件保存到本地 |
+| `olcli pdf [project]` | 触发编译并下载主产物 `output.pdf` |
+| `olcli output [type]` | 触发编译，列出产物或下载其中一个指定产物 |
+
+`output` 不是一组写死的“支持类型”。每次调用都会重新编译，然后读取这次
+编译响应里的 `outputFiles`；项目使用的引擎、宏包、参考文献工具和编译是否
+成功，都会影响实际列表
+（[`compileWithOutputs`](https://github.com/aloth/olcli/blob/6efd99e9c94df600546d3b69f2f119b6638cd00c/src/client.ts#L2167-L2210)）。
+
+先看当前项目真正生成了什么：
+
+```bash
+olcli output --list --project "<project>"
+```
+
+不传 `type` 也会列出产物。输出中的每一行包含 Overleaf 返回的 `type` 和
+远端路径，例如：
+
+```text
+pdf          output.pdf
+log          output.log
+aux          output.aux
+bbl          output.bbl
+gz           output.synctex.gz
+```
+
+这只是示例；`--list` 的结果才是该项目本次编译的权威列表。`.bbl` 是
+BibTeX/Biber 等参考文献流程生成的中间产物，只有项目和本次编译实际产生它时，
+`olcli output bbl` 才能下载。它常用于 arXiv 投稿，但不是 `output` 唯一能取的
+文件：
+
+```bash
+olcli output bbl -o main.bbl --project "<project>"
+olcli output log -o build.log --project "<project>"
+olcli output aux -o main.aux --project "<project>"
+```
+
+选择规则是：取第一项 `file.type === type`，或远端路径以 `.<type>` 结尾；
+找不到时会提示先运行 `--list`
+（[`output` 选择逻辑](https://github.com/aloth/olcli/blob/6efd99e9c94df600546d3b69f2f119b6638cd00c/src/cli.ts#L657-L722)）。
+若不传 `-o`，当前实现把远端路径中的 `output.` 去掉作为本地文件名，例如
+`output.log` 保存成 `log`；通常显式指定 `-o` 更清楚。下载论文主 PDF 时优先
+使用 `olcli pdf -o paper.pdf`，因为 `pdf` 命令会明确优先选择
+`output.pdf`，避免误取项目中的其他 PDF。
+
+### <a id="figures"></a>文件上传与目录路径
+
+`upload <file>` 一次只上传一个文件；多文件同步走 `push` / `sync`。传入相对
+路径时，`olcli` 会解析或创建对应的远端子目录
 （[上传实现](https://github.com/aloth/olcli/blob/6efd99e9c94df600546d3b69f2f119b6638cd00c/src/client.ts#L1565-L1626)）：
 
 ```bash
@@ -258,7 +307,9 @@ LaTeX 中按同一路径引用：
 \end{figure}
 ```
 
-USTC 实例中已确认 `figures/` 子目录上传与后续 PDF 编译可用。
+`figures` 只是常见目录名，不是 Overleaf 或 `olcli` 的特殊目录；同样的相对
+路径规则也适用于 `chapters/`、`data/` 等目录。USTC 实例中已确认
+`figures/` 子目录上传与后续 PDF 编译可用。
 
 ## 协作编辑架构
 
