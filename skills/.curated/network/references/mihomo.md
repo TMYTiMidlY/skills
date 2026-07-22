@@ -1,6 +1,6 @@
-# Mihomo 代理：配置与泄漏控制
+# Mihomo 代理：配置、运行态与泄漏控制
 
-> 本文把 Mihomo 的**配置用法**和**泄漏控制（DNS / WebRTC）**结合着讲，目标是读完能自己搭一套“不漏、分流准、能排障”的代理，并理解每个开关到底在做什么。全文分两部分：前半是**配置与使用**，后半是**泄漏控制**。WSL ↔ Windows ↔ 远端的网络管道是另一回事——WSL 出站怎么进 Mihomo、portproxy/wslrelay 入站见 [wsl.md](wsl.md)，RDP / serve-web 等远程接入见 [remote.md](remote.md)。
+> 本文覆盖 Mihomo 的产品边界、配置发现、流量选择、运行态控制、TUN 路由，以及 DNS / WebRTC 泄漏控制，目标是能搭建、验证并分层排障。WSL ↔ Windows ↔ 远端的网络管道是另一回事：WSL 出站、portproxy / wslrelay 入站见 [wsl.md](wsl.md)，RDP / serve-web 等远程接入见 [remote.md](remote.md)。
 
 **源码基准与 clone**：下文凡讲到内部行为，都对照官方仓库 `MetaCubeX/mihomo` 的 **`Meta` 分支**（稳定线；开发线是 `Alpha`）。要 Go 源码（`module github.com/metacubex/mihomo`）：`git clone -b Meta`；已经 clone 停在默认的 `main` 上，直接 `git checkout Meta`（或 `git switch Meta`）即可——单 remote + 全量 refspec 下 Git 的 DWIM 会自动基于 `origin/Meta` 建同名跟踪分支（实测 exit 0）。
 
@@ -11,13 +11,9 @@
 > 2023-11-02，Clash 内核 `Dreamacro/clash`（Go 核心引擎，mihomo 即由它 fork 而来）与最流行的 GUI 客户端 Clash for Windows（`Fndroid/clash_for_windows_pkg`，作者 Fndroid）在**同一天各自删库**；此后 Clash 系普遍把仓库门面伪装成无关项目以规避审查 / 下架 / 爬虫扫描。
 > - **是作者自行删库、非版权 / DMCA 处置**：实测二者今均为**纯 404** 而非 451 DMCA 下架页，GitHub 官方 `github/dmca` 存档亦零命中，加之作者当日公开自宣停更删库。
 > - **Wayback 取证**：Wayback（Wayback Machine，互联网档案馆 Internet Archive 运营的“网页时光机”`web.archive.org`，定期抓取并永久保存网页快照、可回看某 URL 过去某时点的样子，原页删了也能看）显示，这两个仓库最后一张能正常打开的快照都止于 **2023-11-02**——把删库时点钉在那天。
-> - **停更原因**：作者仅称“不可抗力”；社区普遍推测系其**推特自曝的个人信息被顺藤定位、遭约谈“请喝茶”**，援引线索包括推特照片暴露的所在城市（湖南/长沙）、部分车牌 + 车型、购物 / 充电记录、京东订单截图等，但**官方从未证实**，各版本均属社区推测。参见中国数字时代存档 `chinadigitaltimes.net/chinese/701751`。
+> - **停更原因**：作者仅称“不可抗力”；社区普遍推测系其**推特自曝的个人信息被顺藤定位、遭约谈“请喝茶”**，援引线索包括推特照片暴露的所在城市（湖南/长沙）、部分车牌 + 车型、购物 / 充电记录、京东订单截图等，但**官方从未证实**，各版本均属社区推测。参见[中国数字时代文章文本镜像](https://r.jina.ai/https://chinadigitaltimes.net/chinese/701751.html)。
 
----
-
-# 第一部分：配置与使用
-
-## 1. 整体架构：控制面与数据面
+## <a id="architecture"></a>架构与流量路径
 
 Mihomo 是 Clash Meta 的 Go 内核，**一个可执行文件**里同时跑两套东西：
 
@@ -29,7 +25,7 @@ Mihomo 是 Clash Meta 的 Go 内核，**一个可执行文件**里同时跑两�
 ```
 应用流量
   → 入口：mixed-port(显式代理) 或 TUN(透明接管)
-  → DNS：要不要解析 / 解析成真 IP 还是 fake-ip（见第二部分）
+  → DNS：要不要解析 / 解析成真 IP 还是 fake-ip（见 [DNS 泄漏](#dns-leak)）
   → rules：按域名/IP/端口/网络匹配，决定交给哪个 proxy-group
   → proxy-group：Selector/URLTest 选出当前用哪个节点（.now）
   → outbound：具体协议(VLESS/Hysteria2/…) → 落地服务器 → 目标网站
@@ -38,11 +34,11 @@ Mihomo 是 Clash Meta 的 Go 内核，**一个可执行文件**里同时跑两�
 两个最常见的认知纠正，先打预防针：
 
 - **TUN 模式通常要管理员/sudo 启动**（要创建管理虚拟网卡）。CLI 跑起来要**终端一直挂着**，关了就停；要常驻就做成 service。
-- **设了 `HTTPS_PROXY` ≠ 流量一定走代理节点**。env 只决定“流量送进 Mihomo 哪个入口端口”，**出口走哪个节点完全由 `rules` + `proxy-groups` 决定**（见[第 3 节](#3-流量链路入口规则与节点组)）。
+- **设了 `HTTPS_PROXY` ≠ 流量一定走代理节点**。env 只决定“流量送进 Mihomo 哪个入口端口”，**出口走哪个节点完全由 `rules` + `proxy-groups` 决定**（见 [规则匹配](#rule-matching)）。
 
-## 2. 安装、配置目录与启动
+## <a id="installation"></a>安装与配置发现
 
-### 2.1 安装
+### <a id="distribution"></a>分发方式
 
 mihomo 内核是一个**单文件静态二进制**，没有复杂依赖，“安装”本质就是把这个可执行文件放到某处。官方文档（[wiki.metacubex.one](https://wiki.metacubex.one/en/startup/)）给两条主路：
 
@@ -62,15 +58,15 @@ mihomo 内核是一个**单文件静态二进制**，没有复杂依赖，“安
     -p 7890:7890 -p 9090:9090 \
     metacubex/mihomo   # TUN 还需 --cap-add NET_ADMIN --device /dev/net/tun 等
   ```
-- **从源码构建**：见[第 8 节](#8-从源码构建windows)。
+- **从源码构建**：见 [源码构建](#source-build)。
 
 > 很多 GUI 客户端（Clash Verge Rev、FlClash 等）**内置了 mihomo 内核**，装它们就不用单独装内核；只有要纯内核 / 做服务端常驻时才手动装上面这些。
 >
-> **但 GUI 捆绑的内核 ≠ 你自装的 CLI——是多套各自独立、可共存的二进制**。每个 GUI 把自己的 mihomo（常改名）放在各自程序目录：实测同一台 Windows，Clash Verge → `Program Files\Clash Verge\verge-mihomo.exe`、Clash Party（mihomo-party）→ `...\Clash Party\resources\sidecar\mihomo.exe`；你自装的 CLI 又是独立第三套（如 `C:\Users\<user>\mihomo\mihomo.exe`，靠 `-d` 指向 `~/.config/mihomo`）。**谁在实际跑，看进程的 `-d`/`-f` 启动参数**（[§6](#6-运行态控制rest-api-与-web-面板)；Windows 上内核可能高权限跑、需 UAC 提权才读得到命令行）。推论：删某个 GUI 的**用户数据**（`AppData\Roaming|Local` 里的 profile / 订阅 / 缓存）既不动它程序目录里的内核、也不影响另一套独立跑着的 CLI——所以清 GUI 数据不会断掉一个单独常驻的 mihomo。
+> **但 GUI 捆绑的内核 ≠ 你自装的 CLI——是多套各自独立、可共存的二进制**。每个 GUI 把自己的 mihomo（常改名）放在各自程序目录：实测同一台 Windows，Clash Verge → `Program Files\Clash Verge\verge-mihomo.exe`、Clash Party（mihomo-party）→ `...\Clash Party\resources\sidecar\mihomo.exe`；你自装的 CLI 又是独立第三套（如 `C:\Users\<user>\mihomo\mihomo.exe`，靠 `-d` 指向 `~/.config/mihomo`）。**谁在实际跑，看进程的 `-d`/`-f` 启动参数**（见 [REST API](#rest-api)；Windows 上内核可能高权限跑、需 UAC 提权才读得到命令行）。推论：删某个 GUI 的**用户数据**（`AppData\Roaming|Local` 里的 profile / 订阅 / 缓存）既不动它程序目录里的内核、也不影响另一套独立跑着的 CLI——所以清 GUI 数据不会断掉一个单独常驻的 mihomo。
 
-### 2.2 配置目录是运行时算出来的（不是安装决定的）
+### <a id="config-directory"></a>配置目录
 
-容易误解的一点：`~/.config/mihomo` 这个路径**和二进制装在哪无关**，是 mihomo 启动时按“当前用户的主目录”现算的。源码见 [`constant/path.go` 的路径解析逻辑](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L29-L40)（pin 到与 [§6](#6-运行态控制rest-api-与-web-面板) 同一 commit `24b6de71`、行号锁死不漂移；下方为节选）：
+容易误解的一点：`~/.config/mihomo` 这个路径**和二进制装在哪无关**，是 mihomo 启动时按“当前用户的主目录”现算的。源码见 [`constant/path.go` 的路径解析逻辑](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L29-L40)（pin 到与 [运行态控制](#runtime) 相同的 commit `24b6de71`、行号锁死不漂移；下方为节选）：
 
 ```go
 const Name = "mihomo"
@@ -90,9 +86,9 @@ if _, err := os.Stat(homeDir); err != nil {     // 若该目录不存在
 - **`$XDG_CONFIG_HOME` 只在 `~/.config/mihomo` 不存在时才生效**（注意这个先后顺序）。
 - **`sudo` 启动**：`$HOME` 变 `/root`，目录就变 `/root/.config/mihomo`——所以 Linux 跑 TUN（要 `sudo`）时，要么显式 `-d /home/<user>/.config/mihomo`，要么把配置放到 root 的目录下。
 - 命令行覆盖：`-d <dir>` 改配置目录（源码 [`SetHomeDir`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L62)），`-f <file>` 改配置文件名（[`SetConfig`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L67)）。
-- **“安全路径”**：REST API 用 `path` 方式热重载（见[第 6 节](#6-运行态控制rest-api-与-web-面板)）默认只允许 home 的子路径；要放别处可用环境变量 `SAFE_PATHS` 加白名单，或 `SKIP_SAFE_PATH_CHECK=1` 整个关掉检查（源码 [`IsSafePath`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L88)）。
+- **“安全路径”**：REST API 用 `path` 方式热重载（见 [配置热重载](#config-reload)）默认只允许 home 的子路径；要放别处可用环境变量 `SAFE_PATHS` 加白名单，或 `SKIP_SAFE_PATH_CHECK=1` 整个关掉检查（源码 [`IsSafePath`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L88)）。
 
-### 2.3 启动与校验
+### <a id="startup-validation"></a>启动与校验
 
 ```bash
 # Linux/macOS
@@ -112,7 +108,7 @@ cd "$env:USERPROFILE\mihomo"
 
 CLI 跑起来要**终端一直挂着**，关了就停；要常驻就做成 service（Linux systemd / Windows 服务）。TUN 模式通常要管理员/sudo 启动（创建管理虚拟网卡）。
 
-### 2.4 GUI 客户端（Clash Verge Rev）：配置链与改端口
+### <a id="gui-config-chain"></a>GUI 配置链
 
 GUI 客户端不直接用 mihomo 的 `config.yaml`，而是自己生成一份运行时配置喂给内嵌内核——直接改底层文件会被覆盖或不重载。以 Clash Verge Rev（核心进程 `verge-mihomo`）为例：
 
@@ -121,9 +117,10 @@ GUI 客户端不直接用 mihomo 的 `config.yaml`，而是自己生成一份运
 - **系统代理端口与核心端口错位**：实测 Windows 上 `verge_mixed_port` 可能仍被 Verge 用作系统代理的目标端口，而核心实际监听的是基础 `config.yaml` / 生成配置里的另一个 `mixed-port`。两者不一致时，Windows 系统代理会指向无人监听的旧端口；表现为所有 profile 都无法联网，很容易误判成订阅或节点故障。先用 `curl.exe -x http://127.0.0.1:<核心端口> https://www.gstatic.com/generate_204` 直测核心：若返回 `204`，再对照 `verge.yaml` 的 `verge_mixed_port`、`clash-verge.yaml` 的 `mixed-port`、`Get-NetTCPConnection -State Listen` 的实际监听端口，以及注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings` 的 `ProxyEnable` / `ProxyServer`。修复时完全退出 GUI，把 `verge_mixed_port` 与核心端口对齐后重启；若系统代理原本关闭，旧 `ProxyServer` 只是残留值，要重新打开系统代理才会生效。
 - **核心由 SYSTEM 服务托管**：`verge-mihomo` 归 `clash-verge-service` 管，非提权 shell 杀不掉（`Stop-Process` 报拒绝访问）；靠重启 GUI 让服务重拉核心。
 
-## 3. 流量链路：入口、规则与节点组
+<a id="3-流量链路入口规则与节点组"></a>
+## <a id="traffic-selection"></a>流量入口与出站选择
 
-### 3.1 入口方式
+### <a id="mixed-port-tun"></a>mixed-port 与 TUN
 
 - **`mixed-port`（显式代理）**：应用主动把流量发到这个端口（HTTP/SOCKS 混合）。适合“只想让特定程序走代理”。
   ```yaml
@@ -134,9 +131,9 @@ GUI 客户端不直接用 mihomo 的 `config.yaml`，而是自己生成一份运
   两者是「开关 + 过滤器」不是两种等效写法：**开不开 LAN 看 `allow-lan`，开了之后听哪儿才看 `bind-address`**。所以单写 `bind-address` 而不开 `allow-lan` 没用，照样只听回环。要对外时**别绑某个具体虚拟网卡地址**——网卡重连/地址变化/启动顺序变了，就会间歇连不上代理端口。
   > **源码** `listener/listener.go` 的 `genAddr(host, port, allowLan)`：`allow-lan` 关时直接返回 `127.0.0.1:port`（无视 `bind-address`），开时 `bind-address=*` → `:port`（全听）、否则 `host:port`。
 
-- **TUN（透明接管）**：创建一张虚拟网卡，把**整机路由**劫进 mihomo，应用无感。适合“全局接管 + 想按域名分流 + 防 DNS 泄漏”。TUN 怎么配见第二部分（它和 DNS 强相关）。
+- **TUN（透明接管）**：创建一张虚拟网卡，把**整机路由**劫进 Mihomo，应用无感。适合“全局接管 + 想按域名分流 + 防 DNS 泄漏”。配置边界见 [TUN 与系统路由](#tun-routing) 和 [DNS 泄漏](#dns-leak)。
 
-### 3.2 出口由规则与节点组决定
+### <a id="rule-matching"></a>规则匹配
 
 出口节点 = **`rules` 命中的那个 group，一路顺着 `.now` 解析到最终 outbound**。排障时**每一层都看 `.now`**，别只盯 GLOBAL 或某一个 group。
 
@@ -164,7 +161,7 @@ TCP from client → mixed-port / TUN
   于是看你想要的节点在不在外层组的 `.all` 里：① 在 → 直接 PUT 外层组到该节点，一层即可、只影响这一类；② 不在 → 先 PUT 外层组 → 内层主选择器（在它 .all 里），再 PUT 内层主选择器 → 目标节点（在主选择器 .all 里），这就是“改两层”（副作用：改主选择器会牵动所有指向它的分类组）。③ 想让所有分类一起换 → 因为它们多半都指向同一个主选择器，**只改主选择器一层**即可。
 - **切节点只对新建连接生效**。长跑的下载/上传/WebSocket 要重连才走新节点；单独启动一个新的 `curl` 进程即可得到新连接。`--no-keepalive` 只关闭 TCP keepalive 探针，并不等于禁止 HTTP 连接复用，别把它当“强制换节点”开关。
 
-### 3.3 节点组类型
+### <a id="proxy-groups"></a>节点组
 
 ```yaml
 proxy-groups:
@@ -179,9 +176,10 @@ proxy-groups:
 
 经验：`url-test` 的默认 tolerance 太小，几个延迟相近的节点会“小幅波动就来回切”，体感像偶尔掉线。**要么手动钉死稳定节点，要么把 `tolerance` 调大**。挑节点优先级建议：**协议（QUIC/Hysteria2 > vless+TCP+WS）> 链路跳数（直连落地 > 经反代）> 平均 delay**——平均 delay 排最后，jitter（抖动）比绝对延迟更影响长连接/流式 API。
 
-## 4. 协议、性能与客户端配置
+<a id="4-协议性能与客户端配置"></a>
+## <a id="protocol-performance"></a>协议与性能
 
-### 4.1 协议选型与性能
+### <a id="protocol-selection"></a>协议选择
 
 **经验法则**：跨国（高延迟、可能丢包）链路优先 QUIC 系（Hysteria2 / TUIC）；vless+ws+TCP 适合穿 CDN/反代，但传输层受 TCP 拥塞控制限制。
 
@@ -206,7 +204,7 @@ proxy-groups:
 
 > 稳定性：节点抖动大会触发 URLTest 反复横跳、打断长连接，挑节点别只看平均延迟，自己 `/delay` 多采样看。vless+ws 若落在海外反代后面多一跳，日志里可能偶发 `dial ... :443 connect error: i/o timeout`（前置反代瞬时抖动）。
 
-### 4.2 VLESS + WS + TLS 客户端配置
+### <a id="vless-websocket"></a>VLESS WebSocket 配置
 
 VLESS+WS+TLS 放在 Caddy/Nginx 后面是常见正经方案（复用已有 HTTPS 站点、证书自动续、端口复用、反代隐藏）。客户端要补齐 TLS 侧信息：
 
@@ -227,9 +225,9 @@ proxies:
 
 **MTU 默认就好**，别为“求稳”显式写死。只有出现大包症状（大文件下载中断、网页加载一半卡住、TLS 握手偶发超时、小请求通但大响应卡）才去测，从 `1400`/`1380` 起试。
 
-### 4.3 实测吞吐与验证（客户端排障）
+### <a id="throughput"></a>吞吐验证
 
-节点 `/delay` 只测 1KB 级 RTT（见[第 6 节](#6-运行态控制rest-api-与-web-面板)），拥塞控制有没有真生效得自己测吞吐。经 `mixed-port` 用 curl 的 `-w` 直接拿 speed、不落盘：
+节点 `/delay` 只测 1KB 级 RTT（见 [REST API](#rest-api)），拥塞控制有没有真生效得自己测吞吐。经 `mixed-port` 用 curl 的 `-w` 直接拿 speed、不落盘：
 
 ```bash
 P=http://127.0.0.1:7890
@@ -244,11 +242,11 @@ curl -s -o /dev/null --max-time 45 --proxy $P \
 
 测速源踩坑：`speed.cloudflare.com/__down` 经某些落地 IP 回 **403**（节点 IP 命中 Cloudflare 风控），但同站 `__up` 上传能用；Hetzner `ash-speed.hetzner.com/100MB.bin` 稳，OVH `proof.ovh.net` 能用但跨洲偏慢。多换源交叉看、文件 ≥50–100MB（前几 MB 慢启动偏小）。换算：1 MB/s ≈ 8 Mbps。
 
-> **验证 Brutal 有没有接管**：mihomo 不暴露 `brutal-debug`，客户端日志看不到 Brutal 速率，唯一办法是 sudo 读服务端 `/etc/hysteria/config.yaml` 看 `ignoreClientBandwidth`/`bandwidth`（机制见 [§4.1](#41-协议选型与性能)）。服务端那套：独立 Hysteria2 搭建见 [hysteria2.md](hysteria2.md)，3x-ui 面板配置见 [3x-ui.md](3x-ui.md)，带宽/iperf3 丢包质量测试见 `vps-maintenance` skill，客户端、服务端两边配合看。
+> **验证 Brutal 有没有接管**：mihomo 不暴露 `brutal-debug`，客户端日志看不到 Brutal 速率，唯一办法是 sudo 读服务端 `/etc/hysteria/config.yaml` 看 `ignoreClientBandwidth` / `bandwidth`（机制见 [协议选择](#protocol-selection)）。服务端那套：独立 Hysteria2 搭建见 [hysteria2.md](hysteria2.md)，3x-ui 面板配置见 [3x-ui.md](3x-ui.md)，带宽 / iperf3 丢包质量测试见 `vps-maintenance` skill，客户端、服务端两边配合看。
 
 海外 VPS 上实测：给 Hysteria2 节点加 `up: "80 Mbps"`/`down: "120 Mbps"`（格式正则 `^(\d+)\s*[KMGT]?[Bb]ps$`，小写 `b`=bit）后，下载上传两向都进 Brutal——但当时链路 ~16 MB/s 下载、~9 MB/s 上传、**几乎无丢包**，加 `up`/`down` 前后吞吐无差异，印证「Brutal 收益要丢包才显现」。
 
-## 5. 订阅与覆写：内核只封装「节点级」，没有「配置级」
+## <a id="providers"></a>Provider 与订阅变换
 
 常被问“mihomo 内核有没有替订阅 URL 封装覆写功能”。**分两层看，答案不一样**：
 
@@ -270,9 +268,12 @@ curl -s -o /dev/null --max-time 45 --proxy $P \
 
 一句话：**节点级（proxy-provider 的 `override` + `filter`）有且完整；整份配置级订阅覆写内核不管，交给外部管理程序 / 订阅转换器。**
 
-## 6. 运行态控制：REST API 与 Web 面板
+<a id="6-运行态控制rest-api-与-web-面板"></a>
+## <a id="runtime"></a>运行态控制
 
-控制面 = REST API（本节）+ 可选 Web Dashboard（[§6.1](#61-web-面板external-ui--ui-路径)）。它是“遥控器”：**只查运行态、改运行态（切节点 / 模式 / 热重载 / 改单项），既不碰也不回吐配置文件**。配置里开：
+### <a id="rest-api"></a>REST API
+
+控制面由 REST API 和可选 Web Dashboard 组成。它是“遥控器”：**只查运行态、改运行态（切节点 / 模式 / 热重载 / 改单项），既不碰也不回吐配置文件**。配置里开：
 
 ```yaml
 external-controller: 127.0.0.1:9090   # 绑回环自用；要被 mesh/LAN 访问才绑 0.0.0.0（那时必设 secret）
@@ -293,38 +294,9 @@ curl --max-time 3 "http://127.0.0.1:9090/logs?format=structured&level=info"
 curl --max-time 3 http://127.0.0.1:9090/traffic
 ```
 
-> **源码实证：没有任何端点回吐"当前配置文件路径"**（链接 pin 到 `MetaCubeX/mihomo` 的 `Alpha` 分支 commit [`24b6de71`](https://github.com/MetaCubeX/mihomo/tree/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c)——真实源码在 `Alpha`/`Meta` 等分支，`main` 只有 release/CI 元数据、连 `hub/route/` 都没有）。[全表路由注册](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/server.go#L105)共 18 个（`/ /logs /traffic /memory /version /configs /proxies /group /rules /connections /providers/* /cache /dns /storage /restart /upgrade /ui` + doh），其中 `C.Path.Config()` 只出现一次——在 [`updateConfigs`（`PUT /configs`）](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/configs.go#L415)里当热重载的**默认输入**（请求没带 `path` 时兜底），从不写进任何响应。`GET /configs` 返回的是 [`executor.GetGeneral()`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/executor/executor.go#L129)：纯运行态设置（端口/tun/mode/log/geo/keepalive…），无路径字段。内核**自己知道**路径（[`constant/path.go` 的 `Path.Config()`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L75)），只是不经 API 暴露。**要定位 active 配置只能看进程 `-d`/`-f` 启动参数**（Windows 上 mihomo 可能高权限跑、需 UAC 提权才读得到命令行），或按 [§2.2](#22-配置目录是运行时算出来的不是安装决定的) 规则 + `/configs` 与 `/proxies` 运行态内容比对推断。
+> **源码实证：没有任何端点回吐"当前配置文件路径"**（链接 pin 到 `MetaCubeX/mihomo` 的 `Alpha` 分支 commit [`24b6de71`](https://github.com/MetaCubeX/mihomo/tree/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c)——真实源码在 `Alpha`/`Meta` 等分支，`main` 只有 release/CI 元数据、连 `hub/route/` 都没有）。[全表路由注册](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/server.go#L105)共 18 个（`/ /logs /traffic /memory /version /configs /proxies /group /rules /connections /providers/* /cache /dns /storage /restart /upgrade /ui` + doh），其中 `C.Path.Config()` 只出现一次——在 [`updateConfigs`（`PUT /configs`）](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/configs.go#L415)里当热重载的**默认输入**（请求没带 `path` 时兜底），从不写进任何响应。`GET /configs` 返回的是 [`executor.GetGeneral()`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/executor/executor.go#L129)：纯运行态设置（端口/tun/mode/log/geo/keepalive…），无路径字段。内核**自己知道**路径（[`constant/path.go` 的 `Path.Config()`](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/constant/path.go#L75)），只是不经 API 暴露。**要定位 active 配置只能看进程 `-d` / `-f` 启动参数**（Windows 上 mihomo 可能高权限跑、需 UAC 提权才读得到命令行），或按 [配置目录](#config-directory) 的规则结合 `/configs` 与 `/proxies` 运行态内容推断。
 
-**改运行态**——三种改法：`PUT /configs`（换整份配置）、`PATCH /configs`（改单项运行态）、`PUT /proxies/<组>`（切节点）。
-
-**① 整份热重载 `PUT /configs`**（配置在安全路径内时用 `path`）：
-
-```powershell
-$body = @{ path = "$env:USERPROFILE\.config\mihomo\config.yaml" } | ConvertTo-Json -Compress
-Invoke-WebRequest -Uri 'http://127.0.0.1:9090/configs?force=true' -Method Put -ContentType 'application/json' -Body $body
-```
-
-配置不在安全路径内会报 `path is not subpath of home directory or SAFE_PATHS`——临时可用 `payload` 提交完整 YAML，但日常应直接维护默认位置的 `config.yaml`。
-
-**② 增量改单项 `PATCH /configs`**：只改你 body 里带的字段、其余保留（base = 当前运行态）。`mode` / 端口 / `log-level` / `ipv6` 这类改一行就行；`tun` 也能这么改，但它**特殊**（改 tun 要重建网卡、有额外坑，见下）：
-
-```bash
-# 只切模式，其它不动
-curl -H "Authorization: Bearer <secret>" -X PATCH http://127.0.0.1:9090/configs -d '{"mode":"global"}'
-# 改 TUN：base=当前 tun，只覆盖你传的字段（auto-route/dns-hijack/inet4/route-exclude 等都保留）
-curl -H "Authorization: Bearer <secret>" -X PATCH http://127.0.0.1:9090/configs -d '{"tun":{"enable":true,"strict-route":false}}'
-```
-
-> **源码**：`hub/route/configs.go` 的 `patchConfigs`——各段 base 取当前运行态（如 tun 的 base=`listener.LastTunConf`），只覆盖请求里出现的字段。
-
-**改 `tun` 段的四个额外坑**（改 `mode`/端口那些一般没这些）：
-
-1. `tun.enable` 是**非指针 bool**——一旦发 `tun` 对象就**必须带 `"enable":true`**，漏了会被当 `false`、直接把 TUN 关掉。
-2. **`enable` OFF→ON = 新建 TUN/Wintun 设备，要 mihomo 进程本身有管理员 / root 权限**。注意提权的是**核心进程**、**不是**调 9090 的 curl（调用方只要 `secret`、不要 admin）。所以：**只要那个带 TUN 的 mihomo 本来是提权跑的（正常都是），就能用 9090 把 TUN 关了再开**；若核心没提权，`enable:true` 会**静默失败**、`GET /configs` 读回 `enable=false`。这也是"驱动已提权的核心原地重建 TUN"能行、而"kill 核心再从普通上下文裸起"不行（新进程拿不到 TUN 提权、还撞下面的竞态，本机实测 4/4 次 TUN 起不来）的根因。
-3. **（Windows）改任何 `tun` 参数都触发 `ReCreateTun` = close + 立刻重建 → 撞 Wintun 竞态 → TUN 静默掉**（见 [§6.2](#62-tun-模式下别用-post-restartwindows-会静默丢-tun)）。所以切 tun 参数要**两段式**：先 `{"tun":{"enable":false}}` 关掉 → 等 ~12s 让 Meta 适配器 PnP 删净 → 再 `{"tun":{"enable":true, ...目标...}}` 建新的（此时不再撞）。
-4. **读回坑**：`strict-route:false`（及其它零值 bool）因 `json:",omitempty"`，`GET /configs` 会**省略该字段**——读到 `None`/缺失 ≠ 没生效。
-
-**③ 改节点 / 测延迟 `PUT /proxies/<组>`**（group 名常含 emoji/中文，URL path 必须 `EscapeDataString`）：
+改节点或测延迟使用 `PUT /proxies/<组>`；group 名常含 emoji / 中文，URL path 必须 `EscapeDataString`：
 
 ```powershell
 $enc = [uri]::EscapeDataString("🚀 节点选择")
@@ -343,30 +315,69 @@ foreach ($n in @("vless-ws-Node","Hysteria2-Node")) {
 
 > **`/delay` 通 ≠ 节点能跑全速**：它只测 1KB 级 RTT。真实吞吐要用 ≥50MB 文件测（前几 MB 在 TCP 慢启动，speed 偏小）；跑大量 KB 级小文件时看 `part/s` 而不是 `MiB/s`。
 
-### 6.1 Web 面板（external-ui / `/ui` 路径）
+### <a id="web-ui"></a>Web 面板
 
-控制面除了裸 REST API，还能让 mihomo **自己托管一个 Web Dashboard**，不用另起 web 服务——配 `external-ui` 即可，浏览器开 `http://<controller>/ui/`：
+Mihomo 可以自己托管 Web Dashboard，无需另起 Web 服务。配置 `external-ui` 后，浏览器访问 `http://<controller>/ui/`：
 
 ```yaml
 external-controller: 0.0.0.0:9090   # 要被别的机器 / mesh 访问就绑 0.0.0.0；仅本机用 127.0.0.1
-secret: '<random-secret>'           # 控制面出回环必须设 token（同 §3.1 的逻辑，控制面也一样）
+secret: '<random-secret>'           # 控制面出回环必须设 token
 external-ui: ui                     # dashboard 静态文件目录：绝对路径，或相对 mihomo home(~/.config/mihomo/ui)
 external-ui-url: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip"  # 目录为空时自动拉这个 zip
 ```
 
-- **服务路径**：mihomo 把 `external-ui` 目录挂在控制面的 `/ui` 下（源码 `hub/route/server.go`：`/ui` → `FileServer(external-ui 目录)`，裸 `/ui` 自动 302 到 `/ui/`）。所以 `http://127.0.0.1:9090/ui/` 就是面板，和 REST API 同端口。
-- **自动下载**：启动时若 `external-ui` 目录为空，mihomo 按 `external-ui-url` 下载并解压 dashboard（源码 `hub/executor/executor.go` 的 `AutoDownloadUI()`）；想手动更新打 `POST /upgrade/ui`（`hub/route/upgrade.go`）。上面这个 URL 是 **MetaCubeXD**（常见 mihomo 面板，另有 yacd / zashboard 等，换 URL 即可）。
-- **暴露到网络要 secret**：`external-controller` 绑 `0.0.0.0`（让 mesh / LAN 上别的机器也能开面板）时**必须设 `secret`**——它是 REST API 的 Bearer token，面板首屏要填"后端地址 + 这个 secret"才连得上；绑回环自用可留空。**真实 secret 不入库，占位即可。**
-- **面板默认连哪个后端**：dashboard 是纯静态 SPA，得知道连哪个控制面 API。MetaCubeXD 默认让你首屏手填后端 URL + secret；在 `external-ui` 目录里放一个 `config.js` 把它钉成同源就免手填：
+- **服务路径**：Mihomo 把 `external-ui` 目录挂在控制面的 `/ui` 下（源码 `hub/route/server.go`：`/ui` → `FileServer(external-ui 目录)`，裸 `/ui` 自动 302 到 `/ui/`）。所以 `http://127.0.0.1:9090/ui/` 就是面板，和 REST API 同端口。
+- **自动下载**：启动时若 `external-ui` 目录为空，Mihomo 按 `external-ui-url` 下载并解压 dashboard（源码 `hub/executor/executor.go` 的 `AutoDownloadUI()`）；手动更新可调用 `POST /upgrade/ui`（`hub/route/upgrade.go`）。上面的 URL 是 MetaCubeXD；也可换成 yacd、zashboard 等面板。
+- **暴露到网络要 secret**：`external-controller` 绑定 `0.0.0.0` 时必须设置 `secret`。它是 REST API 的 Bearer token；面板填写“后端地址 + 这个 secret”才能连接。仅绑定回环时可留空。**真实 secret 不入库，占位即可。**
+- **面板默认后端**：dashboard 是纯静态 SPA，需要知道控制面 API 地址。MetaCubeXD 默认在首屏要求填写后端 URL 和 secret；在 `external-ui` 目录放置 `config.js` 可固定为同源：
 
   ```js
   // <external-ui>/config.js
   window.__METACUBEXD_CONFIG__ = { defaultBackendURL: window.location.origin }
   ```
 
-  这样从 `http://<host>:9090/ui/` 打开就自动连同源的 `http://<host>:9090` 控制面，不必每次手填 backend（secret 仍需在面板里填一次）。
+  从 `http://<host>:9090/ui/` 打开时就会连接同源的 `http://<host>:9090` 控制面；secret 仍需在面板中填写一次。
 
-### 6.2 TUN 模式下别用 `POST /restart`（Windows 会静默丢 TUN）
+### <a id="config-reload"></a>配置热重载
+
+配置变更有三种入口：`PUT /configs` 换整份配置，`PATCH /configs` 改单项运行态，`PUT /proxies/<组>` 切节点。节点切换见 [REST API](#rest-api)；本节集中说明配置重载。
+
+**整份热重载 `PUT /configs`**：配置在安全路径内时使用 `path`。
+
+```powershell
+$body = @{ path = "$env:USERPROFILE\.config\mihomo\config.yaml" } | ConvertTo-Json -Compress
+Invoke-WebRequest -Uri 'http://127.0.0.1:9090/configs?force=true' -Method Put -ContentType 'application/json' -Body $body
+```
+
+配置不在安全路径内会报 `path is not subpath of home directory or SAFE_PATHS`——临时可用 `payload` 提交完整 YAML，但日常应直接维护默认位置的 `config.yaml`。
+
+**增量改单项 `PATCH /configs`**：只改 body 中出现的字段，其余保留（base = 当前运行态）。`mode`、端口、`log-level`、`ipv6` 一类字段改一行即可；`tun` 也能修改，但会重建网卡，边界见 [TUN 重建](#tun-recreate)。
+
+```bash
+# 只切模式，其它不动
+curl -H "Authorization: Bearer <secret>" -X PATCH http://127.0.0.1:9090/configs -d '{"mode":"global"}'
+```
+
+> **源码**：`hub/route/configs.go` 的 `patchConfigs`——各段 base 取当前运行态（如 tun 的 base=`listener.LastTunConf`），只覆盖请求里出现的字段。
+
+### <a id="tun-recreate"></a>TUN 重建
+
+TUN PATCH 以当前 tun 配置为 base，只覆盖请求中出现的字段，因此 `auto-route`、`dns-hijack`、inet4、route-exclude 等未提交字段会保留：
+
+```bash
+curl -H "Authorization: Bearer <secret>" -X PATCH http://127.0.0.1:9090/configs \
+  -d '{"tun":{"enable":true,"strict-route":false}}'
+```
+
+**改 `tun` 段的四个额外坑**（改 `mode`/端口那些一般没这些）：
+
+1. `tun.enable` 是**非指针 bool**——一旦发 `tun` 对象就**必须带 `"enable":true`**，漏了会被当 `false`、直接把 TUN 关掉。
+2. **`enable` OFF→ON = 新建 TUN/Wintun 设备，要 mihomo 进程本身有管理员 / root 权限**。注意提权的是**核心进程**、**不是**调 9090 的 curl（调用方只要 `secret`、不要 admin）。所以：**只要那个带 TUN 的 mihomo 本来是提权跑的（正常都是），就能用 9090 把 TUN 关了再开**；若核心没提权，`enable:true` 会**静默失败**、`GET /configs` 读回 `enable=false`。这也是"驱动已提权的核心原地重建 TUN"能行、而"kill 核心再从普通上下文裸起"不行（新进程拿不到 TUN 提权、还撞下面的竞态，本机实测 4/4 次 TUN 起不来）的根因。
+3. **（Windows）改任何 `tun` 参数都触发 `ReCreateTun` = close + 立刻重建 → 撞 Wintun 竞态 → TUN 静默掉**（机制见 [进程重启](#process-restart)）。所以切 tun 参数要**两段式**：先 `{"tun":{"enable":false}}` 关掉 → 等 ~12s 让 Meta 适配器 PnP 删净 → 再 `{"tun":{"enable":true, ...目标...}}` 建新的（此时不再撞）。
+4. **读回坑**：`strict-route:false`（及其它零值 bool）因 `json:",omitempty"`，`GET /configs` 会**省略该字段**——读到 `None`/缺失 ≠ 没生效。
+
+<a id="62-tun-模式下别用-post-restartwindows-会静默丢-tun"></a>
+### <a id="process-restart"></a>进程重启
 
 REST API 有个 `POST /restart`：让 mihomo **重启自己、用原启动参数重载配置**。但在 **Windows + TUN** 下它有硬伤——调用返回 `{"status":"ok"}`，核心却死了、不再起来（`:9090` 监听直接消失），得手动拉起。**改 `external-controller` / `secret` / `external-ui` 这类只有重启才生效的项时最容易踩**（想省一次手动重启 → 用 `/restart` → 反而把核心整没了）。
 
@@ -385,7 +396,7 @@ REST API 有个 `POST /restart`：让 mihomo **重启自己、用原启动参数
 
 **教训 / 做法**：TUN 模式**别用 `/restart`**，改成**外部 kill → 等一下（让 Wintun 适配器删干净、端口释放）→ 按原启动参数重新拉起**（或重启对应服务）。要在 Windows 上脚本化这套 kill+relaunch、且 mihomo 高权限跑需要 UAC 提权时，`Start-Process -Verb RunAs` + 落盘取结果的手法见 `software` skill 的 Windows/WSL 提权章节。
 
-### 6.3 某些域名打不开、别的正常：多半是某个节点死了
+### <a id="single-domain"></a>单域名故障
 
 **现象**：`curl google.com` 通、但 `curl 某域名` 不通（502 / 连接超时 / SSH `banner exchange timeout`）；同一个代理、同一台机器，就这批域名坏。**别急着判远端服务器故障**——最常见的真因是：这批域名被某条规则单独导进一个 Selector 组，而该组当前**钉死**在一个已挂的节点上（节点被墙 / 落地 IP 被封 / 上游死了）。google 走的是另一个自动挑活节点的组，所以没事。
 
@@ -410,15 +421,15 @@ curl -s --proxy socks5h://<gw>:7890 "https://1.1.1.1/dns-query?name=<域>&type=A
 sleep 9 | nc -x <gw>:7890 -X 5 <真实IP> 22    # 期望立刻回 SSH-2.0-...；回得来=服务器活、是节点的锅
 ```
 
-**判决**：若组 `now` 那个节点 `/delay` 超时/为 0、而候选里别的节点 delay 正常、且真实 IP 直连能拿到 banner → **服务器没事，是选择器钉的节点死了**。修复：把该 Selector 切到活节点（`PUT /proxies/<组>` body `{"name":"<活节点>"}`，见 §6 的改节点示例；只影响新连接、可随时切回）。**注意别切 DIRECT**——若该域名的落地 IP 已被墙，直连反而不通。
+**判决**：若组 `now` 那个节点 `/delay` 超时/为 0、而候选里别的节点 delay 正常、且真实 IP 直连能拿到 banner → **服务器没事，是选择器钉的节点死了**。修复：把该 Selector 切到活节点（`PUT /proxies/<组>` body `{"name":"<活节点>"}`，见 [REST API](#rest-api) 的改节点示例；只影响新连接、可随时切回）。**注意别切 DIRECT**——若该域名的落地 IP 已被墙，直连反而不通。
 
-**要点提炼**：① "入口通 ≠ 出口节点活"（`HTTPS_PROXY` 只决定进 mihomo，出口由 rule+group 链决定，见 §3.2）；② fake-ip 下裸连报 502/超时先查 TUN/节点、别怪远端；③ 选择器当前选择在 `cache.db`、config 改默认项不一定生效（要在面板/API 里切）。
+**要点提炼**：① "入口通 ≠ 出口节点活"（`HTTPS_PROXY` 只决定进 Mihomo，出口由 rule + group 链决定，见 [规则匹配](#rule-matching)）；② fake-ip 下裸连报 502 / 超时先查 TUN 与节点，不要先归因远端；③ 选择器当前选择在 `cache.db`，config 改默认项不一定生效，需要在面板或 API 中切换。
 
-> 上面是「某批域名突然打不开、别的正常」这个高频场景的速查；连不上时更一般的「从近到远逐层排查」（含 CONNECT `200` 不等于连通、`--resolve` 直接测入口、多地外部探针）见 §6.4。
+> 上面是“某批域名突然打不开、别的正常”这个高频场景的速查；更一般的从近到远排查（含 CONNECT `200` 不等于连通、`--resolve` 直接测入口、多地外部探针）见 [分层连接诊断](#layered-diagnosis)。
 
-### 6.4 节点连不上时逐层排查（CONNECT 200 不等于连通）
+### <a id="layered-diagnosis"></a>分层连接诊断
 
-> 这是「连不上」的通用逐层排查方法。一个高频具体场景——某批域名突然打不开、别的正常、多半是选择器钉死了已挂节点——的速查见 §6.3。
+> 这是“连不上”的通用逐层排查方法。某批域名突然打不开而其他域名正常时，先看 [单域名故障](#single-domain)。
 
 遇到下面这种输出，**不能**据第一行判断节点或目标网站已经连通：
 
@@ -438,7 +449,7 @@ curl: (35) ... SSL routines::unexpected eof while reading
 
 1. **确认实际规则链与旧连接**：查 `/proxies` 的逐层 `.now`，再查 `/connections` 的 `host`、`start`、`chains`、`rule`。selector 的 PUT 只改变后续新连接，不会把已有 TCP/WebSocket 迁移到新节点。
 2. **不切主选择器，直接测具体节点**：调用 `/proxies/<urlencoded-node>/delay?url=<urlencoded-real-target>&timeout=10000`，分别用普通连通性目标和实际业务目标。两个都失败才继续向落地入口排查；单一目标失败可能只是目标站风控或分流差异。
-3. **拿落地真实 IP，绕开本机代理测入口**：DNS 必须走 DoH（见 §12.1），避免 fake-ip；随后清除 proxy env、加 `--noproxy '*'`，并用 `--resolve` 同时钉真实 IP、保留正确 Host/SNI：
+3. **拿落地真实 IP，绕开本机代理测入口**：DNS 必须走 DoH（见 [DNS 探测](#dns-probing)），避免 fake-ip；随后清除 proxy env、加 `--noproxy '*'`，并用 `--resolve` 同时钉真实 IP、保留正确 Host/SNI：
 
    ```bash
    env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
@@ -472,21 +483,31 @@ curl -sS -H 'Accept: application/json' \
 
 最后一行在 Codex/流式 API 上尤其常见。OpenAI 的 [Responses WebSocket mode](https://developers.openai.com/api/docs/guides/websocket-mode) 会复用持久连接；Mihomo selector 改的是**未来连接的选择结果**，不会在线迁移这条 socket。验证时用一个新进程/新连接，并在 `/connections` 里核对它的 `start` 与 `chains`。删除单条或全部 `/connections` 会打断用户业务，只在明确获准时做；诊断阶段优先重启目标应用或另开短连接。
 
-## 7. TUN 路由的边界
+<a id="7-tun-路由的边界"></a>
+## <a id="tun-routing"></a>TUN 与系统路由
 
-几条容易踩、值得先知道的事实：
+### <a id="direct-bypass"></a>DIRECT 与真正 bypass
 
 - **`IP-CIDR,...,DIRECT` 不等于绕过 TUN**：它只是“流量进了 TUN 后，mihomo 选 `DIRECT` 这个 outbound”；`/connections` 里仍会看到 `inboundName: DEFAULT-TUN`、`chains:[DIRECT,...]`。真要某个目的地完全不进 TUN，是另一回事。
   > **源码**：TUN 入站固定打标 `listener/sing_tun/server.go` 的 `inbound.WithInName("DEFAULT-TUN")`；而 `rules/common/ipcidr.go` 的 `IPCIDR.Match()` 只返回出站 adapter 名，决定 outbound、不碰 inbound 拦截。
 - **规则顺序决定命中**：宽泛的 `RULE-SET,cn-ip`/`private-ip` 放在显式 `IP-CIDR` 前会先命中特例地址。需要特例策略就把特例规则提前——但提前命中 `DIRECT` 仍不是 TUN bypass。
   > **源码**：`tunnel/tunnel.go` 的 `match()` 从上往下首条命中即 `return`。
-- **`route-exclude-address` 不是稳定通用方案**：它只让 mihomo 不接管这些目的地址，**不保证** Windows 自动补出可用的物理网卡路由；排除异地组网依赖的公网 IP 后，可能把组网本身断开。需要对照时 `route print <peer-ip>` 看实际路由。
-  > **源码**：`listener/sing_tun/server.go` 的 `RouteExcludeAddress`/`Inet4RouteExcludeAddress` 传给 tun 栈，作用是把这些地址从 TUN 的 auto-route 里排除；OS 有没有可用物理路由是系统路由表的事，mihomo 不补。
-- **`route-exclude-address`（TUN 层）与 `IP-CIDR,...,DIRECT`（规则层）是两道机制、作用在不同路径，可并用也可能覆盖不齐**：前者管“被路由进 TUN 的裸包”（宿主自身、或经 NAT 转发进来的路由流量——直接不接管、不进引擎）；后者管“已进 mihomo 引擎的流量”（TUN 抓进来的、或下游以 socks/http 递进来的请求——判 `DIRECT`）。所以**对把流量当 socks 请求交给 mixed-port 的下游客户端（如 WSL tun2socks→7890），`route-exclude-address` 完全不生效**（那是路由层的事，socks 请求早已绕过路由），只有 `DIRECT` 规则兜得住；反之宿主自身到组网的裸路由流量靠 route-exclude 不进 TUN。
-  > **两层覆盖常不一致的例子**：`route-exclude-address:[10.144.0.0/16]` 只覆盖 `10.144.x`，而规则 `IP-CIDR,10.144.18.0/24,DIRECT`+`IP-CIDR,10.100.158.0/24,DIRECT` 还覆盖 `10.100.158.x`——于是 `10.100.158.x` 缺 route-exclude 那层、会被 TUN 抓进引擎再由规则放直连，`10.144.x` 则两层都在。
+
+### <a id="auto-strict-route"></a>auto-route 与 strict-route
+
 - **`auto-route` 决定「被路由/转发的流量进不进 TUN」、Windows 的 `strict-route` 不决定**：`auto-route` 在宿主装 `0.0.0.0/1`+`128.0.0.0/1`（metric 0）指向 TUN 的路由 + 开 tun 网卡 `ForwardingEnabled`——**凡被宿主路由表处理的包**（宿主自身的、以及经 NAT 转发进来的下游流量，例如 WSL NAT VM 的裸出站）都落进 TUN → 引擎，连自建域名解析成的 fake-ip 也闭环通。Windows 的 `strict-route` **只加 WFP 防火墙过滤器**（挡 IPv6 + 挡明文 DNS `:53` 泄漏），不动任何路由、也不拦通用 IPv4——是**防泄漏**、不是抓取开关。所以「宿主开 TUN 后下游/转发流量被不被接管」由 `auto-route` 决定、与 `strict-route` 无关。
-  > **源码 + 实测坐实（2026-07，mihomo v1.19.24 / sing-tun v0.4.17）**：`tun_windows.go` 的 `AutoRoute` 分支装那套路由 + `ForwardingEnabled=true`；`StrictRoute` 分支只 `FwpmFilterAdd0` 加 WFP、**IPv4 block 段是注释掉的 `/* */`**、不碰路由（Linux 的 strict-route 也只在某地址族没配 TUN 地址时补 `unreachable` 兜底，正常非抓取机制）。A/B：固定 `auto-route:true`、把 `strict-route` 切 `false→true→false` 三态（改它会被 `listener/config/tun.go` 的 `Equal()` diff 到 → 触发 `ReCreateTun`；Windows 上 close+立刻重建撞 Wintun 竞态、见 [§6.2](#62-tun-模式下别用-post-restartwindows-会静默丢-tun)，切它要 `enable:false`→等 Meta 删净→`enable:true` 两段式），每态让一个 NAT 下游（WSL）剥 proxy 后 raw-IP 裸连——**三态出口 IP 恒 = 代理节点、外网恒通** ⇒ strict-route 不改变接管。踩坑：`strict-route` 是 `json:",omitempty"`，`false` 时 `GET /configs` **省略该字段**（读到 `None` 不代表没生效）。
-  > **⚠ Windows 实测坑：接管是真的、但不持久。** 先记**肯定**的一面：tun2socks 停着、WSL 无任何代理配置时，WSL NAT 裸连**确实成功**被宿主 TUN 接管、从宿主代理节点出口过（出口 IP == 代理节点、非本地 ISP；A/B 3 轮 + 重建后 11 连采 + durability 新鲜态多次复现，**绝不是"从不接管"**）。问题只在**持久性**：这层对「转发进来的下游流量」（WSL NAT VM 这类）的接管**会随时间退化（实测分钟级）**——路由一直在（`Find-NetRoute <目标>` 仍指 TUN）、宿主自身上网也一直正常，但「把转发包收进 Wintun 设备」那条数据路径会失效、下游裸包进了 TUN 却被**黑洞丢弃**（超时、**不是**漏直连）。**两段式重建 TUN（`enable:false`→等 Meta 删净→`enable:true`）~4s 内即恢复**（实测：陈旧 TUN 连测 60s 全超时、换多个目标也全超时；重建后 4s 即接管并稳定）。诊断：停掉下游自己的代理后、下游 raw-IP 裸连超时，但 `Find-NetRoute` 仍指 TUN、宿主自身在线 ⇒ 就是这个退化。所以要让 WSL / 下游**稳定**走宿主，别裸靠宿主 TUN 接管——用 tun2socks 之类**显式代理**（[wsl.md 方案 B](wsl.md#wsl-nat-下出站走-mihomo)：走 mixed-port、不碰这条会退化的转发路径）。**别误读成"不用 tun2socks 也许还能接管"**："放着不重建的宿主 TUN 会退化到不接管转发流量"是**确认的**（陈旧态连测 60s 全超时）；未坐实的只是退化的**触发原因**（时间 / 空闲 / 被旁路"变冷"），**不是"会不会退化"**。而两条"翻盘"路已被实测封死：① `strict-route:false` 也照样退化（新鲜接管约 3min 后就掉、t=4~7min 连续超时）⇒ 退化**与 strict-route 无关**；② 每 90s 定期使用"保持热"也拦不住。所以"不装 tun2socks 还能稳定接管"**不成立**——auto-route 对 WSL-NAT 的接管是**分钟级就掉的**、本质不可靠，tun2socks 必留。（注：早前以为"小时级"是误判——那只是 TUN 已开了很久，不是接管撑了很久；实测新鲜接管 3min 就退。退化的正向触发机制仍未坐实，但 strict-route 与"保持热"两个候选已排除。）
+  > **源码 + 实测坐实（2026-07，mihomo v1.19.24 / sing-tun v0.4.17）**：`tun_windows.go` 的 `AutoRoute` 分支装那套路由 + `ForwardingEnabled=true`；`StrictRoute` 分支只 `FwpmFilterAdd0` 加 WFP、**IPv4 block 段是注释掉的 `/* */`**、不碰路由（Linux 的 strict-route 也只在某地址族没配 TUN 地址时补 `unreachable` 兜底，正常非抓取机制）。A/B：固定 `auto-route:true`、把 `strict-route` 切 `false→true→false` 三态（改它会被 `listener/config/tun.go` 的 `Equal()` diff 到 → 触发 `ReCreateTun`；Windows 上 close+立刻重建撞 Wintun 竞态，见 [TUN 重建](#tun-recreate)，切它要 `enable:false`→等 Meta 删净→`enable:true` 两段式），每态让一个 NAT 下游（WSL）剥 proxy 后 raw-IP 裸连——**三态出口 IP 恒 = 代理节点、外网恒通** ⇒ strict-route 不改变接管。踩坑：`strict-route` 是 `json:",omitempty"`，`false` 时 `GET /configs` **省略该字段**（读到 `None` 不代表没生效）。
+
+### <a id="route-exclude"></a>route-exclude-address
+
+- **`route-exclude-address` 不是稳定通用方案**：它只让 Mihomo 不接管这些目的地址，**不保证** Windows 自动补出可用的物理网卡路由；排除异地组网依赖的公网 IP 后，可能把组网本身断开。需要对照时用 `route print <peer-ip>` 查看实际路由。
+  > **源码**：`listener/sing_tun/server.go` 的 `RouteExcludeAddress` / `Inet4RouteExcludeAddress` 传给 tun 栈，作用是把这些地址从 TUN 的 auto-route 中排除；OS 是否有可用物理路由由系统路由表决定，Mihomo 不会补。
+- **`route-exclude-address`（TUN 层）与 `IP-CIDR,...,DIRECT`（规则层）是两道机制，作用在不同路径，可并用也可能覆盖不齐**：前者管“被路由进 TUN 的裸包”（宿主自身或经 NAT 转发进来的路由流量——直接不接管、不进引擎）；后者管“已进 Mihomo 引擎的流量”（TUN 抓入，或下游以 SOCKS / HTTP 递交的请求——判 `DIRECT`）。所以把流量作为 SOCKS 请求交给 mixed-port 的下游客户端（如 WSL tun2socks→7890）不受 `route-exclude-address` 影响，只能由 `DIRECT` 规则处理；宿主自身到组网的裸路由流量则可依靠 route-exclude 不进 TUN。
+  > **两层覆盖常不一致的例子**：`route-exclude-address:[<mesh-cidr-a>]` 只覆盖组网 A，而规则层还配置了 `IP-CIDR,<mesh-subnet-a>,DIRECT` 与 `IP-CIDR,<mesh-subnet-b>,DIRECT`。于是组网 B 缺 route-exclude 那层，会被 TUN 抓入引擎后由规则放直连；组网 A 则两层都有。
+
+### <a id="wsl-forwarding"></a>WSL 转发边界
+
+> **⚠ Windows 实测坑：接管是真的、但不持久。** 先记**肯定**的一面：tun2socks 停着、WSL 无任何代理配置时，WSL NAT 裸连**确实成功**被宿主 TUN 接管、从宿主代理节点出口过（出口 IP == 代理节点、非本地 ISP；A/B 3 轮 + 重建后 11 连采 + durability 新鲜态多次复现，**绝不是"从不接管"**）。问题只在**持久性**：这层对「转发进来的下游流量」（WSL NAT VM 这类）的接管**会随时间退化（实测分钟级）**——路由一直在（`Find-NetRoute <目标>` 仍指 TUN）、宿主自身上网也一直正常，但「把转发包收进 Wintun 设备」那条数据路径会失效、下游裸包进了 TUN 却被**黑洞丢弃**（超时、**不是**漏直连）。**两段式重建 TUN（`enable:false`→等 Meta 删净→`enable:true`）~4s 内即恢复**（实测：陈旧 TUN 连测 60s 全超时、换多个目标也全超时；重建后 4s 即接管并稳定）。诊断：停掉下游自己的代理后、下游 raw-IP 裸连超时，但 `Find-NetRoute <目标>` 仍指 TUN、宿主自身在线 ⇒ 就是这个退化。所以要让 WSL / 下游**稳定**走宿主，别裸靠宿主 TUN 接管——用 tun2socks 之类**显式代理**（见 [wsl.md 的方案 B](wsl.md)：走 mixed-port，不碰这条会退化的转发路径）。**别误读成"不用 tun2socks 也许还能接管"**："放着不重建的宿主 TUN 会退化到不接管转发流量"是**确认的**（陈旧态连测 60s 全超时）；未坐实的只是退化的**触发原因**（时间 / 空闲 / 被旁路"变冷"），**不是"会不会退化"**。而两条"翻盘"路已被实测封死：① `strict-route:false` 也照样退化（新鲜接管约 3min 后就掉、t=4~7min 连续超时）⇒ 退化**与 strict-route 无关**；② 每 90s 定期使用"保持热"也拦不住。所以"不装 tun2socks 还能稳定接管"**不成立**——auto-route 对 WSL-NAT 的接管是**分钟级就掉的**、本质不可靠，tun2socks 必留。（注：早前以为"小时级"是误判——那只是 TUN 已开了很久，不是接管撑了很久；实测新鲜接管 3min 就退。退化的正向触发机制仍未坐实，但 strict-route 与"保持热"两个候选已排除。）
 
 排障先分清“远端节点不通”还是“本机 TUN/入口没接管”：
 
@@ -497,11 +518,11 @@ curl.exe -v -I --max-time 12 --proxy http://127.0.0.1:7890 <test-url> # 显式�
 
 显式 `--proxy` 稳定成功、而裸 `curl` 失败或命中 fake-ip 后报连接错误 → 优先查 TUN/系统路由/DNS 劫持/权限环境，别一上来就怪远端节点。
 
-### 7.1 WSL ssh 借道宿主 mihomo（没开 TUN 时才需要）
+宿主 Mihomo 开启 TUN 且 `auto-route: true` 时，WSL 直连会被透明接管：`auto-route` 把整机路由（含经 NAT 转发的 WSL 出站）导入 Mihomo，解析为 fake-ip 的自建域名也能闭环，WSL 内 ssh / curl 暂时无需代理配置；`strict-route` 只负责防泄漏，不决定接管，见 [auto-route 与 strict-route](#auto-strict-route)。
 
-**宿主 mihomo 开了 TUN（且 `auto-route: true`）时，WSL 里直连即被透明接管**——`auto-route` 把整机路由（含经 NAT 转发出去的 WSL 出站）都劫进 mihomo，连解析成 fake-ip 的自建域名也直接通，WSL 内 ssh / curl 无需任何代理配置（**为什么是 `auto-route` 决定接管、`strict-route` 只防泄漏不影响，见上 [§7](#7-tun-路由的边界)**）。**⚠ 但 NAT 模式下这层接管不持久、会随时间退化**（宿主 TUN 挂久了 WSL 转发流量被黑洞丢弃、要重建宿主 TUN 才恢复，见 [§7](#7-tun-路由的边界)）；要 WSL 稳定走宿主，建议用 tun2socks（wsl.md 方案 B）。只有“没开 TUN、或 `auto-route` 关、或目标没被 TUN/规则覆盖、直连出不去”时，才需要让 WSL 流量**显式借道**宿主 mihomo：HTTP 类工具设 `HTTPS_PROXY`，ssh 走 SOCKS 配 `ProxyCommand`，且 NAT 下宿主在 WSL 网段的网关 IP 每次启动可能变、得动态取。具体 `ProxyCommand` / 动态网关 / 代理环境变量配方（方案 A），以及 WSL 内自建 TUN 透明代理 tun2socks（方案 B），见 [wsl.md](wsl.md#wsl-nat-下出站走-mihomo)「WSL NAT 下出站走 Mihomo」；Mirror 模式下 WSL 与宿主共享 `127.0.0.1`，可直接 `127.0.0.1:7890`、不必取网关。
+但 NAT 模式下这层接管不持久，会随时间退化：宿主 TUN 运行一段时间后，WSL 转发流量可能被黑洞丢弃，需要重建宿主 TUN 才恢复。要让 WSL 稳定走宿主，应保留 tun2socks。只有未开 TUN、`auto-route` 关闭、目标未被 TUN / 规则覆盖，或直连无法出站时，才需要让 WSL 流量显式借道宿主 Mihomo：HTTP 类工具设置 `HTTPS_PROXY`，ssh 通过 SOCKS 配 `ProxyCommand`；NAT 模式下宿主在 WSL 网段的网关 IP 每次启动可能变化，需要动态获取。具体 `ProxyCommand`、动态网关、代理环境变量（方案 A）和 WSL 内 tun2socks（方案 B）见 [wsl.md](wsl.md) 的“WSL NAT 下出站走 Mihomo”；Mirror 模式下 WSL 与宿主共享 `127.0.0.1`，可直接使用 `127.0.0.1:7890`。
 
-## 8. 从源码构建（Windows）
+## <a id="source-build"></a>源码构建
 
 `MetaCubeX/mihomo` 的 `Meta` 分支。切到 release tag 再构建：
 
@@ -527,30 +548,21 @@ go build -v -tags "with_gvisor" -trimpath `
 # 期望: Mihomo Meta v1.19.24 windows amd64 / Use tags: with_gvisor
 ```
 
----
-
-# 第二部分：泄漏控制
-
-## 9. 泄漏控制总览：泄漏是什么 + DNS / WebRTC 要不要开 TUN
-
-**先说“泄漏”是什么。** 你挂上代理，以为流量都从节点出、真实身份藏好了；但有些信息会从**代理没兜住的旁路**漏回去，暴露你真实所在。最常见两类：**DNS 泄漏**（谁在替你查域名、你查了哪些站，落到本地 ISP / 运营商手里）和 **WebRTC 泄漏**（浏览器把你**真实公网 IP** 直接吐出来）。泄漏控制就是把这两条旁路也堵上。
+**先说“泄漏”是什么。** 你挂上代理，以为流量都从节点出、真实身份藏好了；但有些信息会从**代理没兜住的旁路**漏回去，暴露你真实所在。最常见两类：**DNS 泄漏**（谁在替你查域名、你查了哪些站，落到本地 ISP / 运营商手里）和 **WebRTC 泄漏**（浏览器把你**真实公网 IP**直接吐出来）。泄漏控制就是把这两条旁路也堵上。
 
 **最常被一起问的：“是不是都得开 TUN 才不漏？”** 两类答案不一样，根源是**这两类流量和代理的关系根本不同**：
 
-- **DNS：域名解析本来就是“建立连接”的一部分，代理协议自带。** 只要 app 把解析交给代理——HTTP CONNECT / SOCKS5h 把**域名**（而非 IP）发给代理、在**远端**解析——乖乖走代理的 app（如浏览器）**没 TUN 也不漏**（[§12.1](#121-dns-泄漏怎么测browserleaks--bashws--排障) 那次 mixed-port 实测就是零 ISP 解析器）。`dns-hijack`（TUN 的功能）只是为了兜住**另一类**：不走代理、自己硬解 DNS 的程序（硬编码 `8.8.8.8` 之类）。
+- **DNS：域名解析本来就是“建立连接”的一部分，代理协议自带。** 只要 app 把解析交给代理——HTTP CONNECT / SOCKS5h 把**域名**（而非 IP）发给代理、在**远端**解析——乖乖走代理的 app（如浏览器）**没 TUN 也不漏**；[DNS 探测](#dns-probing) 中 mixed-port 的实测就是零 ISP 解析器。`dns-hijack`（TUN 的功能）只是为了兜住**另一类**：不走代理、自己硬解 DNS 的程序（硬编码 `8.8.8.8` 之类）。
 - **WebRTC：正相反，它为 STUN 探测另起一条独立 UDP。** 这条 UDP 与代理那条连接无关，HTTP / SOCKS 代理**搬不动**它，所以**必须**靠 TUN（网络层连 UDP 一起接管）或浏览器策略来堵。
 
 一句话——**域名解析是建连的一部分、代理协议自带；WebRTC 的 UDP 是另起炉灶、代理管不着。** 所以 DNS 泄漏能靠“让 app 走代理”解决，WebRTC 泄漏则非 TUN / 浏览器策略不可。
 
-> 下面 [§10](#10-dns-泄漏原理与-mihomo-配置)（DNS）、[§11](#11-webrtc-泄漏原理与-mihomo-配置)（WebRTC）各自只讲**原理 + mihomo 配置**；两类泄漏**怎么探测验证**统一放 [§12](#12-探测与验证-dns--webrtc-泄漏)。
+DNS 与 WebRTC 的流量路径不同；后者的机制、策略与探测见 [WebRTC 泄漏](#webrtc-leak)。
 
-## 10. DNS 泄漏：原理与 mihomo 配置
+<a id="10-dns-泄漏原理与-mihomo-配置"></a>
+## <a id="dns-leak"></a>DNS 泄漏
 
-这一节是理解代理“干不干净”的关键，配置和原理必须一起讲。
-
-### 10.1 原理：三方模型 · 两个正交开关 · 行为对照表
-
-#### 三方模型：DNS 泄漏泄给了谁
+### <a id="dns-parties"></a>泄漏参与方
 
 解析一个域名牵涉**三方**，不是两方：
 
@@ -560,7 +572,7 @@ go build -v -tags "with_gvisor" -trimpath `
 
 所以 **DNS 泄漏 = 你的查询跑去了一个你不想让它知道的解析器（通常是 ISP 的）**，于是运营商攒下了你的域名清单，还能据此**按域名封锁 / 投毒**（故意回错 IP，就是 GFW 的 DNS 污染）。代理的目标因此不只是“内容走代理”，还要“DNS 也别落到 ISP 解析器手里”。
 
-#### 两个正交的开关：dns-hijack 与 enhanced-mode
+### <a id="dns-modes"></a>dns-hijack 与 enhanced-mode
 
 防不防泄漏、返回真 IP 还是假 IP，是**两个独立的开关**：
 
@@ -593,7 +605,7 @@ func (h *ListenerHandler) ShouldHijackDns(targetAddr netip.AddrPort) bool {
   if skipper.ShouldSkipped(host) { return next(ctx, r) } // fake-ip-filter 命中才放行去真解析
   ip := fakePool.Lookup(host)   // 直接给一个池子里的 198.18.x，不 call next（当场不做真解析）
   ```
-  应用瞬间拿到假 IP，**真解析推迟到连接时、在远端做**。最快、分流最准、最防污染。代价：少数按 IP 工作的程序会坏（见 [10.2](#102-mihomo-配置防泄漏--分流准--防污染) 的 `fake-ip-filter`）。
+  应用瞬间拿到假 IP，**真解析推迟到连接时、在远端做**。最快、分流最准、最防污染。代价：少数按 IP 工作的程序会坏（见 [配置](#linux-dns) 中的 `fake-ip-filter`）。
 - **`redir-host`**（`withMapping`）：
   ```go
   msg, err := next(ctx, r)             // 先做真解析，拿真 IP
@@ -602,7 +614,7 @@ func (h *ListenerHandler) ShouldHijackDns(targetAddr netip.AddrPort) bool {
   回**真 IP**，但记住“这个 IP 是哪个域名的”，连接时还能按域名分流。代价：每次要等真实解析、上游被污染会拿到污染结果。
 - **`normal`**：啥都不加，回真 IP、也不记映射。**分流退化**为只能按 IP（域名信息丢了，按域名的规则可能判错）。
 
-#### 行为对照表
+**行为对照**
 
 | dns-hijack | enhanced-mode | 普通查询(`getent`)拿到 | 分流准度 | DNS 泄漏风险 |
 |---|---|---|---|---|
@@ -619,7 +631,8 @@ func (h *ListenerHandler) ShouldHijackDns(targetAddr netip.AddrPort) bool {
 - **`fake-ip`**：真解析**推迟到连接时、走代理链路**，冷门境外域名的解析在**境外**完成。
 - 两者都**不暴露本地 ISP 明文解析器**（dns-hijack + DoH 该拦的都拦了）；差别只在“未分类冷门域名的解析交给境内还是境外 DoH”。想让 `redir-host` 也走境外，把域名纳入 `geosite:geolocation-!cn` 或调 `nameserver-policy`。
 
-### <a id="linux-dns"></a>10.2 mihomo 配置：防泄漏 + 分流准 + 防污染
+<a id="102-mihomo-配置防泄漏--分流准--防污染"></a>
+### <a id="linux-dns"></a>配置
 
 防泄漏 + 分流准 + 防污染的一套：
 
@@ -650,17 +663,54 @@ dns:
 
 要点：`dns-hijack any:53` 堵住泄漏闸门；`fake-ip` 给快且准的分流；`nameserver` 用 **DoH/DoT** 让“上游解析”这步也加密、并配合 `respect-rules` 走代理出去——这样 ISP 既看不到你的明文查询，也截不到上游往哪查。`fake-ip-filter` 里的 `skipper`（源码 `component/fakeip/skipper.go`）让排除的域名走真解析，避免坏掉 ping、局域网设备、按 IP 比对的软件。
 
-> **Linux 宿主的 `systemd-resolved` 边界（实测）**：应用默认查询 `127.0.0.53`，resolved 再自行访问上游；loopback stub 这段不一定进入 Mihomo TUN，因此只写 `dns-hijack: any:53` 仍可能得到污染记录。需要让 Mihomo 显式监听本机 DNS 端口，再把 resolved 的全局上游指向该 listener。配置形态与验证方法见 [共享 Linux 节点的 DNS 接入](setup.md#dns)。
-
-> **注·与 WSL 的边界**：这个 `198.18.0.1/16` 是宿主自己的 fake-ip 段（TUN 默认网关 IP 也取自此值）。**WSL 内自建 TUN（tun2socks）要避开 `198.18.x`**，否则和宿主 fake-ip / TUN 网关撞——见 [wsl.md](wsl.md#方案-bwsl-内自建-tun-透明代理tun2socks)「方案 B：WSL 内自建 TUN 透明代理」。
+> **注·与 WSL 的边界**：这个 `198.18.0.1/16` 是宿主自己的 fake-ip 段（TUN 默认网关 IP 也取自此值）。**WSL 内自建 TUN（tun2socks）要避开 `198.18.x`**，否则会和宿主 fake-ip / TUN 网关冲突；配置方案见 [wsl.md](wsl.md) 的“WSL 内自建 TUN 透明代理”。
 
 > **注·对 agent 工具的副作用**：fake-ip 会让某些**自己解析 DNS + 做 SSRF 判黑**的 agent 工具误伤——典型是 GitHub Copilot CLI 的 `web_fetch`：它抓任何域名都先解析成 `198.18.x`，而这段属 RFC 保留段、被判为"blocked address"直接拒（换 `redir-host` 就没事）。绕过要改源码（定点放行 `198.18.0.0/15`），机制与补丁思路见 `harness` skill 的 `web_fetch` SSRF 章节。
 
-## 11. WebRTC 泄漏：原理与 mihomo 配置
+### <a id="linux-resolved"></a>Linux systemd-resolved
+
+应用默认查询 `127.0.0.53`，resolved 再自行访问上游；loopback stub 这段不一定进入 Mihomo TUN，因此只写 `dns-hijack: any:53` 仍可能得到污染记录。需要让 Mihomo 显式监听本机 DNS 端口，再把 resolved 的全局上游指向该 listener。配置形态与验证方法见 [共享 Linux 节点的 systemd-resolved 接入](setup.md#dns)。
+
+### <a id="dns-probing"></a>探测
+
+`browserleaks.com/dns` 把自己设成被查域名的权威服务器，因此能识别实际递归解析器：
+
+1. 给每个访客一个独一无二的随机子域，例如 `7f3a9k2.dnsleaktest.browserleaks.com`。
+2. 浏览器解析它，查询最终一定到达 browserleaks 的权威服务器。
+3. 权威服务器看到是哪个递归解析器来问，并通过随机子域关联这次会话；例如它可能看到 `7f3a9k2` 来自 IP=`202.x` 的某 ISP 解析器。
+4. 如果代理出口在境外，权威服务器却看到“中国电信·杭州”一类本地解析器，DNS 就泄漏在本地。
+
+对照“是谁看到了什么”：**ISP 解析器看到“你要去哪”；域名权威服务器看到“是谁在替你问”**。browserleaks 充当后者，因此能识别 DNS 出口。
+
+`bash.ws` 是 `macvk/dnsleaktest` 的脚本化 API，适合 agent / CI 无需手点网页地运行，同样依赖“独一随机子域逼查询到权威服务器”的机制。经 mixed-port 运行：
+
+```bash
+P=http://127.0.0.1:7890
+id=$(curl -s --proxy $P https://bash.ws/id)          # 拿一次性测试 id
+for i in $(seq 0 6); do curl -s --proxy $P "https://$i.$id.bash.ws/" >/dev/null; done   # 触发权威台
+curl -s --proxy $P "https://bash.ws/dnsleak/test/$id?json"   # 读结果：权威台看到哪些解析器
+```
+
+返回中 `type:"dns"` 的条目就是权威服务器看到的解析器。全是 `nameserver` 配置的 DoH 提供商（如 Google / AS15169）、没有本地 ISP 或校园解析器，表示没有这类泄漏；出现本地 ISP 解析器则表示泄漏。bash.ws 自带的 “may be leaking” 只用“解析器 IP ≠ 出口 IP”判断，可能误报，应按是否暴露本地 ISP 解析器判断。
+
+也可经代理访问 `browserleaks.com/dns`，对照 “Found N Servers, M ISP” 和解析器列表。实测与 bash.ws 一致：解析器全为 Google DoH，ISP 标成代理落地所属网络，没有本地解析器。
+
+排障时可绕开本机 fake-ip / hijack 查看单条真实记录：
+
+```bash
+# DoH：走 443 不碰 :53，hijack 拦不到，拿到真公网解析
+curl -s "https://223.5.5.5/resolve?name=<域名>&type=A"
+# --resolve：根本不查 DNS，直接把域名钉到指定 IP（验某个后端时用）
+curl --resolve <域名>:443:<IP> https://<域名>/
+```
+
+> `dns-hijack any:53` 会把普通 `dig` / `nslookup` / `getent` / `host` 查询劫进 Mihomo，但是否返回 `198.18.x` 取决于 `enhanced-mode`。只有 `fake-ip` 才返回占位 IP，此时才需要上面两种方法取真实记录；`redir-host` / `normal` 下劫持仍在，但返回真实 IP（本机 redir-host 实测 `www.google.com`→`142.251.x`，`getent` 就是真记录）。所以这两种绕过方法主要用于 fake-ip 排障，不应把 hijack 和假 IP 混为一谈。
+
+## <a id="webrtc-leak"></a>WebRTC 泄漏
 
 WebRTC 泄漏和 DNS 泄漏**是两回事**，很多人混在一起。
 
-### 11.1 原理：浏览器自己把公网 IP 暴露出来
+### <a id="webrtc-mechanism"></a>泄漏机制
 
 网页里的 `RTCPeerConnection`（WebRTC 用于音视频/P2P）建连前要“收集 ICE 候选地址”，其中一步是**向 STUN 服务器发 UDP 探测**问“我的公网 IP 是多少”。STUN 服务器照实回它看到的来源 IP——**如果这个 UDP 没走代理，它看到的就是你真实出口 IP**。然后网页用 JS（`onicecandidate`）读到这些候选，直接显示出来。
 
@@ -669,7 +719,7 @@ WebRTC 泄漏和 DNS 泄漏**是两回事**，很多人混在一起。
 - **DNS 泄漏**：服务端（权威台）侧识破“替你查的解析器”。
 - **WebRTC 泄漏**：**你自己浏览器**里就能读到 STUN 探测回来的公网 IP——`browserleaks.com/webrtc` 就是读这些 ICE 候选，比对“WebRTC Public IP”和你的代理出口是否一致；不一致（露出真实 ISP IP）= 泄漏。
 
-### 11.2 mihomo 配置 / 浏览器策略：让 STUN 的 UDP 别走真实出口
+### <a id="webrtc-policy"></a>TUN 与浏览器策略
 
 核心思路是正向的：**保证这些 STUN/TURN 的 UDP 探测要么走代理、要么直接拒掉**，让它们拿不到你的真实 IP。在规则里精准处理常见 STUN/TURN 端口：
 
@@ -683,48 +733,9 @@ rules:
 
 这些端口只是**常见**探测端口、不是“所有 WebRTC 端口”。先精准拒这几个；若 `/connections` 里还看到新的 UDP STUN/TURN 出口，再按日志补规则。若你需要 WebRTC 能用（如开会），则改成把这些 UDP 指向代理 group 而不是 REJECT。
 
-> **关键前提：REJECT 只在流量进了 mihomo 时才拦得住。** 开了 TUN，浏览器的 STUN UDP 被透明接管进 mihomo，上面的 REJECT 才生效；**只用 mixed-port（HTTP/SOCKS 代理）、没开 TUN 时，浏览器默认直接发 STUN 的 UDP、根本不经过 mihomo**，这些 REJECT 形同虚设、WebRTC 照样泄漏真实 IP（实测见 [§12.2](#122-webrtc-泄漏怎么测)）。no-TUN 场景只能靠浏览器侧堵：Chromium 加 `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`，Firefox 设 `media.peerconnection.ice.proxy_only=true`（或干脆 `media.peerconnection.enabled=false` 关掉 WebRTC）。
+> **关键前提：REJECT 只在流量进了 Mihomo 时才拦得住。** 开了 TUN，浏览器的 STUN UDP 被透明接管进 Mihomo，上面的 REJECT 才生效；只用 mixed-port（HTTP / SOCKS 代理）、没开 TUN 时，浏览器默认直接发送 STUN UDP，根本不经过 Mihomo，这些 REJECT 形同虚设，WebRTC 仍会泄漏真实 IP。实测见 [WebRTC 探测](#webrtc-probing)。no-TUN 场景只能靠浏览器侧阻断：Chromium 加 `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`，Firefox 设置 `media.peerconnection.ice.proxy_only=true`，或用 `media.peerconnection.enabled=false` 关闭 WebRTC。
 
-## 12. 探测与验证 DNS / WebRTC 泄漏
-
-两类泄漏的**探测方法**集中放这儿（探测时顺带大致回顾原理）：DNS 靠“独一随机子域逼查询走到权威台”识破替你查的解析器，WebRTC 靠读 ICE 候选里的 `srflx` 看 STUN 拿到的出口 IP。
-
-### 12.1 DNS 泄漏怎么测：browserleaks / bash.ws + 排障
-
-**`browserleaks.com/dns` 凭什么知道你 DNS 泄漏？** 它把自己设成了“被查域名的权威总台”：
-
-1. 给你一个**独一无二的随机子域**，如 `7f3a9k2.dnsleaktest.browserleaks.com`（每个访客不同）。
-2. 你的浏览器解析它 → 世界上只有 browserleaks 的权威服务器知道这个怪名字 → 查询**一定层层转到它的总台**。
-3. 总台看到“`7f3a9k2` 是从 IP=202.x（某 ISP 的解析器）来问的” → 于是知道你**实际用的解析器是谁、在哪个运营商/国家**，并靠那个专属随机名跟你这次会话对上号。
-4. 判定：你挂着境外节点、却被发现解析器在“中国电信·杭州” → DNS 漏在了本地。
-
-对照“是谁看到了什么”：**ISP 解析器看到「你要去哪」；域名权威台看到「是谁在替你问」**。browserleaks 故意当后者，所以能识破 DNS 出口。
-
-**可脚本化自测（`bash.ws`，给 agent / CI 跑、不用手点网页）**：`bash.ws` 是 `macvk/dnsleaktest` 那套 DNS-leak 测试的 API，同样靠"独一随机子域逼查询走到它权威台"的原理。经代理（mixed-port）跑一遍：
-
-```bash
-P=http://127.0.0.1:7890
-id=$(curl -s --proxy $P https://bash.ws/id)          # 拿一次性测试 id
-for i in $(seq 0 6); do curl -s --proxy $P "https://$i.$id.bash.ws/" >/dev/null; done   # 触发权威台
-curl -s --proxy $P "https://bash.ws/dnsleak/test/$id?json"   # 读结果：权威台看到哪些解析器
-```
-
-判读：返回里 `type:"dns"` 的条目就是权威台看到的解析器。**全是你 `nameserver` 配的 DoH 提供商（如 Google/AS15169）、零个本地 ISP/校园解析器 = 不漏**；冒出一个中国 ISP 解析器 = 漏。（注：bash.ws 自带的 "may be leaking" 结论是"解析器 IP≠出口 IP 就报漏"的朴素启发式，会误报；按"有没有暴露 ISP 解析器"自己判更准。）
-
-**也可直接访问 `browserleaks.com/dns` 页面交叉验证**（经代理加载、读页面的 "Found N Servers, M ISP" + 解析器列表）——实测和上面 bash.ws 结论一致：解析器全 Google DoH、ISP 标成代理落地的那家，无本地解析器。
-
-**排障时怎么看单条真实记录**（绕开本机 fake-ip/hijack 的两招）：
-
-```bash
-# DoH：走 443 不碰 :53，hijack 拦不到，拿到真公网解析
-curl -s "https://223.5.5.5/resolve?name=<域名>&type=A"
-# --resolve：根本不查 DNS，直接把域名钉到指定 IP（验某个后端时用）
-curl --resolve <域名>:443:<IP> https://<域名>/
-```
-
-> `dns-hijack any:53` 会把普通 `dig`/`nslookup`/`getent`/`host` 的查询都劫进 mihomo——**但回不回假 `198.18.x` 取决于 `enhanced-mode`**：只有 `fake-ip` 才回占位 IP（此时才需要上面两招绕开拿真实记录）；`redir-host`/`normal` 下劫持仍在、回的却是**真实 IP**（本机 redir-host 实测 `www.google.com`→`142.251.x`，`getent` 就是真记录、两招用不着）。所以这两招是 **fake-ip 专属**的排障手段，别默认 hijack 机器一定回 198.18.x。
-
-### 12.2 WebRTC 泄漏怎么测
+### <a id="webrtc-probing"></a>探测
 
 **用运行态连接验证**
 
@@ -762,33 +773,31 @@ await pc.setLocalDescription(await pc.createOffer())   // 等几秒收集完
 > | Camoufox（反检测）+ proxy | mixed-port、TUN 关 | **代理出口 IP（spoof）** | 不漏 |
 > | Camoufox | TUN 开 | 空 | 不漏 |
 >
-> 坐实 [§11.2](#112-mihomo-配置--浏览器策略让-stun-的-udp-别走真实出口)：no-TUN 下 mihomo 的 UDP-REJECT 拦不到浏览器 STUN（那条 UDP 压根不进 mihomo）。防泄漏三条路任选其一：① **TUN** 网络层兜底；② **浏览器策略**（Chromium flag / Firefox `media.peerconnection.ice.proxy_only`）；③ **反检测浏览器**（camoufox 默认把 WebRTC 出口 spoof 成代理 IP，连 flag 都不用——这正是 browser-use 之类用 camoufox 做 stealth 的原因）。OS 防火墙禁非代理 UDP 也算。**TUN 不是唯一解。**
+> 这组结果验证了 [TUN 与浏览器策略](#webrtc-policy)：no-TUN 下 Mihomo 的 UDP-REJECT 拦不到浏览器 STUN，因为那条 UDP 根本没有进入 Mihomo。防泄漏有三条路：TUN 网络层兜底；浏览器策略（Chromium flag / Firefox `media.peerconnection.ice.proxy_only`）；反检测浏览器（camoufox 默认把 WebRTC 出口 spoof 成代理 IP，这也是 browser-use 一类自动化使用 camoufox 做 stealth 的原因）。OS 防火墙禁止非代理 UDP 也可达到相同目标。**TUN 不是唯一解。**
 
 也可经代理**直接访问 `browserleaks.com/webrtc` 页面交叉验证**：默认 Chromium + no-TUN 下，该页 "Public IP Address" 显示的就是 srflx 那个真实公网 IP，并直接标 `WebRTC IP doesn't match your Remote IP` 判为漏——与上面自写 STUN 探针结论一致。
 
----
+## <a id="field-observations"></a>现场观察
 
-# 附录：实测封锁记录（field observations，归因多未坐实）
+> 本节只记录代理技术侧的封锁现象、尚未坐实的协议 / 技术归因，以及对照实验与缓解。每台机器的规格、IP、延迟、被墙时间线、换 IP 操作与费用属于运营事实，见 `vps-maintenance` skill 的 `vps-quality`“历史服务器信息”主题。样本都很小，归因一律标为“未坐实”，只供后续对照。
 
-> **本附录只放“梯子 / 技术侧”**：被墙**现象** + **协议 / 技术归因**（未坐实）+ **对照实验与缓解**。每台机器的**规格 / IP / 延迟 / 被墙时间线 / 换 IP 操作与费用**属运营事实，见 `vps-maintenance` skill 的 `vps-quality`「历史服务器信息」（A=RackNerd、B=LisaHost）。样本都很小，归因一律标“未坐实”，只作下次对照。
+### <a id="single-ip-block"></a>单 IP 屏蔽
 
-## A. 落地 IP 被大陆精准屏蔽（RackNerd，长期跑 Hysteria2，2026-06-08）
-
-RackNerd（海外 VPS）的 Hysteria2 主节点跑一段时间后，某天起从**大陆任何出口**对这台 IP 的任何端口（22/443/ICMP）全 timeout，而**同 /24 邻居 IP 正常**、境外多地探测全通、VPS 本机服务健康——形态像“大陆精准屏蔽这一个 IP”。
+RackNerd（海外 VPS）的 Hysteria2 主节点运行一段时间后，自 2026-06-08 起从**大陆任何出口**访问这台 IP 的任何端口（22 / 443 / ICMP）都 timeout，而同 `/24` 邻居 IP 正常、境外多地探测全通、VPS 本机服务健康，形态像“大陆精准屏蔽这一个 IP”。
 
 > **可能原因（未验证）**：QUIC over UDP 单 IP 持续大流量是 GFW 主动探测的特征之一；落地 IP 注册了公开域名长期暴露；也可能是机房 IP 段整体波及、与协议无关。
 
 **后续（2026-06-27 更新）**：没迁协议、没换机器，只**付费给这台 VPS 换了一个 IP**（换 IP、Hysteria2 照跑）。换 IP 后短期内（截至更新日）未再复现被墙，至今仍在日常使用该 Hysteria2 节点。→ 单 IP 换干净就恢复、协议没动也没事，**更像“那个具体 IP 被点名”而非“Hysteria2/QUIC 协议特征触发”**；但样本只一次、观察窗口短，归因仍未坐实。（这台机器的规格 / IP / 延迟明细见 `vps-maintenance` skill 的「历史服务器信息」。）
 
-## B. 长期稳定的 vless 节点被墙（LisaHost，2026-06-25）
+### <a id="long-lived-node-block"></a>长期节点屏蔽
 
 LisaHost（海外住宅 IP VPS）上**长期稳定使用**的 vless(+ws+TLS) 节点，于 2026-06-25 起被墙。值得注意：这是 **TCP 系 vless、不是 QUIC/Hysteria2**，且已长期暴露使用——说明封锁不限于 QUIC/UDP 那一类特征，长期暴露的 TCP+TLS 节点同样会中招。
 
 > **归因（未坐实）**：长期固定的域名 / 落地 IP / vless+ws-over-TLS 的流量指纹长期暴露都可能是诱因。
 
-## C. RackNerd 新 IP 仅部分源网络不可达（2026-07-13）
+### <a id="source-network-failure"></a>源网络相关不可达
 
-现象：主选择器切到 RackNerd 的 vless+ws 节点后，新建的 `curl -I https://api.github.com` 先收到本地 Mihomo 的 `200 Connection established`，随后报 TLS `unexpected eof`；同一落地的 Hysteria2 节点也失败。与此同时，已经运行的 Codex 仍能继续交互。
+2026-07-13 的现象：主选择器切到 RackNerd 的 vless+ws 节点后，新建的 `curl -I https://api.github.com` 先收到本地 Mihomo 的 `200 Connection established`，随后报 TLS `unexpected eof`；同一落地的 Hysteria2 节点也失败。与此同时，已经运行的 Codex 仍能继续交互。
 
 分层实测：
 
@@ -799,7 +808,7 @@ LisaHost（海外住宅 IP VPS）上**长期稳定使用**的 vless(+ws+TLS) 节
 
 结论：这次不是“WebSocket 协议能穿过坏节点”，也不能简单归为落地全局被墙；证据只支持**当前源网络到 RackNerd 的双向路径或源地址策略有问题**。要继续区分“客户端/中间上游没把 SYN 送到”与“RackNerd/抗 DDoS 收到后按源丢弃”，决定性实验是在落地同时抓 `tcpdump`：看当前公网源 IP 的 SYN 是否到达、SYN-ACK 是否发出。没有服务端抓包前，归因保持未坐实。
 
-## 通用对照实验与缓解
+### <a id="field-mitigation"></a>对照实验与缓解
 
 - **对照实验**：停掉对应监听等 24~72h 看 IP 是否恢复（恢复=支持“代理流量触发”假设）。
-- **缓解**：从大陆侧 ssh 改 `ProxyJump` 经境外不受影响的跳板；彻底解决换 IP（A 已验证有效）+ 换域名，或把协议迁到 Reality 这类更强 fingerprint masking 的方案。
+- **缓解**：从大陆侧 ssh 改 `ProxyJump` 经境外不受影响的跳板；彻底解决可换 IP（单 IP 屏蔽案例已验证有效）并换域名，或把协议迁到 Reality 这类更强 fingerprint masking 的方案。
