@@ -103,8 +103,9 @@
 
 本 skill 的"多源交叉 + 揪压栈遗漏"范式不是凭空设计的，是从用户历史会话里挖出来的。下次要扩展 / 复刻这套方法（或给别的 agent 套同样的路子），照这条路走：
 
-1. **`/chronicle search` 先试，但别死磕**——云端 store 会连续 `query timed out`，试几次不通就迅速放弃，别在它上面耗。
+1. **一律本地检索，别碰云端**——用 `chronicle search "<关键词>" --session <id>`（或跨会话 `chronicle search "<关键词>"`）在本机 events.jsonl 上搜；要 SQL 就 `session_store_sql` 只用 `source:"local"`。**不要用云端会话 store**（会连续 `query timed out`，且会话本就不该出本机）。
 2. **直接 SQL 本机 `~/.copilot/session-store.db`（`mode=ro` 只读打开）**——这才是可靠信源；注意 live 会话最近 1~2 个 turn 还没 flush，最后一轮可能读不到。
 3. **关键词两遍走**：先**宽**（"承诺/遗漏/没做/收尾"）会拿到几百条噪音；再**收严**（"回顾本/我说过的话/聊过但/本 session/关掉你"）收到上百条——**严的这遍是关键**。用户最稳定的高频信号是「我要把你关掉了，还有什么没做的」+「回顾本 session 我说过的话看看漏了什么」。
 4. **读代表性会话里 agent 的回答**，找出用户反复点赞的范式（做过 / 聊过但没做 / 踩坑 / 安全交代）——就是上面几个范例的出处。
 5. **dump 当前 live session 验证 schema**——会发现 `turns` 表只有 user/assistant 文本，而完整时间线（工具调用 / reasoning / 通知）在 `~/.copilot/session-state/<id>/events.jsonl`。**直接看 events.jsonl，别只读 `turns` 表**——这是花了最久才意识到的一点，可以省掉。
+   - **ask_user / 选择题的回答不是 `user.message`**，而是 `tool.execution_complete`（按 `toolCallId` 配对 start，答案在 `data.result.content` 的 `User selected/responded:`）。只数 `user.message` 必漏掉选择型决策。`chronicle` 现在把它抽成一等 `user/decision` 条目（`--format dialogue` 直接带上）；DB-only 会话（只有 `turns` 表）**无法**恢复这些决策。
