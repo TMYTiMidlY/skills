@@ -619,7 +619,7 @@ func (h *ListenerHandler) ShouldHijackDns(targetAddr netip.AddrPort) bool {
 - **`fake-ip`**：真解析**推迟到连接时、走代理链路**，冷门境外域名的解析在**境外**完成。
 - 两者都**不暴露本地 ISP 明文解析器**（dns-hijack + DoH 该拦的都拦了）；差别只在“未分类冷门域名的解析交给境内还是境外 DoH”。想让 `redir-host` 也走境外，把域名纳入 `geosite:geolocation-!cn` 或调 `nameserver-policy`。
 
-### 10.2 mihomo 配置：防泄漏 + 分流准 + 防污染
+### <a id="linux-dns"></a>10.2 mihomo 配置：防泄漏 + 分流准 + 防污染
 
 防泄漏 + 分流准 + 防污染的一套：
 
@@ -649,6 +649,8 @@ dns:
 ```
 
 要点：`dns-hijack any:53` 堵住泄漏闸门；`fake-ip` 给快且准的分流；`nameserver` 用 **DoH/DoT** 让“上游解析”这步也加密、并配合 `respect-rules` 走代理出去——这样 ISP 既看不到你的明文查询，也截不到上游往哪查。`fake-ip-filter` 里的 `skipper`（源码 `component/fakeip/skipper.go`）让排除的域名走真解析，避免坏掉 ping、局域网设备、按 IP 比对的软件。
+
+> **Linux 宿主的 `systemd-resolved` 边界（实测）**：应用默认查询 `127.0.0.53`，resolved 再自行访问上游；loopback stub 这段不一定进入 Mihomo TUN，因此只写 `dns-hijack: any:53` 仍可能得到污染记录。需要让 Mihomo 显式监听本机 DNS 端口，再把 resolved 的全局上游指向该 listener。配置形态与验证方法见 [共享 Linux 节点的 DNS 接入](setup.md#dns)。
 
 > **注·与 WSL 的边界**：这个 `198.18.0.1/16` 是宿主自己的 fake-ip 段（TUN 默认网关 IP 也取自此值）。**WSL 内自建 TUN（tun2socks）要避开 `198.18.x`**，否则和宿主 fake-ip / TUN 网关撞——见 [wsl.md](wsl.md#方案-bwsl-内自建-tun-透明代理tun2socks)「方案 B：WSL 内自建 TUN 透明代理」。
 
