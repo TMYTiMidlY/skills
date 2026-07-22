@@ -27,7 +27,7 @@ async function saveLogin(client, user, configDir, opts){
 
 📖 app.js `1.0.72-1`（闭源 bundle，无公开源码仓可链）。稳定字面量锚点：`COPILOT_GITHUB_TOKEN`、`storeCurrentTokenInConfig`、`authFindClassicPatEnvVar`、`"System keychain unavailable. Store token in plaintext config file?"`、`"the token was not saved"`。
 
-🔬 一台以 headless SSH 会话登录的桌面机上，keychain 不可用 → 走了明文兜底，`config.json` 里出现：
+🔬 一台桌面机上实测：gnome-keyring 守护进程在跑、`org.freedesktop.secrets` 也可达，但从非图形会话（SSH / web 终端）看，`login`（默认）collection 是**锁定**的（`busctl --user get-property org.freedesktop.secrets /org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked` → `b true`）——非图形登录没有 PAM 自动解锁。往锁定的 keyring 写会失败，copilot 遂走[明文兜底](#cli-storage)（这条还需 TTY + 手动同意），`config.json` 里于是出现：
 
 ```jsonc
 { "copilotTokens": { "https://github.com:<login>": "gho_…(40 char 明文)" },
@@ -36,7 +36,7 @@ async function saveLogin(client, user, configDir, opts){
 
 ## <a id="reuse"></a>跨机 / 跨用户复用 Copilot 登录
 
-- **交互登录的凭据基本搬不动**：桌面上它在**每用户的 secret-service keyring** 里，按该用户登录密码加密；headless / 服务环境 keyring 又常锁着。把 A 用户的 keyring 拷给 B 用户解不开。
+- **交互登录的凭据基本搬不动**：桌面上它在**每用户的 secret-service keyring** 里，按该用户登录密码加密；非图形会话（SSH / web 终端）里该 keyring 常处于**锁定**态（🔬 实测 `login` collection `Locked=true`，无 PAM 自动解锁），既读不出也写不进。把 A 用户的 keyring 拷给 B 用户也解不开。
 - **`config.json` 里的明文 token 理论可搬**，但它只在[明文兜底](#cli-storage)触发时才存在（有 TTY + 手动同意，或 headless 且 keychain 不可用那条）。
 - **可移植正路 = 环境变量 token**：鉴权绑的是 **GitHub 账号 + Copilot 席位**，不绑 Linux 用户 / 机器。给目标环境注入即可非交互登录成同一账号：
 
