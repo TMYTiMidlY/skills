@@ -14,7 +14,7 @@ description: 会话收尾盘点——把你聊过/承诺过、却被后续任务
 你当前的上下文是**有损**的：长会话早期对话被压缩，用户某句"顺便把 X 也改了"可能已经不在你视野里。所以单一信源都不够，必须**多源交叉**：
 
 1. **本 session 的原始 turns / 事件流**（最重要）——回读本机 session 状态目录里的存档，逐条看用户**实际说过的每一句话**，而不是你记得的版本。这是唯一能抓出"压栈遗忘"项的办法。
-   - 用 `scripts/` 里的 dump 脚本（按需 `--format text` 通读、`--format html` 留档）拉出全部条目。
+   - 用 `recall show <id> --format text` 通读全部条目（`recall` = `agent-session-exporter` 仓库的 CLI，见下「可选输出」）。
    - **session id 永远用 system prompt 给的 session 文件夹名**（即 `~/.copilot/session-state/<id>/` 里的 `<id>`），**不要追着对话里出现的别的 id 跑**——对话里经常会出现历史会话 id、文件名里的 id 等，那些不是当前会话。这是高频踩坑点。
    - ⚠️ live store 滞后最近一两个 turn，最新一轮可能还没落库——这部分用你自己的上下文补。
 2. **plan.md 与 todos**——session 文件夹下的 plan.md、SQL `todos` 表里没标 done 的项。
@@ -25,7 +25,7 @@ description: 会话收尾盘点——把你聊过/承诺过、却被后续任务
 
 ## 工作流程
 
-1. **先 dump 原始对话**：跑 `scripts/` 里的 dump 脚本通读用户的每一条消息。逐条问自己："这件事最后做了吗？做完整了吗？还是被后面的任务压下去忘了？"
+1. **先 dump 原始对话**：跑 `recall show <id> --format text` 通读用户的每一条消息。逐条问自己："这件事最后做了吗？做完整了吗？还是被后面的任务压下去忘了？"
 2. **交叉核对状态**：对照 plan.md / todos / `git status` / 文件系统 / 远端，确认每件"自以为做完"的事**真的**落地了。
 3. **grep 验证关键承诺**：凡是"实现了某功能"的结论，回去 `grep` 确认代码/配置真的存在、真的生效，不要只凭你说过"我改好了"。
 4. **按下面的范式输出盘点报告**。
@@ -57,22 +57,21 @@ description: 会话收尾盘点——把你聊过/承诺过、却被后续任务
 
 ## 可选输出
 
-- **报告式 HTML 存档**：用户想要可视化留档 / 把会话过程交给别人时，用 `scripts/` 里的 dump 脚本（自身用 `uv run` 跑、PEP723 内联依赖）生成单文件 HTML。
-  - 数据源是 `~/.copilot/session-state/<id>/events.jsonl`（缺失时回退到 `session-store.db` 的 `turns` 表，header 显示警告）——它是 Copilot CLI 自带 `/share html`（别名 `/export`）所导**同一份事件流的落盘形式**（注意：`/share` 实际渲染的是 live 会话的内存 timeline、**不是**这个文件，见下条"内存 vs 落盘"）。所以能还原**完整时间线**：用户消息 / 助手回答 / 推理（reasoning） / 工具调用（按 `callId` 合并 start+complete） / 通知 / 信息 / 错误 / 会话压缩（含注入新窗口的 summary + token 统计） / 任务完成 / 子代理（`subagent.started`+`completed` 按 `toolCallId` 合并成一条，带模型·工具调用数·tokens·耗时） / 技能调用 / 计划变更等 entry 类型——其中**子代理 / 技能 / 计划变更超出官方 `/share html`**（官方只渲染到"错误"及压缩/任务完成那几类），是本 skill 额外从 events.jsonl 补出来的。
-  - **内存 vs 落盘：官方 `/share html` 读的是内存 timeline，不是 events.jsonl（已对 bundle 逆向核实）**。命令实现是 `session.getTimelineEntries()` 取内存条目数组直接喂给 HTML 生成器（数组空了就报 `The session is empty.`）；events.jsonl 只是**持久化层**——会话中 append、resume 时读回、compaction 时按 event id 截断。live 里那条 timeline 是运行时一路 `addTimelineEntry` 攒出来的。**离线复刻拿不到这个内存 timeline，只能自己从 events.jsonl 把 event→entry 映射重跑一遍**——所以**少一个映射分支 ＝ 那类条目被静默丢掉**（哪怕对应渲染器/pill 都在也白搭；这正是本 skill 曾漏渲 compaction/task_complete 的根因）。两个已核实的推论：① 官方 exporter 的筛选 pill 是**写死的 12 类**（user/copilot/tool/reasoning/info/warning/error/group/notification/handoff/compaction/task_complete），**不含 subagent/skill/plan**——证实这三类是本 skill 自己补的；② `assistant.message.reasoningText` 在 live 只作为模型上下文块回传、**不进 timeline**，故官方导出 0 条 reasoning，而本 skill 额外把它拆成 reasoning 条目。
-  - 视觉**照搬 `/share html`**：暗色 GitHub(Primer) 主题、sticky header、按类型筛选 pill、搜索（`/` 聚焦）、折叠/展开、侧栏目录、上一条/下一条用户消息跳转。CSS/JS 来自从 `@github/copilot` 包里抽出的资产；标签汉化但 `data-type` 保持英文（JS 过滤靠它）。助手消息按 markdown 渲染、用户消息转义。
-  - **想在报告顶部钉 agent 总结**：把"做过的事 / 承诺未做"等盘点写成 HTML 片段文件（`<h3>`/`<ul>` 等简单标签即可，精炼别太详），用 `--summary <片段.html>` 注入。总结条目**钉在编号之外**（`data-index="summary"`），真实 #1 仍是真实第一条事件；同时多一个 `总结` 筛选 pill。
-  - **两条渲染路径并存**（视觉不同，按场景选）：
-    - **vanilla**（`scripts/dump_session.py <sid> --format html [--summary 片段.html] [--out out.html]`）：纯 Python 拼字符串、复刻 `/share html` 视觉、~1MB、**零构建**（只需 `uv`）。要快、要轻、要和 share 一致时用。⚠️ **脚本默认 `--format text`（纯文本通读用，给上面"先 dump 原始对话"读条目）；要 HTML 视觉必须显式 `--format html`**——只把输出名写成 `x.html`、不加 `--format html`，写出来的其实是纯文本（曾踩坑：产物几 KB、无内联 CSS/JS、筛选 pill 全无）。也可用 `--events <路径>` 指定任意 events.jsonl（如从备份 restore 出来的）。
-    - **React**（`scripts/build_react_report.sh <sid> [out.html] [--summary 片段.html]`）：Vite 打包成单文件、shadcn 风卡片 + lucide 图标 + Shiki 高亮，外加 vanilla 没有的三样：**紧凑密度切换**（header 按钮，状态存 localStorage）、**LaTeX**（KaTeX，行内 `$x$` + 块级 `$$…$$`，仅作用于助手 markdown 消息）、**summary 按 HTML 原样渲染**。代价：需 `pnpm build`（首次自动 `pnpm install`），产物 ~3MB / gzip ~1.4MB（KaTeX 字体 base64 内联占大头）。要精致视觉 / 会话里有数学公式时用。
-    - 两条**共用同一数据层**：React 端只消费 `export_session_json.py` 出的 agent-neutral JSON，**绝不**自己解析 events.jsonl（解析只在 `dump_session.py` 里做一次）。`--summary` 注入的总结条目两边都**钉在编号之外**（`data-index="summary"`），真实 #1 仍是真实事件。
-  - **离线注定补不到的几类**：mascot 启动 banner（`Tip: /cwd` 这类）、`/share` 命令自产回执（`Session shared successfully to: ...`）、ephemeral retry 提示——它们**只活在 live session 内存**里、从不写盘。share 在 live 时能有，离线 dump 没有，这是事实差。
-  - **维护责任**：`assets/share-export.{css,js}` 是从 `@github/copilot` 包里抽出来的资产，会随 Copilot CLI 升级**过期**（GitHub 团队加新 entry 类型 / 改 Primer 主题色 / 调按钮 ID 之类）。每次 Copilot CLI 出明显的视觉或 `/share html` 行为升级，要跑一次 `scripts/` 内的资产抽取脚本重抽，diff `assets/` 看变化——具体怎么用见 `assets/README.md`。
+- **报告式存档（导出 HTML / Markdown / 文本 / JSON）**：用户要可视化留档 / 把会话交给别人时，用 **`recall`**（`agent-session-exporter` 仓库的 CLI）导出。本 skill **不再自带渲染器**——同一套解析+渲染逻辑只在 `recall` 里维护一份。
+  - 首次在本机准备：clone `TMYTiMidlY/agent-session-exporter`，`pnpm install && pnpm build`（要全局命令就再 `pnpm --filter @agent-session-exporter/cli exec npm link` 装出 `recall`；否则用 `node packages/cli/dist/index.js …`）。之后直接调。
+  - **单文件 HTML**（复刻 Copilot `/share html`：暗色 Primer 主题、sticky header、按类型筛选 pill、搜索（`/` 聚焦）、折叠/展开、侧栏目录、上一条/下一条用户消息跳转，外加 Shiki 高亮、KaTeX 数学、紧凑密度切换、24h 时间戳）：
+    `recall html <session-id> -o out.html`
+    从任意 events.jsonl（如 restic 备份 restore 出来的）导：`recall html --file <路径> -o out.html`。
+  - **Markdown**（字节级复刻 `/share file`）：`recall md <session-id> -o out.md`。
+  - **纯文本通读 / 结构化 JSON**：`recall show <id> --format text|json`。text 已含工具参数+结果、子代理/技能/计划/压缩统计，适合上面「先 dump 原始对话」逐条通读。
+  - **顶部钉 agent 总结**：把盘点写成片段文件用 `-s` 注入——`recall html <id> -s 总结.html`（HTML 片段）/ `recall md <id> -s 总结.md`（Markdown）。⚠️ 两种格式**不能混用同一文件**（html 要 HTML、md 要 Markdown），必要时看 `--summary-format`。总结条目钉在编号之外（`data-index="summary"`），真实 #1 仍是真实第一条事件。
+  - **覆盖的 entry 类型**：user / assistant / reasoning / tool（按 callId 合并 start+complete） / notification / info / warning / error / compaction（含注入摘要 + token/消息/耗时统计） / task_complete / **subagent / skill / plan**（后三类超出官方 `/share html`，是 recall 额外从 events.jsonl 补的）。`events.jsonl` 缺失（老会话被 prune）时用 `--copilot-db <session-store.db>` 从 `turns` 表回退（lossy，header 标警告）。
+  - **为什么导出 = 离线复刻**：官方 `/share html` 渲染的是 live 会话的**内存 timeline**、不是 `events.jsonl`；离线只能从 `events.jsonl` 把 event→entry 映射**重跑一遍**——**漏一个映射分支＝那类条目被静默丢掉**。完整逆向笔记见 exporter 仓库 `docs/copilot-timeline.md`。**session-id 永远用 `~/.copilot/session-state/<id>/` 的文件夹名**，别追对话里出现的其它 id（高频踩坑）。
 - **正式交接文档**：若用户明确要"交接给下一个 agent / 写 handoff"，结合 `plan` skill（写给实施者的自包含正式文档）或仓库自带的 handoff 流程，不要在本 skill 里重造。
 
-## 待办（后续扩展）
+## 关于导出工具
 
-- **支持 Claude Code 和 Codex 的会话导出**：当前数据层硬绑 Copilot CLI（`~/.copilot/session-state/<id>/events.jsonl` 的 schema）。Claude Code 存档在 `~/.claude/projects/*.jsonl`、Codex 在 `~/.codex/sessions/` 各有各的格式。下一步是把 events.jsonl 解析抽象成"数据源接口"，再补两个 adapter（claude-code / codex），让 recap 三家通吃。**渲染层两条路都已 agent-neutral**：vanilla 的 CSS/JS + entry DOM + 筛选 pill、React 的组件层都只消费中间形态（events.jsonl 解析结果 / `export_session_json.py` 出的 JSON），所以做完数据源抽象后**两条渲染路径都不用动**。
+导出（HTML / Markdown / 文本 / JSON）已全部交给 `agent-session-exporter` 仓库的 `recall` CLI，本 skill 只负责盘点方法论 + 调用它。多 agent 支持（Claude Code / Codex）、从 restic 备份缓存搜索等能力都在那个仓库里演进，见其 README 与 `docs/`。
 
 ## 边界
 
