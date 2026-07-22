@@ -971,4 +971,4 @@ CSS 和 JS 在 bundle 里都是模板字符串字面量。源码层每个反斜�
 
 ### 离线复刻参考实现
 
-`dredge-up` skill（`skills/.curated/dredge-up/`）已经基于上述逆向做了一份**离线**复刻——从 `events.jsonl` 重建时间线、复刻同款 entry DOM、复用 share 抽出的 CSS/JS，并加了 agent 总结注入。要做"离线把会话存档成 HTML"这件事直接用它，不要重新逆向。
+`dredge-up` skill 已经基于上述逆向做了一份**离线**复刻——从 `events.jsonl` 重建时间线、复刻同款 entry DOM、复用 share 抽出的 CSS/JS，并加了 agent 总结注入。要做"离线把会话存档成 HTML"这件事直接用它，不要重新逆向。
