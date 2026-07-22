@@ -325,11 +325,13 @@ keybinds {
 
 > 实务：给 Web 端加 `Alt u`/`Alt d` 这类 `keybinds` 改动属于 ①，**不用重启 service**——在跑着多个 agent 会话的机器上尤其重要（重启会连坐杀掉 cgroup 内所有会话和 agent，见上「作为后台服务运行」的 `KillMode` 说明）。直接在 Web 里新建一个 session 即可用上新键位，老会话保持不动。只有改「监听端口 / 证书 / IP」或「`web_client` 浏览器外观」才必须重启。
 
-## pane 大小相关的操作（全屏 / resize / stacked_resize）
+## pane 大小相关的操作（全屏 / resize / stacked_resize / 边框留白）
 
-zellij 中几个改变 pane 大小 / 占比的操作，均为 **默认（mode 键位）** 行为；键位引自 `0.44.x` 默认配置 `zellij-utils/assets/config/default.kdl`，都是 toggle 或可逆操作，pane 内容不会丢。
+zellij 中几个改变 pane 大小 / 占比 / 边框显示的操作，均为 **默认（mode 键位）** 行为；键位引自 `0.44.x` 默认配置 `zellij-utils/assets/config/default.kdl`，都是 toggle 或可逆操作，pane 内容不会丢。
 
 - **`Ctrl p` 进 pane 模式 → `f`：聚焦全屏（`ToggleFocusFullscreen`）**。把当前 pane 临时铺满整个 tab、隐藏其余 pane（不是关闭，数据都在），状态栏显示 `FULLSCREEN`；再按一次 `Ctrl p` `f` 还原。（`default.kdl`：`Ctrl p`→Pane 在 206 行，pane 模式 `f` 在 35 行。tmux 兼容模式 `Ctrl b` 然后 `z` 同效，166 行。）
+
+- **`Ctrl p` 进 pane 模式 → `z`：切换 pane 边框（`TogglePaneFrames`）**。开关所有 pane 的边框；那圈边框同时充当窗格四周的留白，**关掉后内容贴边、左右不再留白**——常见误触是想按别的 pane 键时手滑到 `z`。再按一次 `Ctrl p` `z` 即恢复。想让新会话默认带边框，在 `config.kdl` 顶层写 `pane_frames true`——本就是默认值（`dump-config` 里以注释 `// pane_frames true` 形式给出），它只定会话初始态，当前会话仍随时可用 `z` 临时切换。注意别和上一条混淆：pane 模式 `z` = 边框开关，而 tmux 兼容模式 `Ctrl b`→`z` = 全屏。（`0.44.3` `zellij setup --dump-config`：pane 模式 `z` 在 36 行、`Ctrl p`→Pane 在 206 行、`pane_frames` 默认注释在 284 行。）
 
 - **`Ctrl n` 进 resize 模式 → 方向键 / `h j k l` / `+ - =`：调整当前 pane 大小**。方向映射是 **`h/j/k/l` = 左/下/上/右**（方向键同理），表示朝该方向 Increase；大写 `H/J/K/L` 表示朝左/下/上/右 Decrease。这些**带方向**的操作每按一步移动分隔线 **5%**（源码 `pub const RESIZE_PERCENT: f64 = 5.0`，`zellij-server/src/panes/tiled_panes/tiled_pane_grid.rs:18`），压到边界就停。`=`/`+` = 无方向 Increase、`-` = 无方向 Decrease；默认开启 `stacked_resize` 时走下面单独的自动堆叠算法，不是同一套 5% 定向 resize。`Ctrl n` 再按一次退出模式。（`default.kdl` 12–21 行；`Ctrl n`→Resize 在 209 行。）
 
