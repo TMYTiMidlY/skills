@@ -260,6 +260,42 @@ test "$ok" -eq 1
 
 项目树另做 `rsync -n`/文件数/体积/硬链接/软链接基线；对可疑单文件再用 checksum。会话数据与项目树两边都过关，才进入删源阶段。
 
+## <a id="resume-history-visibility"></a>resume 后的历史可见性（落盘、内存、TUI、模型上下文）
+
+resume 后终端“只看到一点历史”不等于迁移丢数据。至少分清四层:
+
+| 层 | 真正回答的问题 | 判据 |
+|---|---|---|
+| `events.jsonl` 落盘事件链 | 原始会话事实还在不在 | JSON 全可解析、首条 `session.start`、ID 唯一、单根、所有 `parentId` 可解析、时间范围覆盖源会话 |
+| resume 后内存 events/timeline | CLI 有没有读进来 | 新追加的 `session.resume.data.eventCount / eventsFileSizeBytes` 与 resume 前文件数量/大小相符 |
+| TUI 终端渲染 | 屏幕能向上看到多少 | 受过滤、折叠、终端宽度换行和硬行数上限影响 |
+| 模型上下文 | agent 当前真正能引用多少旧内容 | 受 context window、resume 重建策略、compaction/summary 影响；与 TUI、落盘文件都不是一回事 |
+
+### TUI 的渲染行上限
+
+Copilot CLI 1.0.73 的终端 renderer 里 `uZe=5e3`；`cZe(...)` 渲染完 timeline 后若超过 5000 行，就对 `lines / softWrapRows / contentSpans` 一起从开头 `slice(I)`，并把省略量记为 `droppedFromStart` 📖。这是**渲染行**而非 event 数:Markdown、工具输出和窄终端换行都会迅速吃完 5000 行，所以数 MB 的长会话 resume 后通常只显示尾段。
+
+`Ctrl+O` 的官方快捷键说明是 `toggle all timeline`:它切换 timeline 类型/折叠可见性，但不会取消 `cZe` 的 5000 行上限 📖。PageUp 也无法找回已经从当前 render buffer 开头切掉的行。
+
+想看全历史有两条不受 TUI 行数限制的路:
+
+- `/share html` 从 `session.getTimelineEntries()` 取完整内存 timeline，再交给 HTML exporter，不走终端 5000 行 renderer;
+- 离线直接把 `events.jsonl` 映射成 text/HTML；同时输出 entry 类型计数，作为迁移验收附件。
+
+### 派生索引与对话正文
+
+目标 `session-store.db` 只合并 `sessions` 元数据行时，`turns / search_index / checkpoints / session_files` 等派生表可能是 0。结果是 `/chronicle` 全文搜索不完整，但 `--resume` 仍从 session 目录 + `workspace.yaml` + `events.jsonl` 复原对话。**DB 搜不到、TUI 看不到、模型一时想不起、events 真缺失**是四种不同故障，不能互相替代诊断。
+
+一次现场实测 🧭:一个 6.70 MB 长会话有 2241 条合法事件（单根、0 重复 ID、0 断链、无 compaction/truncate），最新 resume 自报先读入 2237 条既有 events；离线映射得到 828 条 timeline entries（含 23 条真人消息、99 条助手正文、108 条 reasoning、594 条工具事件），但 TUI 只能看到末段。这个组合应判定为**落盘完整 + 内存完整 + 终端截尾**，不是迁移损坏。
+
+### 快速判定顺序
+
+1. 先复制一份当前 session 目录作只读快照，防后续 resume 继续追加。
+2. 查 events 的首尾时间、type 计数、JSON 错行、ID/parent 链、compaction/truncate 事件。
+3. 对比每次 `session.resume` 自报的 `eventCount` 与实际行数；resume 事件本身会让行数继续增加，差几个尾部 warning/shutdown 属正常。
+4. 离线渲染全部 entries，核对首条/末条真人消息；真人消息很少但 agent 工具事件很多时，TUI 的“对话看起来短”也可能只是会话本来就高度自动化。
+5. 最后才查 TUI 过滤/5000 行上限、中央派生索引和模型 context；不要一看到屏幕短就从备份覆盖目标 events。
+
 ## <a id="cleanup-scope"></a>删除与回收站的作用域
 
 | 动作 | 项目树 | 本地 session 目录/索引 | 云端副本 | 备注 |
@@ -324,6 +360,7 @@ test "$ok" -eq 1
 - **把项目删除当成会话删除**:项目树与 `~/.copilot` 独立；项目进 trash 后源会话仍在，resume 只是 cwd 缺失。`trash-rm` 也只永久清掉已经在回收站里的那一项。
 - **直接覆盖目标中心 DB**:会吞掉目标机原有会话，活跃写入时还可能拿到不一致副本；只合并迁移集合的行。
 - **拿迁移后的动态总数对账**:目标 resume/新建、源继续使用都会让数量和时间漂移；按切换清单的 ID 集合验。
+- **把 TUI 尾段当成历史丢失**:长会话会被终端 5000 渲染行上限截掉开头；先按 [历史可见性](#resume-history-visibility) 验 events 链和 resume 自报数量，再判断是否需要恢复。
 - **误把 `COPILOT_HOME` 当路径重写**:它只换配置根，不会改 cwd、git root 或项目 checkout。
 - **清源前只停 unit、不查进程**:livereload/开发服务器子进程可能已脱离 service cgroup；停 unit 后还要查相关进程和监听端口。移除服务前先备份 unit，跨机临时 SSH 公钥用完也应移除。
 
