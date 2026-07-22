@@ -1,4 +1,6 @@
-# Copilot 登录凭据：存储、环境变量鉴权、跨机 / 跨客户端复用
+# Coding agent 登录鉴权：凭据存储与跨机 / 跨客户端复用
+
+**当前范围**：本文目前只覆盖 **GitHub Copilot**（Copilot CLI / Copilot SDK / pi 的 `github-copilot` provider）；文件名 `auth.md` 是通用的，后续其他厂商（Codex / Anthropic 等）的登录鉴权可按厂商分节续写进来。
 
 Copilot 订阅的登录态在 Copilot CLI、Copilot SDK、pi（`github-copilot` provider）三处各自怎么存、怎么读，以及能不能把一台机上的 Copilot 登录搬到另一台机 / 另一个系统用户 / 另一个客户端。一句话结论：**环境变量 token 是唯一干净的可移植方式**；但"哪个 token 直接喂进去能用"取决于 token 类型——标准 GitHub OAuth token（如 `gh auth token` 给的）能被 Copilot API 直接接受，而 Copilot CLI 自己存的那个 `gho_` 必须先经内部交换才可用（见 [env 变量接受的 token 类型](#token-type)）。
 
