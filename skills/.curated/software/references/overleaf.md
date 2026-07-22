@@ -236,13 +236,53 @@ const projectId = response.body.project_id
 ### 编译与产物下载
 
 `compile`、`pdf`、`output` 都会触发 Overleaf 编译，但拿回来的东西不同
-（[命令实现](https://github.com/aloth/olcli/blob/6efd99e9c94df600546d3b69f2f119b6638cd00c/src/cli.ts#L632-L722)）：
+（[`pdf` / `output`](https://github.com/aloth/olcli/blob/6efd99e9c94df600546d3b69f2f119b6638cd00c/src/cli.ts#L632-L722)、
+[`compile`](https://github.com/aloth/olcli/blob/6efd99e9c94df600546d3b69f2f119b6638cd00c/src/cli.ts#L818-L837)）：
 
 | 命令 | 行为 |
 | --- | --- |
 | `olcli compile [project]` | 触发编译，只打印主 PDF URL，不把文件保存到本地 |
 | `olcli pdf [project]` | 触发编译并下载主产物 `output.pdf` |
 | `olcli output [type]` | 触发编译，列出产物或下载其中一个指定产物 |
+
+#### 编译入口文件
+
+GUI 通常编译项目设置里的主文档（root document），但有一个临时覆盖规则：
+当前打开的文件如果不是已设置的主文档、且自身包含有效的
+`\documentclass`，本次编译会改用当前文件
+（[`useRootDoc`](https://github.com/overleaf/overleaf/blob/28ad3b03b71cb4311decdcb55c36b33ec10d72db/services/web/frontend/js/shared/hooks/use-root-doc.ts#L12-L32)）。
+所以“点到哪个文件就编译哪个”只对能独立编译的主文件成立；打开一个只有
+章节内容、没有 `\documentclass` 的 `chapter.tex`，仍会编译项目主文档。
+
+GUI 会把选出的 `rootDoc_id` 和 `rootResourcePath` 放进编译请求
+（[`compiler.ts`](https://github.com/overleaf/overleaf/blob/28ad3b03b71cb4311decdcb55c36b33ec10d72db/services/web/frontend/js/features/pdf-preview/util/compiler.ts#L132-L150)）。
+要持久切换主文档，可在文件树菜单选择 **Set as Main Document**
+（[`file-tree-item-menu-items.tsx`](https://github.com/overleaf/overleaf/blob/28ad3b03b71cb4311decdcb55c36b33ec10d72db/services/web/frontend/js/features/file-tree/components/file-tree-item/file-tree-item-menu-items.tsx#L68-L75)）。
+
+当前 `olcli` 没有 `--root-doc` 或文件参数；它发送
+`rootDoc_id: null`
+（[`compileProject`](https://github.com/aloth/olcli/blob/6efd99e9c94df600546d3b69f2f119b6638cd00c/src/client.ts#L803-L851)）。
+服务端随后使用项目已设置的主文档
+（[`ensureRootDocumentIsValid`](https://github.com/overleaf/overleaf/blob/28ad3b03b71cb4311decdcb55c36b33ec10d72db/services/web/app/src/Features/Project/ProjectRootDocManager.mjs#L135-L153)）；
+设置缺失或失效时，再自动寻找包含 `\documentclass` 的可用文档
+（[`setRootDocAutomatically`](https://github.com/overleaf/overleaf/blob/28ad3b03b71cb4311decdcb55c36b33ec10d72db/services/web/app/src/Features/Project/ProjectRootDocManager.mjs#L36-L49)）。
+因此要让 `olcli` 编译指定文件，现成做法是先在 GUI 把它设为主文档；若只想
+做一次临时覆盖，则需要扩展 `olcli`，让编译请求传入对应 doc ID。
+
+#### PDF 下载时机
+
+GUI 的下载按钮直接使用当前 PDF 预览持有的 `pdfDownloadUrl`；尚未编译时
+按钮不可用，点击下载本身不会再触发一次编译
+（[`pdf-hybrid-download-button.tsx`](https://github.com/overleaf/overleaf/blob/28ad3b03b71cb4311decdcb55c36b33ec10d72db/services/web/frontend/js/features/pdf-preview/components/pdf-hybrid-download-button.tsx#L11-L56)）。
+
+`olcli pdf` 不同：它先调用 `compileProject()`，再下载该次编译返回的主
+`output.pdf`
+（[`downloadPdf`](https://github.com/aloth/olcli/blob/6efd99e9c94df600546d3b69f2f119b6638cd00c/src/client.ts#L803-L851)）。
+也就是说，它不是单纯下载 GUI 当前已经显示的旧 PDF。请求启用了 incremental
+compile，服务端可能复用缓存，但命令语义仍是“先编译，再下载”；本次编译失败
+时也不会自动退回上一次成功的 PDF。
+
+#### `output` 产物选择
 
 `output` 不是一组写死的“支持类型”。每次调用都会重新编译，然后读取这次
 编译响应里的 `outputFiles`；项目使用的引擎、宏包、参考文献工具和编译是否
