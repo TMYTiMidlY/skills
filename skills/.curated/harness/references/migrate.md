@@ -121,9 +121,9 @@ Copilot 迁移最反直觉的一点:**"名字"和"时间/排序"来自不同数�
 ## <a id="mtime-prune"></a>时间、排序、mtime 与清理
 
 - **文件 mtime 决定一切"时间/排序/陈旧"**（picker 时间列、picker 排序、`--continue` 选最新、prune 判陈旧）🔬。`touch -d` 改 mtime,picker 时间立刻跟着变;让 `workspace.yaml.updated_at` 或 DB `updated_at` 与 mtime 冲突,`--continue` 仍按 mtime 选、二者都翻不了盘 🔬。
-- **`pruneOldSessions` 按文件 mtime 判陈旧、删整个会话目录** 📖:`cutoff = now − olderThanDays×24h`,`listSessions().filter(f => f.modifiedTime <= cutoff)`,`modifiedTime` 即文件 mtime。全 bundle 里这条可读 JS 路径只由 `scope:"server"` 的 RPC `sessions.pruneOld` 暴露（`olderThanDays` 由调用方传入),没有开机/定时触发器,也没有 retention 设置项 🔬;默认 `includeNamed:false` → 走**这条 RPC**时有名字的会话受保护。这个结论只约束可读到的 JS RPC，**不能证明不存在原生层、云端对账或本机外部程序触发的其它删除路径**。
-- **另有一次未归因的目录消失实测** 🔬:一个带名字/summary、用 `cp -p` 搬入且保留旧 mtime 的会话，成功 resume 后在 Copilot 长时间空转约一小时期间从 `session-state/` 消失，DB 行仍在；三个隔离变体单次启动都存活，故不是简单的“每次启动 prune”。用户自建 restic 备份脚本与已知 timer 已排除，可读 JS 也解释不了，具体机制仍**不确定**（可能在不可读原生路径、云端同步对账或当时未发现的外部清理者）。→ 不要拿“named 受 JS RPC 保护”当保险；迁移先留不可变备份，live 副本用新 mtime 做存活观察，再按展示需求回设原始 mtime。
-- **⚠️ `cp -p` 是雷** 🧭:`cp -p`/`rsync -a` 保留旧 mtime,会让迁移来的会话 ① `--continue` 够不到、② picker 显示成"很久以前"、③ 一旦有人跑会话清理就可能被删。→ 迁移后把 mtime 设成"现在"（防清理、但 picker 时间显示成刚才）**或**设成原始 `updated_at`（picker 时间真实、但离清理 cutoff 更近）,二选一,别留 `cp -p` 的旧 mtime。
+- **`pruneOldSessions` 按文件 mtime 判陈旧、删整个会话目录** 📖:`cutoff = now − olderThanDays×24h`,`listSessions().filter(f => f.modifiedTime <= cutoff)`,`modifiedTime` 即文件 mtime。全 bundle 里这条可读 JS 路径只由 `scope:"server"` 的 RPC `sessions.pruneOld` 暴露（`olderThanDays` 由调用方传入),没有开机/定时触发器,也没有 retention 设置项 🔬;默认 `includeNamed:false` → 走**这条 RPC**时有名字的会话受保护。源码证据只支持这条显式 RPC 的行为，不应据此杜撰另一条隐藏清理机制。
+- **一次“目录消失”的误归因纠正** 🧭:迁移测试中曾观察到一个成功 resume 的目录消失而 DB 行仍在，当时因它由 `cp -p` 搬入而错误怀疑旧 mtime、周期 prune、原生清理或云端对账。用户事后确认是自己执行了 `/session delete`。→ 这件事**不能**作为“mtime 导致自动删除”或“存在隐藏 prune”的证据；排查目录消失时先核用户命令、其它客户端、`/session delete`、trash 与 shell 历史，再谈 runtime 机制。目录与 DB 暂时不一致也只说明两层状态可能分离，不足以反推删除者。
+- **`cp -p` 会带来旧 mtime 语义** 🧭:`cp -p`/`rsync -a` 保留旧 mtime,会让迁移来的会话 ① `--continue` 够不到、② picker 显示成"很久以前"、③ **若显式运行按龄清理**则更靠近 cutoff。→ 迁移后把 mtime 设成"现在"（防显式按龄清理、但 picker 时间显示成刚才）**或**设成原始 `updated_at`（picker 时间真实、但离 cutoff 更近）,二选一；不要再把目录消失本身归因给 `cp -p`。
 - **创建时间(btime)改不回** 📖:Linux 用户态只能改 atime/mtime（`utimensat`),没有 syscall 改 btime;唯一歪招是 root `debugfs -w -R 'set_inode_field <inode> crtime …'` 直接改块设备 inode（要 root、挂载盘上有风险、逐 inode 改,大批量不现实）。会话真正的创建时间不丢——在 `workspace.yaml.created_at` 和 DB `created_at` 里。picker 显示的"创建时间"是**文件 mtime**、不是 btime,所以 `stat` 看到的 Birth 是复制时刻纯属系统限制的展示层，不影响使用。
 - **DB `created_at` 只对 `/chronicle` 有意义**,且 resume 自动回填时写的是 **resume 时刻**而非原始值 🔬 → 想让 `/chronicle` 里时间准,迁移时要**手动**把源 DB 行的原始 `created_at` 写进目标 DB（见下[迁移步骤](#copilot-steps)第 6 步）。
 
@@ -237,7 +237,7 @@ test "$ok" -eq 1
 4. **传输整目录**（不是单文件):`rsync -aHr --files-from=<id列表> <源>/session-state/ <目标>:/…/session-state/`;可 `--exclude rewind-snapshots` 瘦身（这里的显式 `-r` 不能省，见 [会话目录的完整搬运](#session-directory-copy)）。
 5. **改写 cwd 三处**（见 [cwd 三处](#cwd-places)):`workspace.yaml` 的 `cwd:` + `events.jsonl` 的 `session.start.context.cwd`（含 `system.message` 内嵌）全部前缀替换。
 6. **合并 DB 行**:把源 DB 的行 `INSERT OR REPLACE` 进目标 `session-store.db`（cwd 改写、**保留原始 `summary/created_at/updated_at`**，否则 `/chronicle` 里时间/名字丢）。
-7. **设 mtime**（见 [mtime 与清理](#mtime-prune)):设成"现在"防清理,或设成原始 `updated_at` 让显示真实——二选一,别留 `cp -p` 旧值。
+7. **设 mtime**（见 [mtime 与清理](#mtime-prune)):设成"现在"规避显式按龄清理并让会话靠前,或设成原始 `updated_at` 让显示真实——二选一,不要把 `cp -p` 保留的杂乱文件时间误当成会话更新时间。
 8. **验证**:真 id resume 能解析、picker 里名字/时间对、数量对得上。
 9. **最后才删源**:确认目标是完整副本（`rsync -n` 干跑 0 差异）+ 留备份 + 用回收站删（可恢复）。
 
@@ -344,7 +344,7 @@ Copilot CLI 1.0.73 的终端 renderer 里 `uZe=5e3`；`cZe(...)` 渲染完 timel
 - **cwd 只改一处**:三处不一致会残留、resume 报警——全改。
 - **cwd 目录新机不存在**:resume 打 `ignoring persisted cwd … missing` 回退启动目录,`mkdir` 那目录后就自动 cd 进去 🔬。
 - **以为要填 DB 行才有名字/时间**:❌ 不需要——`--resume` picker 目录驱动,名字来自 `workspace.yaml`、时间来自文件 mtime,无 DB 行照样显示 🔬。DB 行只为 `/chronicle`。
-- **`cp -p` / `rsync -a` 带旧 mtime**:见 [mtime 与清理](#mtime-prune),`--continue` 够不到、picker 显示上古、清理时可能被删。
+- **`cp -p` / `rsync -a` 带旧 mtime**:见 [mtime 与清理](#mtime-prune),`--continue` 够不到、picker 显示上古、显式按龄清理时更靠近 cutoff；它本身不是已证实的自动删除触发器。
 - **`rsync --files-from` 不递归**:`rewind-snapshots/` 等子目录内容不在清单里就不会过去;传完核对 `events.jsonl` 数量,别以为 rsync "都传了"。（`rewind-snapshots` 是 `/rewind` 的整文件备份、内含旧绝对路径、跨机无用、与 resume 无关,通常**可不搬**。）
 - **符号链接两连坑**:(a) 绝对软链指向旧 home 会断,按前缀重指,但**只改目标前缀那段**,别把 `<旧home>/.local/...`（venv 的 uv-python 等）也一起改;(b) 后续再跑 rsync 会把改好的软链按源覆盖回去——**软链修复放在所有 rsync 之后**。
 - **两机之间没免密**:直连 rsync 前先把公钥加进对方 `authorized_keys`;经跳板/中转工具时注意它可能只支持 client↔远端、不支持远端↔远端（否则大文件要过本机两趟）。
