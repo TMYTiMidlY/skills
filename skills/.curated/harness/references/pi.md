@@ -152,7 +152,7 @@ export interface SessionEntryBase { type: string; id: string; parentId: string |
 - `compaction` 摘要是有损材料，只用来导航；仍要逐条核对原始 user message，并以文件/配置/API/Git 实况验证承诺是否落地。
 - 导出前先脱敏 `sk-*`、Authorization、内部 URL、预算与账户字段。live store 可能还没写入最后一个进行中的 turn，需用当前上下文补齐。
 
-现有 `dredge-up` 脚本的数据层只解析 Copilot CLI；在补 pi adapter 前，可直接按上述 schema 写一个只读 JSONL 提取器。渲染层应消费 agent-neutral 中间结构，不要把 pi schema 再复制进每个前端。
+`chronicle` 当前有 Copilot CLI、Claude Code、Codex CLI adapter，尚无 Pi adapter。在补 adapter 前，可直接按上述 schema 写一个只读 JSONL 提取器；正式接入时应在共享数据层产出 agent-neutral 时间线，不要把 Pi schema 分别复制进 Markdown、HTML 等前端。
 
 ### <a id="config-discovery"></a>配置与指令发现
 

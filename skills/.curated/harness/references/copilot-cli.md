@@ -969,6 +969,6 @@ CSS 和 JS 在 bundle 里都是模板字符串字面量。源码层每个反斜�
 
 正确做法：把模板字符串体当作 JS 模板字面量**求值一次**再落盘——拿任何 JS 运行时跑 `\`...\`` 就行，让引擎自己折叠转义。另一个细节：`pFs` 自身的 mini-highlighter 包含一个**字面反引号**（源码里用反斜杠转义），所以"下一个反引号定界"会切错——边界要靠下一个相邻函数（不是下一个反引号）。
 
-### 离线复刻参考实现
+### 离线导出实现
 
-`dredge-up` skill 已经基于上述逆向做了一份**离线**复刻——从 `events.jsonl` 重建时间线、复刻同款 entry DOM、复用 share 抽出的 CSS/JS，并加了 agent 总结注入。要做"离线把会话存档成 HTML"这件事直接用它，不要重新逆向。
+`chronicle` CLI 已基于上述逆向实现离线导出：从 `events.jsonl` 重建规范化时间线，再输出 Markdown 或单文件 HTML。当前 HTML 渲染器使用 React，抽取的官方 CSS/JS 只作为 bundle 漂移探针，不作为运行时资产。要离线存档会话直接用 `chronicle html` / `chronicle md`，不要在其它工具里重复维护 event→entry 映射。
