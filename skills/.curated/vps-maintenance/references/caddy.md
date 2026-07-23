@@ -686,6 +686,25 @@ portal（`authenticate with <portal>` 那个站点）按 path 分发（`go-authc
 
 ### 配置 OAuth 环境变量
 
+把实际值放进只有 root 能读的环境文件：
+
+```bash
+sudo touch /etc/caddy/caddy.env
+sudo chown root:root /etc/caddy/caddy.env
+sudo chmod 600 /etc/caddy/caddy.env
+sudoedit /etc/caddy/caddy.env
+```
+
+文件内容：
+
+```dotenv
+GITHUB_CLIENT_ID=<你的ID>
+GITHUB_CLIENT_SECRET=<你的密钥>
+JWT_SHARED_KEY=<你的JWT密钥>
+```
+
+再用 systemd drop-in 引用该文件：
+
 ```bash
 sudo systemctl edit caddy
 ```
@@ -694,9 +713,7 @@ sudo systemctl edit caddy
 
 ```ini
 [Service]
-Environment="GITHUB_CLIENT_ID=你的ID"
-Environment="GITHUB_CLIENT_SECRET=你的密钥"
-Environment="JWT_SHARED_KEY=你的JWT密钥"
+EnvironmentFile=/etc/caddy/caddy.env
 ```
 
 然后重载并重启：
@@ -704,11 +721,14 @@ Environment="JWT_SHARED_KEY=你的JWT密钥"
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl restart caddy
-sudo systemctl show caddy --property=Environment
+sudo systemctl show caddy --property=EnvironmentFiles
 ```
 
 说明：
 
+- `systemctl edit caddy` 默认写入 `/etc/systemd/system/caddy.service.d/override.conf`。drop-in 通常是 `0644`；如果直接写 `Environment="KEY=明文"`，普通用户可通过 `systemctl cat caddy` 看到值。`EnvironmentFile=` 让 drop-in 只暴露文件路径，实际值由 `600 root:root` 的文件保护。
+- systemd 负责读取环境文件并把值传给 Caddy；`caddy` 用户本身不需要拥有该文件的读取权限。环境变量不是加密，值仍存在于环境文件和 Caddy 进程内存中，root 可以读取。
+- 首次添加或修改 drop-in 后需要 `daemon-reload`；之后若只修改 `/etc/caddy/caddy.env` 的内容，直接 `restart caddy` 即可让新进程读取新值。
 - `JWT_SHARED_KEY` 填一串足够长的随机字符串即可。
 - 为什么必须显式配 `JWT_SHARED_KEY`，见上一节的 `crypto key sign-verify` 说明。
 
@@ -1292,7 +1312,7 @@ grep -nE 'changeConfig|rawCfgMu|ManageSync|tls.obtain|Shutdown|io\.Copy|streamin
 
 ### `caddy validate` 读不到 systemd 注入的环境变量
 
-**`caddy validate` 读不到 systemd 注入的环境变量**。无论是 `sudo` shell 下的 env placeholder，还是 `systemctl edit caddy` 里的 `Environment=...`，`validate` 都是命令行直接启动的，不会经过 systemd。
+**`caddy validate` 读不到 systemd 注入的环境变量**。无论是 `sudo` shell 下的 env placeholder，还是 drop-in 里的 `Environment=...` / `EnvironmentFile=...`，`validate` 都是命令行直接启动的，不会经过 systemd。
 
 如果 Caddyfile 里用了 `{env.XYZ}`，先在当前 shell 里手动 `export`（或命令前置）一遍即可；值随便填，`validate` 只检查占位符能否解析。例如带 caddy-security 的配置：
 
