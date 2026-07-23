@@ -1,6 +1,6 @@
 # Copilot / Claude / Codex 会话跨机迁移与备份
 
-把一个**还能被 CLI `--resume` 续聊**的会话从一台机器搬到另一台（换 home、换 cwd、换用户名），三家各自要搬什么、改什么、哪些字段真正影响行为。核心结论:**搬的是"原生会话状态文件",不是导出的报告**——exporter 产物（`/share html`、dredge-up 报告）是有损只读、不可 resume（见本文末[归档 ≠ 迁移](#archive-vs-migrate)）。
+把一个**还能被 CLI `--resume` 续聊**的会话从一台机器搬到另一台（换 home、换 cwd、换用户名），三家各自要搬什么、改什么、哪些字段真正影响行为。核心结论:**搬的是"原生会话状态文件",不是导出的报告**——`/share html`、`chronicle html` / `chronicle md` 等报告是有损只读、不可 resume（见本文末[归档 ≠ 迁移](#archive-vs-migrate)）。
 
 置信度标注:🔬 = 本机隔离环境实测（独立 `COPILOT_HOME`）｜📖 = 读源码（Codex 锁 commit、Copilot 锁 bundle 版本）｜🧭 = 现场迁移经验（一次 1000+ 会话 + 数十 G 项目的实操沉淀）。
 
@@ -366,7 +366,7 @@ Copilot CLI 1.0.73 的终端 renderer 里 `uZe=5e3`；`cZe(...)` 渲染完 timel
 
 ## <a id="archive-vs-migrate"></a>归档 ≠ 迁移
 
-想在另一台设备**续聊**,搬的是**原生 jsonl / 会话目录**;别指望从 exporter 产物反推。`/share html`、以及 dredge-up skill 的离线 HTML 报告,都是**有损只读**的渲染产物（明确丢弃 `system.message`、`hook.*`,事件链关系不保留），只为给人看,拿它反推回可 resume 的 jsonl 不现实。要"离线把会话存档成 HTML 给人看"用 dredge-up skill;要"跨机续聊"用本文。
+想在另一台设备**续聊**,搬的是**原生 jsonl / 会话目录**;别指望从导出报告反推。`/share html`、`chronicle html` / `chronicle md` 都是**有损只读**的渲染产物（明确丢弃 `system.message`、`hook.*`,事件链关系不保留），只为给人看,拿它反推回可 resume 的 jsonl 不现实。要离线存档给人看用 `chronicle`;要跨机续聊用本文。
 
 ## <a id="pty-verify"></a>交互式 TUI 的无头实测方法
 
