@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 命令行精准操作（有并发/无关改动时只提交某处、hunk/行级暂存、后有提交时 amend）、jj（Jujutsu）版本控制（working copy 即 commit/无暂存区、op log 操作日志与 undo/op restore、一等冲突与延迟解决、冲突与 change-id 在 git 层的表示、哪些数据不出机器、改动不丢失与恢复）、gh 认证 vs git 提交身份（user.name/email）、Git 镜像/自建 Forgejo、git-pages 静态站托管（Forgejo/Gitea 的 GitHub Pages 替代服务、Codeberg Pages 后端、不可猜路径、DNS Challenge 鉴权）、Commitizen 发版（PEP 440 版本号、CHANGELOG 手改是否被冲、tag 触发 CI 发 PyPI）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、USTC Overleaf/olcli（无头鉴权、项目同步、内部 API、OT/评论/修订）、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Docker Engine 安装（官方 apt 仓库法）与多用户共用（docker 组、`sg`/重登生效、组≈免密 root 的安全取舍）、Coolify 与 Dokploy 自托管 PaaS（端口所有权、前置反代、工作负载边界与清理）、Go 工具链（模块 / `go install` / 依赖解析 / GOPROXY）、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、Git 命令行精准操作（有并发/无关改动时只提交某处、hunk/行级暂存、后有提交时 amend）、jj（Jujutsu）版本控制（working copy 即 commit/无暂存区、op log 操作日志与 undo/op restore、一等冲突与延迟解决、冲突与 change-id 在 git 层的表示、哪些数据不出机器、改动不丢失与恢复）、gh 认证 vs git 提交身份（user.name/email）、Git 镜像/自建 Forgejo、git-pages 静态站托管（Forgejo/Gitea 的 GitHub Pages 替代服务、Codeberg Pages 后端、不可猜路径、DNS Challenge 鉴权）、Commitizen / semantic-release 发版（配置版本源、CHANGELOG、GitHub Release、npm/PyPI OIDC Trusted Publishing）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、USTC Overleaf/olcli（无头鉴权、项目同步、内部 API、OT/评论/修订）、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Docker Engine 安装（官方 apt 仓库法）与多用户共用（docker 组、`sg`/重登生效、组≈免密 root 的安全取舍）、Coolify 与 Dokploy 自托管 PaaS（端口所有权、前置反代、工作负载边界与清理）、Go 工具链（模块 / `go install` / 依赖解析 / GOPROXY）、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
 ---
 
 # Software
@@ -38,6 +38,14 @@ tag 触发的 CI。覆盖：Python 版本号规范（PEP 440 的 a/b/rc/dev/post
 `pre_bump_hooks` 在版本文件写入之后才跑导致失败后的半途状态与恢复、tag 触发 build + GH Release
 （stable/prerelease 分类、changelog 抽取 vs 重生成）+ PyPI（OIDC、skip-existing、不可变）的流水线
 形态。见 [references/commitizen.md](references/commitizen.md)。
+
+## 自动发版（配置版本源 / semantic-release / Registry OIDC）
+
+跨 Python 与 Node 的发版心智模型、QuantumAtlas 式“`pyproject.toml` 为版本真相源”的
+Commitizen 配置、semantic-release 的提交分析 / CHANGELOG / GitHub Release / npm publish
+生命周期、npm 首次本机 web auth 发布与后续 Trusted Publisher OIDC、GitHub
+`environment:` 实体 / YAML 引用、staged publishing，以及 Bun 多平台二进制 + checksum
+完整 CI 模板见 [references/publish.md](references/publish.md)。
 
 ## 包管理器全景 / 分类对比（Nix vs apt、choco/winget/Scoop、npm/pnpm/bun、pip…）
 
