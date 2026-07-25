@@ -12,28 +12,42 @@ description: 用户要做实验性改动 / 对比实现 / 可能失败的大改�
 
 两个判据互相独立：**有没有 submodule** 决定用哪套机制，**要不要编译** 决定要不要把 submodule 拉下来。
 
+### <a id="mechanism-compare"></a>两套机制共享的层级不同
+
+它们不是「同一件事的两种写法」——省盘的效果相似，但共享的层级不一样：
+
+| | [`git worktree`](#git-worktree) | [共享 clone](#shared-clone) |
+|---|---|---|
+| 本质 | **1 个仓库，N 个工作树** | **N 个独立仓库** |
+| objects | 共享（同一 gitdir） | 共享（alternates + 硬链接） |
+| refs / 分支 | 共享 | [各自独立](#branch-flow) |
+| config | **共享** | 各自独立 |
+| HEAD / index | 各自独立 | 各自独立 |
+| 同一分支两处 checkout | 拒绝（`already used by worktree at …`） | 可以 |
+| 适用 | 无 submodule 的仓库 | 有 submodule 的仓库 |
+
+worktree 共享**整个仓库**，clone 只共享**对象库**。`config` 那一行就是分水岭：submodule 的定位
+字段 `core.worktree` 正住在 config 里，是个**单值**字段，表达不了 N 个工作区——谁最后写谁赢。
+在 worktree 里跑一次 `git submodule update`，**主工作区**的 submodule 当场变成不可访问；
+共享 clone 里 `core.worktree` 是 per-clone 的，这场冲突在结构上不可能发生。
+所以不是「小心点就能绕过」的行为问题，选对机制才是解。
+
+`refs / 分支` 那一行是共享 clone 的代价：分支不会自动同步，得手动搬一次（见[分支流转](#branch-flow)）；
+换来的是两边能同时 checkout 同一分支。
+
 ### 仓库有没有 submodule
 
 ```bash
 [ -s .gitmodules ] && echo "有 submodule → 共享 clone" || echo "无 submodule → git worktree"
 ```
 
-| 仓库情况 | 用哪套 | 理由 |
-|---|---|---|
-| **有 submodule** | [共享 clone](#shared-clone)（`--reference` + `submodule.alternateLocation`） | git 官方明确不推荐对 superproject 用 worktree |
-| **无 submodule** | [`git worktree`](#git-worktree) | worktree 本来的用途，没有任何坑 |
-
-git 官方把这件事写进了 `git worktree` 文档的
+有 submodule 就别用 worktree——git 官方把这件事写进了 `git worktree` 文档的
 [BUGS 一节](https://github.com/git/git/blob/v2.43.0/Documentation/git-worktree.txt#L513-L517)：
 
 > Multiple checkout in general is still experimental, and the support for submodules is
 > **incomplete**. It is **NOT recommended** to make multiple checkouts of a superproject.
 
-根因是个装不下的结构：worktree 让 N 个工作区共享 1 份 gitdir，而 submodule 的定位字段
-`core.worktree` 是那份共享 config 里的**单值**字段，表达不了 N 个——谁最后写谁赢。在 worktree
-里跑一次 `git submodule update`，**主工作区**的 submodule 当场变成不可访问。共享 clone 让每个
-工作区自带一份 gitdir，`core.worktree` 变成 per-clone 的，这场冲突在结构上不可能发生——
-不是「小心点就能绕过」的行为问题，选对机制才是解。
+无 submodule 时 `git worktree` 是它本来的用途，没有任何坑。
 
 > 机理、实测现场、五个坑、诊断与恢复流程见
 > [submodule 与 worktree 的冲突](references/submodule-hazards.md)。
@@ -107,9 +121,9 @@ git remote add local "$MAIN_REPO"
 
 ### <a id="branch-flow"></a>分支流转
 
-共享 clone 只共享 object store，**refs 和 config 各自独立**——分支不会自动同步。好处是两边可以
-同时 checkout 同一分支（worktree 会拒绝：`'main' is already used by worktree at ...`），
-代价是成果得手动搬一次。因为对象早已共享，两个方向的 `fetch` 都**不传输对象**，只更新 ref。
+共享 clone 的 refs 独立，分支不会自动同步，成果得手动搬一次（为什么见
+[两套机制共享的层级不同](#mechanism-compare)）。因为对象早已共享，两个方向的 `fetch`
+都**不传输对象**，只更新 ref。
 
 ```bash
 # 主仓库 → clone：clone 时只带到了当时的分支，之后主仓库新建的要靠 local 取
