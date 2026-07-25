@@ -7,7 +7,7 @@
 
 根子都在一件事：**它们的"真身"是预编译好的原生程序（native binary，直接由 CPU 执行的机器码，不是要先装 Node 才跑的 JS），npm 只是被借来当"跨平台安装器"。** 你 `npm install` 到的那个包确实只是几 KB 的空壳——"套壳"的直觉没错，只是套的不是 JS 逻辑，而是一层安装器外壳。
 
-这个"壳包 + 平台子包"的**通用打包模式**（`optionalDependencies` + `os`/`cpu`/`libc` 门控、只下匹配平台的那份、musl 分叉当"真身是原生程序"的判据等）属于包管理器话题，讲在 software skill 的 [package-managers.md 第八节](../../software/references/package-managers.md)。**本篇只做三家 coding agent 的具体普查**：各自怎么打包、用什么工具链编、有哪些安装入口、npm "软弃用"到什么程度、采用度如何。Copilot 本体运行时（`npm-loader → index → app.js` 三层进程模型、逆向、补丁）见 [copilot-cli.md](copilot-cli.md)。
+这个"壳包 + 平台子包"的**通用打包模式**（`optionalDependencies` + `os`/`cpu`/`libc` 门控、只下匹配平台的那份、musl 分叉当"真身是原生程序"的判据等）属于包管理器话题，讲在 `software` skill 的"npm 当跨平台二进制安装器：壳包 + 平台子包"章节。**本篇只做三家 coding agent 的具体普查**：各自怎么打包、用什么工具链编、有哪些安装入口、npm "软弃用"到什么程度、采用度如何。Copilot 本体运行时（`npm-loader → index → app.js` 三层进程模型、逆向、补丁）见 [copilot-cli.md](copilot-cli.md)。
 
 > 下面所有版本号 / 体积 / 下载量都是**某次快照**（核对于 2026-07，用 `npm view` / 官方 README / HN Algolia API 实测）。这些包每周都在变、体积还在涨，引用前请自己复核。
 
@@ -48,7 +48,7 @@
 
 - 三家也都在 **GitHub Releases** 直挂各平台二进制供手动下载。
 - **各家把 npm 摆的位置略不同**：Codex README 的包管理器区把 `npm` 列在 Homebrew **之前**（npm 是与 brew 并列的选项，不算"最末兜底"）；Claude Code 明确把 npm 标为 Deprecated；Copilot 三条并列。
-- 这些工具本身就是"自带升级、不依赖任何运行时的独立原生程序"，用官方脚本 / brew 一步装好最省事（还免去先装 Node）——这正是"能进包管理器就优先包管理器"这条通则的**边界情形**（见 [package-managers.md 第七节](../../software/references/package-managers.md)）。
+- 这些工具本身就是"自带升级、不依赖任何运行时的独立原生程序"，用官方脚本 / brew 一步装好最省事（还免去先装 Node）——这正是"能进包管理器就优先包管理器"这条通则的**边界情形**（见 `software` skill 讲"绕过包管理器的安装"（`curl | sh` / `irm | iex`）的章节）。
 
 ## 三、npm "软弃用"（soft deprecation）：文档说别用，技术上照用
 
@@ -77,10 +77,10 @@ npm 周下载量（`api.npmjs.org/downloads`）：
 
 - **只是快照、名次周周变**：仅一周前 Codex 还以 ~13.4 M 领先、反超 Claude；近月 Codex 在 **9.7 M–13.4 M** 间大幅摆动，与 Claude Code（较稳的 10–12 M）的相对排名并不稳定——别把某一周的名次当定论。
 - **agent 的 npm 下载量本身低估真实使用**：官方现在主推 curl 脚本 / brew / winget，很多安装根本不经 npm registry。
-- pnpm / yarn / bun 等**包管理器客户端**自身的采用度与社区风向，属包管理器话题，见 [package-managers.md 第五节](../../software/references/package-managers.md)。
+- pnpm / yarn / bun 等**包管理器客户端**自身的采用度与社区风向，属包管理器话题，见 `software` skill 的语言级包管理器（npm / pip）章节。
 
 ## 相关
 
-- **通用打包模式**（"壳包 + 平台二进制"：`optionalDependencies`、`os`/`cpu`/`libc` 门控、musl 分叉判据、esbuild / swc / biome / turbo 等泛例）：[package-managers.md 第八节](../../software/references/package-managers.md)。
+- **通用打包模式**（"壳包 + 平台二进制"：`optionalDependencies`、`os`/`cpu`/`libc` 门控、musl 分叉判据、esbuild / swc / biome / turbo 等泛例）：`software` skill 的"npm 当跨平台二进制安装器：壳包 + 平台子包"章节。
 - **Copilot CLI 本体运行时**（三层进程模型、逆向读 `app.js`、补丁脚本）：[copilot-cli.md](copilot-cli.md)。
 - 三家**开源 / 闭源与逆向**差异、worktree 支持对照：本 skill [SKILL.md](../SKILL.md) 与 [worktree.md](worktree.md)。
