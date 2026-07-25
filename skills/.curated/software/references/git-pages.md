@@ -592,8 +592,6 @@ jobs:
 | 一个 forge 看得到 workflow，另一个看不到 | workflow commit 只存在一端，或本机文件未跟踪 | 对比两端 branch SHA，并确认文件已进 commit |
 | `mkdocs` 找不到主题 / 插件 | 只装了基础 `mkdocs`，但配置引用额外插件 | 镜像或 `--with` 列表覆盖 `mkdocs.yml` 的全部插件 |
 
-迁移 workflow 时要分清“同名分支”与“同一提交”：用某个 forge 的 API 直接创建 workflow，只会在那个 forge 的分支上产生新 commit；另一个本地仓库里的 untracked 文件、或另一台 server 上同名分支的独有 commit，都不会因“推了全部本地分支”自动出现。用 `git rev-parse <branch>` 与两端 `git ls-remote` 对 SHA，不能只对分支名。
-
 Forgejo 16 实测可先列 run 下的 jobs，再下载单个 job 文本日志；适合 UI 不便访问、或现有客户端只封装了 run 状态而没封装日志的情况：
 
 ```bash
