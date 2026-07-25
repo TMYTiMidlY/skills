@@ -109,7 +109,7 @@ go env -w GOSUMDB=sum.golang.google.cn          # 用 Google 的中国镜像域�
 
 > `goproxy.cn` 支持[代理 checksum database](https://golang.org/design/25530-sumdb#proxying-a-checksum-database)，所以多数情况设了 `GOPROXY` 就够、`go.sum` 校验照常走；只有当 `sum.golang.org` 本身连不上导致校验超时才需要再设 `GOSUMDB=sum.golang.google.cn`（Google 官方在中国的镜像域名，仍是真校验、不是关掉校验）。
 
-## `pixi global install go` 的 cgo 坑（conda-forge go 包）
+## <a id="cgo-pitfall"></a>`pixi global install go` 的 cgo 坑（conda-forge go 包）
 
 **现象**：用 `pixi global install go`（拉的是 [conda-forge 的 go 包](https://github.com/conda-forge/go-feedstock)）装好 go 后，任何需要 cgo 的构建一上来就报：
 

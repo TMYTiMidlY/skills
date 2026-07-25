@@ -7,7 +7,7 @@ Ubuntu 上装 Docker Engine 的**官方推荐方式**、怎么让多个非 root 
 Docker 官方给了两条常见路径，**首装生产 / 长期机器优先 apt 仓库法**：
 
 - **apt 仓库法（推荐）**：把 Docker 官方 apt 源加进系统，再 `apt-get install docker-ce …`。好处是后续 `apt upgrade` 跟着官方源升级、版本可控可回滚、与系统包管理一致。
-- **便捷脚本 `curl -fsSL https://get.docker.com | sh`**：官方明确说它**只适合快速搭个测试 / 开发环境**、不建议用于生产——非交互、装的组件不完全可控、也不利于审计（= 跑一段未审阅的远程脚本，取舍见 [package-managers.md](package-managers.md) 的 `curl|sh` 一节）。
+- **便捷脚本 `curl -fsSL https://get.docker.com | sh`**：官方明确说它**只适合快速搭个测试 / 开发环境**、不建议用于生产——非交互、装的组件不完全可控、也不利于审计（= 跑一段未审阅的远程脚本，取舍见 [package-managers.md](package-managers.md#curl-sh)）。
 
 下面走 apt 仓库法。
 
