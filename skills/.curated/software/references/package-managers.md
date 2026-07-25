@@ -6,22 +6,22 @@
 
 ---
 
-## 一、先分清"管谁的包"——五大类
+## <a id="categories"></a>按"管谁的包"分类
 
 理解包管理器全景的第一刀不是比命令，而是看它**管的是谁的包、装到哪一层**。同一台机器上这五类可以并存、各管各的：
 
 1. **系统级 / OS package manager**：管整个操作系统的原生二进制与共享库，装进系统全局路径（`/usr`、`Program Files`）。
    - Linux：`apt`（底层 `dpkg`，`.deb`）、`dnf`/`yum`（`rpm`）、`pacman`（Arch，`.pkg.tar.zst`）、`apk`（Alpine）、`zypper`（openSUSE）。
    - 跨平台/用户级：**Homebrew**（macOS 原生，也能装 Linux，装进自己 prefix 不碰系统）。
-   - Windows：**Chocolatey (choco)**、**winget**、**Scoop**（详见第四节）。
+   - Windows：**Chocolatey (choco)**、**winget**、**Scoop**（详见 [Windows](#windows)）。
 2. **语言级 / 生态级 package manager**：只管某门语言的库和 CLI，通常装到项目本地或语言专属目录。`pip`(Python)、`npm`(Node)、`cargo`(Rust)、`go`(Go)、`gem`(Ruby)、`nuget`(.NET)、`maven`/`gradle`(Java)、`composer`(PHP)。
-3. **跨发行版声明式 / 函数式**：**Nix**、**Guix**。不依赖发行版，把每个包连同全部依赖装进带哈希的只读路径，换来多版本共存、原子回滚、可复现（详见第三节）。
+3. **跨发行版声明式 / 函数式**：**Nix**、**Guix**。不依赖发行版，把每个包连同全部依赖装进带哈希的只读路径，换来多版本共存、原子回滚、可复现（详见 [Nix vs apt](#nix-vs-apt)）。
 4. **应用沙箱分发（sandboxed app）**：把桌面应用连运行时依赖一起打包并沙箱隔离。**Flatpak**（Flathub 源、用户级、portal 权限模型）、**Snap**（Canonical，含服务/CLI/GUI，商店后端专有，自动更新，squashfs 挂载）、**AppImage**（单文件、下载即跑、无中心仓库、无"安装"步骤）。
-5. **跨语言环境管理（cross-language env）**：**conda / mamba / pixi**（不止 Python，带预编译二进制，conda-forge 生态）、**uv**（Python 专用、极快）。给每个项目搭独立、可复现的工具链（详见第六节）。
+5. **跨语言环境管理（cross-language env）**：**conda / mamba / pixi**（不止 Python，带预编译二进制，conda-forge 生态）、**uv**（Python 专用、极快）。给每个项目搭独立、可复现的工具链（详见 [跨语言环境与版本管理器](#env-managers)）。
 
 ---
 
-## 二、六个对比维度（这篇的灵魂）
+## <a id="dimensions"></a>横向对比维度
 
 抓住这六个轴，任何包管理器都能一眼归位；后面所有对比都是这张表的展开。
 
@@ -41,7 +41,7 @@
 
 ---
 
-## 三、重点：Nix vs apt（几乎每个维度都相反）
+## <a id="nix-vs-apt"></a>Nix vs apt
 
 用户熟 `apt`，理解 Nix 最快的路径就是拿它俩逐维对撞——这也是理解"声明式 + 内容寻址"包管理的最佳样本。
 
@@ -69,7 +69,7 @@
 
 ---
 
-## 四、Windows 三家：Chocolatey (choco) / winget / Scoop
+## <a id="windows"></a>Windows：Chocolatey (choco) / winget / Scoop
 
 choco 和 winget 都是**"静默跑官方安装程序"的自动化壳**——本质是替你 `下载官方 installer → 静默安装`，装进系统标准位置（`Program Files` 等），**都不做 Nix 那种隔离**，装完就是普通的已安装程序。**Scoop 走的是另一条路**：把程序当**绿色便携版**解压到用户目录 `~/scoop/`、不进系统、不需管理员、卸载=删目录，更像"给 CLI 工具用的、免污染系统"的方案。区别在"谁维护、包长什么样、装到哪一层"。
 
@@ -88,7 +88,7 @@ choco 和 winget 都是**"静默跑官方安装程序"的自动化壳**——本
 
 - **Chocolatey**：*"software management automation for Windows that wraps installers, executables, zips, and scripts into compiled packages"* —— 关键词 **wraps … into compiled packages**（PowerShell 驱动）。见 [docs.chocolatey.org](https://docs.chocolatey.org/en-us/)。
 - **winget**：*"a comprehensive package manager solution that consists of a command line tool and set of services"*。见 [learn.microsoft.com/windows/package-manager](https://learn.microsoft.com/en-us/windows/package-manager/)。
-- **Scoop**：把 Scoop 自己也用 `irm get.scoop.sh | iex` 一行装（PowerShell 版 `curl|sh`，见第七节）。
+- **Scoop**：把 Scoop 自己也用 `irm get.scoop.sh | iex` 一行装（PowerShell 版 `curl|sh`，见[绕过包管理器的安装](#curl-sh)）。
 
 常用命令（三家横向对照）：
 
@@ -109,19 +109,21 @@ choco list --local-only  ;  winget list          ;  scoop list
 
 ---
 
-## 五、语言级：npm / pip(PyPI)（+ cargo/gem/nuget 简表）
+## <a id="language-level"></a>语言级：npm / pip(PyPI)（+ cargo / gem / nuget 简表）
 
 语言级包管理器**只管本语言的库**，且大多支持"项目本地隔离 + 多版本共存"——这是它们跟系统级 apt 最根本的差异。
 
-### npm（Node.js）
+### <a id="npm"></a>npm（Node.js）
 
 - **中心 registry** `registry.npmjs.org`，按名字下载。
 - **项目本地** `node_modules/` + 全局 `-g`；`package.json` 声明依赖、`package-lock.json` 锁定精确版本树（[docs](https://docs.npmjs.com/cli/v10/configuring-npm/package-lock-json)）。
 - **允许依赖树里多版本共存**：A 依赖 `lodash@3`、B 依赖 `lodash@4`，npm 靠嵌套/去重让两份并存——这正是 apt 全局单版本**做不到**的事，是"语言级隔离"的典型。
-- 变体：**pnpm**（全局 content-addressable store + 项目内 `node_modules/.pnpm` 虚拟 store，硬链接省磁盘、符号链接防幽灵依赖，详见表下说明）、**yarn**。
+- 变体：**pnpm**（全局 content-addressable store + 项目内 `node_modules/.pnpm` 虚拟 store，硬链接省磁盘、符号链接防幽灵依赖，详见 [pnpm 的两层结构](#pnpm)）、**yarn**。
 - 常用：`npm install` / `npm install -g <pkg>` / `npm update` / `npm uninstall` / `npx <pkg>`（临时跑不留全局）。
 
-**npm / pnpm / yarn / bun 四家对照**（都读 `package.json`、都连 npm registry，差别在装法与速度）：
+#### <a id="npm-clients"></a>客户端对照：npm / pnpm / yarn / bun
+
+都读 `package.json`、都连 npm registry，差别在装法与速度：
 
 | | **npm** | **pnpm** | **yarn** | **bun** |
 | --- | --- | --- | --- | --- |
@@ -131,11 +133,16 @@ choco list --local-only  ;  winget list          ;  scoop list
 | 速度 | 基准 | 快、省盘 | 快（PnP 更快） | **最快**（Zig 写，含自带 runtime/打包/测试） |
 | 定位 | 稳、无脑兼容 | monorepo/省盘首选 | 大厂/PnP 生态 | 一体化工具链，追新 |
 
-- **pnpm 的两层结构**（用户常问的"那个特殊目录"）：全局有一个 **content-addressable store**（CAS，默认 `~/.local/share/pnpm/store`），同一版本的文件全机器只存一份；项目里 `node_modules/.pnpm/` 是**虚拟 store**，每个依赖摊平放在 `.pnpm/<name>@<version>/node_modules/<name>`（文件从全局 CAS **硬链接**过来，不占额外空间）；项目顶层 `node_modules/` 里只有**符号链接**指向 `.pnpm/` 中对应目录——**只有 `package.json` 里声明过的依赖才在顶层可见**，所以能挡住"用了没声明的包"（幽灵依赖 / phantom dependency）。这正是 pnpm 既省盘（硬链）又严格（符号链接隔离）的来源，官方图解见 [pnpm.io/symlinked-node-modules-structure](https://pnpm.io/symlinked-node-modules-structure) 与 [pnpm.io/motivation](https://pnpm.io/motivation)。
 - 四家的库都来自同一个 `registry.npmjs.org`，**换的是客户端不是源**；`package.json` 通用，切换成本主要在 lockfile 与 `node_modules` 策略。
 - `corepack`（Node 自带）能按项目 `package.json` 的 `"packageManager"` 字段自动切到对应的 pnpm/yarn 版本，避免"本机装的版本和项目要求不一致"。
 
-**bun 为何两极分化**（追新者力捧、生产派谨慎——快速迭代中，早期批评不少已过时，评价要看版本/日期）：
+#### <a id="pnpm"></a>pnpm 的全局 CAS 与 `node_modules/.pnpm` 虚拟 store
+
+全局有一个 **content-addressable store**（CAS，默认 `~/.local/share/pnpm/store`），同一版本的文件全机器只存一份；项目里 `node_modules/.pnpm/` 是**虚拟 store**，每个依赖摊平放在 `.pnpm/<name>@<version>/node_modules/<name>`（文件从全局 CAS **硬链接**过来，不占额外空间）；项目顶层 `node_modules/` 里只有**符号链接**指向 `.pnpm/` 中对应目录——**只有 `package.json` 里声明过的依赖才在顶层可见**，所以能挡住"用了没声明的包"（幽灵依赖 / phantom dependency）。这正是 pnpm 既省盘（硬链）又严格（符号链接隔离）的来源，官方图解见 [pnpm.io/symlinked-node-modules-structure](https://pnpm.io/symlinked-node-modules-structure) 与 [pnpm.io/motivation](https://pnpm.io/motivation)。
+
+#### <a id="bun"></a>bun（JSC 运行时、一体化工具链）
+
+追新者力捧、生产派谨慎。快速迭代中，早期批评不少已过时，评价要看版本 / 日期：
 
 - **爱它的理由（真实优势）**：① `bun install` 官方基准比 npm 快 ~25–30×、比 yarn ~18×（[v1.0](https://bun.sh/blog/bun-v1.0)/[v1.1 博客](https://bun.sh/blog/bun-v1.1)，注：跑分带 `--ignore-scripts`、有缓存，冷装差距会缩小，但装包快这点外部验证较多）；② **一体化**——一个二进制顶替 node + npm/yarn/pnpm + esbuild/webpack + jest/vitest，原生跑 TS/JSX、ESM/CJS 混用、`.env` 开箱即用，省掉大半工具链配置；③ 启动比 Node 快 ~4×，脚本/测试循环体感好。
 - **不信任它的理由（争议点，标注是否仍成立）**：
@@ -148,19 +155,21 @@ choco list --local-only  ;  winget list          ;  scoop list
   - **背景变化：2025-12-02 Anthropic 收购 Bun**（[官方公告](https://www.anthropic.com/news/anthropic-acquires-bun-as-claude-code-reaches-usd1b-milestone)，随 Claude Code 达 $1B 里程碑；HN 最高热帖 2192pt，指向 Bun 官方博客，Anthropic 官网那条另有 99pt）——Bun 团队并入 Anthropic、作为 Claude Code 的打包/运行基座。此前"小团队、前途未卜"的顾虑因此缓解；但 JSC≠V8、Node 兼容等**技术性**差异不受收购影响、依旧成立。
 - **中肯定位**：**开发环境**的极速 npm 替代 + TS 脚本 runner 已经很能打；**核心生产服务**建议先小规模灰度、盯版本，别仓促全量迁移。（时间线核对至 2026-07，bun 迭代快，用前请复核最新版本文档。）
 
-**yarn 为何一分为二：Classic (v1) → Berry (v2+)**（理解 yarn 绕不开这道设计断裂，也是它采用度掉队的根源）：
+#### <a id="yarn"></a>yarn：Classic (v1) 与 Berry (v2+)
+
+理解 yarn 绕不开这道设计断裂，它也是 yarn 采用度掉队的根源：
 
 - **历史贡献**：yarn 由 Meta（当年 Facebook）2016 年发布，当年就带来 `yarn.lock`（确定性锁定，同一份清单在哪都装出同样的依赖树）、并行安装、离线缓存、workspaces（monorepo 单仓多包）——很多是 yarn 先趟出来、后来被 npm 逐一吸收。这条 1.x 线如今叫 **Yarn Classic**，已进**维护模式**（只修 bug、不加新功能）。
-- **断裂点**：2020 年的 **Yarn 2（代号 Berry）** 是一次近乎重写的破坏性升级，理念大改，2.x+ 统称 **Yarn Berry / Modern**。"Classic 停更 + Berry 迁移成本高"这道坎，正是不少团队干脆转投 pnpm、yarn 采用度走低的主因（呼应下方下载量快照）。
+- **断裂点**：2020 年的 **Yarn 2（代号 Berry）** 是一次近乎重写的破坏性升级，理念大改，2.x+ 统称 **Yarn Berry / Modern**。"Classic 停更 + Berry 迁移成本高"这道坎，正是不少团队干脆转投 pnpm、yarn 采用度走低的主因（呼应下方[客户端采用度快照](#client-adoption)）。
 
-**Berry 的招牌设计：Plug'n'Play（PnP，即插即用）**：
+**Plug'n'Play（PnP，即插即用）**：
 
 - **是什么**：PnP **彻底不生成 `node_modules/` 目录**，改用一个 `.pnp.cjs` 文件当"依赖位置索引表"，把包直接从全局 zip 缓存（`.yarn/cache/*.zip`）映射给 Node 的 `require`。
 - **为什么**：`node_modules` 的扁平化提升（hoisting，把嵌套依赖抬到顶层去重）会放出幽灵依赖，且装包要解压海量小文件、慢又占盘。PnP 用一张静态映射表取代磁盘目录树 → 装得快、还能严格拦幽灵依赖。
 - **代价（也是迁移阻力）**：PnP **打破了"包一定躺在 `node_modules` 里"这个全生态默认假设**——很多打包器 / 编辑器 / 老库直接去读 `node_modules`，PnP 下要装编辑器 SDK 补丁才认。所以 Berry 允许**退回传统布局**（`nodeLinker: node-modules`），官方迁移指南也默认先让你保留 `node_modules`、要不要上 PnP 另说。见 [PnP 特性页](https://yarnpkg.com/features/pnp)。
 - **顺带一个 Berry 卖点**：**zero-install（零安装）**——把 `.yarn/cache` 一起提交进 git，`clone` 下来无需 `yarn install` 即可跑。
 
-**关键设计取舍：Berry 砍掉了全局安装（`yarn global`）**：
+**Berry 砍掉了全局安装（`yarn global`）**：
 
 - Classic 有 `yarn global add <pkg>`（对标 `npm i -g`）。**Berry（v2+）直接移除了 `yarn global` 命令**。官方迁移指南原话：*"Yarn focuses on project management, and managing system-wide packages was deemed to be outside of our scope"*——**"yarn 专注项目管理，管全系统级的包不在我们职责范围内"**（[berry#821](https://github.com/yarnpkg/berry/issues/821)）。
 - 替代品分两种，但都**不是**"常驻全局 CLI"：
@@ -172,7 +181,9 @@ choco list --local-only  ;  winget list          ;  scoop list
 
 **中肯定位**：yarn 的历史贡献大（lockfile / workspaces / 确定性安装很多是它先趟出来的），但今天夹在"Classic 稳却停更"和"Berry 新却破坏性、迁移贵"之间，通用场景大量流向 pnpm；Berry + PnP + zero-install 在**大型 monorepo** 仍有稳定拥趸。
 
-**四家客户端采用度快照**（npm registry 周下载量，2026-07；**看趋势别抠绝对值**）：
+#### <a id="client-adoption"></a>客户端采用度快照（周下载量，2026-07）
+
+npm registry 周下载量，**看趋势别抠绝对值**：
 
 | 客户端 | 周下载量 |
 | --- | --- |
@@ -181,18 +192,18 @@ choco list --local-only  ;  winget list          ;  scoop list
 | yarn | ~8.3 M |
 | bun | ~2.4 M |
 
-- **带系统性偏差**：`npm` 随 Node 自带、`bun` 主要靠官方脚本 / brew 装，二者"从 registry 下载"的次数天然偏少、低估真实使用；`pnpm` / `yarn` 更多在项目和 **CI**（持续集成，自动化构建 / 测试流水线，每跑一次常重拉一遍依赖）里从 registry 装、偏多。所以**"pnpm 遥遥领先、yarn 明显走低"这个大小趋势可信，但别拿绝对值一对一比高低**（yarn 走低也印证了上文对 Yarn Classic 掉队的判断）。
+- **带系统性偏差**：`npm` 随 Node 自带、`bun` 主要靠官方脚本 / brew 装，二者"从 registry 下载"的次数天然偏少、低估真实使用；`pnpm` / `yarn` 更多在项目和 **CI**（持续集成，自动化构建 / 测试流水线，每跑一次常重拉一遍依赖）里从 registry 装、偏多。所以**"pnpm 遥遥领先、yarn 明显走低"这个大小趋势可信，但别拿绝对值一对一比高低**（yarn 走低也印证了[上文对 Yarn Classic 掉队的判断](#yarn)）。
 - **Hacker News 风向**：pnpm 口碑正面（`disk space efficient`、防供应链攻击的新设置）、bun 高热看好（v1.0、Zig 写的 runtime）、yarn 几乎没有独立高热帖（话题多是"从 yarn 迁到 pnpm"）；另一类高赞是对 node/npm 依赖链复杂度的疲劳吐槽（`Why does every package+module system become a Rube Goldberg machine`）。
 
-### pip（Python / PyPI）
+### <a id="pip"></a>pip（Python / PyPI）
 
 - **中心 registry** `pypi.org`；包两种形态：**wheel**（`.whl`，预编译二进制，装得快）vs **sdist**（源码 tar，装时可能要编译）。见 [pip.pypa.io](https://pip.pypa.io/en/stable/)。
 - **隔离靠 venv**（虚拟环境），不是 pip 自带的多版本机制——同一 venv 内仍是每个包单版本。
 - **无原生 lockfile**：`requirements.txt` 是清单不是锁（`pip freeze` 能钉死版本当近似锁）；真 lock 由现代工具给：**uv**、**poetry**、**pdm**、**pip-tools**。
 - **PEP 668 坑（externally-managed-environment）**：Debian/Ubuntu 给系统 Python 打了 `EXTERNALLY-MANAGED` 标记，`pip install` 直接**拒绝**装进系统解释器（否则会和 apt 装的 python 包打架）。见 [PEP 668](https://peps.python.org/pep-0668/)。
-  - 正解：用 `venv` / `uv venv` 起隔离环境，或 `uv run --with <pkg>`、`pipx` 装 CLI；**别** `--break-system-packages` 硬闯（会与系统包冲突）。本仓统一走 `uv`（见第六节与顶层 AGENTS 规则）。
+  - 正解：用 `venv` / `uv venv` 起隔离环境，或 `uv run --with <pkg>`、`pipx` 装 CLI；**别** `--break-system-packages` 硬闯（会与系统包冲突）。本仓统一走 `uv`（见[跨语言环境与版本管理器](#env-managers)与顶层 AGENTS 规则）。
 
-### 其他语言级（一句话 + 命令）
+### <a id="other-language-pm"></a>其他语言级生态
 
 | 生态 | registry | 清单 / lock | 装法 | 备注 |
 | --- | --- | --- | --- | --- |
@@ -207,17 +218,21 @@ choco list --local-only  ;  winget list          ;  scoop list
 
 ---
 
-## 六、跨语言环境 & 版本管理器：conda / pixi / uv、asdf / mise
+## <a id="env-managers"></a>跨语言环境与版本管理器
 
-**（A）环境管理器**——介于"语言级"和"系统级"之间，给**项目**搭一整套隔离、可复现的工具链，且能带非 Python 的原生依赖（C 库、CUDA、甚至 `go`、`nodejs`）。
+### <a id="env-manager"></a>环境管理器：conda / mamba / pixi / uv
+
+介于"语言级"和"系统级"之间，给**项目**搭一整套隔离、可复现的工具链，且能带非 Python 的原生依赖（C 库、CUDA、甚至 `go`、`nodejs`）。
 
 - **conda**：多语言、装的是**预编译二进制**，源是 channel（`conda-forge` / `defaults`）。经典痛点是 solver 慢 → 换 **libmamba** 求解器或直接用 **mamba**（C++ 重写、更快）。见 [docs.conda.io](https://docs.conda.io/)。
 - **pixi**：conda-forge 生态的**现代前端**（Rust 写、快），`pixi.toml` + `pixi.lock`，项目级 + `pixi global`。见 [pixi.sh](https://pixi.sh/)。
 - **uv**：Astral 出品，Python 专用、极快，一把管 venv / 依赖 / lock / Python 版本。见 [docs.astral.sh/uv](https://docs.astral.sh/uv/)。
 
-> 本仓约定的 Python 环境优先级：**Pixi > uv > python/python3**（见顶层 AGENTS.md）。两条相关坑：① `conda base` 常年激活会污染 `PATH`、conda 与 pip 在同环境混装易冲突（先 conda 后 pip、别反复横跳）；② `pixi global install go` 装的 go 有 cgo 编译器坑（`DefaultCC` 被烧进二进制），判别与修法见 [go.md](go.md) 第三节。
+> 本仓约定的 Python 环境优先级：**Pixi > uv > python/python3**（见顶层 AGENTS.md）。两条相关坑：① `conda base` 常年激活会污染 `PATH`、conda 与 pip 在同环境混装易冲突（先 conda 后 pip、别反复横跳）；② `pixi global install go` 装的 go 有 cgo 编译器坑（`DefaultCC` 被烧进二进制），判别与修法见 [go.md](go.md#cgo-pitfall)。
 
-**（B）版本管理器**——不装"库"，只管**同一门语言的多个版本**并按目录/项目切换：
+### <a id="version-manager"></a>版本管理器：nvm / pyenv / asdf / mise
+
+不装"库"，只管**同一门语言的多个版本**并按目录/项目切换：
 
 - **单语言**：`nvm`(Node)、`pyenv`(Python)、`rbenv`(Ruby)、`fnm`(Node，Rust 写更快)——各管一门。
 - **多语言合一**：**`asdf`**（插件式，一个工具管 node/python/ruby/… 多版本，`.tool-versions` 声明，[asdf-vm.com](https://asdf-vm.com/)）、**`mise`**（Rust 写、更快、兼容 asdf 插件，还能管**环境变量 + task runner**，`mise.toml`/`.tool-versions`，[mise.jdx.dev](https://mise.jdx.dev/)）。
@@ -225,7 +240,7 @@ choco list --local-only  ;  winget list          ;  scoop list
 
 ---
 
-## 七、绕过包管理器的安装：`curl | sh` 与 `irm | iex`
+## <a id="curl-sh"></a>绕过包管理器的安装：`curl | sh` 与 `irm | iex`
 
 不是所有软件都进包管理器。很多工具的官方安装方式是**下载一段脚本直接执行**——这是一整类"装软件的方式"，跟包管理器并列：
 
@@ -238,7 +253,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # uv
 
 ```powershell
 # Windows PowerShell：等价物 —— irm 下载、iex 执行
-irm get.scoop.sh | iex                        # 装 Scoop（第四节）
+irm get.scoop.sh | iex                        # 装 Scoop（见 Windows 一节）
 irm https://…/install.ps1 | iex
 irm https://…/install.ps1 -OutFile a.ps1      # 或先落地再跑（能先审阅）
 ```
@@ -250,20 +265,20 @@ irm https://…/install.ps1 -OutFile a.ps1      # 或先落地再跑（能先审
 
 ---
 
-## 八、当 npm 被当成"跨平台二进制安装器"：壳包 + 平台子包
+## <a id="npm-as-binary-installer"></a>npm 当跨平台二进制安装器：壳包 + 平台子包
 
 前面几节讲的"包"多半是某门语言的库。但有一类工具反过来——**它本体是一块预编译好的原生程序（native binary，直接由 CPU 执行的机器码，不需要先装 Node 之类的运行时才能跑），却借 npm（或 Homebrew / winget）来当"跨平台安装器"。** 此时 npm 扮演的不是"运行时依赖管理器"，而是被当成一个"最普及、还自带按平台配货能力的下载器"。
 
 **为什么原生程序也要发到 npm 上？** 因为 npm 是 JS 开发者**最顺手的安装入口**，而且它天生支持"**按你的操作系统 / CPU 架构自动挑对应版本**"。所以很多其实用别的语言写的原生工具都借 npm 分发：打包器 **esbuild**、编译器 **swc**、代码检查器 **@biomejs/biome**、构建工具 **turbo**……都是这个套路。最典型的当代例子，是 OpenAI Codex、Claude Code、GitHub Copilot 三个 AI coding agent（具体普查见本节末尾指针）。
 
-### 机制：空盒子 + 一张按机型自动配货的清单
+### <a id="shell-package-mechanism"></a>机制：壳包 + `optionalDependencies` 平台门控
 
 一句话：**你装的主包，是个几 KB 的"空盒子 + 一张配货单"；真正几百 MB 的原生程序被列在配货单上，由 npm 按你的机型只挑一个下载下来。**
 
 - **空盒子（launcher，启动器外壳）**：`npm install -g` 装的主包往往只有几 KB 到几百 KB，几乎不带普通依赖。它唯一的活儿，是被调用时转手去启动本机那个真正的大程序。
-- **配货单（`optionalDependencies`，可选依赖）**：主包里列着一组"平台专属子包"，每个子包用 `os`（操作系统）、`cpu`（CPU 架构）、`libc`（C 运行时，见下）三个字段标明"我给哪种机器用"。安装时 npm **只下载与你这台机器匹配的那一个**子包，其余的因平台对不上被**静默跳过**——"可选依赖"装不上不报错，正是干这个用的。那块几百 MB 的原生程序，就藏在被选中的子包里。
+- **配货单（`optionalDependencies`，可选依赖）**：主包里列着一组"平台专属子包"，每个子包用 `os`（操作系统）、`cpu`（CPU 架构）、`libc`（C 运行时，见 [原生二进制的判据](#native-binary-clues)）三个字段标明"我给哪种机器用"。安装时 npm **只下载与你这台机器匹配的那一个**子包，其余的因平台对不上被**静默跳过**——"可选依赖"装不上不报错，正是干这个用的。那块几百 MB 的原生程序，就藏在被选中的子包里。
 
-### 怎么判断"某个 npm 包其实装的是原生二进制"
+### <a id="native-binary-clues"></a>原生二进制的判据（体量差与 libc 分叉）
 
 两条一眼可辨的线索：
 
@@ -271,17 +286,17 @@ irm https://…/install.ps1 -OutFile a.ps1      # 或先落地再跑（能先审
 - **libc 分叉**：看它是否为 Linux **同时**发了 `glibc` 和 `musl` 两套子包。**libc 是 Linux 最底层的 C 标准库**——主流发行版（Ubuntu / Debian…）用 `glibc`，轻量的 Alpine 用 `musl`，二者不通用（子包上会标 `libc=["glibc"]` 或 `["musl"]`）。**关键推理**：纯 JS 在哪种 libc 上都照跑、根本不用区分；**会专门分 libc，说明装的是挑 C 运行时的原生二进制。**
   - ⚠️ 但**反过来不成立**：一个原生工具若是**静态链接**的（把用到的 C 库都打进自己肚子里、不再依赖系统 libc），它可以只发**一个** musl 版就通吃 glibc / musl 两种系统。所以"没分叉"不代表"不是原生"——Codex 就是这种，只发一个静态 musl 二进制。
 
-> **这套"壳包 + 平台二进制"模式最典型的当代样本，就是 Codex / Claude Code / Copilot 三个 coding agent。** 它们各自用什么工具链编（Rust / Bun `--compile` / Node SEA）、四种安装入口的完整对照、npm "软弃用"到什么程度、以及采用度数据，属于 coding-agent 话题，普查见 **harness skill 的 [install.md](../../harness/references/install.md)**。
+> **这套"壳包 + 平台二进制"模式最典型的当代样本，就是 Codex / Claude Code / Copilot 三个 coding agent。** 它们各自用什么工具链编（Rust / Bun `--compile` / Node SEA）、四种安装入口的完整对照、npm "软弃用"到什么程度、以及采用度数据，属于 coding-agent 话题，普查见 `harness` skill 的"coding agent 的安装与分发形态"章节。
 
-### 和第七节（`curl | sh`）的关系
+### <a id="vs-curl-sh"></a>与 `curl | sh` 直装的关系
 
-第七节的通则是"能进包管理器就优先包管理器、少用脚本直装"。这类工具看着像反例，其实是那条通则的**边界情形**：当一个工具本身就是"自带升级、又不依赖任何运行时的独立原生程序"时，用官方 `curl` 脚本 / brew 一步装好反而最省事（还免去先装 Node），npm 于是退化成"照顾 Node 老用户的兼容入口"。
+[`curl | sh` 直装](#curl-sh)那节的通则是"能进包管理器就优先包管理器、少用脚本直装"。这类工具看着像反例，其实是那条通则的**边界情形**：当一个工具本身就是"自带升级、又不依赖任何运行时的独立原生程序"时，用官方 `curl` 脚本 / brew 一步装好反而最省事（还免去先装 Node），npm 于是退化成"照顾 Node 老用户的兼容入口"。
 
-这类工具往往会在文档里把 npm 标为"已弃用（deprecated）"来引导迁移，但常常只是**软弃用（soft deprecation）**——registry 层并没有真打弃用标记、`npm i -g` 照装照用不弹警告，只为不砸掉海量还写着 `npm i -g` 的老教程和 CI 脚本。（Claude Code 就是活例，连同三家的体积普查、工具链、采用度详见 harness [install.md](../../harness/references/install.md)。）
+这类工具往往会在文档里把 npm 标为"已弃用（deprecated）"来引导迁移，但常常只是**软弃用（soft deprecation）**——registry 层并没有真打弃用标记、`npm i -g` 照装照用不弹警告，只为不砸掉海量还写着 `npm i -g` 的老教程和 CI 脚本。（Claude Code 就是活例，连同三家的体积普查、工具链、采用度详见 `harness` skill 的"coding agent 的安装与分发形态"章节。）
 
 ---
 
-## 九、"想干嘛 × 各家"命令速查
+## <a id="cheatsheet"></a>命令速查（按动作横向对照）
 
 **系统级**（同一动作横向对照）：
 
@@ -306,9 +321,9 @@ irm https://…/install.ps1 -OutFile a.ps1      # 或先落地再跑（能先审
 
 ---
 
-## 十、踩坑合集（紧贴主题）
+## <a id="pitfalls"></a>踩坑合集
 
-- **PEP 668**：`pip install` 报 `externally-managed-environment` = 系统 Python 被 apt 保护，别硬装。用 `uv venv` / `venv` / `pipx`（详见第五节）。
+- **PEP 668**：`pip install` 报 `externally-managed-environment` = 系统 Python 被 apt 保护，别硬装。用 `uv venv` / `venv` / `pipx`（详见 [pip](#pip)）。
 - **npm 全局 vs 项目本地**：CLI 工具用 `-g` 或 `npx`；库依赖留在项目 `node_modules`。`node_modules` 体积大是常态，pnpm 用硬链接大幅省盘。
 - **Nix 非 FHS 二进制**：自己下载的预编译 ELF 在 NixOS/纯 Nix 环境跑不起来（找不到 `ld-linux`），要 `patchelf`/`steam-run`/`nix-ld`。
 - **choco 与 winget 混装**：两套安装数据库互不相认，同一软件别两家都装，卸载会对不上。choco 多数操作要管理员 shell。
