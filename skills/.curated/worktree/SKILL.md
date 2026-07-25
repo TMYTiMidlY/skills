@@ -84,8 +84,7 @@ SU2-Quantum 实测的成本差距：
 ```bash
 MAIN_REPO=$(git rev-parse --show-toplevel)          # 或见「动态推导主仓库路径」
 TIMESTAMP=$(date +%Y-%m-%dT%H-%M-%S)
-# 注意目录名用 .clones/ 而非 .worktrees/——它们不是 worktree，
-# `git worktree list` 看不到、`git worktree remove` 也删不掉
+# 目录名用 .clones/ 而非 .worktrees/（见下方「命名约定」）
 NEW="$(dirname "$MAIN_REPO")/$(basename "$MAIN_REPO").clones/cli-clone-$TIMESTAMP"
 BRANCH_NAME="cli/clone-$TIMESTAMP"
 BASE=$(git -C "$MAIN_REPO" rev-parse --abbrev-ref HEAD)
@@ -118,6 +117,24 @@ git remote add local "$MAIN_REPO"
   让个别 submodule 算不出 alternate 时退化成正常 clone 而不是整体失败
 - 之后**一切照常**：`git submodule update`、`git checkout`、`git pull` 想怎么用怎么用，
   不需要任何特殊姿势，也不会影响主仓库
+
+命名约定（与 worktree 同构，只换容器目录名和前缀）：
+
+- 时间戳格式 `YYYY-MM-DDTHH-MM-SS`（用 `-` 不用 `:`，跨文件系统兼容）
+- clone 目录 `{主仓库父目录}/{仓库名}.clones/cli-clone-{时间戳}`，与主仓库**同级**——
+  放进主仓库内部会被 git 看见、污染 `status`
+- 容器目录用 `.clones/` 而非 `.worktrees/`：它们不是 worktree，`git worktree list` 看不到、
+  `git worktree remove` 也删不掉，同名会误导
+- 分支名 `cli/clone-{时间戳}`；`cli-` / `cli/` 前缀标识 agent 创建的，便于和人工开的区分、
+  定期批量清理
+
+分支要**单独建一步**，这是和 worktree 的一处操作差异：`git worktree add -b` 建目录和建分支
+一条命令就完成，而 `git clone` 只能 checkout 已有分支——所以先用 `--branch "$BASE"` 落在
+主仓库当前所在的分支上当起点，再 `git checkout -b "$BRANCH_NAME"` 开专属分支。
+
+clone 的 refs 独立，你**可以**直接在 `main` 上提交（worktree 会拒绝），但那样两边各有一条
+`main` 分头前进，[搬回主仓库](#branch-flow)时就撞车；开带时间戳的专属分支，`fetch` 回去
+永远是干净的 `[new branch]`。
 
 ### <a id="branch-flow"></a>分支流转
 
