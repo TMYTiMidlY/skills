@@ -90,6 +90,8 @@ cd "$NEW"
 git checkout -b "$BRANCH_NAME"
 # 别让 origin 指着本地仓库（主仓库没有 origin 时跳过）
 UP=$(git -C "$MAIN_REPO" remote get-url origin 2>/dev/null) && [ -n "$UP" ] && git remote set-url origin "$UP"
+# 再留一条指回主仓库的 remote——origin 改指上游后就够不着主仓库了（见「分支流转」）
+git remote add local "$MAIN_REPO"
 ```
 
 要点：
@@ -102,6 +104,25 @@ UP=$(git -C "$MAIN_REPO" remote get-url origin 2>/dev/null) && [ -n "$UP" ] && g
   让个别 submodule 算不出 alternate 时退化成正常 clone 而不是整体失败
 - 之后**一切照常**：`git submodule update`、`git checkout`、`git pull` 想怎么用怎么用，
   不需要任何特殊姿势，也不会影响主仓库
+
+### <a id="branch-flow"></a>分支流转
+
+共享 clone 只共享 object store，**refs 和 config 各自独立**——分支不会自动同步。好处是两边可以
+同时 checkout 同一分支（worktree 会拒绝：`'main' is already used by worktree at ...`），
+代价是成果得手动搬一次。因为对象早已共享，两个方向的 `fetch` 都**不传输对象**，只更新 ref。
+
+```bash
+# 主仓库 → clone：clone 时只带到了当时的分支，之后主仓库新建的要靠 local 取
+git fetch local
+
+# clone → 主仓库：把成果送回去
+git -C "$MAIN_REPO" fetch "$NEW" "$BRANCH_NAME":"$BRANCH_NAME"
+```
+
+⚠️ 目标分支正被对方 checkout 时 fetch 会被拒绝
+（`fatal: refusing to fetch into branch 'refs/heads/…' checked out at …`），先切走再 fetch。
+
+成果要长期保留时，直接 `git push origin "$BRANCH_NAME"` 推上游比搬回主仓库更省事。
 
 ### 事后补 submodule
 
@@ -155,8 +176,7 @@ git submodule foreach --recursive 'git repack -a -d && rm -f "$(git rev-parse --
 rm -rf "$NEW"        # 独立 clone，直接删就行，没有注册残留要清
 ```
 
-分支活在这个 clone 自己的仓库里，删目录即一并消失；要保留成果先 `git push` 或
-在主仓库 `git fetch "$NEW" "$BRANCH_NAME":"$BRANCH_NAME"`。
+分支活在这个 clone 自己的仓库里，删目录即一并消失——先按[分支流转](#branch-flow)把成果搬走或推上游。
 
 ## <a id="git-worktree"></a>git worktree（无 submodule 的仓库）
 
