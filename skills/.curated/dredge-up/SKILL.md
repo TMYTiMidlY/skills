@@ -65,7 +65,7 @@ description: 会话收尾盘点——把你聊过/承诺过、却被后续任务
 ## 可选输出
 
 - **报告式存档（导出 HTML / Markdown / 文本 / JSON）**：用户要可视化留档 / 把会话交给别人时，用 **`asmgr`**（`agent-session-manager` 仓库的 CLI）导出。本 skill **不再自带渲染器**——同一套解析+渲染逻辑只在 `asmgr` 里维护一份。
-  - 首次在本机准备（`asmgr` 是单一无 scope 的 npm 包，命令同名）：`npm i -g github:TMYTiMidlY/agent-session-manager`（Node ≥ 22，安装时 `prepare` 钩子自动打包，免 registry）；registry 上线后可直接 `npm i -g asmgr`。也可从 Releases 下零依赖原生二进制，但⚠️ 二进制基于 Bun、缺 `node:sqlite`，会**静默跳过 Copilot 的 SQLite 库**这一数据源（即下面的 `--copilot-db` 回退失效），要用该回退请走 Node 安装。
+  - 首次在本机准备（`asmgr` 是单一无 scope 的 npm 包，命令同名）：`npm i -g asmgr`。也可从 Releases 下零依赖原生二进制，但⚠️ 二进制基于 Bun、缺 `node:sqlite`，会**静默跳过 Copilot 的 SQLite 库**这一数据源（即下面的 `--copilot-db` 回退失效），要用该回退请走 Node 安装。
   - **单文件 HTML**（复刻 Copilot `/share html`：暗色 Primer 主题、sticky header、按类型筛选 pill、搜索（`/` 聚焦）、折叠/展开、侧栏目录、上一条/下一条用户消息跳转，外加 Shiki 高亮、KaTeX 数学、紧凑密度切换、24h 时间戳）：
     `asmgr html <session-id> -o out.html`
     从任意 events.jsonl（如 restic 备份 restore 出来的）导：`asmgr html --file <路径> -o out.html`。
