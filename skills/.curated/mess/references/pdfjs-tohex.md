@@ -1,4 +1,4 @@
-# PDF.js `Uint8Array.toHex` 兼容性事故 —— 从旧浏览器崩溃到官方 legacy build 修复
+# PDF.js `Uint8Array.toHex` 兼容性事故
 
 > 首记 2026-04-10（LaTeX-Workshop 10.14.1 fork · pdfjs-dist 5.6.205 · htbrowser Chrome 132）
 > 补全 2026-07-22（jujuleaf 个人项目 · pdfjs-dist 6.1.200 · 核对上游官方修复）
@@ -7,7 +7,7 @@
 
 ---
 
-## 症状
+## <a id="symptom"></a>症状
 
 - PDF 预览在新 Chrome 正常，**旧 Chromium 套壳浏览器 / 旧 Electron / 旧 VSCode webview / QtWebEngine** 打开 PDF 全白。
 - Console：`TypeError: hashOriginal.toHex is not a function`，位置 `pdf.mjs:428`（BaseException）。
@@ -28,7 +28,7 @@ pdf.js 用 [TC39 `proposal-arraybuffer-base64`](https://github.com/tc39/proposal
 
 低于上述版本的运行时调用 `.toHex()` 必 `throw`。
 
-### 精确的版本边界（比"v5.5+"准）
+### 版本边界
 
 - **`5.4.530`（2025-12-28）**：最后一个仍带手写 fallback 守卫的发行版，安全。
 - **commit [`5b368dd58a39b02f58314ee9e23eddb3c6f01fee`](https://github.com/mozilla/pdf.js/commit/5b368dd58a39b02f58314ee9e23eddb3c6f01fee)**（Jonas Jenwald/Snuffleupagus，committed 2026-01-29）："Remove the `Uint8Array.prototype.toHex()`, `toBase64()`, `fromBase64()` polyfills"。diff 把 `src/shared/util.js` 里的 `toHexUtil()`（内含 `if (Uint8Array.prototype.toHex) {...} else {...}`）整段删掉，`src/core/document.js` 改成直接 `hashOriginal.toHex()`。
@@ -55,7 +55,7 @@ pdf.js 用 [TC39 `proposal-arraybuffer-base64`](https://github.com/tc39/proposal
 
 ---
 
-## 三种做法，只有一种是"官方"
+## 兼容做法与官方定性
 
 | 做法 | 是什么 | 定性 |
 |---|---|---|
@@ -67,14 +67,14 @@ pdf.js 用 [TC39 `proposal-arraybuffer-base64`](https://github.com/tc39/proposal
 
 ## 官方修复证据
 
-### pdf.js：官方立场 = 旧浏览器用 legacy build
+### pdf.js 上游的 build 划分与支持范围
 
 - **README**（`mozilla/pdf.js:README.md`）："If you need to support older browsers, run: `npx gulp generic-legacy`"。在线 demo 也分 Modern / Older browsers 两个入口（`.../web/viewer.html` vs `.../legacy/web/viewer.html`）。
 - **FAQ wiki**（`Frequently-Asked-Questions#faq-support`）："By default we produce a non-translated/non-polyfilled build, intended for *the latest* browsers. However, we also provide a **translated/polyfilled build for older browsers in a separate bundle (with a `legacy` suffix)**." legacy 官方支持范围：**Firefox ESR+ / Chrome 125+ / Edge / Opera / Safari 18 mostly / Node 22+**。
 - **构建配置**（`gulpfile.mjs`）：`generic` 用 `SKIP_BABEL:true`（无 polyfill）；`generic-legacy` 用 `SKIP_BABEL:false` + `babel-plugin-polyfill-corejs3`（core-js **3.49.0**，`shippedProposals:true`），browserslist `Chrome >= 125 / Firefox ESR / Safari >= 18 / Node >= 22`。因此 legacy build 会给 Chrome 125–139 注入 `toHex` polyfill。
 - npm 包 `pdfjs-dist` 同时含 `build/`（modern）和 `legacy/build/`（legacy），`package.json` 的 `main` 默认指向 modern。**这就是坑的开关：谁指到 `build/` 谁崩，指到 `legacy/build/` 才安全。**
 
-### LaTeX-Workshop：官方修复就是切 legacy build
+### LaTeX-Workshop 的修复
 
 - 它把 pdf.js **自带的 stock viewer** 整包，通过本地 Node HTTP server（`src/preview/server.ts`）在 VSCode webview 的 iframe 里加载。
 - 修复 commit `a248e2a1`（James Yu，2026-05-07，v10.15.2）只改了 `server.ts` 的路由：
@@ -90,13 +90,13 @@ pdf.js 用 [TC39 `proposal-arraybuffer-base64`](https://github.com/tc39/proposal
 
   即：`/build/pdf.mjs`、`/build/pdf.worker.mjs` 的文件系统根从 `pdfjs-dist/` 换到 `pdfjs-dist/legacy/`。相关 issue：#4851 / #4867 / #4882。main 分支 `pdfjs-dist` 为 5.7.284，`engines.vscode` 仅 `^1.114.0`（故意不要求很新的 VSCode）。
 
-### microsoft/vscode：与本事故无关
+### microsoft/vscode 的关联
 
 vscode 核心**不打包 pdf.js、也没有** `Uint8Array.toHex` 相关 polyfill。代码里出现的 `toHex` 只是 `src/vs/base/common/hash.ts` 里 SHA-1/SHA-256 的无关私有 `toHexString()`。所谓"vscode 官方修复"这层是空的——真正的修复在 pdf.js（提供 legacy build）+ LaTeX-Workshop 扩展（切到 legacy build）这两层。
 
 ---
 
-## jujuleaf 的落地，以及与 LaTeX-Workshop 的区别
+## jujuleaf 的落地
 
 **jujuleaf** = 浏览器端 LaTeX 编辑器（真实 jj 版本控制 + 服务端 latexmk + **自研 PDF.js 连续预览** + 双向 SyncTeX + 双语流水线；Node/express + esbuild 打包的 CodeMirror 6 前端）。关键：它没用 pdf.js 的 stock viewer，而是**把 pdf.js 当库**，自己写了 `src/pdfviewer.js`。
 
@@ -107,7 +107,7 @@ jujuleaf 的兼容做法（三层）：
 
 **jujuleaf commit `b896582`（2026-07-22）修的回归**：原 `package.json` 的 build 第二步是一段内联 `node -e`，从 `build/`（= **standard**）复制 worker 到 `public/`；下一次 `pnpm run build` 会把好的 legacy worker 覆盖成 standard，`toHex` 崩溃复发。改成 `node copy-worker.mjs`（永远复制 `legacy/build/` 的 worker）堵住。
 
-### 区别 / 为什么 / 能否学 LaTeX-Workshop
+### 两种消费形态的差异与改造可行性
 
 | 维度 | LaTeX-Workshop | jujuleaf |
 |---|---|---|
@@ -139,7 +139,9 @@ jujuleaf 的兼容做法（三层）：
 - **v6 standard 不只依赖 toHex**：还用 `Map.getOrInsertComputed`、`Math.sumPrecise`、`Promise.try` 等更晚落地的 API。所以只补 6 个 Uint8Array 方法**救不了 standard**，legacy build 才是完整解。
 - **选型**：目标 Chrome 125+（pdf.js v6 官方支持范围）→ 钉 `pdfjs-dist@6.1.200` + 全 legacy（jujuleaf 现状）。若必须支持 Chrome 103–124 → 钉最后一个 v4 `4.10.38` + legacy。
 
-### 附：旧的"回退式 workaround"（已被官方 legacy 方案取代，保留备查）
+### <a id="vsix-bypass"></a>回退式 workaround
+
+> **已被官方 legacy 方案取代，保留备查。**
 
 mess 首记当时（官方修复未出）走的是**降级 + 成套回退**路线，针对 LaTeX-Workshop 这类"整包 stock viewer"扩展，要点：
 
