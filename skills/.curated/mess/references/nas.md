@@ -96,3 +96,140 @@ failed to initialize logging driver: database is blocked
 ### 关键词
 
 `Postgres checkpoint 卡住`、`end-of-recovery checkpoint`、`Ds 状态`、`不可中断磁盘睡眠`、`docker stats BlockIO 不变`、`iSCSI LUN`、`NAS-backed 存储`、`WAL fsync 慢`、`wsl --mount`、`崩溃恢复耗时长`、`checkpoint complete sync=727s`、`误判为死锁`、`pg_isready`、`大表 + 慢速存储 checkpoint 正常耗时`
+
+## <a id="iscsi-ip-change"></a>iSCSI LUN 重连：NAS 换 IP 与初始化器里的陈旧绑定
+
+> 2026-07-25 | 与上一条同一套链路：Synology NAS 建 iSCSI Target/LUN → Windows iSCSI Initiator → `wsl --mount --bare` → WSL2 `/dev/sdX`（整盘 ext4，无分区表）→ docker volume。下文 `<NAS-旧IP>` / `<NAS-新IP>` / `<NAS 主机名>` 为占位符。
+
+> 记录原则：这次中途下过一个错误结论（"NAS 关机了"），下面如实保留当时凭什么这么判断、以及那个判据错在哪。
+
+### 症状
+
+WSL 里 `/dev/sdX` 消失，依赖它的 docker volume（`driver_opts` 写死 `device: /dev/sdX`）起不来。Windows 侧：
+
+- `Get-IscsiSession` 有一条会话，但 `IsConnected=False`
+- `Get-IscsiConnection` **返回空**（没有任何真实 TCP 连接）
+- `Connect-IscsiTarget` 报 `已经通过 iSCSI 会话登录目标`（`HRESULT 0xefff003f`）而拒绝执行
+
+于是形成死锁：既没连上，也不允许重连。
+
+### 端口探测在 TUN 代理下不可用作存活判据
+
+用 `Test-NetConnection` 和 bash `/dev/tcp` 探已经失效的 `<NAS-旧IP>`，3260 / 5000 / 5001 / 445 **全部报"通"**。实际那个地址上什么都没有——本机跑着 Mihomo/Clash TUN，代理**就地接下了 TCP 握手**，握手成功不代表对端存在。
+
+> 实测：同一时刻 `Test-NetConnection <NAS-旧IP> -Port 3260` → `TcpTestSucceeded=True`，而 .NET `TcpClient.ConnectAsync` 对同一地址端口 → `False`。TUN 拦截的原理见 `network` skill 的 Mihomo TUN / fake-ip 章节。
+
+可靠判据（按可信度）：
+
+| 判据 | 说明 |
+|---|---|
+| ARP 表（`Get-NetNeighbor`） | 链路层，代理伪造不了 |
+| .NET `TcpClient.ConnectAsync` | 实测能把死地址和活地址干净区分开 |
+| 真实 HTTP 响应（`Invoke-WebRequest`） | 有响应体才算活 |
+| ~~`Test-NetConnection`~~ / ~~`/dev/tcp`~~ | 本环境下会给假阳性 |
+
+```powershell
+$c = New-Object System.Net.Sockets.TcpClient
+$ok = $c.ConnectAsync('<NAS-IP>', 3260).Wait(4000)
+"connected=" + ($ok -and $c.Connected)
+$c.Close()
+```
+
+### ARP 不可达只说明该地址没人应答
+
+旧地址的 ARP 项是 `00-00-00-00-00-00 / Unreachable`，而同网段上百台设备都有真实 MAC、网关 `Reachable`。据此当时判定"NAS 断电或掉线"——**这个结论是错的**。
+
+ARP 能证明的只是"**这个地址**上没有设备应答"，不能证明"**这台设备**不在了"。设备换了地址，旧地址一样表现为不可达。下判断前应先按主机名解析一次。
+
+### 按主机名与厂商 OUI 定位新地址
+
+Synology 默认注册 mDNS，主机名直接能解析：
+
+```powershell
+Resolve-DnsName <NAS 主机名>        # -> <NAS 主机名>.local -> <NAS-新IP>
+```
+
+交叉验证：在 ARP 表里按 Synology 的厂商 OUI（MAC 前三段 `00-11-32` / `90-09-D0`，IEEE 公开注册）筛，能独立确认哪台是 NAS。
+
+```powershell
+Get-NetNeighbor -AddressFamily IPv4 |
+  Where-Object { $_.LinkLayerAddress -match '^(00-11-32|90-09-D0)' } |
+  Select-Object IPAddress, LinkLayerAddress, State
+```
+
+### 换掉 portal 之后登录仍然超时
+
+把 portal 改到 `<NAS-新IP>` 后，SendTargets 发现**成功**（`iscsicli ListTargets` 能列出 target），但 `Connect-IscsiTarget` 与 `iscsicli QLoginTarget` 双双超时（60s / 90s），每次还留下一条新的僵尸会话。
+
+真凶在持久化目标（persistent target，开机自动重连用的书签）里，它单独记着地址，**不随 portal 更新**：
+
+```
+> iscsicli ListPersistentTargets
+共 1 个永久目标
+    目标名称     : iqn.2000-01.com.synology:<target>
+    地址和套接字 : <NAS-旧IP> 3260      <- 仍钉在死地址
+```
+
+`iscsicli TargetInfo <iqn>` 也会显示该 target 同时挂着新旧两条 `SendTargets:` 发现机制。登录时走到死地址那条就一路等到超时。
+
+> 诊断上的差别：`Connect-IscsiTarget` 只会静默卡住，不说自己在连哪个 portal；`iscsicli` 系列会把地址、持久化条目、错误码都打出来。cmdlet 查不出原因时换 `iscsicli`。
+
+### PowerShell 数组真值导致的误判
+
+`Get-IscsiTarget -NodeAddress` 匹配 **大小写不敏感**。NAS 上若注册过大小写不同的两个 IQN（例如目标改过名），它会返回**数组**，于是：
+
+```powershell
+$t = Get-IscsiTarget -NodeAddress $iqn   # 返回 2 个对象
+if ($t.IsConnected) { ... }              # -> @($false, $false)
+                                         # 非空数组恒为真 -> 误判"已连接"
+```
+
+结果是脚本报告"已经连上了"，实际连接动作从未执行。判断前先确认返回的是单个对象。
+
+### 恢复顺序
+
+清掉所有陈旧绑定，再显式钉住活的 portal 登录：
+
+```powershell
+# 1. 拆僵尸会话（无连接、无磁盘暴露时拆除不涉及数据）
+Get-IscsiTarget | ForEach-Object {
+    Disconnect-IscsiTarget -NodeAddress $_.NodeAddress -Confirm:$false -ErrorAction SilentlyContinue
+}
+
+# 2. 清掉钉在旧地址的持久化目标，并重启初始化器刷内存态
+iscsicli ClearPersistentTargets
+Restart-Service MSiSCSI -Force
+
+# 3. 只保留活着的 portal
+Remove-IscsiTargetPortal -TargetPortalAddress '<NAS-旧IP>' -Confirm:$false
+New-IscsiTargetPortal    -TargetPortalAddress '<NAS-新IP>'
+
+# 4. 登录时显式指定 portal，避免又被旧地址抢走
+Connect-IscsiTarget -NodeAddress '<iqn>' `
+                    -TargetPortalAddress '<NAS-新IP>' -TargetPortalPortNumber 3260 `
+                    -IsPersistent $true
+
+# 5. 整盘交给 WSL（LUN 是无分区表的整盘 ext4，故用 --bare）
+wsl --mount \\.\PHYSICALDRIVE<N> --bare
+```
+
+以上都需要管理员权限；从 WSL 侧发起提权的做法见 `software` skill 的 Windows/WSL 宿主侧章节。
+
+> ⚠️ Windows 可能把这块盘识别为"未初始化"。**不要接受初始化 / 分区 / 格式化的提示**（`Initialize-Disk`、`New-Partition`、`Format-Volume`、`Clear-Disk`）——LUN 上是 Linux 侧的整盘文件系统，Windows 不认识它是正常的，一旦写入分区表数据即毁。盘若是 `IsOffline`，只做 `Set-Disk -IsOffline $false` 就够。
+
+### 设备名漂移的风险
+
+docker volume 若把设备写死（`driver_opts: device: /dev/sdg`），而 LUN 重新挂载后被分到别的字母，volume 就会指向错误的设备或失败。本次重连后仍是原字母，**没有触发**该问题。
+
+mount(8) 支持 `LABEL=` / `UUID=`，理论上写成 `device: LABEL=<卷标>` 可以规避漂移，但**未实测**，采用前需自行验证。用 `lsblk -o NAME,SIZE,FSTYPE,LABEL,UUID` 可确认卷标与 UUID。
+
+### 教训
+
+- **"某地址不可达"和"某设备不在了"是两回事**。设备可能只是换了地址；断定硬件故障前先按主机名解析、按厂商 OUI 扫一遍 ARP。
+- **代理 / TUN 环境下，端口探测不能当存活判据**——TCP 握手可能由本地代理完成。要么用链路层证据（ARP），要么用能拿到真实响应的探测。
+- **iSCSI 的地址记在多个地方**：portal 注册、target 的发现机制列表、持久化目标条目。只改其中一处，其余仍会把登录导向死地址。
+- **cmdlet 卡住不给理由时，换更啰嗦的原生 CLI**（`iscsicli`）——它会直接打印地址和错误码。
+
+### 关键词
+
+`NAS 换 IP`、`iSCSI 重连`、`/dev/sdg 消失`、`wsl --mount --bare`、`Get-IscsiSession IsConnected False`、`Get-IscsiConnection 为空`、`已经通过 iSCSI 会话登录目标`、`HRESULT 0xefff003f`、`Connect-IscsiTarget 超时`、`QLoginTarget 超时`、`iscsicli ListPersistentTargets`、`持久化目标钉在旧 IP`、`ClearPersistentTargets`、`Restart-Service MSiSCSI`、`TargetPortalAddress 显式指定`、`僵尸 iSCSI 会话`、`Test-NetConnection 假阳性`、`/dev/tcp 假阳性`、`TUN 接管 TCP 握手`、`TcpClient ConnectAsync 判活`、`ARP Unreachable 误判关机`、`Get-NetNeighbor`、`Synology OUI 00-11-32 90-09-D0`、`Resolve-DnsName mDNS .local`、`Get-IscsiTarget 大小写不敏感`、`PowerShell 数组真值`、`不要 Initialize-Disk`、`docker volume device 设备名漂移`
