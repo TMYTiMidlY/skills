@@ -425,6 +425,44 @@ flowchart TD
 
 PUT 归档会全量替换站点；PATCH 会增量合并，不支持 zip。PATCH 用 character device `(0,0)` 作为 whiteout 删除标记，需要 `Atomic: yes|no`，输掉并发竞态时返回 `409`，客户端应原样重试。
 
+#### <a id="path-publishing"></a>子路径发布与多子站
+
+`site` 指向 wildcard 映射出来的项目站根（如 `https://<user>.<zone>/<project>/`），`path` 则把 `source` 整棵目录树放到这个站点下的某个前缀。它不是“只发布一个页面”：一个 MkDocs 站的 `index.html`、`assets/`、`search/` 和所有子页面都会一起进入该前缀。
+
+```yaml
+- uses: https://codeberg.org/git-pages/action@v2.2.0
+  with:
+    site: https://<user>.<zone>/<project>/
+    path: ${{ secrets.DOCS_PATH }}
+    token: ${{ forge.token }}
+    source: site-docs/
+
+- uses: https://codeberg.org/git-pages/action@v2.2.0
+  with:
+    site: https://<user>.<zone>/<project>/
+    path: ${{ secrets.REPORTS_PATH }}
+    token: ${{ forge.token }}
+    source: site-reports/
+```
+
+这样同一个项目 manifest 可以同时容纳多个独立子站；更新 `DOCS_PATH` 不影响 `REPORTS_PATH`。CLI v1.8.2 的实现是：`path` 为空时发 PUT 全量替换，非空时发 PATCH，并用 `Create-Parents` 控制是否补齐 manifest 内的父目录（[固定源码](https://codeberg.org/git-pages/git-pages-cli/src/commit/b6a8defd5b432657a0782e2d1b7e7bf0cd630cf3/main.go#L322-L332)）；Action v2.2.0 固定传 `--parents`（[action.yml](https://codeberg.org/git-pages/action/src/commit/2b24bbb7ff943d3c8fe1df91326adec66daea6dd/action.yml#L24-L35)）。
+
+这里有一个首次发布边界：**项目站 manifest 本身还不存在时，带 `path` 的第一次 PATCH 会返回 `not found:`**；`--parents` 只能补 manifest 内的目录，不能凭空创建 manifest。先对项目根做一次 PUT（放一个不链接秘密路径、带 `noindex` 的占位首页即可），之后各个 `path` 才能独立 PATCH。占位站只需初始化一次：
+
+```bash
+site='https://<user>.<zone>/<project>/'
+stage="$(mktemp -d)"
+printf '%s\n' '<meta name="robots" content="noindex,nofollow"><h1>Not Found</h1>' \
+  > "$stage/index.html"
+tar -C "$stage" -cf "$stage.tar" .
+curl -X PUT "$site" \
+  -H "Forge-Authorization: token $FORGE_TOKEN" \
+  -H 'Content-Type: application/x-tar' \
+  --data-binary @"$stage.tar"
+```
+
+不可猜路径可把高熵单段值放进 Actions secret，再传给 `path`；可读前缀不是必须项。更换 secret 只会创建新前缀，**旧前缀不会自动失效**，需要显式 `--delete --path <旧值>`。另外，路径难猜不等于内容不可枚举；保留这种弱隐私模型时还要处理 [metadata 端点](#metadata-auth)。
+
 CI 打包有两个常见现象：
 
 - `git archive` 生成的 tar 可能带 `pax_global_header`（type `g`）；git-pages 会报告 `tar: unsupported type 'g'` 但跳过该条目，发布仍可成功。想避免告警可用普通 `tar` 打包。
@@ -432,7 +470,7 @@ CI 打包有两个常见现象：
 
 #### <a id="private-repo-action"></a>私有仓库的 Forgejo Action
 
-私有仓库由 CI checkout 后上传归档，不经过 `pages` 分支：
+私有仓库由 CI checkout 后上传归档，不经过 `pages` 分支。workflow 位于 wildcard 所授权的同一个 Forgejo、且 URL 与仓库匹配时，官方 Action 可直接使用 `${{ forge.token }}`；下面这个裸 curl + PAT 模板适用于 CI 在另一台 Git server、或发布 URL 与当前仓库不匹配的情况：
 
 ```yaml
 name: publish-to-git-pages
@@ -459,10 +497,126 @@ jobs:
           cat /tmp/resp; [ "$code" = "200" ] || exit 1
 ```
 
-- **token**：使用对目标仓库有 push 权限的 forge PAT，scope 包含 `read:user` 与仓库 write，存为仓库 Actions secret（如 `GITPAGES_TOKEN`）。git-pages 只调用 `/api/v1/user` 和 `/api/v1/repos/<owner>/<repo>` 读取身份与 `permissions.push`，不会修改仓库（[`forge_api.go`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/forge_api.go#L17-L103)）。Forgejo 仓库 secret 可通过 `PUT /api/v1/repos/<owner>/<repo>/actions/secrets/<NAME>` 写入。
+- **token**：跨 server / non-matching 场景使用对目标仓库有 push 权限的 forge PAT，scope 包含 `read:user` 与仓库 write，存为 CI 所在仓库的 Actions secret（如 `GITPAGES_TOKEN`）。git-pages 只调用 `/api/v1/user` 和 `/api/v1/repos/<owner>/<repo>` 读取身份与 `permissions.push`，不会修改仓库（[`forge_api.go`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/forge_api.go#L17-L103)）。Forgejo 仓库 secret 可通过 `PUT /api/v1/repos/<owner>/<repo>/actions/secrets/<NAME>` 写入。
 - **dry-run**：请求头 `Dry-Run: yes`（任意非空值都会触发）只执行鉴权和映射，不落库；适合定位 401、wildcard 映射和 token 权限（[README](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/README.md#L113-L116)）。token 无权访问推导出的仓库时，响应可能是 `no access to <owner>/<repo> or invalid token`（[`forge_api.go`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/forge_api.go#L90-L105)）。
 - **容器内生成 token**：Forgejo 拒绝以 root 运行管理 CLI。容器默认用户是 root 时，使用 `docker exec -u git <forgejo容器> forgejo admin user generate-access-token --username <U> --scopes read:user,write:repository --raw`。
 - **runner 单并发**：`capacity: 1` 时，一个长期卡住的 workflow 会占满唯一槽位，后续发布全部排队。停止对应 job 容器后 runner 会把 run 标为 failed 并释放槽；迁移期可把不再自动运行的旧 workflow 改为 `on: workflow_dispatch`。Runner / DinD / token 机制见本 skill 的 [git-server](git-server.md)。
+
+#### <a id="cross-forge-ci"></a>CI 与鉴权 Forge 分离
+
+“构建在哪个 Git server”与“git-pages 向哪个 Forge 验证发布权限”是两件事：
+
+```text
+Gitea CI ──上传归档──▶ git-pages ──检查 token 的 push 权限──▶ Forgejo
+```
+
+- **同一个 Forgejo**：workflow 所在仓库与 wildcard 的 `clone-url` 指向同一 Forgejo 时，匹配的项目站可直接用 `${{ forge.token }}`；不需要长期 PAT。
+- **跨 server**：CI 在 Gitea、wildcard 却配置 `authorization = "forgejo"` 时，Gitea 的自动 job token 不能拿到 Forgejo 验证。应在 Forgejo 创建 `read:user + write:repository` PAT，把它存进 Gitea 仓库 secret，再作为 Action 的 `token:`。git-pages 仍只接收构建产物；Forgejo 仓库只是权限锚点，不承载这些产物。
+- **仓库必须存在**：Forge Wildcard 会从 `<user>.<zone>/<project>/` 推导授权 Forge 上的 `<user>/<project>`，再查询 `permissions.push`。对应仓库不存在时，即使 token 有效也会得到 `401 not authorized by forge (wildcard)`。
+- **CLI 不绕过鉴权**：`git-pages-cli --upload-dir` 只是归档上传客户端；服务端未开启 `PAGES_INSECURE`、又没有 DNS Challenge 时，仍然需要能通过 Forge Wildcard / DNS allowlist 的 token。
+
+迁移 workflow 时还要分清“同名分支”与“同一提交”：用某个 forge 的 API 直接创建 workflow，只会在那个 forge 的分支上产生新 commit；另一个本地仓库里的 untracked 文件、或另一台 server 上同名分支的独有 commit，都不会因“推了全部本地分支”自动出现。用 `git rev-parse <branch>` 与两端 `git ls-remote` 对 SHA，不能只对分支名。
+
+#### <a id="ci-performance"></a>Actions 构建性能
+
+MkDocs 的生产模型本来就是 `mkdocs build` 生成 `site/`，再交给任意静态服务器；官方 1.6.1 文档也按这个流程描述其他托管商（[固定文档](https://github.com/mkdocs/mkdocs/blob/1.6.1/docs/user-guide/deploying-your-docs.md#other-providers)）。`mkdocs serve` 是开发预览，不需要作为常驻生产服务。
+
+先缩小触发面，避免每次代码提交都重建文档：
+
+```yaml
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "docs/**"
+      - "private/reports/**"
+      - "mkdocs.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".forgejo/workflows/publish-docs.yml"
+  workflow_dispatch:
+```
+
+耗时通常分成四段：拉 Action、checkout、准备 Python/MkDocs、构建并上传。分别处理：
+
+- **checkout 深度**：`fetch-depth: 0` 会取完整历史，`git-revision-date-localized` 日期最准确，但大仓库每次 clone 很重；`1` 最快但旧文档日期容易回退到构建时间；`100` 是常用折中。是否足够取决于文档修改距 HEAD 多远，不是固定真理。
+- **不要把项目运行依赖一起装**：`uv run --group docs` 仍会解析并安装项目本体依赖。没有预装镜像时，用 `uv run --no-project --with mkdocs …`，并把配置实际使用的主题 / 插件逐个列成 `--with`。
+- **预装 runner 镜像**：频繁发布时，把 Python、uv、MkDocs、主题和插件固化进 OCI image。Forgejo 的 `actions/checkout` 等是 JavaScript Action，所以镜像仍应基于带 Node 的 runner image，而不是纯 Python slim image；复用其中的系统 Python 可避免每次下载 managed Python。
+- **保留可重建来源**：DinD 本地 image 很快，但清理 `/var/lib/docker` 后会消失；Dockerfile 应跟仓库走，image tag 固定版本而不是只用 `latest`。
+
+一个通用镜像：
+
+```dockerfile
+FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
+FROM data.forgejo.org/oci/node:20-bookworm
+COPY --from=uv /uv /uvx /usr/local/bin/
+ENV UV_PYTHON_DOWNLOADS=never \
+    UV_LINK_MODE=copy \
+    PATH="/opt/mkdocs/bin:${PATH}"
+RUN uv venv --python /usr/bin/python3.11 /opt/mkdocs \
+    && uv pip install --python /opt/mkdocs/bin/python \
+       mkdocs==1.6.1 mkdocs-material==9.7.6 \
+       mkdocs-awesome-pages-plugin==2.10.1 \
+       mkdocs-glightbox==0.5.2 \
+       mkdocs-git-revision-date-localized-plugin==1.5.3 \
+    && uv cache clean
+```
+
+给 runner 新增标签映射：
+
+```yaml
+runner:
+  labels:
+    - "docker:docker://data.forgejo.org/oci/node:20-bookworm"
+    - "mkdocs:docker://mkdocs:20260725"
+```
+
+`mkdocs:docker://mkdocs:20260725` 中，第一个 `mkdocs` 是 `runs-on:` 使用的**调度标签**，第二个是 Docker **image 名**，`20260725` 是可回滚的 **image tag**。workflow 随后只剩：
+
+```yaml
+jobs:
+  publish:
+    runs-on: mkdocs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+      - run: mkdocs build --clean
+```
+
+一次单并发 DinD runner 的实测快照（2026-07）：
+
+| 形态 | 安装行为 | 总耗时 |
+|---|---|---:|
+| `uv run --group docs` | 项目 + docs，共 85 包；另下载 Python | 1m38s |
+| `uv run --no-project --with …` | 只装 docs，共 39 包；仍下载 uv + Python | 1m36s |
+| 预装 `mkdocs` image + `fetch-depth: 100` | 无运行时安装；checkout 约 5s，构建约 4s | 18–22s |
+
+第二行几乎没变快，说明当次瓶颈不是 Python 包数量，而是 Action 初始化、uv/CPython 下载与完整 checkout。镜像列表显示约 1.8GB 时也不要直接当成新增磁盘量：它与 Node 基础镜像共享 layers；该次实测新增约 240MB。构建阶段加 `uv cache clean`，避免下载缓存也被封进 layer。
+
+#### <a id="publish-diagnostics"></a>CI 发布故障定位
+
+| 现象 | 根因判别 | 处理 |
+|---|---|---|
+| run 一直 `queued`，同实例其他仓库也无 running job | runner 离线，或没有匹配 `runs-on` 的 label | 查 runner 状态与注册 labels；不要先改 workflow |
+| MkDocs 成功，Action 报 `not found:` | 带 `path` 的 PATCH 遇到尚不存在的项目 manifest | 先 PUT 初始化项目根，再重跑 |
+| 401 中含 `cannot check repository permissions: … context deadline exceeded` | git-pages 到授权 Forge API 超时，不是 token scope 必然错误 | 从 git-pages 主机分别测公开 URL / 内网 URL；恢复后原样重试 |
+| `PATCH … connect: connection refused` | Pages 边缘入口短暂不可用 | 连续探测入口，恢复后重跑；无需重建镜像 |
+| 一个 forge 看得到 workflow，另一个看不到 | workflow commit 只存在一端，或本机文件未跟踪 | 对比两端 branch SHA，并确认文件已进 commit |
+| `mkdocs` 找不到主题 / 插件 | 只装了基础 `mkdocs`，但配置引用额外插件 | 镜像或 `--with` 列表覆盖 `mkdocs.yml` 的全部插件 |
+
+Forgejo 16 实测可先列 run 下的 jobs，再下载单个 job 文本日志；适合 UI 不便访问、或现有客户端只封装了 run 状态而没封装日志的情况：
+
+```bash
+curl -H "Authorization: token $FORGE_TOKEN" \
+  "https://<forge>/api/v1/repos/<owner>/<repo>/actions/runs/<run-id>/jobs"
+
+curl -H "Authorization: token $FORGE_TOKEN" \
+  "https://<forge>/api/v1/repos/<owner>/<repo>/actions/jobs/<job-id>/logs" \
+  -o job.log
+```
+
+API 的内部 `run-id` 与网页 URL 显示的 run 序号可能不是同一个数字；先从 list-runs 响应取 `id`，不要把 UI 序号直接代入 API。
 
 #### <a id="publishing-http-details"></a>读取、特殊头与格式限制
 
@@ -594,6 +748,18 @@ git-pages README 的 Authorization 段列出内容更新的完整判定顺序，
 #### <a id="metadata-auth"></a>元数据读取权限
 
 `/.git-pages/manifest.json`、`manifest.pb`、archive 等接口可以枚举站点内容，走独立的 [`AuthorizeMetadataRetrieval`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/auth.go#L367-L415)。除 Development Mode 和 DNS Challenge 外，wildcard 站点在未使用 `Basic-Auth:` 时也会放行 metadata；因此这类站点的目录清单不应视为私密。
+
+如果使用高熵 `path` 降低枚举概率，又不需要对外开放调试 manifest，应在边缘反代先拦截**任意层级**的 `/.git-pages/*`；只拦根路径会漏掉 `/<project>/.git-pages/manifest.json`：
+
+```caddyfile
+*.pages.example.com {
+    @git_pages_internal path_regexp ^/(.*/)?[.]git-pages(/|$)
+    respond @git_pages_internal 404
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+这会连 health / archive 一并隐藏；需要公开 health 时改成只匹配 `manifest.json`、`manifest.pb`、`archive.tar`。封锁 metadata 仍不等于访问控制：拿到完整高熵 URL 的人依旧可以读取站点。
 
 ### <a id="site-lifecycle"></a>站点过期与下线
 
