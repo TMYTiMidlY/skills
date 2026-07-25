@@ -423,6 +423,8 @@ flowchart TD
 - **git-pages-cli v1.10.0**：`--upload-dir <目录>` / `--delete` / `--dry-run` / `--expires 14`（[参数定义](https://codeberg.org/git-pages/git-pages-cli/src/commit/a63042dcc9c1419967ded3ce389dae1bab39724e/main.go#L43-L58)）。
 - **Forgejo Action v2.2.0**：[`action.yml`](https://codeberg.org/git-pages/action/src/commit/2b24bbb7ff943d3c8fe1df91326adec66daea6dd/action.yml#L1-L35) 实际启动 git-pages-cli 容器；CI 也可以直接调用 CLI 或 curl。它们都是客户端上传，不是新的传输协议。
 
+CLI / Action 只负责传输，不会绕过服务端鉴权；未开启 `PAGES_INSECURE`、又没有 DNS Challenge 时，仍需提供能通过 Forge Wildcard / DNS allowlist 的 token。
+
 PUT 归档会全量替换站点；PATCH 会增量合并，不支持 zip。PATCH 用 character device `(0,0)` 作为 whiteout 删除标记，需要 `Atomic: yes|no`，输掉并发竞态时返回 `409`，客户端应原样重试。
 
 #### <a id="path-publishing"></a>子路径发布与多子站
@@ -501,21 +503,6 @@ jobs:
 - **dry-run**：请求头 `Dry-Run: yes`（任意非空值都会触发）只执行鉴权和映射，不落库；适合定位 401、wildcard 映射和 token 权限（[README](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/README.md#L113-L116)）。token 无权访问推导出的仓库时，响应可能是 `no access to <owner>/<repo> or invalid token`（[`forge_api.go`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/forge_api.go#L90-L105)）。
 - **容器内生成 token**：Forgejo 拒绝以 root 运行管理 CLI。容器默认用户是 root 时，使用 `docker exec -u git <forgejo容器> forgejo admin user generate-access-token --username <U> --scopes read:user,write:repository --raw`。
 - **runner 单并发**：`capacity: 1` 时，一个长期卡住的 workflow 会占满唯一槽位，后续发布全部排队。停止对应 job 容器后 runner 会把 run 标为 failed 并释放槽；迁移期可把不再自动运行的旧 workflow 改为 `on: workflow_dispatch`。Runner / DinD / token 机制见本 skill 的 [git-server](git-server.md)。
-
-#### <a id="cross-forge-ci"></a>CI 与鉴权 Forge 分离
-
-“构建在哪个 Git server”与“git-pages 向哪个 Forge 验证发布权限”是两件事：
-
-```text
-Gitea CI ──上传归档──▶ git-pages ──检查 token 的 push 权限──▶ Forgejo
-```
-
-- **同一个 Forgejo**：workflow 所在仓库与 wildcard 的 `clone-url` 指向同一 Forgejo 时，匹配的项目站可直接用 `${{ forge.token }}`；不需要长期 PAT。
-- **跨 server**：CI 在 Gitea、wildcard 却配置 `authorization = "forgejo"` 时，Gitea 的自动 job token 不能拿到 Forgejo 验证。应在 Forgejo 创建 `read:user + write:repository` PAT，把它存进 Gitea 仓库 secret，再作为 Action 的 `token:`。git-pages 仍只接收构建产物；Forgejo 仓库只是权限锚点，不承载这些产物。
-- **仓库必须存在**：Forge Wildcard 会从 `<user>.<zone>/<project>/` 推导授权 Forge 上的 `<user>/<project>`，再查询 `permissions.push`。对应仓库不存在时，即使 token 有效也会得到 `401 not authorized by forge (wildcard)`。
-- **CLI 不绕过鉴权**：`git-pages-cli --upload-dir` 只是归档上传客户端；服务端未开启 `PAGES_INSECURE`、又没有 DNS Challenge 时，仍然需要能通过 Forge Wildcard / DNS allowlist 的 token。
-
-迁移 workflow 时还要分清“同名分支”与“同一提交”：用某个 forge 的 API 直接创建 workflow，只会在那个 forge 的分支上产生新 commit；另一个本地仓库里的 untracked 文件、或另一台 server 上同名分支的独有 commit，都不会因“推了全部本地分支”自动出现。用 `git rev-parse <branch>` 与两端 `git ls-remote` 对 SHA，不能只对分支名。
 
 #### <a id="ci-performance"></a>Actions 构建性能
 
@@ -604,6 +591,8 @@ jobs:
 | `PATCH … connect: connection refused` | Pages 边缘入口短暂不可用 | 连续探测入口，恢复后重跑；无需重建镜像 |
 | 一个 forge 看得到 workflow，另一个看不到 | workflow commit 只存在一端，或本机文件未跟踪 | 对比两端 branch SHA，并确认文件已进 commit |
 | `mkdocs` 找不到主题 / 插件 | 只装了基础 `mkdocs`，但配置引用额外插件 | 镜像或 `--with` 列表覆盖 `mkdocs.yml` 的全部插件 |
+
+迁移 workflow 时要分清“同名分支”与“同一提交”：用某个 forge 的 API 直接创建 workflow，只会在那个 forge 的分支上产生新 commit；另一个本地仓库里的 untracked 文件、或另一台 server 上同名分支的独有 commit，都不会因“推了全部本地分支”自动出现。用 `git rev-parse <branch>` 与两端 `git ls-remote` 对 SHA，不能只对分支名。
 
 Forgejo 16 实测可先列 run 下的 jobs，再下载单个 job 文本日志；适合 UI 不便访问、或现有客户端只封装了 run 状态而没封装日志的情况：
 
@@ -721,6 +710,8 @@ authorization = "forgejo"
 ```
 
 [`Matches` / `ApplyTemplate`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/wildcard.go#L37-L84) 要求 host 比 domain 后缀多一个标签，并把它作为用户名：根 `/` 映射到 `.index`，使用 `index-repo` 和 `index-repo-branch`；`/<项目>/` 映射到 `<user>/<项目>`，分支固定为 `pages`。仓库归属每次请求现算，不需要预登记。Forgejo Actions 的自动 token 可直接用于这条路径；源码快照还支持 Forgejo 16+ 的 PR preview。固定单域名不符合“后缀前多一个用户名标签”的匹配条件，不适合 Forge Wildcard。
+
+被推导出的仓库是**权限锚点**：git-pages 只查询 token 的 `permissions.push`，归档产物仍直接进入 Pages 存储，不写该仓库。仓库必须真实存在；不存在时，即使 token 本身有效也会得到 `401 not authorized by forge (wildcard)`。workflow 与 wildcard 指向同一个 Forgejo 且 URL matching 时可用 `${{ forge.token }}`；CI 位于另一台 Git server 或 URL non-matching 时，则使用授权 Forge 签发的 PAT，按 [私有仓库的 Forgejo Action](#private-repo-action) 所述存入 CI secret。
 
 > **多 forge 排序（v0.9.1 实测）**：可以为不同 forge 配多段 `[[wildcard]]`。若一个 domain 是另一个的后缀，把更长、更具体的 domain 放前面；否则短后缀可能先匹配，把 `alice.gitea.pages.example.com` 的用户名误算成 `alice.gitea`，进而生成错误 clone URL。
 
