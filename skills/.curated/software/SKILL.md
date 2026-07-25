@@ -119,7 +119,7 @@ FunASR、Fun-ASR-Nano、Paraformer + VAD + Punc + CAM++、SenseVoiceSmall、Whis
 
 ## git-pages 静态站托管（Git forge → 网站，GitHub Pages 替代）
 
-[git-pages](https://codeberg.org/git-pages/git-pages) 把某个 Git 仓库某分支的内容直接 serve 成静态网站（文件按路径即 URL、图片等资源原样出，不用内联 data-URI），S3 或文件系统后端，配 Caddy on-demand TLS 全自动签证。是上面 docs-share「S3 presigned 直链」模型的**另一条路线**（docs-share 本身也已迁到这套）。核心要点见 [references/git-pages.md](references/git-pages.md)：**最关键的决策是公开库 vs 私有库走不同发布路径**——webhook（POST）让 git-pages 匿名 clone、**只对公开库有效**（私有库必 401）；私有库要走**归档 PUT + `Forge-Authorization` token**（内容在请求体、不 clone），典型是 Forgejo Action 打 tar + curl PUT。还覆盖：一个项目下用 `path` 发布多个子站 / 不可猜路径及首次初始化、CI 与授权 Forge 分离时的 token 边界、预装 MkDocs runner image 和 checkout/依赖加速、metadata 枚举封锁、S3 桶布局（`blob`/`.index`/`.exists` 语义，`.exists` 驱动 on-demand TLS 且故意不随删站清除）、wildcard 映射、`Dry-Run` 头验链路，以及 `git archive` pax header、runner 单并发堵塞等排障。另含 Codeberg Pages / v2 迁移、同类实现对比、自建整套与生命周期、鉴权源码导读。
+[git-pages](https://codeberg.org/git-pages/git-pages) 把某个 Git 仓库某分支的内容直接 serve 成静态网站（文件按路径即 URL、图片等资源原样出，不用内联 data-URI），S3 或文件系统后端，配 Caddy on-demand TLS 全自动签证。是上面 docs-share「S3 presigned 直链」模型的**另一条路线**（docs-share 本身也已迁到这套）。核心要点见 [references/git-pages.md](references/git-pages.md)：**最关键的决策是公开库 vs 私有库走不同发布路径**——webhook（POST）让 git-pages 匿名 clone、**只对公开库有效**（私有库必 401）；私有库要走**归档 PUT + `Forge-Authorization` token**（内容在请求体、不 clone），典型是 Forgejo Action 打 tar + curl PUT。还覆盖：一个项目下用 `path` 发布多个子站 / 不可猜路径及首次初始化、matching / non-matching wildcard 的 token 边界、预装 MkDocs runner image 和 checkout/依赖加速、metadata 枚举封锁、S3 桶布局（`blob`/`.index`/`.exists` 语义，`.exists` 驱动 on-demand TLS 且故意不随删站清除）、wildcard 映射、`Dry-Run` 头验链路，以及 `git archive` pax header、runner 单并发堵塞等排障。另含 Codeberg Pages / v2 迁移、同类实现对比、自建整套与生命周期、鉴权源码导读。
 
 ## OpenList 网盘聚合面板
 
