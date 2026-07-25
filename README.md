@@ -14,7 +14,7 @@
 | `vps-maintenance` | VPS 初始化、Caddy（含 caddy-security）、EasyTier、网络质量检测 |
 | `docker-maintenance` | Hermes Docker 后端等受限容器内的环境探测、只读挂载识别、受限 CLI 安装、OAuth device flow、SSH key 生成 |
 | `docs-writer` | 三类中文文档产出（论文 / docx 小汇报 / PPT）：python-docx cookbook、二次核验、AI 标注、引用核查、GB/T 7714、占位符工作流 |
-| `worktree` | 为实验性改动创建隔离 git worktree（含 submodule 同步）；项目特定构建由上层接管 |
+| `worktree` | 为实验性改动开隔离工作区：无 submodule 用 git worktree，有 submodule 改用共享 clone；项目特定构建由上层接管 |
 | `mess` | 记录排查过的疑难杂症和踩坑经历 |
 | `plan` | 先规划再实施：产出面向另一 AI 的分步可验证实施文档，含设计考量与注意事项 |
 | `autopilot` | 自动推进式任务系统：cron 触发 Hermes session 在容器内自主推进任务、开 PR、汇报进度（规划侧默认 Claude Code） |
