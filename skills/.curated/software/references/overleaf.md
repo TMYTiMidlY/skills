@@ -325,6 +325,110 @@ olcli output aux -o main.aux --project "<project>"
 使用 `olcli pdf -o paper.pdf`，因为 `pdf` 命令会明确优先选择
 `output.pdf`，避免误取项目中的其他 PDF。
 
+#### <a id="client-as-library"></a>把 client 当库用直取 build 产物
+
+`compile`、`pdf`、`output` **三个命令都会触发编译**，`output --list` 也不例外。
+别人正在 GUI 里点编译时，这些命令会互相打架；此时需要绕开 CLI 直接发 HTTP。
+
+`OverleafClient` 虽然导出，但**必须用 `OverleafClient.fromSessionCookie()` 构造**。
+CLI 自己的 `getClient()` 就走这条路
+（`dist/cli.js` 的 `getClient`，取 `lb_srv_id` 后调 `fromSessionCookie`）。
+直接 `new OverleafClient({ cookies, csrf })` 是**静默失效**的：`getCsrf()` 常返回
+空，且缺少 `lb_srv_id` 粘性会话 cookie，服务端对所有请求回**登录页 HTML 且状态码
+仍是 200**，看起来像成功。判据是响应体里有 `<title translate="no">登录`，不是状态码。
+
+```js
+const P = '<prefix>/lib/node_modules/olcli-ustc/dist';
+const { OverleafClient, getBaseUrl, getSessionCookie, getSessionCookieName }
+  = await import(`${P}/index.js`);
+const { getCookieJar } = await import(`${P}/config.js`);   // 未从包入口导出
+
+const jar = getCookieJar() || {};
+const client = await OverleafClient.fromSessionCookie(
+  getSessionCookie(), getBaseUrl(), getSessionCookieName(),
+  jar['lb_srv_id'] ? { lb_srv_id: jar['lb_srv_id'] } : {});
+```
+
+产物只在 **build 作用域**下可取：
+
+| 路径 | 实测结果 |
+| --- | --- |
+| `/project/<pid>/user/<uid>/build/<buildId>/output/output.log` | 路由存在 |
+| `/project/<pid>/build/<buildId>/output/output.log` | 路由存在 |
+| `/project/<pid>/output/output.log` | 404，完整 HTML 错误页 |
+| `/project/<pid>/output` | 404，完整 HTML 错误页 |
+
+区分「路由不存在」和「build 已失效」看响应体大小：前者是约 11 KB 的 HTML 错误页，
+后者是**短纯文本**（实测 146 字节）。`Clear cached files` 会让旧 `buildId` 立即失效。
+
+`buildId` 只出现在 `POST /compile` 的响应里
+（`compileWithOutputs` 读 `data.outputFiles` 与 `data.clsiServerId`），
+因此**「完全不触发编译就拿到最新日志」做不到**；只能在自己刚编译过、
+`buildId` 仍有效的窗口内复用。另注意 `outputFiles[].url` 必须补
+`?clsiserverid=<id>` 才能下载，否则一律 404。
+
+两个 `olcli` 未封装、排查时很关键的内部接口：
+
+| 操作 | 请求 | 说明 |
+| --- | --- | --- |
+| 清缓存 | `DELETE /project/<pid>/output` | 等价 GUI 的 Clear cached files，返回 200 |
+| 切 TeX Live 镜像 | `POST /project/<pid>/settings`，body `{"imageName":"texlive-2023"}` | 返回 204 |
+
+可选镜像从项目页的 `ol-allowedImageNames` meta 读取，USTC 实例实测为
+`texlive-full`（标称 TeXLive 2025）、`texlive-2024`、`texlive-2023`、
+`texlive-2022`、`texlive-2019`。改完镜像必须再 `DELETE /output` 才会重建容器产物，
+否则看不出变化。
+
+#### <a id="stale-cache"></a>服务端 latexmk 缓存卡死
+
+编译反复失败、且 `output.stdout` 出现下面这组信号时，是服务端 latexmk 缓存卡住，
+不是源文件的问题：
+
+```
+Latexmk: Nothing to do for 'main.tex'.
+Latexmk: All targets (output.xdv output.pdf) are up-to-date
+Collected error summary: xelatex: gave an error in previous invocation of latexmk.
+```
+
+latexmk 认为目标已最新而拒绝重跑，同时保留上一轮的错误标记，于是每次都返回
+failure。**用 biblatex 时会连带表现为正文引用全变 `?`**：引用要
+`xelatex → biber → xelatex → xelatex` 跑满四趟才解析，一趟都不跑则 `.bbl` 被标成
+`output.bbl-SAVE-ERROR`，引用退化为 `?`。`-SAVE-ERROR` 后缀是**症状不是病因**，
+不必去查 `.bib`。
+
+解法是清缓存后重编。GUI 里是 `Menu → Clear cached files`；`olcli` 没有对应命令，
+但内部接口有，且这是命令行唯一的出路：
+
+```js
+await client.httpRequest(`${baseUrl}/project/${PID}/output`,
+  { method: 'DELETE', headers: client.getHeaders(true) });   // -> 200
+```
+
+实测卡死状态下 `DELETE /output` 后立即 `POST /compile`，一次即 `status = success`。
+仅把 `incrementalCompilesEnabled` 设为 `false` **不够**，必须真的 DELETE。
+另注意 latexmk 卡死时**根本不产出 `output.log`**，所以「先取日志再判断」是走不通的，
+必须先清缓存。
+
+这是 latexmk 自身行为、不是 Overleaf 特有：本地也能复现同样三行，同样只能靠
+`latexmk -C` 或 `latexmk -g -f` 解开。本地 `latexmkrc` 设 `$pdf_mode = 5` +
+`xelatex -no-pdf` **不是诱因**——删掉后仍复现，且 Overleaf 自带配置的目标同样是
+`output.xdv output.pdf`，两者并不冲突。
+
+#### <a id="download-flake"></a>`download` 静默失败与回读校验
+
+`olcli download` 连续调用时实测会**静默失败**：不报错、退出码 0，但 `-o` 指定的
+文件根本没落盘。若用 `cmp` 做上传后的回读校验，会因取不到文件而报「不一致」，
+误判成内容没传上去。循环里要先判存在，失败则退避重试：
+
+```bash
+[ -s "$tmp" ] || { sleep 3; continue; }
+cmp -s "$tmp" "$f" && echo "  =  $f" || echo "  ≠  $f"
+```
+
+同理，`push` 在 `.olcli.json` 缺 `remoteManifest` 时会把**全部**文件当变更重传，
+重传本身足以让服务端重走构建。改动少时先逐文件 `download` + `cmp` 比对，
+再用 `upload` 定点上传。
+
 ### <a id="figures"></a>文件上传与目录路径
 
 `upload <file>` 一次只上传一个文件；多文件同步走 `push` / `sync`。传入相对
@@ -350,6 +454,65 @@ LaTeX 中按同一路径引用：
 `figures` 只是常见目录名，不是 Overleaf 或 `olcli` 的特殊目录；同样的相对
 路径规则也适用于 `chapters/`、`data/` 等目录。USTC 实例中已确认
 `figures/` 子目录上传与后续 PDF 编译可用。
+
+#### <a id="sync-root"></a>同步根必须是编译根
+
+Overleaf 的项目根就是编译根，主文档必须在根。若仓库里 LaTeX 工程位于子目录
+（如 `paper/`），**必须 `cd paper/` 再 push**。从仓库根推送会把 `paper/` 当普通
+子目录原样上传，于是项目里根目录和 `/paper/` **各存一份全量文件**：两份都被
+Overleaf 索引，但 `\input{sec-obs}` 只认根目录那份，改错地方就是「改了不生效」。
+
+影子副本会各自漂移，越久越难分辨。判断哪份最新不要读时间戳，用内容哈希反查提交：
+
+```bash
+h=$(git hash-object "$remote_copy")
+git log --all --format=%h -- "paper/$f" | while read c; do
+  [ "$(git rev-parse $c:paper/$f)" = "$h" ] && echo "$c" && break
+done
+```
+
+`olcli delete <dir>` 可直接删掉整个远端目录，用于清理影子副本。
+
+### <a id="texlive-skew"></a>本地与 Overleaf 的 TeX Live 版本错配
+
+同一份源码本地编译正常、Overleaf 上渲染出乱码时，优先怀疑 TeX Live 版本差异，
+而不是源码写错。**决定性判据在 `.aux`**：下载 `output.aux` 与本地 `.aux` 比对同一
+标签的写法。实测 `cleveref` 案例：
+
+```
+Overleaf : \newlabel{subsec:step1@cref}{{[subsection][1][1]1.1thesubsection\endcsname }...}
+本地     : \newlabel{subsec:step1@cref}{{[subsection][1][1]1.1}...}
+```
+
+Overleaf 把 `\csname the<counter>\endcsname` 泄漏成字面文本加游离的 `\endcsname`，
+于是每个 `\cref` 报一次 `! Extra \endcsname`，正文渲染出 `第 1.1thesubsection 节`。
+只影响 `section`／`subsection`，`equation`／`figure`／`table` 正常。
+
+成因：`cleveref` 停更在 2018 年的 v0.21.4；LaTeX2e 2024-11-01 内核起 `\label` 改走
+label hook + `\@currentcounter`，内核 firstaid 里那版适配不完整，2025-06-01 之后的
+内核才修好（日志可见 `==> First Aid for cleveref.sty applied!`）。
+
+逐镜像实测：
+
+| 镜像 | 内核 | `! Extra \endcsname` |
+| --- | --- | --- |
+| `texlive-full`（标称 2025） | LaTeX2e 2024-11-01 pl2 | 33 |
+| `texlive-2024` | LaTeX2e 2024-11-01 pl2 | 33 |
+| `texlive-2023` | LaTeX2e 2023-11-01 pl1 | **0** |
+
+**处置是降到 `texlive-2023`，不是升级。** 标称「TeXLive 2025」的 `texlive-full`
+内核仍是 2024-11-01（TL2025 发行时冻结的就是它），**没有任何 Overleaf 镜像能提供
+2025-06-01 之后的内核**；本地若是 2025-11-01，那是 `tlmgr` 更新来的，复制不到线上。
+
+> 两条走不通的路：
+>
+> 1. **把内核 firstaid 的 cleveref 补丁内联进导言区**——实测本地直接编不出来
+>    （`Use of \@tempa doesn't match its definition`）。`texmf-dist/tex/latex-dev/firstaid/`
+>    下那份与稳定内核实际加载的并非同一版本，手工移植内核内部实现过于脆弱。
+> 2. **同一 type 上 `\crefname` 与 `\crefformat` 并用**——`\crefname` 在导言区推迟到
+>    `\begin{document}` 才执行，会覆盖 `\crefformat`，哪怕后者写在它后面。中文
+>    「第 X 节」需要序号后缀，只有 `\crefformat` 能做；加 `\crefname{subsection}{节}{节}`
+>    想兜底，实测反而把引用弄成 `节 1.2`。
 
 ## 协作编辑架构
 
