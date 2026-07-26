@@ -111,7 +111,7 @@ pandoc 文档转换（LaTeX→Word）、PDF→图片、feishu2md 飞书/Lark→M
 
 ## USTC Overleaf / olcli
 
-USTC 自建 Overleaf 的 `olcli-ustc` 安装与一次性 token 无头鉴权、nvm-safe npm prefix、与上游 `@aloth/olcli` 的差异及上游连接 Overleaf 官方站的边界，以及内部 HTTP 项目创建、普通 OT 编辑、评论、Track Changes、Accept/Reject 和 `figures/` 上传实测见 [references/overleaf.md](references/overleaf.md)。
+USTC 自建 Overleaf 的 `olcli-ustc` 安装与一次性 token 无头鉴权、nvm-safe npm prefix、与上游 `@aloth/olcli` 的差异及上游连接 Overleaf 官方站的边界，以及内部 HTTP 项目创建、普通 OT 编辑、评论、Track Changes、Accept/Reject 和 `figures/` 上传实测见 [references/overleaf.md](references/overleaf.md)。同步根必须是编译根（否则产生影子副本）、服务端 latexmk 缓存卡死导致引用变 `?`、`download` 静默失败、把 `OverleafClient` 当库用直取 build 产物，以及本地与 Overleaf 的 TeX Live 版本错配（cleveref first aid），同见该文。
 
 ## 本地中文 ASR
 
