@@ -69,7 +69,7 @@ Zellij Web client、HTTPS 证书要求、login token/session token、反代注�
 
 ## Service / systemd
 
-多用户共享服务、systemd 模板单元与按 UID 分配端口、systemd `LoadCredential` 注入密钥，以及 **user 级服务（`systemctl --user`）与 `loginctl enable-linger` 常驻**（user manager 生命周期默认绑 login session、登出即被杀、开机不自启的坑）见 [references/service.md](references/service.md)。
+多用户共享服务、systemd 模板单元与按 UID 分配端口、systemd `LoadCredential` 注入密钥，**user 级服务（`systemctl --user`）与 `loginctl enable-linger` 常驻**（user manager 生命周期默认绑 login session、登出即被杀、开机不自启的坑），以及 **stdout 块缓冲导致 journal 看不到服务卡死前最后输出**（`StandardOutput=journal` 接的是管道不是 TTY；Python 要 `PYTHONUNBUFFERED=1`，`stdbuf` 对它无效）见 [references/service.md](references/service.md)。
 
 ## Agent harness / Copilot CLI
 

@@ -105,3 +105,44 @@ sudo loginctl disable-linger <user>
 
 - 需要 root 能力、与登录完全无关、开机必须启动：使用 system service；
 - 归属普通用户、依赖其 HOME 下的运行时或凭据，并要求登出后仍运行：使用 user service 并启用 linger。
+
+## stdout 块缓冲：journal 里看不到服务卡死前的最后输出
+
+`StandardOutput=journal`（现代 systemd 的默认值）把服务的 stdout 接到一根**管道**上，不是 TTY。而 C stdio 与 Python 的 io 层都按同一条规则选缓冲模式：**stdout 是 TTY 就行缓冲，否则块缓冲**（典型 4–8 KB）。于是日志会先攒在进程内存里，攒满才写出去。
+
+正常退出时缓冲区会 flush，所以平时看不出问题。**一旦服务卡死、被 `SIGKILL`、或 OOM，那段没攒满的输出就永远到不了 journald**——`journalctl -u <unit>` 看到的是「日志停在半路」，最关键的那条报错恰好丢失。排查时很容易误判成「服务无声无息挂了」，往错误方向查。
+
+实测（子进程 stdout 接管道，打印一行后 sleep 3 秒，看 1.2 秒内能否读到）：
+
+| 启动方式 | 1.2 秒内是否收到 |
+|---|---|
+| 裸 `python3` | ❌ 无输出 |
+| `stdbuf -oL python3` | ❌ **仍无输出** |
+| `PYTHONUNBUFFERED=1 python3` | ✅ 收到 |
+| `python3 -u` | ✅ 收到 |
+| 裸 C 程序（glibc stdio） | ❌ 无输出 |
+| `stdbuf -oL` C 程序 | ✅ 收到 |
+
+### `stdbuf` 对 Python 无效
+
+这是最容易浪费时间的一点。`stdbuf` 靠 `LD_PRELOAD` 一个在 `main()` 前调 `setvbuf()` 的库来改 **libc stdio** 的缓冲模式，因此对 C/C++、以及大多数直接用 stdio 的程序有效。但 CPython 的 `sys.stdout` 是 `io` 模块自己在裸 fd 之上实现的缓冲层，**不经过 libc stdio**，`setvbuf` 影响不到它。所以对 Python 服务必须用 `PYTHONUNBUFFERED=1` 或 `python -u`，套 `stdbuf` 是无效功。
+
+同理，其它自带 IO 缓冲层的运行时也各有各的开关，别指望 `stdbuf` 通杀（Node.js 对管道的 `process.stdout` 是异步且不保证即时落盘；Go 的 `fmt.Print*` 直写 fd、默认反而没有这个问题）。
+
+### 处置
+
+Python 服务在 unit 里加一行即可：
+
+```ini
+[Service]
+Environment=PYTHONUNBUFFERED=1
+```
+
+非 Python 的 stdio 程序用 `ExecStart=/usr/bin/stdbuf -oL /usr/bin/myservice`，或让程序自己 `setvbuf(stdout, NULL, _IOLBF, 0)`。
+
+补充两点：
+
+- **Python 的 stderr 不受影响**：3.9 起 stderr 始终行缓冲（`sys.stderr.line_buffering` 为 `True`），未捕获异常的 traceback 照常实时进 journal。丢的是走 stdout 的那部分——恰恰是构建日志、进度输出这类"卡在哪一步"的线索。
+- 无缓冲会让每次 `print` 都触发一次 write 系统调用。对日志量极大的服务是真实开销，此时改用行缓冲（`python -X ...` 无对应开关，可在代码里 `sys.stdout.reconfigure(line_buffering=True)`）比全无缓冲更合适。
+
+真实案例：`mkdocs serve` 的 user 服务卡死时 `journalctl --user -u qsu2-docs` 始终看不到最后的 build 报错，加 `Environment=PYTHONUNBUFFERED=1` 后恢复实时。
