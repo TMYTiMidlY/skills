@@ -5,11 +5,15 @@ description: 处理本机与远端的网络互通、WSL网络、远程接入与�
 
 # Network
 
-本 skill 索引远程接入、组网管道。Caddy 反代和网络质量检测由 `vps-maintenance` skill 覆盖。
+本 skill 索引受限网络下的 Git 获取、远程接入、组网管道。Caddy 反代和网络质量检测由 `vps-maintenance` skill 覆盖。
 
 ## 共享 Linux 节点
 
 EasyTier、双层 Caddy / OAuth 和多用户 Zellij Web / VS Code Serve Web 的组合部署见 [references/setup.md](references/setup.md)。
+
+## 受限网络下的 Git 获取
+
+GitHub 的 ghfast 临时改写、GitLab 镜像分流、递归 submodule、完全离线的 bare mirror / bundle，以及只缺目标提交时的对象导入见 [references/git-clone.md](references/git-clone.md)。
 
 ## 远程接入
 
