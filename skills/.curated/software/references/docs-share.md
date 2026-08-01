@@ -4,9 +4,9 @@
 
 > **注**：docs-share 已迁往 **git-pages** 托管（见 `git` skill 的 git-pages 章节）——仓库直接 serve 成站点、路径即 URL。本文档保留 S3 直链模型，适用于"逐文件签名 + 有效期 + 默认私有"的分享场景；两套路线的取舍见该文开头。
 
-> **本文件 = 简明索引 + 安装/部署。** 每节是 1-3 句的速查;每个日常操作话题在 docs-share 仓库自己的 `README.md` 里有**更详细的版本**。该仓库已随项目迁出 GitHub、现由自建 forge 托管，按你当前的 forge 地址取用。
+> **本文件 = 简明索引 + 安装/部署。** 每节是 1-3 句的速查。
 >
-> 服务端基础设施（建桶、CI key 创建、bucket policy、Caddy 边缘 + Accept-rewrite、viewer / `_viewer.html` 部署）→ **vps-maintenance** skill 的 Caddy 文档私链分享站章节（含完整端到端部署步骤）。RustFS 桶日常操作的客户端坑（mc / boto3 行为差异、versioning、跨桶 copy、删桶）→ 本 skill 的 [rustfs.md](rustfs.md)（批量 ops 注意点见 [rustfs-bulk-ops.md](rustfs-bulk-ops.md)）。仓库目录结构与本机 alias 细节 → docs-share 仓库自己的 `README.md`。
+> 服务端基础设施（建桶、CI key 创建、bucket policy、Caddy 边缘 + Accept-rewrite、viewer / `_viewer.html` 部署）→ **vps-maintenance** skill 的 Caddy 文档私链分享站章节（含完整端到端部署步骤）。RustFS 桶日常操作的客户端坑（mc / boto3 行为差异、versioning、跨桶 copy、删桶）→ 本 skill 的 [rustfs.md](rustfs.md)（批量 ops 注意点见 [rustfs-bulk-ops.md](rustfs-bulk-ops.md)）。
 
 ---
 
@@ -53,7 +53,7 @@ mc alias rm rfsadmin
 
 其他路径不受影响，仍然 403 → 全靠 presigned。
 
-> ⚠️ **默认走 presigned 私链，不要默认丢进 `public/`。** `public/` 是**永久、匿名、全网可读**——只在内容**明确**可公开且需要不过期直链时才用。日常分享统统走 presigned，详见仓库 README §分享方式。
+> ⚠️ **默认走 presigned 私链，不要默认丢进 `public/`。** `public/` 是**永久、匿名、全网可读**——只在内容**明确**可公开且需要不过期直链时才用。日常分享统统走 presigned。
 
 ---
 
@@ -63,11 +63,11 @@ mc alias rm rfsadmin
 
 **公开文件（仅 `public/` 下，需明确选择）**：直拼 `https://<S3_HOST>/<BUCKET>/public/<path>`。
 
-**带图片的私有 md / html**：相对图在 presigned 下会 403（`_viewer.html` 故意剥签名）。md 在第一行加 `<!-- docs-share:bundle -->` 标记，CI 生成自包含 `<名>.bundle.md`（图 base64 内联），分享 `.bundle.md` 即可；html 惯例是单文件自包含手写 `data:` URI。**详细工作流（bundler 边界、`<a download>` 强制下载、JS Blob 下载原文）见仓库 README §分享方式 B/C**。
+**带图片的私有 md / html**：相对图在 presigned 下会 403（`_viewer.html` 故意剥签名）。md 在第一行加 `<!-- docs-share:bundle -->` 标记，CI 生成自包含 `<名>.bundle.md`（图 base64 内联），分享 `.bundle.md` 即可；html 惯例是单文件自包含手写 `data:` URI。
 
 ## 更新内容
 
-`git push` 即触发同步（rclone 幂等对齐最终 tree）。**forgejo rerun 早 sha 的 run 会回滚桶**——想对齐当前 HEAD 推空 commit 或 rerun HEAD 对应的 run（详见仓库 README §更新内容 §rerun 早 sha 会回滚桶）。
+`git push` 即触发同步（rclone 幂等对齐最终 tree）。**forgejo rerun 早 sha 的 run 会回滚桶**——想对齐当前 HEAD 推空 commit，或 rerun HEAD 对应的那个 run。
 
 ## 撤销分享
 
@@ -132,8 +132,4 @@ mc alias rm rfsadmin
 | 同一个对象 mc cp 上传后下次 sync 又消失 | `rclone sync --remove` 是“以 git 仓库为权威 mirror”，桶里多余对象会被删；**永远以 git push 为唯一写入路径**，除非在做 hot-fix 对齐 |
 | 桶里看到很多 `0B` 目录条目 | `mc ls` 不带 `--recursive` 把 S3 prefix 列为 0B（视觉占位）；用 `mc ls --recursive` 看真实内容 |
 
-> Markdown 导出为 PDF / 源文件格式转换见 **software** skill 的 `references/format-conversion.md`；操作 RustFS 桶的客户端坑（mc / boto3 / versioning / 删桶）见 **software** skill 的 `references/rustfs.md`（同目录 `rustfs-bulk-ops.md` 写批量 ops）。
-
-## 部署后
-
-仓库 `README.md` 是日常操作的**更详细版本**——本文件是速查索引，遇到边界情况、bundler 细节、html 下载按钮 JS Blob 模板、入口差异、Accept-rewrite 完整 curl 矩阵等，去 README 看完整版。
+> Markdown 导出为 PDF / 源文件格式转换见本 skill 的 [format-conversion.md](format-conversion.md)；操作 RustFS 桶的客户端坑（mc / boto3 / versioning / 删桶）见 [rustfs.md](rustfs.md)（批量 ops 见 [rustfs-bulk-ops.md](rustfs-bulk-ops.md)）。
