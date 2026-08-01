@@ -10,12 +10,12 @@
 | --- | --- |
 | `manage-skills` | 创建、拆分、审查、合并、维护本仓库里 skill 的规范与工作流 |
 | `harness` | Agent harness / runtime 架构知识库：Copilot CLI / SDK / MCP / session export、Claude Code / Codex 对照、CLI subprocess / SDK client / extension host / JSON-RPC 取舍、Hermes agent（systemd / backend / provider / skill 体系） |
-| `software` | SSH、systemd、Git/jj、Commitizen/semantic-release 自动发版与 npm/PyPI OIDC、USTC Overleaf/olcli、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享客户端、Windows/macOS 操作与激活、远程桌面 / WSL 网络、EasyTier 客户端 |
-| `network` | Mihomo/Clash 客户端与泄漏控制、受限网络下的 Git clone/submodule 镜像与离线导入、远程接入、WSL ↔ Windows ↔ 远端网络管道，以及 3x-ui、Hysteria2、EasyTier 客户端 |
+| `git` | Git 与 jj：并发脏区下的精准提交/暂存/丢弃/amend、隔离工作区（worktree 与共享 clone）、受限网络下的 clone/submodule 与离线传输、gh 认证 vs 提交身份、自建 Forgejo/Gitea forge 与 git-pages 静态站 |
+| `software` | SSH、systemd、Commitizen/semantic-release 自动发版与 npm/PyPI OIDC、USTC Overleaf/olcli、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享客户端、Windows/macOS 操作与激活、远程桌面 / WSL 网络、EasyTier 客户端 |
+| `network` | Mihomo/Clash 客户端与泄漏控制、远程接入、WSL ↔ Windows ↔ 远端网络管道，以及 3x-ui、Hysteria2、EasyTier 客户端 |
 | `vps-maintenance` | VPS 初始化、Caddy（含 caddy-security）、EasyTier、网络质量检测 |
 | `docker-maintenance` | Hermes Docker 后端等受限容器内的环境探测、只读挂载识别、受限 CLI 安装、OAuth device flow、SSH key 生成 |
 | `docs-writer` | 三类中文文档产出（论文 / docx 小汇报 / PPT）：python-docx cookbook、二次核验、AI 标注、引用核查、GB/T 7714、占位符工作流 |
-| `worktree` | 为实验性改动开隔离工作区：无 submodule 用 git worktree，有 submodule 改用共享 clone；项目特定构建由上层接管 |
 | `mess` | 记录排查过的疑难杂症和踩坑经历 |
 | `plan` | 先规划再实施：产出面向另一 AI 的分步可验证实施文档，含设计考量与注意事项 |
 | `autopilot` | 自动推进式任务系统：cron 触发 Hermes session 在容器内自主推进任务、开 PR、汇报进度（规划侧默认 Claude Code） |
@@ -82,7 +82,7 @@
 | `superpowers/writing-plans` | [obra/superpowers](https://github.com/obra/superpowers) | 已有 spec 或需求、动手写代码前，写一份假设工程师零上下文的完整实施计划 |
 | `superpowers/writing-skills` | [obra/superpowers](https://github.com/obra/superpowers) | 编写/编辑/验证新 skill 的方法论：把写 skill 本身当作对流程文档做 TDD |<!-- skills-table:end -->
 
-`ponytail/` 和 `superpowers/` 与上面其他条目不同：上游本身是一个打包了多个 skill 的仓库（分别是 6 个和 14 个），不是单一能力，所以嫁接时多套了一层以仓库名命名的目录，保留归属、也不与本仓已有的同类 skill（如 `tdd`、`worktree`、`diagnose`）合并或去重。两者也有一点相似：都不满足于"等用户调用"，而是各自想办法让自己在没人主动喊它时也生效——`ponytail` 靠 Claude Code/Codex 等宿主的生命周期 hook 在每次会话/每条消息注入规则；`superpowers` 的 `using-superpowers` 则是在 skill 正文里直接写死"对话开始时必须先调用本 skill，包括在回答任何澄清性提问之前"。两种"强迫生效"的实现层级不同（前者是宿主机制，后者是文档层面的自我指令），但目的一致。
+`ponytail/` 和 `superpowers/` 与上面其他条目不同：上游本身是一个打包了多个 skill 的仓库（分别是 6 个和 14 个），不是单一能力，所以嫁接时多套了一层以仓库名命名的目录，保留归属、也不与本仓已有的同类 skill（如 `tdd`、`git`、`diagnose`）合并或去重。两者也有一点相似：都不满足于"等用户调用"，而是各自想办法让自己在没人主动喊它时也生效——`ponytail` 靠 Claude Code/Codex 等宿主的生命周期 hook 在每次会话/每条消息注入规则；`superpowers` 的 `using-superpowers` 则是在 skill 正文里直接写死"对话开始时必须先调用本 skill，包括在回答任何澄清性提问之前"。两种"强迫生效"的实现层级不同（前者是宿主机制，后者是文档层面的自我指令），但目的一致。
 
 此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 

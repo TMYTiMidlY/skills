@@ -8,7 +8,7 @@
 - 给自建 Forgejo / Gitea 增加 Pages：看 [Forgejo/Gitea 自建](#self-hosted)。
 - 核对实现与版本边界：看 [源码导读](#source-guide)。
 
-**与本 skill 的 [docs-share](docs-share.md) 对比**：docs-share 是"仓库树同步到 S3 + presigned URL 按文件分享"，默认私有、链接带有效期；git-pages 是"把构建产物发布成网站"，文件路径就是 URL，图片和其他资源无需内联，域名与 TLS 可自动化。前者适合逐文件授权，后者适合 push 后直接得到可浏览站点。git-pages 可以用高熵路径降低被枚举的概率，但这不等于访问控制。
+**与 `software` skill 的 docs-share 对比**：docs-share 是"仓库树同步到 S3 + presigned URL 按文件分享"，默认私有、链接带有效期；git-pages 是"把构建产物发布成网站"，文件路径就是 URL，图片和其他资源无需内联，域名与 TLS 可自动化。前者适合逐文件授权，后者适合 push 后直接得到可浏览站点。git-pages 可以用高熵路径降低被枚举的概率，但这不等于访问控制。
 
 > 本文的 git-pages 源码断言核验于 upstream commit [`7d3368e`](https://codeberg.org/git-pages/git-pages/commit/7d3368e196073588c229aa8e0e65c3ede10e3342)（2026-07-13 核验）；关键断言在正文就近链接到该快照的具体行段。横向对比中的 star / release 等动态数据核验于 2026-07-04。
 
@@ -18,7 +18,7 @@
 
 ### <a id="naming-migration"></a>名称与迁移关系
 
-**Codeberg Pages** 是非营利代码托管平台 [Codeberg](https://codeberg.org/) 提供的静态站托管服务，相当于"Codeberg 版的 GitHub Pages"。Codeberg 使用 Forgejo；Forgejo 与 Gitea 的关系见本 skill 的 [git-server](git-server.md)。关键事实是：Codeberg Pages 的新后端就是开源的 `git-pages`，同一套服务也能部署在自己的 Forgejo / Gitea 旁边。常被混为一谈的名称分别是：
+**Codeberg Pages** 是非营利代码托管平台 [Codeberg](https://codeberg.org/) 提供的静态站托管服务，相当于"Codeberg 版的 GitHub Pages"。Codeberg 使用 Forgejo；Forgejo 与 Gitea 的关系见本 skill 的 [forge.md](forge.md)。关键事实是：Codeberg Pages 的新后端就是开源的 `git-pages`，同一套服务也能部署在自己的 Forgejo / Gitea 旁边。常被混为一谈的名称分别是：
 
 - **Pages Server v2** —— 旧后端**代码库**（仓库 [`Codeberg/pages-server`](https://codeberg.org/Codeberg/pages-server)，EUPL-1.2）。2024-11 起进入维护模式，见置顶 issue [#399 "We will not accept new features!"](https://codeberg.org/Codeberg/pages-server/issues/399)；仓库首页写着 "This code is in maintenance mode… **Codeberg Pages itself is in the process of migrating to the new git-pages server**"。
 - **git-pages** —— 新后端**代码库**，v2 的官方继任者。Codeberg 文档说明它已从旧 v2 后端迁向 git-pages，并从 2025 年 12 月起提供这套新服务（[固定文档快照](https://codeberg.org/Codeberg/Documentation/src/commit/bbf5e3ab104b9a9f4ffb056ed0dd16f6d35d9af9/content/codeberg-pages/migrating-from-pages-v2.md#L25-L35)）。
@@ -226,7 +226,7 @@ v2 使用仓库根的 `.domains` 文件；git-pages 改由 DNS 记录授权，�
 
 容器默认运行 standalone：只启动 git-pages，监听 HTTP `:3000`；把命令改为 `supervisord` 才会同时启动内置 Caddy 并占用 80/443（[Dockerfile](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/Dockerfile#L29-L53)、[supervisord 配置](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/conf/supervisord.conf#L1-L16)）。内置 Caddy 配置启用 on-demand TLS，并用 certmagic-s3 保存证书（[Caddyfile](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/conf/Caddyfile#L1-L29)）。已有 Caddy / nginx 时使用 standalone，让现有边缘反代转发到 `:3000`；内置 Caddy 适合没有其他 TLS 入口的独立部署。
 
-仓库没有 systemd unit。自行创建 unit 时，`ExecStart` 传 `-config` / `-secrets`，并用专用 `User=` 运行。S3 凭据可通过 systemd `LoadCredential=` 注入；该功能需要 systemd ≥ 247，旧发行版可能静默跳过凭据加载。兼容写法见本 skill 的 [service](service.md)。
+仓库没有 systemd unit。自行创建 unit 时，`ExecStart` 传 `-config` / `-secrets`，并用专用 `User=` 运行。S3 凭据可通过 systemd `LoadCredential=` 注入；该功能需要 systemd ≥ 247，旧发行版可能静默跳过凭据加载。兼容写法见 `software` skill 的 systemd 服务章节。
 
 ### <a id="service-config"></a>服务配置与 S3 后端
 
@@ -306,7 +306,7 @@ mc admin policy attach ROOT git-pages --user git-pages
 
 换 key 的可复现顺序是：备份旧 `secrets.toml` → 以服务用户和 600 权限安装新文件 → `systemctl restart git-pages` → 请求一个已发布站点。随后做双向交叉验证：受限 key 应能对目标桶 put/get/rm，对其他桶的 `mc ls` / `mc pipe` 应返回 `Access Denied`。RustFS 会在真正访问对象时才暴露部分权限错误，因此 `serve: ready` 不代表 key 已可用；站点请求需要同时读到 manifest 和 blob 才算验证完成。
 
-如果明文 HTTP endpoint 出现看似无关的 `Access Denied`，先核对 `[storage.s3].insecure = true`；如果仍失败，再用同一受限 key 分别通过 `mc` 和实际站点请求验证。更完整的 S3 客户端行为见本 skill 的 [rustfs](rustfs.md)。
+如果明文 HTTP endpoint 出现看似无关的 `Access Denied`，先核对 `[storage.s3].insecure = true`；如果仍失败，再用同一受限 key 分别通过 `mc` 和实际站点请求验证。更完整的 S3 客户端行为见 `software` skill 的 RustFS 章节。
 
 > **版本差异**：`preview-domain`、`max-preview-lifetime`、`allow-expiration`、`-delete-site`、`-site-expire` 属于 v0.9.1 之后的源码快照能力（[配置结构](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/config.go#L81-L89)、[管理命令](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/main.go#L247-L277)）。落盘前运行 `git-pages -config <file> -print-config`，让当前二进制直接验证可识别的键。
 
@@ -411,7 +411,7 @@ flowchart TD
   C -.私有库误用.-> E["服务端 clone 返回<br/>401 authentication required"]
 ```
 
-仓库设为 public 仍不一定能匿名 clone：Gitea / Forgejo 的实例级 `[service] REQUIRE_SIGNIN_VIEW = true` 会要求登录后才能读取公开仓库。匿名请求 `<clone-url>/info/refs?service=git-upload-pack` 或 `/api/v1/version` 返回 401/403 时，应改用客户端上传。该开关的服务端背景见本 skill 的 [git-server](git-server.md)。
+仓库设为 public 仍不一定能匿名 clone：Gitea / Forgejo 的实例级 `[service] REQUIRE_SIGNIN_VIEW = true` 会要求登录后才能读取公开仓库。匿名请求 `<clone-url>/info/refs?service=git-upload-pack` 或 `/api/v1/version` 返回 401/403 时，应改用客户端上传。该开关的服务端背景见本 skill 的 [forge.md](forge.md)。
 
 `git-pages-cli --upload-git <URL> --token <token>` 不会在本地 clone；CLI 只是把 URL 作为 PUT body 交给服务端，服务端克隆时也不会使用这个 forge token。因此私有仓库走这条路径仍会 401。
 
@@ -502,7 +502,7 @@ jobs:
 - **token**：跨 server / non-matching 场景使用对目标仓库有 push 权限的 forge PAT，scope 包含 `read:user` 与仓库 write，存为 CI 所在仓库的 Actions secret（如 `GITPAGES_TOKEN`）。git-pages 只调用 `/api/v1/user` 和 `/api/v1/repos/<owner>/<repo>` 读取身份与 `permissions.push`，不会修改仓库（[`forge_api.go`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/forge_api.go#L17-L103)）。Forgejo 仓库 secret 可通过 `PUT /api/v1/repos/<owner>/<repo>/actions/secrets/<NAME>` 写入。
 - **dry-run**：请求头 `Dry-Run: yes`（任意非空值都会触发）只执行鉴权和映射，不落库；适合定位 401、wildcard 映射和 token 权限（[README](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/README.md#L113-L116)）。token 无权访问推导出的仓库时，响应可能是 `no access to <owner>/<repo> or invalid token`（[`forge_api.go`](https://codeberg.org/git-pages/git-pages/src/commit/7d3368e196073588c229aa8e0e65c3ede10e3342/src/forge_api.go#L90-L105)）。
 - **容器内生成 token**：Forgejo 拒绝以 root 运行管理 CLI。容器默认用户是 root 时，使用 `docker exec -u git <forgejo容器> forgejo admin user generate-access-token --username <U> --scopes read:user,write:repository --raw`。
-- **runner 单并发**：`capacity: 1` 时，一个长期卡住的 workflow 会占满唯一槽位，后续发布全部排队。停止对应 job 容器后 runner 会把 run 标为 failed 并释放槽；迁移期可把不再自动运行的旧 workflow 改为 `on: workflow_dispatch`。Runner / DinD / token 机制见本 skill 的 [git-server](git-server.md)。
+- **runner 单并发**：`capacity: 1` 时，一个长期卡住的 workflow 会占满唯一槽位，后续发布全部排队。停止对应 job 容器后 runner 会把 run 标为 failed 并释放槽；迁移期可把不再自动运行的旧 workflow 改为 `on: workflow_dispatch`。Runner / DinD / token 机制见本 skill 的 [forge.md](forge.md)。
 
 #### <a id="ci-performance"></a>Actions 构建性能
 

@@ -13,7 +13,7 @@
 - **校验靠 checksum database**，不靠中心仓库信任。`go.sum` + `sum.golang.org`（[官方](https://sum.golang.org)）记录每个模块版本的哈希，防篡改；这是完整性机制，不是"平台"。
 - **主版本进路径**：`v2+` 要在 import 路径带 `/v2`、`/v3` 后缀（semantic import versioning，[官方](https://go.dev/ref/mod#major-version-suffixes)）——所以 forgejo-mcp 的装法是 `codeberg.org/goern/forgejo-mcp/v2@latest`，少了 `/v2` 会找错模块。
 
-> 副作用两面：好处是没有名字抢注、可完全自建自控、迁移 host 只改路径；代价是模块可用性理论上依赖源 host 在线（被 proxy 缓存缓解），且没有一个"官方唯一平台"背书——判断某个包是否官方，只能看它挂在哪个组织的仓库下（例：gitea-mcp 在官方 `gitea.com/gitea` 组织下 = 第一方；Forgejo 侧无第一方 MCP，详见 [git-server.md](git-server.md) 第四部分）。`pkg.go.dev` 是文档/搜索索引（爬 proxy），也**不是**准入门槛。全文末尾有一张 Go / PyPI / npm 的对照表。
+> 副作用两面：好处是没有名字抢注、可完全自建自控、迁移 host 只改路径；代价是模块可用性理论上依赖源 host 在线（被 proxy 缓存缓解），且没有一个"官方唯一平台"背书——判断某个包是否官方，只能看它挂在哪个组织的仓库下（例：gitea-mcp 在官方 `gitea.com/gitea` 组织下 = 第一方；Forgejo 侧无第一方 MCP，详见 `git` skill 的自建 forge 章节）。`pkg.go.dev` 是文档/搜索索引（爬 proxy），也**不是**准入门槛。全文末尾有一张 Go / PyPI / npm 的对照表。
 
 ## 装一个 Go 写的 CLI：`go install` / `go run`
 
@@ -55,7 +55,7 @@ GOBIN=~/.local/bin go install <module-path>@latest
 
 > 这条在排查"这个二进制到底哪来的、是不是官方 release"时很有用：`+dirty` / 有 `vcs.modified=true` = 某人在本地改过源码编的，不是 proxy 上的干净版本。
 
-**`go install …@version` 遇 `replace` 指令会失败**：`replace`（把某依赖重定向到 fork 或本地路径）**只对"主模块"生效**（[官方 replace](https://go.dev/ref/mod#go-mod-file-replace)）。而 `go install pkg@version` 是在**没有主模块**的模块感知模式下构建目标模块，它不应用目标 `go.mod` 里的 `replace`；若该模块**靠** `replace` 才能正确构建（例如依赖指向一个 fork），远程 `go install` 就解析不到、构建失败。解法是改用 `git clone` 后在仓库内 `go install .`（此时该仓库是主模块，`replace` 生效），或等作者去掉 `replace`。（forgejo-mcp 历史上就因此坏过，后来去掉 `replace` 已修，见 [git-server.md](git-server.md) 第四部分脚注。）
+**`go install …@version` 遇 `replace` 指令会失败**：`replace`（把某依赖重定向到 fork 或本地路径）**只对"主模块"生效**（[官方 replace](https://go.dev/ref/mod#go-mod-file-replace)）。而 `go install pkg@version` 是在**没有主模块**的模块感知模式下构建目标模块，它不应用目标 `go.mod` 里的 `replace`；若该模块**靠** `replace` 才能正确构建（例如依赖指向一个 fork），远程 `go install` 就解析不到、构建失败。解法是改用 `git clone` 后在仓库内 `go install .`（此时该仓库是主模块，`replace` 生效），或等作者去掉 `replace`。（forgejo-mcp 历史上就因此坏过，后来去掉 `replace` 已修，见 `git` skill 的自建 forge 章节。）
 
 ## 从导入路径怎么找到仓库（解析机制）
 

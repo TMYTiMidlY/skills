@@ -56,6 +56,6 @@ gh api user --jq '{login, id, name, email}'
 
 ## 相关
 
-- 精准提交 / 暂存 / 丢弃 / amend（提交**内容**层面，不是身份）见 [git-surgery.md](git-surgery.md)。
-- 跨设备 git 镜像见 [git-mirror.md](git-mirror.md)；自建 Forgejo / Gitea 的 SSH / token 认证见 [git-server.md](git-server.md)。
+- 精准提交 / 暂存 / 丢弃 / amend（提交**内容**层面，不是身份）见 [surgery.md](surgery.md)。
+- 跨设备 git 镜像见 [mirror.md](mirror.md)；自建 Forgejo / Gitea 的 SSH / token 认证见 [forge.md](forge.md)。
 - 官方文档：[Setting your username in Git](https://docs.github.com/en/get-started/git-basics/setting-your-username-in-git)、[Setting your commit email address](https://docs.github.com/en/account-and-profile/how-tos/email-preferences/setting-your-commit-email-address)、[gh auth setup-git](https://cli.github.com/manual/gh_auth_setup-git)、[gh auth login](https://cli.github.com/manual/gh_auth_login)、[gitcredentials(7)](https://git-scm.com/docs/gitcredentials)。
