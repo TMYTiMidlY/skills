@@ -278,6 +278,34 @@ git branch -d "$BRANCH_NAME"                 # 分支要单独删
 submodule 的 `.git/modules/**/worktrees/` 里都有一份），只能靠事后 `prune` 收尾。
 已经 `rm -rf` 过的，补跑[恢复流程](submodule-hazards.md#recover)里的 `worktree prune`。
 
+## <a id="worktrunk"></a>worktrunk：worktree 生命周期的 UX 层
+
+[worktrunk](https://github.com/max-sixty/worktrunk)（`wt` 命令）是个第三方 CLI，装了它可以少敲上面那些命令。
+**它不改变本文的选型判据**——建 worktree 这步与 `git worktree add` 等价，官方 FAQ 自己也把对比
+框在"手动生命周期管理"上，并写明 *"Worktrunk runs `git` commands internally"*；读 v0.71.0 源码，
+建 worktree 那条命令就是 `git worktree add [-b <分支>] -- <路径> [<基准>]`，没有任何 submodule 处理。
+
+它省掉的是重复劳动（下列除注明外为 v0.71.0 实测）：
+
+| 手动做 | `wt` 里 |
+|---|---|
+| 建完还得自己 `cd` 过去 | `wt switch` 真能改当前 shell 的 cwd——外部子进程改不了父 shell，靠往 rc 文件注入 shell 函数实现 |
+| `git worktree remove` + `git branch -d` 两步 | `wt remove` 一步；**含已初始化 submodule 的 worktree 原生 git 直接拒绝**（`fatal: working trees containing submodules cannot be moved or removed`），`wt remove` 能删干净 |
+| 每建一个都手动装依赖 / 复制 `.env` | 10 种生命周期 hook（`pre-start`/`post-start`/`pre-merge`…）写进项目级 `.config/wt.toml`；`wt step copy-ignored` 直接从别的 worktree 复制 gitignored 文件（依赖目录、缓存、`.env`），可用 `.worktreeinclude` 限定范围 |
+| `git worktree list` 只给路径 + HEAD | `wt list` 带 ahead/behind、暂存、最后提交的状态表 |
+| checkout 主干 → merge → push → 删 worktree | `wt merge` 一条命令走完 squash → rebase → 合并 → 清理 |
+
+它**不**改变的：
+
+- **选型不变**：有 submodule 仍默认[共享 clone](#shared-clone)。它的官方 reference 全文**零次**提到 submodule，
+  实测也确认它对 submodule 不做任何处理，[劫持](submodule-hazards.md#core-worktree-hijack)照样发生。
+- **省下载靠的仍是 alternates**：worktree 那条路每个工作区各存一份 submodule 对象，与用不用 `wt` 无关。
+- **命名约定不同**：默认路径模板是兄弟目录 `<仓库名>.<分支名>`，与本文的
+  `<仓库名>.worktrees/cli-worktree-<时间戳>` 不一致；要对齐得改它的路径模板配置。
+
+所以定位是"可选加速层"：装了就用，没装照走上面的流程，本文的步骤不依赖它。
+它自己的配置、hook 选型与排障有官方配套的 `worktrunk` skill（本仓已嫁接），本文不重复。
+
 ## 项目特定的初始化
 
 构建 / 依赖同步 / 环境激活由项目 `AGENTS.md` 或项目自身的 skill 决定，本文不覆盖。常见步骤：
