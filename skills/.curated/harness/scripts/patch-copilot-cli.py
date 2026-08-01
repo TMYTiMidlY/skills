@@ -28,6 +28,11 @@ pkg cache 里运行时真正跑的 app.js（见 harness/references/copilot-patch
                     抹成空（下次启动不掉档、settings 不被抹）
   tiers-live        context tier 运行时半：TUI 应用模型那一步，tier 为空时按模型能力补
                     long_context，让**本会话**切模型后即时长上下文
+  tiers-picker      context tier picker 半：无参 `/model` 选择器里，非当前模型的 tier 默认值
+                    从硬编 "default" 改成 long_context（否则 picker 传显式 "default"、
+                    把 tiers-live 的守卫短路掉，列表里显示的窗口也是小的那个）
+  tiers-startup     context tier 启动半：settings 里没有 contextTier 时，交互启动兜底
+                    long_context（否则「没配过 / 被抹过」的新会话直接掉回小窗口）
   webfetch-fakeip   web_fetch SSRF 守卫放行 fake-ip 段 198.18/19（mihomo fake-ip 下可用）
                     ⚠️ 1.0.74 起该守卫已整体下沉到 native (.node)，app.js 无锚点可打 → 报 N/A
 
@@ -330,11 +335,87 @@ def p_webfetch(src):
     return src[:ms[0].start()] + new + src[ms[0].end():], f"fake-ip 198.18/19 放行 ({fn})", "apply"
 
 
+def p_tiers_picker(src):
+    """picker 半：无参 `/model` 打开的模型选择器里，每个模型条目的 context tier 默认值。
+
+    上游写成 `<je>=<Hn>?<fe>[<m>.id]??(<m>.id===<cur>?<C>??"default":"default"):void 0`：
+    只有**当前**模型沿用现有 tier，切到任何**其它**模型一律硬编 `"default"`。这个值
+    既决定列表里显示的上下文大小，也作为**显式** tier 传给应用函数 —— 于是
+    `tiers-live` 的 `??` 守卫会被短路（`"default"` 不是 nullish），picker 路径拿不到长上下文。
+    （typed `/model <id>` 路径传的是 undefined，守卫生效、能拿到 1M；两条路径行为不一致就是这么来的。）
+
+    改法：把该赋值 RHS 里的 `"default"` 字面量换成 `"long_context"`。
+    安全性：`<Hn>` 来自「构造 tier 选项」的函数，它在模型**没有** long_context 档时返回
+    undefined；所以 `<Hn>` 为真 ⟺ 该模型确实有 long_context 档，换了不会造出非法档位。
+    保留语义：`<fe>[<m>.id]`（用户在 picker 里明确选过的档）仍然优先，不覆盖显式选择。
+
+    锚点走列表项上的**属性名** `contextTier:…,contextTiers:…?.map(`（API 契约、跨版本稳），
+    再就近回溯到那句赋值，不依赖外层组件签名。"""
+    mk = "tmy-tiers-picker"
+    if mk in src:
+        return None, "", "already"
+    anc = re.compile(r'contextTier:([\w$]+),contextTiers:([\w$]+)\?\.map\(')
+    ms = list(anc.finditer(src))
+    if len(ms) != 1:
+        if "contextTiers:" not in src:
+            return None, "bundle 里已无 contextTiers 列表项（picker 形态已变/无分层档）", "na"
+        return None, f"picker 列表项锚点 count={len(ms)} (want 1)", "skip"
+    je, hn = ms[0].groups()
+    back_from = max(0, ms[0].start() - 2000)
+    back = src[back_from:ms[0].start()]
+    am = list(re.finditer(re.escape(je) + r'=' + re.escape(hn) + r'\?(.{0,220}?):void 0[,;]', back))
+    if not am:
+        return None, f"找不到 {je}={hn}?…:void 0 的默认 tier 赋值", "skip"
+    a = am[-1]
+    rhs = a.group(1)
+    if '"default"' not in rhs:
+        return None, f"默认 tier 赋值里没有 \"default\" 字面量（上游或已改默认）: {rhs[:80]}", "skip"
+    new_rhs = rhs.replace('"default"', '"long_context"')
+    abs_s = back_from + a.start(1)
+    abs_e = back_from + a.end(1)
+    src = src[:abs_s] + new_rhs + f'/*{mk}*/' + src[abs_e:]
+    return src, f"picker 默认 tier -> long_context (je={je}, opts={hn})", "apply"
+
+
+def p_tiers_startup(src):
+    """启动半：把「内置默认 context tier」从 default 改成 long_context。
+
+    启动时 tier 的优先级链是 `--context 开关 ?? settings.contextTier ?? 内置默认`，
+    bundle 里就是一句 `<Br>=<opts>.context??<settings>.contextTier`——**链尾什么都没有**，
+    两者都没有时得到 undefined、落回小窗口。所以「settings 里没写过 contextTier」
+    或「被别的路径抹掉过」的新会话都会掉档（实测：有该键 1000k、没有 264k）。
+
+    改法：在这条链尾接 `??"long_context"`，即只改「内置默认」这一档，
+    开关和 settings 的显式值仍然优先（`??` 短路），不动用户的显式选择。
+
+    安全性：给不支持 long_context 的模型带上该档会被**安静忽略**（实测），不报错、不掉档。
+
+    ⚠️ 别打错地方：另有两处也在读 `contextTier`——一处只喂 UI 状态、一处是 resume /
+    远程会话的「从盘重灌」（条件是 `盘上有值` 才生效）。改那两处对**全新会话无效**（踩过）。
+    认这条链的判据是它同时出现 `<opts>.context`（命令行开关）和 `.contextTier`（settings 键）。"""
+    mk = "tmy-tiers-startup"
+    if mk in src:
+        return None, "", "already"
+    anc = re.compile(r'([\w$]+)=([\w$]+)\.context\?\?([\w$]+)\.contextTier(?!\w)')
+    ms = list(anc.finditer(src))
+    if len(ms) != 1:
+        if "contextTier" not in src:
+            return None, "bundle 里已无 contextTier 设置键", "na"
+        return None, f"启动 tier 优先级链锚点 count={len(ms)} (want 1)", "skip"
+    m = ms[0]
+    var, opts, st = m.groups()
+    new = f'{var}={opts}.context??{st}.contextTier??"long_context"/*{mk}*/'
+    return src[:m.start()] + new + src[m.end():], \
+           f"内置默认 tier -> long_context ({var}={opts}.context??{st}.contextTier)", "apply"
+
+
 PATCHES = [
     ("retry-maxretries", p_retry),
     ("effort-default",   p_effort),
     ("tiers-clearpoint", p_tiers),
     ("tiers-live",       p_tiers_live),
+    ("tiers-picker",     p_tiers_picker),
+    ("tiers-startup",    p_tiers_startup),
     ("webfetch-fakeip",  p_webfetch),
 ]
 
