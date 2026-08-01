@@ -2,12 +2,11 @@
 
 私有 Git 仓库 → forgejo runner `rclone sync --checksum --remove` → RustFS S3 桶（桶结构 = 仓库树）。`public/*` 匿名可读，其他路径**默认**走 presigned URL。`.md` 浏览器直贴自动 markdeep 渲染。
 
-> **注**：docs-share 已迁往 **git-pages** 托管（见 [git-pages.md](git-pages.md)）——仓库直接 serve 成站点、路径即 URL。本文档保留 S3 直链模型，适用于"逐文件签名 + 有效期 + 默认私有"的分享场景；两套路线的取舍见 git-pages.md 开头。
+> **注**：docs-share 已迁往 **git-pages** 托管（见 `git` skill 的 git-pages 章节）——仓库直接 serve 成站点、路径即 URL。本文档保留 S3 直链模型，适用于"逐文件签名 + 有效期 + 默认私有"的分享场景；两套路线的取舍见该文开头。
 
-> **本文件 = 简明索引 + 安装/部署。** 每节是 1-3 句的速查;每个日常操作话题都在仓库 `README.md` 有**更详细的版本**:
-> <https://github.com/TMYTiMidlY/docs-share/blob/main/README.md>
+> **本文件 = 简明索引 + 安装/部署。** 每节是 1-3 句的速查;每个日常操作话题在 docs-share 仓库自己的 `README.md` 里有**更详细的版本**。该仓库已随项目迁出 GitHub、现由自建 forge 托管，按你当前的 forge 地址取用。
 >
-> 服务端基础设施（建桶、CI key 创建、bucket policy、Caddy 边缘 + Accept-rewrite、viewer / `_viewer.html` 部署）→ **vps-maintenance** skill 的 `references/caddy.md` §「文档私链分享站」（含完整端到端部署步骤）。RustFS 桶日常操作的客户端坑（mc / boto3 行为差异、versioning、跨桶 copy、删桶）→ **software** skill 的 `references/rustfs.md`（同目录 `rustfs-bulk-ops.md` 写批量 ops 注意点）。仓库目录结构与本机 alias 细节 → 仓库 `README.md`。
+> 服务端基础设施（建桶、CI key 创建、bucket policy、Caddy 边缘 + Accept-rewrite、viewer / `_viewer.html` 部署）→ **vps-maintenance** skill 的 Caddy 文档私链分享站章节（含完整端到端部署步骤）。RustFS 桶日常操作的客户端坑（mc / boto3 行为差异、versioning、跨桶 copy、删桶）→ 本 skill 的 [rustfs.md](rustfs.md)（批量 ops 注意点见 [rustfs-bulk-ops.md](rustfs-bulk-ops.md)）。仓库目录结构与本机 alias 细节 → docs-share 仓库自己的 `README.md`。
 
 ---
 

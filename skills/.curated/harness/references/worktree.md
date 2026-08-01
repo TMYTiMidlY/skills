@@ -108,7 +108,7 @@ claude --worktree "#1234"        # 从指定 GitHub PR 建 worktree（fetch pull
 | `/delegate` | 把整个会话推到 GitHub 云端，由 Copilot 建 PR | ❌ 云端隔离，非本地 worktree |
 | `/tasks`、`ctrl+x→b` | 管理后台 subagent/shell 任务 | ❌ |
 
-要开 worktree，只能走通用 `bash` 工具跑 `git worktree add`，或者装一个项目级 `worktree` skill（如本环境里已有的那个：自动为隔离分支创建 git worktree、含 submodule 同步）——**这类 skill 底层调用的仍是 `git worktree add`，不是什么 CLI 原生能力**，本质和让我自己敲命令没有区别，只是把步骤和边界条件写成了可复用的固定流程。
+要开 worktree，只能走通用 `bash` 工具跑 `git worktree add`，或者装一个项目级 skill 把这套流程固化下来（如本环境里 `git` skill 的隔离工作区章节：自动为隔离分支创建 git worktree、含 submodule 同步）——**这类 skill 底层调用的仍是 `git worktree add`，不是什么 CLI 原生能力**，本质和让我自己敲命令没有区别，只是把步骤和边界条件写成了可复用的固定流程。
 
 ---
 

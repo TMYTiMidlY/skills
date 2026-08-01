@@ -781,7 +781,7 @@ go install codeberg.org/goern/forgejo-mcp/v2@latest      # forgejo-mcp（注意�
 > - **gitea-mcp** → `GOBIN=~/.local/bin go install gitea.com/gitea/gitea-mcp@latest`。装完 `go version -m` 显示 `mod …@v1.3.0` 带 proxy `h1:` 哈希、**无 `vcs.*` 戳**——这就是「从 module proxy 装 vs 本地 clone build」的判别点（本地 clone build 会打 `vcs.revision`/`vcs.modified`/版本尾 `+dirty`；旧的那个二进制就是 `+dirty` 的本地构建）。
 > - **forgejo-mcp** → 最终也统一成 `GOBIN=~/.local/bin go install codeberg.org/goern/forgejo-mcp/v2@latest`（clean `v2.30.1`，proxy `h1:` 哈希、无 `vcs.*` 戳）。**先前**曾走 **Option B（下 release 二进制）**：下 `forgejo-mcp_2.30.1_linux_amd64.tar.gz`、`sha256sum` 对官方 `checksums.txt` 校验通过后解包——当时以为 README「Known Issues」说的 `@latest` 不可用属实；后实测 `…/v2@latest` 能装（见脚注）遂改回 go install，与 gitea-mcp 一致。Option B 仍是好后备：有 cosign 签名+校验、不依赖本地 Go 工具链。
 
-> ⚠️ **若 `go` 来自 `pixi global install go`（conda-forge 包），头一次 cgo 构建会报「找不到 `x86_64-conda-linux-gnu-cc`」**——该编译器名被编译期烧进 go 二进制、但包没带编译器（跟用没用 conda 无关）。上面 gitea-mcp/forgejo-mcp 都是纯 Go，`CGO_ENABLED=0` 能绕；**正统修法** `pixi global install --environment go c-compiler`。判别四连 + 三种修法详见 [go.md](go.md#cgo-pitfall)。
+> ⚠️ **若 `go` 来自 `pixi global install go`（conda-forge 包），头一次 cgo 构建会报「找不到 `x86_64-conda-linux-gnu-cc`」**——该编译器名被编译期烧进 go 二进制、但包没带编译器（跟用没用 conda 无关）。上面 gitea-mcp/forgejo-mcp 都是纯 Go，`CGO_ENABLED=0` 能绕；**正统修法** `pixi global install --environment go c-compiler`。判别四连 + 三种修法详见 `software` skill 的 Go 工具链章节。
 
 **工具规模**（stdio `tools/list` 实测）：gitea-mcp `v1.3.0` = **53 个工具**；forgejo-mcp `v2.30.1` = **128 个工具**（后者覆盖面明显更广，含 attachments/time-tracking/team/branch-protection 等）。
 

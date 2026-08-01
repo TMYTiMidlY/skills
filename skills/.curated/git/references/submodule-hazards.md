@@ -5,7 +5,7 @@ config 里的**单值**字段，表达不了 N 个——两者装不到一起，
 [把 superproject 多工作区列进 BUGS](https://github.com/git/git/blob/v2.43.0/Documentation/git-worktree.txt#L513-L517)
 的根因。
 
-正常情况下你**不该读到这里**：有 submodule 就用共享 clone（见 [SKILL.md](../SKILL.md)），
+正常情况下你**不该读到这里**：有 submodule 就用共享 clone（见 [isolated-workspace.md](isolated-workspace.md#shared-clone)），
 问题在结构上就不存在。以下几种情况才需要：
 
 - 已经存在一个建好的 superproject worktree、必须就地修好

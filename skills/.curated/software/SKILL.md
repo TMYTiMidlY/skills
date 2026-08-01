@@ -1,9 +1,11 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、PostgreSQL 读写性能量化（容器 / 存储介质 / 网络三层的 `fio`·`pgbench` 测法与实测、tablespace 冷热分层、iSCSI 网络存储的瓶颈归因）、Git 命令行精准操作（有并发/无关改动时只提交某处、hunk/行级暂存、后有提交时 amend）、jj（Jujutsu）版本控制（working copy 即 commit/无暂存区、op log 操作日志与 undo/op restore、一等冲突与延迟解决、冲突与 change-id 在 git 层的表示、哪些数据不出机器、改动不丢失与恢复）、gh 认证 vs git 提交身份（user.name/email）、Git 镜像/自建 Forgejo、git-pages 静态站托管（Forgejo/Gitea 的 GitHub Pages 替代服务、Codeberg Pages 后端、不可猜路径、DNS Challenge 鉴权）、Commitizen / semantic-release 发版（配置版本源、CHANGELOG、GitHub Release、npm/PyPI OIDC Trusted Publishing）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、USTC Overleaf/olcli（无头鉴权、项目同步、内部 API、OT/评论/修订）、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Docker Engine 安装（官方 apt 仓库法）与多用户共用（docker 组、`sg`/重登生效、组≈免密 root 的安全取舍）、Coolify 与 Dokploy 自托管 PaaS（端口所有权、前置反代、工作负载边界与清理）、Go 工具链（模块 / `go install` / 依赖解析 / GOPROXY）、Windows/Office 激活与 macOS 杂项等。Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、PostgreSQL 读写性能量化（容器 / 存储介质 / 网络三层的 `fio`·`pgbench` 测法与实测、tablespace 冷热分层、iSCSI 网络存储的瓶颈归因）、Commitizen / semantic-release 发版与发布 CI（配置版本源、CHANGELOG、GitHub Release、npm/PyPI OIDC Trusted Publishing）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、USTC Overleaf/olcli（无头鉴权、项目同步、内部 API、OT/评论/修订）、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Docker Engine 安装（官方 apt 仓库法）与多用户共用（docker 组、`sg`/重登生效、组≈免密 root 的安全取舍）、Coolify 与 Dokploy 自托管 PaaS（端口所有权、前置反代、工作负载边界与清理）、Go 工具链（模块 / `go install` / 依赖解析 / GOPROXY）、Windows/Office 激活与 macOS 杂项等。Git / jj 命令行操作、隔离工作区、受限网络克隆、自建 Forgejo 与 git-pages 转用 `git` skill；Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
 ---
 
 # Software
+
+Git 与 jj 的日常操作、隔离工作区、受限网络获取、自建 forge 与 git-pages 已迁往 `git` skill；本 skill 仍覆盖发版 / 发布 CI。
 
 ## PostgreSQL 读写性能
 
@@ -12,26 +14,6 @@ description: 本地软件、CLI 工具与自托管服务的客户端配置与排
 ## SSH
 
 SSH 密钥 passphrase、ssh-agent、非交互环境（CI / `bash -c`）私钥带 passphrase 又无解锁 agent 导致 `Server accepts key` 却 `Permission denied` 的诊断与复用常驻 agent 解法、RemoteForward 代理转发、主机密钥校验（known_hosts、`CheckHostIP` 默认及 OpenSSH 与 asyncssh 等第三方库对 IP 的处理差异——同一主机换 IP 后 OpenSSH 沉默而第三方库报 `Host key is not trusted` 的根因与修复）、ControlMaster 连接复用、裸 ssh/scp 跑命令与交互式 sudo（`ssh -t`）及远端文件编辑等通用 SSH 用法见 [references/ssh.md](references/ssh.md)。
-
-## Git 镜像仓库
-
-多设备协作且部分设备无法访问 GitHub 时，用一台公网 VPS 做双向 SSH git 镜像。架构、搭建步骤、hooks、Actions workflow、防回环、防 split-brain 的完整方案见 [references/git-mirror.md](references/git-mirror.md)。
-
-## 自建 Forgejo（公网 22 SSH relay + CI runner）
-
-无独立公网 IP 的内网 WSL2 机上自建 Forgejo，借唯一公网落点 VPS 做入口。核心做法是 SSH passthrough（公网 sshd 按登录名 `git` vs 运维用户分流，不破坏运维 shell）+ 跨机 relay（key 查询/git 命令经一条 SSH 转发到内网 Forgejo 容器的 `forgejo keys`/`serv`）。覆盖整体三段链路架构、为什么网页端加 SSH key 入口机即认（`AuthorizedKeysCommand` 当场查 Forgejo 数据库、不拷文件）、内网机用 authorized_keys 内联 forced command 转发 keys/serv（不另放脚本）、ControlMaster 复用绕过坑、`serv` stdin 透传、入口机发行版差异（SSH service 名/SELinux/sshd_config.d 因发行版而异）、sshd 幂等 append + 安全兜底、Forgejo Actions runner（DinD 隔离、token 注册三步、job 容器回连 `http://forgejo:3000` 的网络设计）、web 经边缘 Caddy 反代（默认中文 header；WSL/Docker 网络细节转 `network` skill）、session COOKIE_NAME 改名治登录 500、数据卷 `/data` 挂载坑（非 rootless 镜像）、**把 Git server 接到 AI agent 的 MCP 配置**（Gitea 有第一方官方 `gitea.com/gitea/gitea-mcp`、Forgejo 无官方 MCP 故用社区事实标准 `codeberg.org/goern/forgejo-mcp` 及为什么是它、两家 flag/env/优先级对照、Copilot CLI `mcp-config.json` 接入、token 走 env 不走 argv 的安全理由）见 [references/git-server.md](references/git-server.md)。
-
-## Git CLI 精准操作（有并发/无关改动时只提交、暂存、丢弃、amend 一处）
-
-工作区同时躺着"你想动的改动"和"不该由你带走的改动"（并发脏文件、别人已 `git add` 的 rename、untracked）时，如何在**命令行非交互**只对一处做 commit / stage / discard / stash，以及提交被别人叠了新提交后怎么改它。按 git-surgery.md 的章节：**三棵树与 commit 的快照范围**（谁是底座 floor 决定动得了什么）、**速查**（场景→命令→章节）、**整文件级**（`git commit -- <path>` pathspec 隔离、新文件先 `add -N`、`restore` / `stash push --`、"加 -p 反破坏隔离"的坑）、**子文件 hunk/行级**（`filterdiff` + `apply --cached` 补丁手术、交互 `-p` 各命令基准对照）、**改一条不在 HEAD 的旧提交**（`rebase -i` reword、`--fixup` + autosquash、脏工作区拒绝启动时的兜底）、**commit-tree 手工建提交**（绕过 index/worktree 的 plumbing、陈旧 index 陷阱）、**reflog 归因**（认出谁移动了 ref）、**jj 无 index 的替代路**。见 [references/git-surgery.md](references/git-surgery.md)。
-
-## jj（Jujutsu）：无暂存区模型、分支与 Git 互操作
-
-jj 用 Git 仓库当后端、协作者可无感，但模型和 Git 不同——遇到 jj 的工作副本 / 分支（bookmark）/ 操作日志 / 冲突 / Git 互操作 / 文件持久性问题看这篇。按 jj.md 的章节：**概述**（Git 兼容、四个心智转变）、**核心术语速查**（change/commit、change-id/commit-id、bookmark、operation 等）、**工作副本 `@` 与暂存区**（无 index、命令懒快照 `@`）、**change 与 commit**（change-id 稳定、commit-id 随重写变、隐藏 commit 靠 change-id+偏移找回）、**分支操作：bookmark 与匿名分支**（bookmark≈git 分支但无"当前分支"、新建 commit 不推进、重写才跟随、abandon 即删；create/set/move/list 命令与 `jj b` 简写；匿名分支；`bookmark@remote` 与 tracked、push 安全检查、`main??` 冲突）、**两条历史：操作日志与提交图**（op log vs jj log、undo/op restore/--at-op、"命名=贴 op 标签 vs 建 commit"的两轴与提交边界、编辑→commit 循环能 diff/回退到哪）、**一等冲突**（rebase 不阻塞、冲突进 commit、按需再解、auto-rebase）、**冲突与 change-id 在 Git 层的表示**（`.jjconflict-*` / `jj:trees` / `refs/jj`、change-id header 泄进 git）、**本地 vs 随 push 传播的数据**（操作×是否进 git 表、push 拒推校验、clone vs 拷目录、远端只能 git）、**改动的持久性与恢复**（懒快照时机、`jj op abandon`+`jj util gc` 修剪、明文非备份边界）、**与纯 Git 工具混用的限制**（hooks / staging / detached HEAD）。实测 jj 0.43.0、引用锁 v0.43.0。见 [references/jj.md](references/jj.md)。
-
-## gh 认证 vs git 提交身份（两套"身份"别混）
-
-`gh auth login` 配的是 **GitHub 登录认证**（token / 凭据助手，用于 clone/pull/push 那一下），`git config user.name`/`user.email` 是 **每条 commit 的作者身份**——**两者互不相干，`gh` 不会把登录账户自动转成 Git 的提交姓名邮箱**；GitHub 官方也明确 "Git username ≠ GitHub username"、改提交身份要单独 `git config`。所以常见的坑是 `gh auth login` 走完、`gh auth status` 全绿，一提交却仍报 `Author identity unknown`。覆盖：`gh auth login` 两个易混提示（protocol HTTPS/SSH；"Authenticate Git with your GitHub credentials?" 里的 "credentials" 指凭据助手不是 user.name/email，选 Yes 只写一条 `credential.https://github.com.helper = !gh auth git-credential`，等价于 `gh auth setup-git`）、`gh api user` 能查账户但 email 常因隐私为 `null` 且不会喂给 commit；结论——不必 `--global`（可每仓库 `--local` 覆盖）、任何层级都没设则 `gh` 不补、git 仍 fatal `Author identity unknown` / `unable to auto-detect email address`、重新 `gh auth` 只修失效 token 不重生成提交身份、推荐全局姓名 + GitHub noreply 邮箱（`ID+username@users.noreply.github.com`）。见 [references/git-identity.md](references/git-identity.md)。
 
 ## 自动发版与发布 CI
 
@@ -112,10 +94,6 @@ FunASR、Fun-ASR-Nano、Paraformer + VAD + Punc + CAM++、SenseVoiceSmall、Whis
 ## 私有 docs-share 站点（Git 仓库 → S3 直链分享）
 
 把要公网呈现的 md/html 放进一个私有 Git 仓库，每次 `git push` 或网页端上传/编辑即触发 CI（`rclone sync --checksum`）**增量同步**到一个 S3 兼容桶（桶结构 = 仓库树）；对外走 S3 **presigned 直链**（URL 自带签名 + 有效期）分享；`public/` 前缀通过 bucket policy 开放匿名读、无需签名——知道 URL 即可访问。`.md` 原样存（下载=raw），由 Caddy Accept rewrite + markdeep viewer 客户端渲染。完整内容见 [references/docs-share.md](references/docs-share.md)：密钥体系（root key 派生受限 CI key、凭据存储位置）、public 路径 vs 私有路径的 bucket policy 机制、presigned URL 生成（直贴/viewer 包装/脚本批量）、更新与撤销、markdeep 写作惯例（`[#key]` 引用 vs `[^name]` 脚注、GFM 不兼容点、研报模板）。服务端部署（Caddy 配置 / viewer 壳子 / CI key 创建 / bucket policy 设置命令）由 `vps-maintenance` skill 的 caddy.md 覆盖。S3 兼容存储底层行为见 [references/rustfs.md](references/rustfs.md)。
-
-## git-pages 静态站托管（Git forge → 网站，GitHub Pages 替代）
-
-[git-pages](https://codeberg.org/git-pages/git-pages) 把某个 Git 仓库某分支的内容直接 serve 成静态网站（文件按路径即 URL、图片等资源原样出，不用内联 data-URI），S3 或文件系统后端，配 Caddy on-demand TLS 全自动签证。是上面 docs-share「S3 presigned 直链」模型的**另一条路线**（docs-share 本身也已迁到这套）。核心要点见 [references/git-pages.md](references/git-pages.md)：**最关键的决策是公开库 vs 私有库走不同发布路径**——webhook（POST）让 git-pages 匿名 clone、**只对公开库有效**（私有库必 401）；私有库要走**归档 PUT + `Forge-Authorization` token**（内容在请求体、不 clone），典型是 Forgejo Action 打 tar + curl PUT。还覆盖：一个项目下用 `path` 发布多个子站 / 不可猜路径及首次初始化、matching / non-matching wildcard 的 token 边界、预装 MkDocs runner image 和 checkout/依赖加速、metadata 枚举封锁、S3 桶布局（`blob`/`.index`/`.exists` 语义，`.exists` 驱动 on-demand TLS 且故意不随删站清除）、wildcard 映射、`Dry-Run` 头验链路，以及 `git archive` pax header、runner 单并发堵塞等排障。另含 Codeberg Pages / v2 迁移、同类实现对比、自建整套与生命周期、鉴权源码导读。
 
 ## OpenList 网盘聚合面板
 

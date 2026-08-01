@@ -1,12 +1,9 @@
----
-name: worktree
-description: 用户要做实验性改动 / 对比实现 / 可能失败的大改动，或明确要求在 worktree 里做、开实验分支时使用。为隔离分支创建独立工作区，避免污染主工作区；仓库带 submodule 时改用 git 官方推荐的共享 clone 方案。本 skill 只覆盖通用骨架，项目特定的构建 / 依赖同步由上层 AGENTS.md 或项目自身的 skill 接管。
----
-
-# Worktree
+# 隔离工作区（worktree 与共享 clone）
 
 给「可能出错或需要并行的改动」开一个隔离工作区，避免 stash / reset 频繁切换。典型用途：
 尝试有失败风险的大改动、并行跑多个实验分支、用户明确说"在 worktree 里做"。
+
+通用骨架在此，项目特定的构建 / 依赖同步由上层 `AGENTS.md` 或项目自身的 skill 接管。
 
 ## 选型
 
@@ -50,7 +47,7 @@ worktree 共享**整个仓库**，clone 只共享**对象库**。`config` 那一
 无 submodule 时 `git worktree` 是它本来的用途，没有任何坑。
 
 > 机理、实测现场、五个坑、诊断与恢复流程见
-> [submodule 与 worktree 的冲突](references/submodule-hazards.md)。
+> [submodule 与 worktree 的冲突](submodule-hazards.md)。
 > 已有 worktree 必须就地修好时，那里也给了权宜之计。
 
 ### 这次任务要不要 build
@@ -73,7 +70,7 @@ SU2-Quantum 实测的成本差距：
 **83 倍时间、122 倍空间。** 而且不带 submodule 的 clone 完全够用——实测在其中
 `mkdocs build` 成功产出 62 个页面、git 操作正常。
 
-> 真实教训：本 skill 记录的那次事故，起因是为一次**纯 markdown 的 cherry-pick**
+> 真实教训：本文记录的那次事故，起因是为一次**纯 markdown 的 cherry-pick**
 > 无条件给 27 个 submodule 建了工作区并跑了 `git submodule update`，导致主工作区的
 > `externals/eigen` 被指向别的目录、`git submodule status` 报错。按需触发本可以完全避免。
 
@@ -270,17 +267,17 @@ git branch -d "$BRANCH_NAME"                 # 分支要单独删
 
 **不要 `rm -rf` worktree 目录**。目录没了但注册还在（主仓库 `.git/worktrees/` 和每个
 submodule 的 `.git/modules/**/worktrees/` 里都有一份），只能靠事后 `prune` 收尾。
-已经 `rm -rf` 过的，补跑[恢复流程](references/submodule-hazards.md#recover)里的 `worktree prune`。
+已经 `rm -rf` 过的，补跑[恢复流程](submodule-hazards.md#recover)里的 `worktree prune`。
 
 ## 项目特定的初始化
 
-构建 / 依赖同步 / 环境激活由项目 `AGENTS.md` 或项目自身的 skill 决定，本 skill 不覆盖。常见步骤：
+构建 / 依赖同步 / 环境激活由项目 `AGENTS.md` 或项目自身的 skill 决定，本文不覆盖。常见步骤：
 
 - 包管理器：`uv sync` / `poetry install` / `npm install`
 - 构建：`poe setup && poe build` / `cmake` / `make`
 - 环境：`source .venv/bin/activate` / `conda activate`
 
-如果项目需要"一次性 worktree + 构建"的工作流，写一个薄壳 skill 先调本 `worktree` skill、
+如果项目需要"一次性 worktree + 构建"的工作流，写一个薄壳 skill 先按本文建工作区、
 再跑项目自己的构建命令即可。
 
 ## 易错命令对照
@@ -289,9 +286,9 @@ submodule 的 `.git/modules/**/worktrees/` 里都有一份），只能靠事后 
 
 | 你想干什么 | 用这个 | 别用这个 |
 |---|---|---|
-| 在 worktree 里对齐 submodule 版本 | `ls-tree` + `git -C <path> checkout --detach` | `git submodule update`（[会劫持主工作区](references/submodule-hazards.md#core-worktree-hijack)） |
-| 删掉**失效**的 worktree 注册 | `git worktree prune` | [手删 `worktrees/*`](references/submodule-hazards.md#manual-delete) |
+| 在 worktree 里对齐 submodule 版本 | `ls-tree` + `git -C <path> checkout --detach` | `git submodule update`（[会劫持主工作区](submodule-hazards.md#core-worktree-hijack)） |
+| 删掉**失效**的 worktree 注册 | `git worktree prune` | [手删 `worktrees/*`](submodule-hazards.md#manual-delete) |
 | 撤掉被劫持的 `core.worktree` | `git config -f <gitdir>/config --unset core.worktree` | 手改 config 文本 |
-| 批量撤 `core.worktree`（含嵌套） | 递归 `find .git/modules -name config`（见[恢复流程](references/submodule-hazards.md#recover)） | 单层通配 `.git/modules/*/config` |
-| 遍历所有 submodule 的 gitdir | `find .git/modules -type d -name worktrees` | `git submodule foreach --recursive`（[有盲区](references/submodule-hazards.md#foreach-blind-spot)） |
-| 看清当前状态 | `git worktree list` / `prune --dry-run -v`（见[动手前的诊断](references/submodule-hazards.md#diagnose)） | 直接跑破坏性命令 |
+| 批量撤 `core.worktree`（含嵌套） | 递归 `find .git/modules -name config`（见[恢复流程](submodule-hazards.md#recover)） | 单层通配 `.git/modules/*/config` |
+| 遍历所有 submodule 的 gitdir | `find .git/modules -type d -name worktrees` | `git submodule foreach --recursive`（[有盲区](submodule-hazards.md#foreach-blind-spot)） |
+| 看清当前状态 | `git worktree list` / `prune --dry-run -v`（见[动手前的诊断](submodule-hazards.md#diagnose)） | 直接跑破坏性命令 |
