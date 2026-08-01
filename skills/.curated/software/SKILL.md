@@ -33,23 +33,15 @@ jj 用 Git 仓库当后端、协作者可无感，但模型和 Git 不同——�
 
 `gh auth login` 配的是 **GitHub 登录认证**（token / 凭据助手，用于 clone/pull/push 那一下），`git config user.name`/`user.email` 是 **每条 commit 的作者身份**——**两者互不相干，`gh` 不会把登录账户自动转成 Git 的提交姓名邮箱**；GitHub 官方也明确 "Git username ≠ GitHub username"、改提交身份要单独 `git config`。所以常见的坑是 `gh auth login` 走完、`gh auth status` 全绿，一提交却仍报 `Author identity unknown`。覆盖：`gh auth login` 两个易混提示（protocol HTTPS/SSH；"Authenticate Git with your GitHub credentials?" 里的 "credentials" 指凭据助手不是 user.name/email，选 Yes 只写一条 `credential.https://github.com.helper = !gh auth git-credential`，等价于 `gh auth setup-git`）、`gh api user` 能查账户但 email 常因隐私为 `null` 且不会喂给 commit；结论——不必 `--global`（可每仓库 `--local` 覆盖）、任何层级都没设则 `gh` 不补、git 仍 fatal `Author identity unknown` / `unable to auto-detect email address`、重新 `gh auth` 只修失效 token 不重生成提交身份、推荐全局姓名 + GitHub noreply 邮箱（`ID+username@users.noreply.github.com`）。见 [references/git-identity.md](references/git-identity.md)。
 
-## Commitizen（发版：PEP 440 版本号 / CHANGELOG / prerelease / tag-CI）
+## 自动发版与发布 CI
 
-commitizen（`cz`）按 Conventional Commit 算版本号、打 tag、生成 `CHANGELOG.md`；发布交给
-tag 触发的 CI。覆盖：Python 版本号规范（PEP 440 的 a/b/rc/dev/post 归一化与排序、"预发布默认
-装不到"）、手改 CHANGELOG 会不会被下次 `cz bump` 冲掉（incremental 逐字保留 vs 裸 `cz changelog`
-整篇重写、实测哨兵验证）、prerelease 段与正式段的关系（转正段默认近乎空、`--merge-prerelease`）、
-`pre_bump_hooks` 在版本文件写入之后才跑导致失败后的半途状态与恢复、tag 触发 build + GH Release
-（stable/prerelease 分类、changelog 抽取 vs 重生成）+ PyPI（OIDC、skip-existing、不可变）的流水线
-形态。见 [references/commitizen.md](references/commitizen.md)。
-
-## 自动发版（配置版本源 / semantic-release / Registry OIDC）
-
-跨 Python 与 Node 的发版心智模型、QuantumAtlas 式“`pyproject.toml` 为版本真相源”的
-Commitizen 配置、semantic-release 的提交分析 / CHANGELOG / GitHub Release / npm publish
-生命周期、npm 首次本机 web auth 发布与后续 Trusted Publisher OIDC、GitHub
-`environment:` 实体 / YAML 引用、staged publishing，以及 Bun 多平台二进制 + checksum
-完整 CI 模板见 [references/publish.md](references/publish.md)。
+跨 Python 与 Node 的自动发版先选版本真相源：Commitizen 由配置文件和显式 `cz bump` 决定版本，
+semantic-release 则在 CI 中分析 Git 历史。覆盖：QuantumAtlas 式 PEP 621 配置、PEP 440 的
+a/b/rc/dev/post、CHANGELOG 增量更新与 prerelease / 正式段、`pre_bump_hooks` 失败后的半途状态，
+以及 tag 或配置更新触发的 GitHub Release + PyPI OIDC；semantic-release 的提交分析、插件生命
+周期、npm 首次 web auth 发布与版本基线、Trusted Publisher OIDC、GitHub `environment:`、
+staged publishing、Bun 多平台二进制 + checksum 模板和端到端验证。见
+[references/release-ci.md](references/release-ci.md)。
 
 ## 包管理器全景 / 分类对比（Nix vs apt、choco/winget/Scoop、npm/pnpm/bun、pip…）
 
