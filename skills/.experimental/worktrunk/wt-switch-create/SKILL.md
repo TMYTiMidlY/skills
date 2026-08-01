@@ -1,28 +1,26 @@
 ---
 name: wt-switch-create
-description: Create a new worktrunk worktree (optionally in another repo) and switch this session's working directory into it. Use when launching a session that should work in its own worktree.
+description: 创建新的 Worktrunk worktree（可选在另一个仓库中创建），并将本会话的工作目录切入其中。启动应在独立 worktree 中工作的会话时使用。
 argument-hint: "[<branch>] [<repo>] [-- <task>]"
 license: MIT OR Apache-2.0
 compatibility: Requires the `wt` CLI (https://worktrunk.dev)
 ---
 
-Arguments: `$ARGUMENTS`. Grammar: `[<branch>] [<repo>] [-- <task>]`.
+参数：`$ARGUMENTS`。语法：`[<branch>] [<repo>] [-- <task>]`。
 
-- **branch** — optional; the branch name for the new worktree. When omitted,
-  pick one (step 1 below).
-- **repo** — optional path; create the worktree in this repo instead of the
-  session's current one.
-- **task** — optional; what to do inside the new worktree. No task means enter
-  the worktree and wait.
+- **branch**——可选；新 worktree 的分支名。省略时，选择一个名称
+  （见下文第 1 步）。
+- **repo**——可选路径；在此仓库而非会话当前仓库中创建 worktree。
+- **task**——可选；进入新 worktree 后要做的事。没有任务时，进入
+  worktree 并等待。
 
-Tokens before the `--` are the branch and/or repo: a path-shaped token
-(starting with `/`, `~`, `./`, or `../`) is the repo; any other token is the
-branch (`docs` is a branch name, never the `docs/` directory). More than one
-branch-shaped token before a `--` doesn't fit the grammar — ask. Without a
-`--`, judge where the task starts: leading tokens that read as a branch name
-(`fix-auth`) or a repo path are consumed as such, and the rest is the task;
-otherwise the whole input is the task (`fix the parser bug` has no
-branch-shaped lead — all task).
+`--` 之前的 token 表示分支和/或仓库：形似路径的 token（以 `/`、`~`、
+`./` 或 `../` 开头）是仓库；其他 token 都是分支（`docs` 是分支名，
+绝不是 `docs/` 目录）。`--` 前出现多个形似分支的 token 不符合语法——
+应询问用户。没有 `--` 时，判断任务从哪里开始：开头看起来像分支名
+（`fix-auth`）或仓库路径的 token 会被解析为相应参数，剩余内容是任务；
+否则整段输入都是任务（`fix the parser bug` 开头没有形似分支的内容——
+全部都是任务）。
 
 ```
 /wt-switch-create my-feature -- fix the parser bug
@@ -31,93 +29,84 @@ branch-shaped lead — all task).
 /wt-switch-create my-feature
 ```
 
-## What to do
+## 操作流程
 
-Creating the worktree comes first on every invocation, before any other work.
-The invocation is itself the explicit request to create it; a research or
-read-only task gets one all the same.
+每次调用都必须先创建 worktree，再做任何其他工作。调用本身就是创建
+worktree 的明确请求；即使任务只是调研或只读，也照样创建。
 
-<!-- Maintainers: rationale.md (same directory) covers the harness rules and
-design choices behind this — read it before re-adding guards or routes. -->
+<!-- 维护者：同目录的 rationale.md 说明了这套流程背后的宿主运行框架规则和
+设计选择——重新加入前置检查或处理路径前，请先阅读。 -->
 
-1. **Pick the branch name** if none was given: short, from the task and
-   consistent with existing worktree names, or, mid-session, from the work
-   being moved; with nothing to derive from, ask.
+1. **选择分支名**（如果没有给出）：名称要简短，从任务中提炼，并与现有
+   worktree 名称风格一致；如果是在会话中途，则根据要迁移的工作命名；
+   没有任何依据时，询问用户。
 
-2. **With no repo argument, create and enter in one call:**
-   `EnterWorktree({name: "<branch>"})`. Worktrunk's `WorktreeCreate` hook runs
-   `wt switch --create`, so the result is an ordinary `wt` worktree in the
-   default layout, and the user sees no confirmation prompt. On success,
-   do the task (or, with no task text, confirm it's ready and wait).
+2. **没有 repo 参数时，一次调用完成创建和进入：**
+   `EnterWorktree({name: "<branch>"})`。Worktrunk 的 `WorktreeCreate` hook 会运行
+   `wt switch --create`，因此结果是采用默认布局的普通 `wt` worktree，
+   用户不会看到确认提示。成功后，执行任务（如果没有任务文本，则确认
+   已准备就绪并等待）。
 
-   Mid-session, carry uncommitted work across: `git stash push -u` before the
-   `EnterWorktree` call, then `git stash pop` after — the call re-roots the
-   session into the new worktree, and the stash is shared across worktrees.
+   在会话中途，要把未提交改动一并带过去：调用 `EnterWorktree` 前运行
+   `git stash push -u`，之后再运行 `git stash pop`——该调用会把会话重定根
+   到新 worktree，而 stash 在各 worktree 之间共享。
 
-3. **Otherwise create it with `wt` and enter by path.** Two cases reach here: a
-   repo argument, which step 2 can't target, and a failed step 2, whose error
-   says which — `✗ Branch <branch> already exists`, or `Already in a worktree
-   session`. Create with a `Bash` call (omit `-C <repo>` for this repo):
+3. **其他情况用 `wt` 创建，再按路径进入。** 两种情况会走到这里：一是给了
+   repo 参数，而第 2 步无法指定目标仓库；二是第 2 步失败，其错误会说明原因——
+   `✗ Branch <branch> already exists` 或 `Already in a worktree
+   session`。通过一次 `Bash` 调用创建（当前仓库应省略 `-C <repo>`）：
 
    ```
    wt -C <repo> switch --create <branch> --no-cd --format=json
    ```
 
-   Stdout is JSON whose `path` field is the worktree's absolute path (status
-   lines go to stderr). On `Branch <branch> already exists`: if the user named
-   the branch, rerun without `--create` (it enters the branch, creating its
-   worktree if missing); if step 1 picked the name, pick another and rerun. Any
-   other failure (not a git repo, invalid name): report it and stop.
+   stdout 是 JSON，其中 `path` 字段为 worktree 的绝对路径（状态行写入
+   stderr）。遇到 `Branch <branch> already exists` 时：如果分支名由用户
+   指定，去掉 `--create` 后重试（这会进入该分支；若其 worktree 不存在，
+   则创建一个）；如果名称由第 1 步选择，则换一个名称后重试。任何其他失败
+   （不是 git 仓库、名称无效）：报告错误并停止。
 
-   Then call `EnterWorktree({path: "<path from the JSON>"})`.
+   然后调用 `EnterWorktree({path: "<path from the JSON>"})`。
 
-   - **Accepted** → the session is re-rooted in the worktree. Do the task (or,
-     with no task text, confirm it's ready and wait).
-   - **Tool error** — the tool ran and returned an error (`Cannot enter
-     worktree: …`) → graceful; nothing moved, and one recovery covers them
-     all. Common causes: the cwd resolves to no git repo (e.g. a non-git
-     parent like `~/workspace` that only holds repos, as in a background job)
-     or to a different repo than the target; or the session is already rooted
-     in a worktree (or is a pinned agent), which limits entry to the current
-     repo's `.claude/worktrees/` and excludes even a same-repo `wt` sibling.
-     The recovery test is whether you can `cd` into the worktree, which works
-     when it's inside an allowed directory. So `cd <path>` and read the
-     result:
-     - no `Shell cwd was reset` notice → it stuck; the worktree is reachable.
-       Work there, but a bare `cd` is not a tracked re-root, so the cwd can
-       revert to the session's launch worktree across turns (and in spawned
-       subagents); pin commands with `git -C <path>` / `wt -C <path>` rather
-       than trusting the `cd` to persist.
-     - `Shell cwd was reset` → not reachable. Stop and ask the user to make it
-       reachable: add the repo, or a parent like `~/workspace`, to
-       `permissions.additionalDirectories` (durable, every session), or run
-       `/add-dir <path>` (this session). Then continue. Don't grind through
-       absolute paths with `cd` resetting on every command.
-   - **Denied** — the call itself was refused, with no tool error → however
-     the denial is worded, it is the user's answer to the confirmation Claude
-     Code shows for entering a worktree outside `.claude/worktrees/`, unless
-     there was no user to ask (the denial says the session couldn't prompt),
-     which decides nothing — take the recovery above. On the user's answer:
-     the worktree `wt` just created still exists; only the entry didn't
-     happen. Report its path and ask how to proceed, since reaching it
-     through `cd` would override that answer.
+   - **已接受** → 会话重定根到该 worktree。执行任务（如果没有任务文本，
+     则确认已准备就绪并等待）。
+   - **工具错误**——工具已经运行并返回错误（`Cannot enter
+     worktree: …`）→ 这是可控失败；没有发生目录移动，一套恢复方式即可处理
+     全部情况。常见原因：cwd 解析不到 git 仓库（例如后台任务从
+     `~/workspace` 这类只用于容纳仓库、但自身并非 git 仓库的父目录启动），
+     或解析到的仓库与目标不同；也可能是会话已重定根到某个 worktree（或属于
+     固定的 agent），此时只能进入当前仓库的 `.claude/worktrees/`，连同仓库的
+     `wt` 兄弟 worktree 也被排除。恢复测试是能否 `cd` 进入该 worktree；
+     如果它位于允许的目录内，就能进入。因此运行 `cd <path>` 并查看结果：
+     - 没有 `Shell cwd was reset` 提示 → 目录切换保持住了，worktree 可达。
+       在那里工作，但单独的 `cd` 不属于受跟踪的重定根，因此跨轮次（以及在
+       派生的子 agent 中）cwd 可能恢复到会话启动时的 worktree；命令应使用
+       `git -C <path>` / `wt -C <path>` 固定路径，不要假定 `cd` 会持续生效。
+     - 出现 `Shell cwd was reset` → 不可达。停止并请用户开放访问：把该仓库
+       或 `~/workspace` 这样的父目录加入 `permissions.additionalDirectories`
+       （持久生效，覆盖每个会话），或运行 `/add-dir <path>`（仅本会话）。
+       然后继续。不要在每条命令的 `cd` 都会重置时靠绝对路径硬撑。
+   - **已拒绝**——调用本身被拒绝，且没有工具错误 → 无论拒绝如何措辞，只要
+     不是因为没有用户可询问（拒绝信息会说明会话无法弹出提示；这种情况没有
+     形成任何决定，应采用上述恢复方式），它就是用户对 Claude Code 确认提示
+     的回答；该提示会在进入 `.claude/worktrees/` 外的 worktree 时出现。若是
+     用户作出的回答：`wt` 刚创建的 worktree 仍然存在，只是没有进入。报告其
+     路径并询问下一步，因为通过 `cd` 进入会推翻这个回答。
 
-## Cleanup
+## 清理
 
-The worktree is a normal worktrunk worktree: it shows up in `wt list` and is
-merged or removed with `wt merge` / `wt remove <branch>` like any other. Don't
-remove it unprompted.
+这个 worktree 是普通的 Worktrunk worktree：它会出现在 `wt list` 中，并像
+其他 worktree 一样通过 `wt merge` / `wt remove <branch>` 合并或删除。不要
+未经请求就删除。
 
-A worktree from step 2 that the session never touched — no changed files, no
-commits — is cleaned up when the session ends, branch included; anything
-written into it keeps it. A worktree from step 3 always stays. If the user asks
-to leave mid-session, `ExitWorktree({action: "keep"})` returns the session to
-its original directory;
-`ExitWorktree` cannot remove a worktree entered by `path`, so removing one of
-those is always `wt remove <branch>`.
+如果会话从未触碰第 2 步创建的 worktree——没有改动文件，也没有提交——
+会话结束时会连同分支一起清理；只要向其中写入过内容，就会保留。第 3 步
+创建的 worktree 始终保留。如果用户要求在会话中途离开，
+`ExitWorktree({action: "keep"})` 会让会话返回原目录；
+`ExitWorktree` 无法删除通过 `path` 进入的 worktree，因此删除这类 worktree
+始终使用 `wt remove <branch>`。
 
-## Scope
+## 范围
 
-The command's mandate is ONE worktree (in the named repo, if one was given)
-and the requested task inside it. Commits, pushes, and merges still each
-require explicit user permission.
+本命令只负责一个 worktree（如果指定了仓库，就在该仓库中）及其中请求的
+任务。创建提交、推送和合并仍各自需要用户明确许可。

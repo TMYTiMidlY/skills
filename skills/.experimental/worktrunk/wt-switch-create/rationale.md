@@ -1,269 +1,250 @@
-# wt-switch-create design rationale
+# wt-switch-create 设计依据
 
-The design of the skill's create-and-enter flow, and the verified harness
-behavior behind it. The flow is error-driven; predictive guards and extra
-routes were tried and cut.
+本文说明该 skill 的创建并进入流程，以及支撑这套流程、经过验证的宿主运行
+框架（harness）行为。流程由错误驱动；预判式前置检查和额外处理路径都试过，
+随后删掉了。
 
-Every claim here was verified against primary sources (2026-06-11 to
-2026-06-17): Claude Code 2.1.173, with the path-entry and working-directory
-logic re-confirmed live and against the 2.1.177 binary, plus official docs at
-code.claude.com/docs; and wt v0.57.0-16-g371d28662 (live runs in a scratch
-repo). Entry — the confirmation, both `EnterWorktree` routes, and what each
-leaves behind at exit — was re-run live on 2026-07-28 against Claude Code
-2.1.220 and wt v0.69.2. Re-verify against current versions before relying on a
-specific behavior; the *shape* of the argument should outlive the details.
-Binary symbol names are deliberately omitted — they re-minify every build.
+本文每项说法都已对照一手来源验证（2026-06-11 至 2026-06-17）：Claude Code
+2.1.173，其中路径进入和工作目录逻辑又通过实时测试及 2.1.177 二进制文件
+重新确认，另参考 code.claude.com/docs 的官方文档；以及 wt
+v0.57.0-16-g371d28662（在临时仓库中实时运行）。进入流程——确认提示、
+`EnterWorktree` 的两条路径，以及各自在退出后留下什么——又于 2026-07-28
+针对 Claude Code 2.1.220 和 wt v0.69.2 做了实时复测。依赖某项具体行为前，
+请用当前版本重新验证；论证的*框架*应比细节更耐久。本文有意省略二进制
+符号名——每次构建重新压缩时，这些名称都会变化。
 
-## The design
+## 设计
 
-1. `EnterWorktree({name})` for a new branch in this repo. It creates through
-   worktrunk's `WorktreeCreate` hook (`wt switch --create`), so the result is
-   an ordinary `wt` worktree, and it passes no `path`, which is what keeps M2's
-   confirmation from firing. It fails on an existing branch and from a session
-   that already entered a worktree, and it has no repo targeting.
-2. Otherwise `wt -C <repo> switch --create <branch> --no-cd --format=json` in
-   Bash, then `EnterWorktree({path})`. `wt` solves repo targeting (`-C` works
-   from anywhere), existing-branch handling (rerun without `--create`), and
-   machine-readable output (`.path` on stdout, status on stderr). Creating in
-   another repo is fine; only *entering* the result is constrained. Entry that
-   someone declined ends there, with the worktree left unentered (M2).
-3. On a tool error (or a denial with no user behind it), the session can still
-   work there iff the path sits
-   inside a directory it's allowed in (an `additionalDirectories` entry). A
-   single `cd <path>` discovers which: it sticks when reachable, resets when
-   not. Reachable → work in place. Unreachable → escalate, because the agent
-   can't enlarge that set itself: ask the user to add the repo or a parent
-   (e.g. `~/workspace`) to `additionalDirectories`, or `/add-dir <path>`. A
-   one-line, set-once handback, not a silent degrade.
+1. 对本仓库中的新分支使用 `EnterWorktree({name})`。它通过 Worktrunk 的
+   `WorktreeCreate` hook（`wt switch --create`）创建，因此结果是普通的 `wt`
+   worktree；调用不传 `path`，正因如此不会触发 M2 的确认提示。分支已存在、
+   会话已经进入某个 worktree 时都会失败，而且无法指定目标仓库。
+2. 其他情况先在 Bash 中运行
+   `wt -C <repo> switch --create <branch> --no-cd --format=json`，再调用
+   `EnterWorktree({path})`。`wt` 负责指定仓库（`-C` 可从任意位置使用）、
+   处理现有分支（去掉 `--create` 后重试）和输出机器可读结果（stdout 中的
+   `.path`，stderr 中的状态）。在另一个仓库中创建没有问题，受限制的只有
+   *进入*结果。如果用户拒绝进入，流程到此结束，worktree 留下但未进入（M2）。
+3. 发生工具错误（或拒绝背后没有可询问的用户）时，只要路径位于会话获准
+   访问的目录内（即某个 `additionalDirectories` 条目），会话仍能在那里
+   工作。一次 `cd <path>` 就能判断：可达时目录切换会保持，不可达时会重置。
+   可达 → 原地工作。不可达 → 交由用户处理，因为 agent 无法自行扩大该集合：
+   请用户把仓库或其父目录（例如 `~/workspace`）加入
+   `additionalDirectories`，或运行 `/add-dir <path>`。这是一行配置、设置
+   一次即可长期生效的交还，而不是静默降级。
 
-Two independent harness facts underlie this — re-root is repo-scoped, and `cd`
-persistence is working-directory-membership-scoped — detailed below.
+这背后有两项相互独立的宿主运行框架事实——重定根受仓库范围约束，`cd` 是否
+持久则取决于路径是否属于工作目录集合——下文会详细说明。
 
-## Why creation is unconditional
+## 为什么无条件创建
 
-The recurring failure: handed a research or read-only task, the model decided
-it didn't need isolation and skipped creation. Two wordings fed that. Scope's
-"authorizes" read as permission, inviting a should-I test (user-level rules
-that gate worktree creation behind an explicit request answer it "no"); an
-ordering-only lead ("steps 1–3 come first") doesn't bind a model that decided
-the steps don't apply. So the lead makes the invocation the explicit request
-itself, and Scope states bounds rather than permission. Don't reintroduce
-either wording.
+反复出现的失败是：收到调研或只读任务后，模型判断不需要隔离，于是跳过
+创建。两种措辞助长了这种判断。范围章节中的“授权”容易被理解为许可，
+引出“该不该做”的判断（如果用户级规则要求必须有明确请求才能创建
+worktree，答案就会是“不该”）；只强调顺序的开头（“先执行第 1–3 步”）
+也约束不了已经认定这些步骤不适用的模型。因此，开头把调用本身定义为明确
+请求，而范围章节只陈述边界，不再授予权限。不要重新引入这两种措辞。
 
-## wt CLI and git behavior (all live-tested)
+## wt CLI 与 git 行为（均经实时测试）
 
-- `wt switch --create <branch>` exits 1 with `✗ Branch <branch> already
-  exists` whenever the branch exists, with or without a worktree. Its own
-  hint names the fix: rerun without `--create`.
-- `wt switch <branch>` (no `--create`) exits 0 for an existing branch: it
-  creates the worktree if missing (`"action":"created","created_branch":false`)
-  or re-enters it (`"action":"existing"`). Per `wt switch --help`: "Without
-  --create, the branch must already exist."
-- Every `--format=json` variant carries `path` (absolute). Only the JSON goes
-  to stdout; all human-readable status, including hook output, goes to stderr —
-  which is what makes `.path` extraction safe.
-- `wt remove`: dirty worktree → refuses (exit 1, hints `--force`); clean but
-  unmerged commits → removes the worktree, keeps the branch, hints
-  `wt remove -D`; clean and merged → removes worktree and branch.
-- The git stash is per-repo, shared across worktrees: `git stash push -u` in
-  one worktree pops cleanly in another via `git -C <path> stash pop`,
-  untracked files included — the mid-session carry-across in the skill's
-  creation step.
+- 只要分支已存在，无论是否已有 worktree，
+  `wt switch --create <branch>` 都会以状态码 1 退出，并显示
+  `✗ Branch <branch> already exists`。它自己的提示给出了修复方法：去掉
+  `--create` 后重试。
+- 对现有分支运行 `wt switch <branch>`（不带 `--create`）会以状态码 0
+  退出：缺少 worktree 时创建一个
+  （`"action":"created","created_branch":false`），否则重新进入现有
+  worktree（`"action":"existing"`）。`wt switch --help` 原文为：
+  "Without --create, the branch must already exist."
+- 每种 `--format=json` 变体都包含 `path`（绝对路径）。只有 JSON 写入
+  stdout；所有供人阅读的状态信息（包括 hook 输出）都写入 stderr——因此
+  可以安全提取 `.path`。
+- `wt remove`：worktree 有未提交改动 → 拒绝（状态码 1，提示 `--force`）；
+  worktree 干净但有未合并提交 → 删除 worktree、保留分支，并提示
+  `wt remove -D`；干净且已合并 → 同时删除 worktree 和分支。
+- git stash 按仓库存储，在各 worktree 之间共享：在一个 worktree 中运行
+  `git stash push -u`，可以在另一个 worktree 中通过
+  `git -C <path> stash pop` 干净地弹出，其中也包括未跟踪文件——这就是
+  skill 创建步骤在会话中途迁移改动的依据。
 
-## Claude Code behavior
+## Claude Code 行为
 
-A session works wherever its cwd is. Two mechanisms move it, and they *compose*:
-`cd` moves the cwd (and so which repo `EnterWorktree` sees); `EnterWorktree`
-re-roots within the repo the cwd is in. All verified live and against the
-2.1.177 binary.
+会话可以在 cwd 所在的位置工作。两种机制都能移动会话，而且会*组合生效*：
+`cd` 移动 cwd（也就改变 `EnterWorktree` 看到的仓库）；`EnterWorktree`
+则在 cwd 所属仓库内重定根。以上行为均通过实时测试和 2.1.177 二进制文件
+验证。
 
-### M1 — `cd` (shell cwd)
+### M1——`cd`（shell cwd）
 
-Moves the shell cwd; the statusline and tool-path relativization
-(`Write(foo/bar.py)`) follow it.
+移动 shell 的 cwd；状态栏和工具路径的相对解析（`Write(foo/bar.py)`）
+会随之变化。
 
-- **Gate:** the path must sit inside a configured working directory — the
-  session's base cwd plus every entry in `permissions.additionalDirectories`
-  (settings.json), `--add-dir` (launch), or `/add-dir` (mid-session).
-- Inside → `cd` persists across Bash calls. Outside → the harness snaps it back
-  and appends `Shell cwd was reset to <original>` to the result.
-- **Repo-blind:** it checks only the path's location against that set, never
-  which git repo owns the path. A different repo's worktree under `/tmp` is
-  reachable when `/tmp` is configured.
-- Within a *single* Bash call, `cd X && cmd` always works; the reset happens
-  only *between* calls. (Subagent threads reset between every call.)
+- **关卡：**路径必须位于已配置的工作目录内——即会话的基础 cwd，加上
+  `permissions.additionalDirectories`（settings.json）、启动参数
+  `--add-dir` 或会话中途执行的 `/add-dir` 中的每个条目。
+- 位于集合内 → `cd` 可跨 Bash 调用保持。位于集合外 → 宿主运行框架会将其弹回，
+  并在结果末尾附加 `Shell cwd was reset to <original>`。
+- **不识别仓库：**它只检查路径位置是否属于该集合，从不检查路径归哪个 git
+  仓库所有。配置了 `/tmp` 后，位于 `/tmp` 下、属于另一个仓库的 worktree
+  也可达。
+- 在*单次* Bash 调用内，`cd X && cmd` 始终有效；重置只发生在两次调用
+  *之间*。（子 agent 线程会在每次调用之间重置。）
 
-### M2 — `EnterWorktree({path})` (re-root)
+### M2——`EnterWorktree({path})`（重定根）
 
-Formally re-roots: sets the session's worktree home (tracked for exit) and its
-cwd.
+执行正式的重定根：设置会话的 worktree 主目录（供退出时追踪）和 cwd。
 
-- **Gate:** a worktree of **the repo the current cwd resolves to**, by session
-  state:
-  - **Plain / first-entry session** → any worktree *registered to that repo*
-    (`git worktree list`), anywhere on disk; in a multi-repo workspace, also
-    one registered to a repo nested inside it.
-  - **Already in a worktree-session, or a pinned agent** → only under that
-    repo's `.claude/worktrees/`; rejects even same-repo siblings.
-  - **cwd outside any git repo** → refuses entirely.
-- **Confirmation:** the safety check runs on the two facts the call carries —
-  a `path` argument, and a target outside the project's `.claude/worktrees/` —
-  and asks before anything else runs, the dialog reading "permission-root
-  relocation to `<path>` — a model-supplied worktree outside
-  .claude/worktrees/". Yes/no only: no always-allow, nothing persisted after a
-  yes, and `permissions.allow` entries for `EnterWorktree` (bare, `(*)`, or a
-  path glob) don't suppress it. It asks wherever the session can prompt
-  (`default`, `acceptEdits`, `auto`); `bypassPermissions` allows without
-  asking, and a session that can't prompt denies without asking.
-  `EnterWorktree({name})` passes no `path`, so it never asks.
-- **Reading the failure:** step 3 splits tool errors from denials
-  structurally rather than by parsing the denial's wording. The tool's own
-  rejections are verbatim and graceful (`Cannot enter …`), so they key the
-  recovery; a denial of the call defaults to being the user's answer, the
-  no-user case an exception keyed on the denial saying the session couldn't
-  prompt. The default falls on the safe side because denial texts don't
-  classify reliably: a typed "no" arrives as the generic `The user doesn't
-  want to proceed with this tool use`, naming neither the tool nor the
-  confirmation, and in blind tests every wording that asked the agent to
-  recognize it — branches labeled by who refused, "the denial reports a
-  decision", even that string quoted as an example — sent the agent into the
-  recovery, into the worktree the user had just declined. A recovery that
-  follows a denial invites that routing, so the denial branch leads with
-  stopping. The only decision that reaches step 3 is that answer — a
-  `permissions.deny` entry for `EnterWorktree`, with or without an argument
-  pattern, drops the tool from the session instead, so there is no call to
-  deny.
-- Rejections are graceful and side-effect-free (nothing is created). The three
-  the skill's own flow produces, verbatim (others exist — a worktree locked by
-  another running session, the main working tree, a prunable registration):
-  - registered-check: `Cannot enter worktree: <path> is not a registered
+- **关卡：**目标必须是**当前 cwd 所解析到的仓库**的 worktree，具体规则取决于
+  会话状态：
+  - **普通会话 / 首次进入** → 磁盘上任意*已注册到该仓库*的 worktree
+    （`git worktree list`）；在多仓库工作区中，也可以是注册到其内部嵌套
+    仓库的 worktree。
+  - **已经处于 worktree 会话中，或属于固定的 agent** → 只能进入该仓库的
+    `.claude/worktrees/`；同仓库的兄弟 worktree 也会被拒绝。
+  - **cwd 不在任何 git 仓库内** → 完全拒绝。
+- **确认提示：**安全检查依据调用携带的两个事实——传入了 `path` 参数，且目标
+  位于项目的 `.claude/worktrees/` 外——并在其他任何操作运行前询问。对话框
+  文字为 "permission-root relocation to `<path>` — a model-supplied
+  worktree outside .claude/worktrees/"。只能选 yes/no：没有“始终允许”，选择
+  yes 后不会持久保存任何设置，而针对 `EnterWorktree` 的
+  `permissions.allow` 条目（裸名称、`(*)` 或路径 glob）也无法消除提示。
+  只要会话能弹出提示（`default`、`acceptEdits`、`auto`），就会询问；
+  `bypassPermissions` 会直接允许而不询问，无法弹出提示的会话则会直接拒绝。
+  `EnterWorktree({name})` 不传 `path`，因此永远不会询问。
+- **判读失败：**第 3 步按结构区分工具错误和调用拒绝，而不是解析拒绝措辞。
+  工具自身的拒绝信息保持原样且属于可控失败（`Cannot enter …`），因此可据此
+  触发恢复；调用被拒绝时，默认视为用户的回答，只有拒绝信息明确表示会话
+  无法弹出提示时，才作为“没有用户可询问”的例外。这个默认值偏向安全一侧，
+  因为拒绝文本无法可靠分类：用户手动输入“no”后，收到的是通用信息
+  `The user doesn't want to proceed with this tool use`，既不指明工具，也不
+  指明确认提示。盲测中，任何要求 agent 识别这种拒绝的措辞——按拒绝者身份
+  划分分支、声称“拒绝信息表明了一项决定”，甚至把该字符串原样列为示例——
+  都会让 agent 走恢复路径，进入用户刚刚拒绝的 worktree。在拒绝之后安排
+  恢复会诱发这种路由，因此拒绝分支以停止为首要动作。能走到第 3 步的决定
+  只有这个回答——如果为 `EnterWorktree` 设置了 `permissions.deny` 条目，
+  无论是否带参数模式，该工具都会直接从会话中移除，根本不会发生可供拒绝的
+  调用。
+- 拒绝属于可控失败且没有副作用（不会创建任何内容）。该 skill 自身流程会
+  原样产生以下三种拒绝（此外还有其他情况——worktree 被另一个运行中的会话
+  锁定、目标是主 worktree、注册项可清理）：
+  - 注册检查：`Cannot enter worktree: <path> is not a registered
     worktree of <repo>. Run 'git -C <repo> worktree list' …`
-  - managed-location: `Cannot enter worktree: <path> is not under
+  - 托管位置：`Cannot enter worktree: <path> is not under
     <repo>/.claude/worktrees. Switching from this session is limited to
     worktrees managed by Claude Code …`
-  - no repo: `Cannot enter an existing worktree: the current directory is not in
+  - 无仓库：`Cannot enter an existing worktree: the current directory is not in
     a git repository.`
 
-The repo is read from the cwd, so `EnterWorktree` never moves you to a different
-repo on its own — it re-roots within whatever repo you're already standing in.
-To re-root into *another* repo, `cd` into it first, then `EnterWorktree`.
-Verified: from a worktrunk session, `cd` into a prql worktree under `/tmp`, then
-`EnterWorktree` re-rooted within prql.
+仓库从 cwd 读取，因此 `EnterWorktree` 自身绝不会把会话移到另一个仓库——
+它只会在当前所在仓库内重定根。要重定根到*另一个*仓库，先 `cd` 进入该
+仓库，再调用 `EnterWorktree`。验证结果：从一个 Worktrunk 会话出发，先
+`cd` 进入 `/tmp` 下的 prql worktree，再调用 `EnterWorktree`，即可在 prql
+内部重定根。
 
-### How they compose
+### 如何组合
 
-Whether you can work in — or re-root into — a repo reduces to whether your cwd
-can be there, which is `cd`'s gate:
+能否在某个仓库中工作或重定根，最终取决于 cwd 能否位于其中，也就是能否
+通过 `cd` 的关卡：
 
-| Target | cwd reachable? | Result |
+| 目标 | cwd 是否可达？ | 结果 |
 |---|---|---|
-| Same repo (incl. its sibling worktrees) | always | `EnterWorktree` re-roots directly |
-| Another repo under a configured dir (`~/workspace`, `/tmp`) | yes | `cd` in → working there; from a plain session, `EnterWorktree` re-roots within it too |
-| Another repo outside every configured dir | no | unreachable — add it (or a parent) to `additionalDirectories`, or `/add-dir` |
-| Outside any repo | n/a | no re-root possible |
+| 同一仓库（包括其兄弟 worktree） | 始终可达 | `EnterWorktree` 直接重定根 |
+| 已配置目录（`~/workspace`、`/tmp`）下的另一个仓库 | 是 | `cd` 进入 → 在其中工作；普通会话还可用 `EnterWorktree` 在其中重定根 |
+| 位于所有已配置目录之外的另一个仓库 | 否 | 不可达——将其（或父目录）加入 `additionalDirectories`，或运行 `/add-dir` |
+| 不属于任何仓库的位置 | 不适用 | 无法重定根 |
 
-`additionalDirectories` is the one master gate: once a repo, or a parent like
-`~/workspace`, is in it, the session can `cd` into that repo's worktrees and both
-work there and re-root within them. This is load-bearing for the same-repo path
-too: a sibling worktree is registered to the repo, so `EnterWorktree` from a
-plain session re-roots into the sibling `wt` creates. The agent **cannot**
-enlarge that set itself (`/add-dir` is user-typed; the only automatic add is a
-narrow symlink-resolving-to-the-same-cwd fixup), so a repo reachable by neither
-the cwd nor config is a genuine handback to the user.
+`additionalDirectories` 是唯一的总关卡：只要某个仓库或 `~/workspace` 这样的
+父目录位于其中，会话就能 `cd` 进入该仓库的 worktree，在其中工作并重定根。
+这对同仓库路径同样关键：兄弟 worktree 已注册到该仓库，因此普通会话中的
+`EnterWorktree` 可以重定根到 `wt` 创建的兄弟 worktree。agent **无法**自行
+扩大这个集合（`/add-dir` 必须由用户输入；唯一的自动加入只是一个范围很窄的
+修正，用于解析指向同一 cwd 的符号链接），因此，如果 cwd 和配置都无法触达
+某个仓库，就确实必须交还给用户处理。
 
-### Why `--no-cd`
+### 为什么使用 `--no-cd`
 
-The Bash tool is not a bare shell: Claude Code replays the user's shell startup
-from a snapshot, so a user who installed wt shell integration runs the `wt`
-wrapper function inside the tool. wt then runs with integration active, and a
-plain `wt switch` hands the wrapper a cd directive that moves the tool's cwd — a
-second, untracked re-root racing `EnterWorktree`. `--no-cd` skips the directive,
-so `EnterWorktree` stays the single re-root. Verified: without `--no-cd`,
-`wt switch <branch>` moved the session and the new cwd persisted to the next
-Bash call. Where the user never installed integration (a fresh shell, CI) the
-wrapper is absent and wt cannot cd regardless, so `--no-cd` is load-bearing on an
-integrated machine and a no-op elsewhere. Don't drop it.
+Bash 工具不是裸 shell：Claude Code 会根据快照重放用户的 shell 启动过程，
+因此，安装过 wt shell 集成的用户会在工具内运行 `wt` 包装函数。此时 wt 在
+集成已启用的环境中运行，普通的 `wt switch` 会向包装函数交付一条 cd 指令，
+移动工具的 cwd——这相当于第二次、不受追踪的重定根，与 `EnterWorktree`
+竞争。`--no-cd` 会跳过这条指令，让 `EnterWorktree` 保持为唯一的重定根。
+验证结果：不带 `--no-cd` 时，`wt switch <branch>` 会移动会话，新 cwd 还会
+保持到下一次 Bash 调用。用户从未安装集成时（全新 shell、CI），包装函数
+不存在，wt 无论如何都不能执行 cd；因此 `--no-cd` 在已集成的机器上不可少，
+在其他环境中则不产生作用。不要删除它。
 
-### What `EnterWorktree({name})` costs, and where it stops
+### `EnterWorktree({name})` 的代价与适用边界
 
-The `name` route is worth having because it skips M2's confirmation entirely,
-which no configuration can do for a path entry. The same plugin hook backs
-`isolation: "worktree"` agents, so the worktree it produces is the one `wt`
-would have made either way. Three properties come with it, all verified live:
+`name` 路径值得保留，因为它能完全跳过 M2 的确认提示，而任何配置都无法让
+按路径进入做到这一点。`isolation: "worktree"` agent 也由同一个插件 hook
+支持，因此它生成的 worktree 仍然是 `wt` 本来就会创建的那个。使用这条路径
+会带来以下三个特性，均经实时验证：
 
-1. **An untouched worktree is cleaned up at exit, branch included.** With no
-   changed files, no commits, and no user-set session title, the exiting
-   session removes it through the plugin's `WorktreeRemove` hook, which is
-   `wt remove`, so a clean fully-merged branch goes too. Verified end-to-end:
-   `EnterWorktree({name: "probe"})`, then `/exit`, leaves neither `repo.probe`
-   nor the `probe` branch; one untracked file is enough for exit to report
-   "Keeping worktree…" and leave both. This is a feature at this scale — a
-   research task that wrote nothing leaves nothing to prune — and it is the
-   reason step 2's worktrees are not described as durable. Path-entered
-   worktrees are always left in place ("worktree at <path> left in place").
-2. **It hard-fails on an existing branch.** The hook runs `wt switch --create`,
-   and a nonzero hook exit fails creation outright, with no git fallback
-   (binary: "Other exit codes - worktree creation failed"; docs: "the hook
-   replaces the default git behavior"). The failure is clean: `wt`'s own
-   `✗ Branch <branch> already exists` surfaces and nothing is created.
-3. **It only works on a session's first entry, and only in its own repo.** From
-   a session already in a worktree it returns "Already in a worktree session.
-   Pass `path` to switch into another existing worktree", and it has no `-C`.
+1. **未触碰的 worktree 会在退出时连同分支一起清理。** 如果没有改动文件、
+   没有提交，而且用户没有设置会话标题，退出中的会话会通过插件的
+   `WorktreeRemove` hook 删除它；该 hook 运行 `wt remove`，因此干净且完全
+   合并的分支也会一并删除。端到端验证：
+   `EnterWorktree({name: "probe"})` 后执行 `/exit`，`repo.probe` 和 `probe`
+   分支都不会留下；只需一个未跟踪文件，退出时就会报告
+   "Keeping worktree…" 并同时保留二者。在这个使用场景中，这是优点——没有
+   写入任何内容的调研任务不会留下待清理对象——也是第 2 步没有把 worktree
+   描述为持久对象的原因。按路径进入的 worktree 始终会留在原处
+   （"worktree at <path> left in place"）。
+2. **遇到现有分支时直接失败。** hook 会运行 `wt switch --create`，而 hook
+   以非零状态退出会让创建立即失败，不会回退到 git（二进制文件：
+   "Other exit codes - worktree creation failed"；文档："the hook
+   replaces the default git behavior"）。失败过程很干净：只会显示 `wt`
+   自己的 `✗ Branch <branch> already exists`，不会创建任何内容。
+3. **只适用于会话的首次进入，而且只能在会话自己的仓库中使用。** 已经位于
+   worktree 中的会话会收到 "Already in a worktree session. Pass `path` to
+   switch into another existing worktree"，并且这条路径不支持 `-C`。
 
-Each failure names the route out, which is why step 3 needs no pre-check: try
-the cheap call, read the error, fall back. The hook contract (stdout's last
-non-empty line must be an existing directory) stays the hook's business, since
-the skill reads only the tool result.
+每种失败都会指出后续路径，因此第 3 步不需要预检查：先尝试成本较低的调用，
+读取错误，再回退。hook 契约（stdout 最后一个非空行必须是现有目录）仍由
+hook 自身负责，因为该 skill 只读取工具结果。
 
-### Why escalate instead of grinding through absolute paths
+### 为什么交由用户处理，而不是靠绝对路径硬撑
 
-The original incident worked a cross-repo task via absolute paths from a session
-rooted elsewhere: every `cd` into the worktree reset, so each command needed an
-absolute prefix, and the session never gained the worktree cwd. It produced
-correct output but read as a failure. File tools (absolute paths) and `git -C`
-are cwd-independent, so the work is *possible* that way — but it is friction the
-user shouldn't absorb when the fix is one line of config.
+最初的问题发生在一个重定根到别处的会话中：它通过绝对路径完成跨仓库任务。
+每次 `cd` 进入 worktree 都会重置，因此每条命令都要加绝对路径前缀，会话也
+始终没有获得该 worktree 的 cwd。输出虽然正确，整个过程看起来却像失败。
+文件工具（绝对路径）和 `git -C` 不依赖 cwd，因此这种方式*能够*完成工作——
+但既然一行配置就能修复，不应让用户承受这份额外摩擦。
 
-So when the worktree is unreachable, the skill escalates with the concrete fix
-rather than degrading silently. This is not a predictive guard: the skill
-doesn't refuse to create cross-repo and doesn't guess reachability. It creates,
-attempts entry, and lets a single `cd` reveal reachability — the escalation
-fires only on an actual reset. Cheap to attempt, and the handback is actionable
-and durable (a `~/workspace` entry, set once, covers every future cross-repo
-task).
+因此，worktree 不可达时，该 skill 会带着具体修复方法交由用户处理，而不是
+静默降级。这不是预判式前置检查：skill 不会拒绝跨仓库创建，也不会猜测路径
+是否可达。它先创建、尝试进入，再让一次 `cd` 显示可达性——只有实际发生
+重置时才会上交。尝试成本很低，而交还方案既可执行又持久（只需设置一次
+`~/workspace` 条目，就能覆盖今后的每个跨仓库任务）。
 
-## The hooks.json pipefail wrapper (agent-isolation path, not this skill)
+## hooks.json 的 pipefail 包装（agent 隔离路径，不属于此 skill）
 
-`WorktreeCreate` pipes `jq | xargs wt | jq`; without `pipefail` the trailing
-`jq` exits 0 on empty input and swallows a `wt` failure, so Claude Code saw a
-"successful" hook with no path. Hook commands are spawned with an empty args
-array and `shell: true` (binary), i.e. `/bin/sh -c` on Unix — bash 3.2 on
-macOS but dash on many Linuxes. dash rejects `set -o pipefail` fatally
-(`set` is a POSIX special builtin; no dash release through 0.5.12 supports
-pipefail — only post-0.5.12 upstream git and distro backports such as
-Debian's 0.5.12-7). And `/bin/sh -c` is evidently not universal: one user's
-hooks ran under fish (worktrunk PR #2962), which has no shell options at
-all. Hence the explicit `bash -c 'set -o pipefail; …'` wrapper. Verified
-end-to-end: success prints the path and exits 0; an existing-branch failure
-exits 1 with empty stdout.
+`WorktreeCreate` 使用管道 `jq | xargs wt | jq`；如果没有 `pipefail`，末尾的
+`jq` 会在输入为空时以状态码 0 退出，吞掉 `wt` 的失败，因此 Claude Code
+看到的是一个没有路径却“成功”的 hook。hook 命令以空参数数组和
+`shell: true`（二进制文件）启动，也就是 Unix 上的 `/bin/sh -c`——macOS
+使用 bash 3.2，许多 Linux 则使用 dash。dash 会把 `set -o pipefail` 当作
+致命错误（`set` 是 POSIX 特殊内建命令；截至 0.5.12 的 dash 发行版都不支持
+pipefail——只有 0.5.12 之后的上游 git 代码和 Debian 0.5.12-7 之类的发行版
+回移补丁支持）。而且 `/bin/sh -c` 显然并不普遍：一位用户的 hook 在 fish
+下运行（Worktrunk PR #2962），fish 完全没有 shell 选项。因此需要显式使用
+`bash -c 'set -o pipefail; …'` 包装。端到端验证结果：成功时打印路径并以
+状态码 0 退出；现有分支导致的失败以状态码 1 退出，stdout 为空。
 
-## Known limits (deliberate)
+## 已知限制（有意保留）
 
-- Another repo is reachable only through `additionalDirectories` ("How they
-  compose", above); outside it the skill escalates for the one-line config add
-  rather than degrading to absolute-paths mode.
-- A pinned or already-in-worktree session can't even re-enter a *same-repo*
-  sibling worktree (the stricter `.claude/worktrees/` check); it lands in the
-  same reachability test and the same escalation.
-- The invocations that fall to step 3 still ask the user to confirm, once each,
-  in any session that can prompt (M2): another repo, an existing branch, a
-  second worktree in one session. Nothing in the skill's reach removes that —
-  the check ignores `permissions.allow`, and pointing a project's
-  `worktree-path` into `.claude/worktrees/` would satisfy it only by leaving
-  worktrunk's default layout and putting `wt` and Claude Code in one directory,
-  a combination we haven't run. Removing it there is upstream's to do, by
-  asking once per repo rather than once per call.
-- `wt switch --create` is not idempotent. If that ever changes upstream
-  (enter-if-exists), step 3's existing-branch retry collapses to nothing, and
-  the hook stops failing on an existing branch, which removes one of the two
-  reasons step 3 exists.
+- 另一个仓库只能通过 `additionalDirectories` 到达（见上文“如何组合”）；
+  位于该范围外时，skill 会要求用户添加一行配置，而不会降级成绝对路径模式。
+- 固定的 agent 或已经进入 worktree 的会话，连*同仓库*的兄弟 worktree 都
+  无法重新进入（因为 `.claude/worktrees/` 检查更严格）；它会走同一套可达性
+  测试和同一条上交路径。
+- 在任何能够弹出提示的会话中，落到第 3 步的调用仍会逐次请求用户确认
+  （M2）：另一个仓库、现有分支、同一会话中的第二个 worktree。skill 能触及
+  的范围内没有办法消除这一点——该检查会忽略 `permissions.allow`；把项目的
+  `worktree-path` 指向 `.claude/worktrees/` 虽能满足检查，却必须放弃
+  Worktrunk 的默认布局，并让 `wt` 与 Claude Code 共用一个目录，而这种组合
+  尚未运行验证。要消除提示，只能由上游改为每个仓库询问一次，而不是每次
+  调用都询问。
+- `wt switch --create` 不具备幂等性。如果上游将来改成“存在即进入”，第 3 步
+  针对现有分支的重试就会化为无操作，hook 也不再因现有分支而失败，从而消除
+  第 3 步存在的两个原因之一。
