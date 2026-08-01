@@ -38,13 +38,22 @@ worktree 共享**整个仓库**，clone 只共享**对象库**。`config` 那一
 [ -s .gitmodules ] && echo "有 submodule → 共享 clone" || echo "无 submodule → git worktree"
 ```
 
-有 submodule 就别用 worktree——git 官方把这件事写进了 `git worktree` 文档的
+有 submodule 默认走共享 clone——git 官方把这件事写进了 `git worktree` 文档的
 [BUGS 一节](https://github.com/git/git/blob/v2.43.0/Documentation/git-worktree.txt#L513-L517)：
 
 > Multiple checkout in general is still experimental, and the support for submodules is
 > **incomplete**. It is **NOT recommended** to make multiple checkouts of a superproject.
 
 无 submodule 时 `git worktree` 是它本来的用途，没有任何坑。
+
+**边界（git 2.43.0 实测）**：有 submodule 也不是"一碰就炸"——在 worktree 里**从零**
+`git submodule update --init` 会走 worktree 私有的 submodule gitdir，主仓库不受影响；
+真正劫持主工作区的是"先给 submodule `git worktree add` 挂上共享 gitdir、再 `submodule update`"
+那条路。用 `worktrunk` 之类第三方 worktree CLI 建 worktree 不改变这个结论（底层就是
+`git worktree add`）。**默认仍选共享 clone**：私有 gitdir 让每个 worktree 各存一份 submodule 对象，
+且并发 session 里任何人走一次危险路径就波及全体工作区——共享 clone 是结构上出不了事，
+worktree 是"只要没人走错那条路"。实测矩阵见
+[worktree 私有的 submodule gitdir](submodule-hazards.md#private-gitdir)。
 
 > 机理、实测现场、五个坑、诊断与恢复流程见
 > [submodule 与 worktree 的冲突](submodule-hazards.md)。

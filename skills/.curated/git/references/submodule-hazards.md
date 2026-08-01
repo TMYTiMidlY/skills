@@ -16,9 +16,14 @@ config 里的**单值**字段，表达不了 N 个——两者装不到一起，
 
 **最危险的一条，元凶是 `git submodule update`，不是 `git worktree add`。**
 
-submodule 全仓库**只有一份 gitdir**（`.git/modules/<sub>`），所有 worktree 共用。而
-`core.worktree` 就写在这份**共享** config 里，语义是「这个 gitdir 的工作区在哪」——
-**谁最后写谁赢**。`git submodule update` 会无条件把它改写成**自己所在 worktree** 的路径。
+submodule 全仓库**只有一份 gitdir**（`.git/modules/<sub>`）——但这份 gitdir 是否被某个 worktree
+共用，取决于你怎么在那个 worktree 里准备 submodule。**共用发生时**（先用 `git worktree add` 把
+`.git/modules/<sub>` 挂到 worktree 的 submodule 路径上，[遗留场景](#legacy-fix)与下表第三步都是这么干的），
+`core.worktree` 这个写在共享 config 里的**单值**字段要同时表达主工作区和 worktree 两个位置——
+**谁最后写谁赢**，`git submodule update` 就把它改写成**自己所在 worktree** 的路径。
+
+反过来，在 worktree 里**从零** `git submodule update --init`（此前没给该 submodule 建过 worktree）
+不触发劫持，git 会另建一份[worktree 私有的 gitdir](#private-gitdir)。
 
 git 2.43.0 实测（main + 嵌套 submodule，另建 worktree `mainwt`）：
 
@@ -64,6 +69,48 @@ gitdir），而**主仓库污染 0、`submodule status` 异常 0、`externals/ei
 现代 git 靠 submodule 目录下 `.git` 文件里的 `gitdir:` 指针定位，多 worktree 场景下
 `core.worktree` **不需要存在**，出现即污染，删掉即可（见[恢复流程](#recover)）。
 
+## <a id="private-gitdir"></a>worktree 私有的 submodule gitdir
+
+在 worktree 里**从零**跑 `git submodule update --init`（此前没给该 submodule 建过 worktree）时，
+git 不复用 `.git/modules/<sub>`，而是新建一份 **worktree 私有的 gitdir**：
+
+```
+.git/worktrees/<worktree名>/modules/<submodule路径>
+```
+
+worktree 里该 submodule 的 `.git` 文件就指向这里，主仓库的 `.git/modules/<sub>/config` 全程不被写，
+`core.worktree` 保持原值——两边互不相干。
+
+实测矩阵（2026-08-01，git 2.43.0，SU2-Quantum 本地副本，11 个 submodule，主工作区先已 init）：
+
+| worktree 由谁建 | worktree 里怎么准备 submodule | 主仓库 `core.worktree` |
+|---|---|---|
+| `git worktree add` | 直接 `git submodule update --init` | 不变 |
+| 第三方 worktree CLI（worktrunk `wt switch -c`） | 直接 `git submodule update --init` | 不变 |
+| `git worktree add` | 先 `submodule foreach git worktree add --force`，再 `submodule update --recursive` | **被改写** |
+| 第三方 worktree CLI | 同上 | **被改写** |
+
+两条结论：
+
+- **劫持与"谁建 worktree"无关**，只与"worktree 里怎么准备 submodule"有关。第三方 worktree CLI
+  底层就是 `git worktree add [-b <分支>] -- <路径>`（读 worktrunk v0.71.0 源码确认），
+  既不提供额外保护，也不引入额外风险。
+- 被改写那两行的现场与[劫持](#core-worktree-hijack)一节记录的一致：错误相对路径、
+  `git -C <sub> rev-parse --show-toplevel` 报 `fatal: cannot chdir to ...`；按[恢复流程](#recover)
+  第 1 步递归清 `core.worktree` 后，11 条劫持归零、submodule 全部复活（同批实测）。
+
+代价与边界：
+
+- 私有 gitdir 让**每个 worktree 各存一份 submodule 对象**。submodule 的 URL 指向本地路径时
+  git 会硬链接（实测 pack 文件链接数 = 3，几乎不占额外空间）；**指向远程时是真的各下一份**。
+- 只实测了 git 2.43.0 + 非嵌套 submodule 的这条路径。更旧的 git、嵌套 submodule 未验证，
+  别据此推广到所有版本。
+- 这条路径能用，不等于"有 submodule 就可以放心用 worktree"：并发 session 里任何人在任一
+  worktree 跑一次上表第三、四行那种准备方式，全体工作区照样中招——[选型](workspace.md#mechanism-compare)
+  推荐共享 clone 的理由是"结构上出不了事"，不是"这条命令这次没出事"。
+
+
+
 ## <a id="force-piles-up"></a>`--force` 累积失效注册
 
 `git worktree add --force` 每跑一次就**新增**一条注册，编号递增（`medi`、`medi1`…`medi6`），
@@ -102,13 +149,21 @@ done
 worktree 里回退到主仓库的 submodule 路径，读写会串到主仓库；目录也可能是空的，构建会失败
 而且错误信息通常指向别处。建完 worktree 先 `git submodule status` 确认，别等到 build 报错。
 
-## <a id="legacy-fix"></a>遗留场景：给已有 worktree 补 submodule
+要在 worktree 里填上 submodule，两条路差别很大：**从零** `git submodule update --init`
+走[私有 gitdir](#private-gitdir)、不碰主仓库；而对**已经 `git worktree add` 挂过共享 gitdir**
+的 submodule 再跑 `git submodule update`，就是[劫持](#core-worktree-hijack)现场。
+后者已发生时用[遗留场景](#legacy-fix)那套 `ls-tree` + `checkout --detach` 收拾。
+
+## <a id="legacy-fix"></a>遗留场景：给已有 submodule worktree 对齐版本
 
 > ⚠️ 下面的写法能规避[劫持](#core-worktree-hijack)，但规避不了 `--force` 累积等其余问题——治标不治本。
 > 只在「worktree 已经建好、必须就地修好」时用；能重来就换共享 clone。
 >
-> **而且先问「这次要 build 吗」**：docs / 配置 / 脚本类改动不需要任何 submodule，
-> 整节跳过即零风险。
+> **先问「这次要 build 吗」**：docs / 配置 / 脚本类改动不需要任何 submodule，整节跳过即零风险。
+>
+> **再问「非得共用主仓库那份 gitdir 吗」**：只要 submodule 在这个 worktree 里还没被
+> `git worktree add` 挂过，直接 `git submodule update --init` 就够了，走[私有 gitdir](#private-gitdir)、
+> 不需要下面这套。下面这套是给「共享 gitdir 已经挂上去了」的既成事实收尾的。
 
 ```bash
 NEW="$PWD"
