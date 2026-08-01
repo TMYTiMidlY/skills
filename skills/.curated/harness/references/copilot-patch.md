@@ -1,6 +1,6 @@
 # Copilot CLI app.js 运行时补丁（bundle patch）
 
-Copilot CLI 闭源、只发 minified bundle（为什么闭源、怎么读源码见 [copilot-cli.md「安装方式与看源码」](copilot-cli.md#安装方式与看源码)）。有几处行为**没有任何 settings / flag / env 能改**，只能直接改 `app.js` 打补丁：**重试太少**、**默认档位（effort ＋ context tier）回落**、**`web_fetch` SSRF 拦 fake-ip**（⚠️ 最后这项 1.0.74 起已整体下沉 native，app.js 里再无锚点可打，见[补丁三](#补丁三-web_fetch-ssrf-守卫拦-fake-ip定点放行)）。
+Copilot CLI 闭源、只发 minified bundle（为什么闭源、怎么读源码见 [copilot-cli.md「安装方式与看源码」](copilot-cli.md#安装方式与看源码)）。有几处行为**没有任何 settings / flag / env 能改**，只能直接改 `app.js` 打补丁：**重试太少**、**默认档位（effort ＋ context tier）回落**、**`web_fetch` SSRF 拦 fake-ip**（⚠️ 最后这项 1.0.74 起已整体下沉 native，app.js 里再无锚点可打，见[补丁三](#webfetch-fakeip)）。
 
 **打补丁只改运行时真正跑的那份 `app.js`**——pkg cache 里的最高版本（`~/.cache/copilot/pkg/<platform>/<version>/app.js`），不是 npm 的 `node_modules` 种子、也不是 SEA 的 ELF（机制见 [copilot-cli.md「运行时到底跑哪份 app.js」](copilot-cli.md#运行时到底跑哪份-appjs打补丁改这份)）。
 
@@ -18,7 +18,7 @@ python3 <skills>/harness/scripts/patch-copilot-cli.py --apply    # 落盘（备�
 python3 <skills>/harness/scripts/patch-copilot-cli.py --revert   # 从 .tmy-patch.bak 恢复所有版本目录
 ```
 
-覆盖 7 个 patch（各带独立幂等 marker）：
+覆盖 6 个 patch（各带独立幂等 marker）：
 
 | patch 名 | marker | 效果 | 稳定锚点（手动逆向时也用它） |
 |---|---|---|---|
@@ -28,7 +28,6 @@ python3 <skills>/harness/scripts/patch-copilot-cli.py --revert   # 从 .tmy-patc
 | `tiers-live` | `tmy-tiers-live` | **context tier 运行时半**：TUI 应用模型那一步，tier 为空时按模型能力补 `long_context` → **本会话**切模型后即时长上下文 | `let <vs>=<st>?.type==="success"?<st>.list:void 0,<gc>=(await <s>.model.switchTo({modelId:…,reasoningEffort:…,contextTier:<me>,` + 就近前方的 `,<bi>=<me>;` |
 | `tiers-picker` | `tmy-tiers-picker` | **context tier picker 半**：无参 `/model` 选择器里，非当前模型的 tier 默认值从硬编 `"default"` 改成 `long_context`（否则列表里显示的窗口是小的那个，选中后还把 `tiers-live` 的守卫短路掉） | `contextTier:<je>,contextTiers:<Hn>?.map(` + 就近前方的 `<je>=<Hn>?…:void 0` 里的 `"default"` 字面量 |
 | `tiers-startup` | `tmy-tiers-startup` | **context tier 启动半**：把「内置默认档」从 default 改成 `long_context`，`settings.json` 里没写过 / 被抹过也不掉档 | `<Br>=<opts>.context??<settings>.contextTier`（开关 ?? settings 的优先级链，链尾接兜底） |
-| `webfetch-fakeip` | `tmy-webfetch-fakeip` | `web_fetch` SSRF 放行 fake-ip 段 `198.18/19`（mihomo fake-ip 下可用） | `.hookResolveAndValidateUrl(…)`（形态 B helper）；形态 A 用 `.networkIsBlockedIp`。**1.0.74 起两者都已不在 app.js → 恒 `N/A`** |
 
 **三种状态，含义不同**（脚本逐 patch 打印）：
 
@@ -42,7 +41,7 @@ python3 <skills>/harness/scripts/patch-copilot-cli.py --revert   # 从 .tmy-patc
 
 **跑成功（全 `apply` 或 `already`）就不用往下读**。**开新会话才生效**（运行中的 `copilot` 已把 `app.js` 载进内存）；`copilot update` 拉的新版本目录是干净的，**重跑一次**即可（幂等）。
 
-**实测（1.0.78-2）**：除 `webfetch-fakeip` 外六个全命中、`--apply` 后 `node --check` 干净、幂等重跑全 `already`；`webfetch-fakeip` 报 `N/A`（守卫已下沉 native）。同一份脚本对 1.0.74 / 1.0.75 / 1.0.76-3 / 1.0.78-0 / 1.0.78-2 五个版本目录全部 `node --check` 通过（老版本自动回落 form A，1.0.74/75 的 `tiers-live` 因形态更早而 `SKIP`——loader 不跑它们，`--latest-only` 已规避）。⚠️ **别用位序数字比版本**：正式版 `1.0.69` 与预发布 `1.0.69-2` 并存时，`1.0.69-2` 的数字元组 `(1,0,69,2)` 会被误判得比 `1.0.69` 的 `(1,0,69)` 高、和 loader（SemVer：release > prerelease）相反；脚本 `_vkey` 已按 SemVer 优先级排，`--latest-only` 才和 loader 选的是同一份。这也是「auto-update 后要重跑」的典型场景：新掉的正式版目录是干净的，把上一版打好的补丁架空了。
+**实测（1.0.78-2）**：六个 patch 全命中、`--apply` 后 `node --check` 干净、幂等重跑全 `already`。同一份脚本对 1.0.74 / 1.0.75 / 1.0.76-3 / 1.0.78-0 / 1.0.78-2 五个版本目录全部 `node --check` 通过（老版本自动回落 form A，1.0.74/75 的 `tiers-live` 因形态更早而 `SKIP`——loader 不跑它们，`--latest-only` 已规避）。⚠️ **别用位序数字比版本**：正式版 `1.0.69` 与预发布 `1.0.69-2` 并存时，`1.0.69-2` 的数字元组 `(1,0,69,2)` 会被误判得比 `1.0.69` 的 `(1,0,69)` 高、和 loader（SemVer：release > prerelease）相反；脚本 `_vkey` 已按 SemVer 优先级排，`--latest-only` 才和 loader 选的是同一份。这也是「auto-update 后要重跑」的典型场景：新掉的正式版目录是干净的，把上一版打好的补丁架空了。
 
 **跑失败时**：脚本会打印是哪个 patch、什么原因（`anchor count=0` / 特性缺失 / 找不到模型对象）。按 patch 名到下面对应节，用「稳定锚点」重新 `view` 当前 `app.js` 定位、据「改什么」重写替换。**每次只修失效的那一个**。
 
@@ -273,9 +272,15 @@ minified bundle 每版都变，锚点必然会坏——目标不是永不坏，�
 
 ---
 
-## 补丁三 · `web_fetch` SSRF 守卫拦 fake-ip（定点放行）
+## <a id="webfetch-fakeip"></a>补丁三 · `web_fetch` SSRF 守卫拦 fake-ip（已退役）
 
-> 🚫 **1.0.74 起本补丁在 app.js 里已无处可打**：整套「解析 + 判黑」连同 `hookResolveAndValidateUrl` / `networkIsBlockedIp` 都下沉到了 native（`<alias>.toolWebFetchRegisterCallbacks`，实现在 `prebuilds/<platform>/cli-native.node`）。脚本的探针会报 **`N/A`** 而不是 `SKIP`——不是腐坏，是没得打，`--strict` 也不会因此失败。要放行只能改 `.node`（不在本脚本范围）。下面保留机制与形态演化记录，供「上游哪天把它挪回 JS」或「真要啃 native」时参考。
+> 🚫 **已退役、脚本不再覆盖。** 1.0.74 起整套「URL 解析 + SSRF 判黑 + 抓取」下沉到 native，app.js 里再无锚点可打，故已从 `patch-copilot-cli.py` 移除（留着只会每次报一行 `N/A` 噪声）。
+>
+> **实证**（1.0.78-2）：`app.js` 里 `hookResolveAndValidateUrl` / `networkIsBlockedIp` / `WebFetchBlockedUrlError` / 错误文案 `URLs must not target loopback, private, or link-local addresses` **全部 0 命中**；同一段文案与 `resolves to blocked address` 出现在 `prebuilds/<platform>/runtime.node` 里。JS 侧只剩注册权限回调（`<alias>.toolWebFetchRegisterCallbacks`）。
+>
+> **现在怎么办**：① 别用 fake-ip（mihomo 换 `redir-host`，回真实公网 IP 就不触发）；② 要抓网页时用 `curl`（没有这道预检）。改 `.node` 二进制理论可行但不划算——每次 `copilot update` 必被换掉，且二进制补丁没法像 JS 那样靠字面量锚点自愈。
+>
+> 下面保留机制与形态演化记录，供「上游哪天把它挪回 JS」时快速重建。
 
 ### 现象
 
@@ -313,11 +318,19 @@ GitHub 把整套「解析 + 判黑」搬进 Rust 绑定了，且这个搬迁是*
 只放行 fake-ip 池 `198.18.0.0/15`（`198.18.x` / `198.19.x`，本就没有合法内网服务），其余仍交给原判黑——`127/10/192.168/169.254/::1/云元数据`照旧全拦，比「让判黑恒 `false`」安全得多：
 
 - **形态 A**：把对 `networkIsBlockedIp(ip)` 的调用包成「命中 `/^198\.1[89]\./` 则返回 `false`（不拦）、否则走原调用」。
-- **形态 B**（脚本做的）：重写那个 helper——先自己 `await import("node:dns/promises")` 解析主机名，**全部**解析成 fake-ip 段（`/^198\.1[89]\./`）时直接返回地址（绕过 native）、否则回落 `await <native>.hookResolveAndValidateUrl(...)`（保留真实内网防护）。锚点用 `.hookResolveAndValidateUrl(t,e.allowLocalhost===!0,e.urlLabel)` 整段定位、混淆名反向引用捕获。
+- **形态 B**（脚本曾经做的）：重写那个 helper——先自己 `await import("node:dns/promises")` 解析主机名，**全部**解析成 fake-ip 段（`/^198\.1[89]\./`）时直接返回地址（绕过 native）、否则回落 `await <native>.hookResolveAndValidateUrl(...)`（保留真实内网防护）。锚点用 `.hookResolveAndValidateUrl(t,e.allowLocalhost===!0,e.urlLabel)` 整段定位、混淆名反向引用捕获。
+- **形态 C**（当前）：无 JS 落点，上面两条都用不上。
 
-### 验证
+### 判断当前是哪种形态
 
-patch 后**开新会话**让它 `web_fetch` 任意外网 URL；若错误从 `blocked address` 变成连接 / 代理类错误，说明判黑已绕过、但底层 fetch 对 pinned fake-ip 的出站路径有问题（查 `proxyEnv` / `pinnedAddresses` 与 TUN 直连）。
+重建前先辨形，一条命令即可（`0 / 0` 就是形态 C、别再往下折腾 JS）：
+
+```bash
+grep -c 'networkIsBlockedIp' <app.js>          # >0 → 形态 A
+grep -c 'hookResolveAndValidateUrl' <app.js>   # >0 → 形态 B
+```
+
+真打上了再验：**开新会话**让它 `web_fetch` 任意外网 URL；若错误从 `blocked address` 变成连接 / 代理类错误，说明判黑已绕过、但底层 fetch 对 pinned fake-ip 的出站路径有问题（查 `proxyEnv` / `pinnedAddresses` 与 TUN 直连）。
 
 ---
 
@@ -326,7 +339,7 @@ patch 后**开新会话**让它 `web_fetch` 任意外网 URL；若错误从 `blo
 脚本刻意不碰的几处（当前形态已变 / 移除，硬做易崩或无收益）。需要时对着当前 `app.js` 手动逆向：
 
 - **retry 非-API 错误的 4 秒退避下限**：旧版本 `retryAfter*(0.8+Math.random()*0.4)` 套 `Math.max(…,4)`。**当前版本已无此 jitter 公式**（`Math.random` 只剩 brace-expansion 占位、temp 文件名等无关用途）。`maxRetries` 翻倍已覆盖主要收益；若未来版本重现该公式，锚点用 `.8+Math.random()*.4`。
-- **`web_fetch` fake-ip 放行（1.0.74+）**：整个 web_fetch 下沉 native，app.js 无锚点（见[补丁三](#补丁三-web_fetch-ssrf-守卫拦-fake-ip定点放行)形态 C）。脚本报 `N/A`。真要修得改 `prebuilds/<platform>/cli-native.node`——二进制补丁的维护成本远高于 JS，且每次 `copilot update` 必然被换掉；实用替代是**别用 fake-ip**（mihomo 切 `redir-host`），或需要抓网页时走 `curl`。
+- **`web_fetch` fake-ip 放行（1.0.74+）**：已退役——整个 web_fetch 下沉 native，app.js 无锚点，脚本已移除该 patch（见[补丁三](#webfetch-fakeip)）。真要修得改 `prebuilds/<platform>/runtime.node`——二进制补丁的维护成本远高于 JS，且每次 `copilot update` 必然被换掉；实用替代是**别用 fake-ip**（mihomo 切 `redir-host`），或需要抓网页时走 `curl`。
 - **1.0.74 / 1.0.75 目录的 `tiers-live`**：那两版的 TUI 应用点还是更早的形态，当前锚点匹配不上、报 `SKIP`。loader 只跑最高版本、不会执行它们，`--latest-only`（systemd 服务就用这个）已规避，故不补。
 
 > 📌 **曾经未覆盖、现已补回**：context tier 的「本会话内存半 / setModel」。重构时误判「1.0.69-2 起 setModel 已转发当前 tier、无需补」，1.0.70-0 实测证伪（typed `/model` 后 live `/context` 掉回 264k），已由 `tiers-live`（作用面 B-运行时）补回，见上文补丁二。教训：**「setModel 已转发 tier」不能只看调用点带没带 `contextTier`——得看那个 tier 值的来源；1.0.70-0 里 live 切换认的是第 4 个位置参（`void 0`），不认对象里的 `contextTier`。**

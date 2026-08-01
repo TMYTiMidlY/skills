@@ -33,8 +33,10 @@ pkg cache 里运行时真正跑的 app.js（见 harness/references/copilot-patch
                     把 tiers-live 的守卫短路掉，列表里显示的窗口也是小的那个）
   tiers-startup     context tier 启动半：settings 里没有 contextTier 时，交互启动兜底
                     long_context（否则「没配过 / 被抹过」的新会话直接掉回小窗口）
-  webfetch-fakeip   web_fetch SSRF 守卫放行 fake-ip 段 198.18/19（mihomo fake-ip 下可用）
-                    ⚠️ 1.0.74 起该守卫已整体下沉到 native (.node)，app.js 无锚点可打 → 报 N/A
+
+**已退役**（曾覆盖、现无处可打，见 copilot-patch.md）：
+  · web_fetch 放行 fake-ip 段 198.18/19 —— 1.0.74 起整套 URL 解析 + SSRF 判黑下沉到
+    native（prebuilds/<platform>/runtime.node），app.js 里再无锚点，故从脚本移除。
 
 用法：  patch-copilot-cli.py            # dry-run，只报告命中/skip，不写
         patch-copilot-cli.py --apply   # 落盘（自动备份 + node --check + 失败回滚）
@@ -305,36 +307,6 @@ def p_tiers_live(src):
     return src, f"live tier guard (switchTo arg only, model={mid}, alias={alias})", "apply"
 
 
-def p_webfetch(src):
-    """web_fetch 的 SSRF 守卫放行 fake-ip 段 198.18/19（mihomo fake-ip 下 web_fetch 可用）。
-    ⚠️ 1.0.74 起该守卫连同整个 URL 解析已下沉到 native（`h.toolWebFetchRegisterCallbacks`），
-    app.js 里再没有 `hookResolveAndValidateUrl` / `networkIsBlockedIp` 可打 → 报 N/A。
-    要改只能动 prebuilds/*/cli-native.node，不在本脚本范围。"""
-    mk = "tmy-webfetch-fakeip"
-    if mk in src:
-        return None, "", "already"
-    anc = re.compile(r'async function ([\w$]+)\(([\w$]+),([\w$]+)=\{\}\)\{'
-                     r'return\(await ([\w$]+)\.hookResolveAndValidateUrl\('
-                     r'\2,\3\.allowLocalhost===!0,\3\.urlLabel\)\)'
-                     r'\.map\(\(\{address:([\w$]+),family:([\w$]+)\}\)=>\(\{address:\5,family:\6\}\)\)\}')
-    ms = list(anc.finditer(src))
-    if len(ms) != 1:
-        if "hookResolveAndValidateUrl" not in src and "networkIsBlockedIp" not in src:
-            return None, "SSRF 守卫已下沉 native（app.js 无锚点，需改 .node 才能放行）", "na"
-        return None, f"anchor count={len(ms)} (want 1)", "skip"
-    fn, t, e, v, ad, fa = ms[0].groups()
-    fake = r'/^198\.1[89]\./'   # fake-ip 池 198.18.0.0/15
-    new = (f'async function {fn}({t},{e}={{}}){{/*{mk}*/'
-           f'try{{let _u=new URL({t}),_h=_u.hostname;'
-           f'if(!/^\\d+\\.\\d+\\.\\d+\\.\\d+$/.test(_h)){{'
-           f'let _n=await import("node:dns/promises"),_a=await _n.lookup(_h,{{all:!0}});'
-           f'if(_a.length&&_a.every(_x=>{fake}.test(_x.address)))'
-           f'return _a.map(({{address:{ad},family:{fa}}})=>({{address:{ad},family:{fa}}}))}}}}catch{{}}'
-           f'return(await {v}.hookResolveAndValidateUrl({t},{e}.allowLocalhost===!0,{e}.urlLabel))'
-           f'.map(({{address:{ad},family:{fa}}})=>({{address:{ad},family:{fa}}}))}}')
-    return src[:ms[0].start()] + new + src[ms[0].end():], f"fake-ip 198.18/19 放行 ({fn})", "apply"
-
-
 def p_tiers_picker(src):
     """picker 半：无参 `/model` 打开的模型选择器里，每个模型条目的 context tier 默认值。
 
@@ -416,7 +388,6 @@ PATCHES = [
     ("tiers-live",       p_tiers_live),
     ("tiers-picker",     p_tiers_picker),
     ("tiers-startup",    p_tiers_startup),
-    ("webfetch-fakeip",  p_webfetch),
 ]
 
 # ============================ 主流程 ============================
