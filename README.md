@@ -10,8 +10,8 @@
 | --- | --- |
 | `manage-skills` | 创建、拆分、审查、合并、维护本仓库里 skill 的规范与工作流 |
 | `harness` | Agent harness / runtime 架构知识库：Copilot CLI / SDK / MCP / session export、Claude Code / Codex 对照、CLI subprocess / SDK client / extension host / JSON-RPC 取舍、Hermes agent（systemd / backend / provider / skill 体系） |
-| `git` | Git 与 jj：并发脏区下的精准提交/暂存/丢弃/amend、隔离工作区（worktree 与共享 clone）、受限网络下的 clone/submodule 与离线传输、gh 认证 vs 提交身份、自建 Forgejo/Gitea forge 与 git-pages 静态站 |
-| `software` | SSH、systemd、Commitizen/semantic-release 自动发版与 npm/PyPI OIDC、USTC Overleaf/olcli、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享客户端、Windows/macOS 操作与激活、远程桌面 / WSL 网络、EasyTier 客户端 |
+| `git` | Git 与 jj：并发脏区下的精准提交/暂存/丢弃/amend、隔离工作区（worktree 与共享 clone）、受限网络下的 clone/submodule 与离线传输、gh 认证 vs 提交身份、Commitizen/semantic-release 自动发版与 npm/PyPI OIDC、自建 Forgejo/Gitea forge 与 git-pages 静态站 |
+| `software` | SSH、systemd、USTC Overleaf/olcli、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享客户端、Windows/macOS 操作与激活、远程桌面 / WSL 网络、EasyTier 客户端 |
 | `network` | Mihomo/Clash 客户端与泄漏控制、远程接入、WSL ↔ Windows ↔ 远端网络管道，以及 3x-ui、Hysteria2、EasyTier 客户端 |
 | `vps-maintenance` | VPS 初始化、Caddy（含 caddy-security）、EasyTier、网络质量检测 |
 | `docker-maintenance` | Hermes Docker 后端等受限容器内的环境探测、只读挂载识别、受限 CLI 安装、OAuth device flow、SSH key 生成 |

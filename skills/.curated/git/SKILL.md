@@ -1,11 +1,11 @@
 ---
 name: git
-description: 用户要提交 / 回退 / 改写 git 历史、开隔离工作区做实验、克隆不下来仓库或 submodule、分不清 gh 登录与提交身份、用 jj 干活，或自建 Forgejo / Gitea 与 git-pages 静态站时使用。核心是先认清动的是哪棵树（HEAD / index / worktree）、以及临时绕行不落进仓库长期配置。发版 CI 由 software skill 覆盖。
+description: 用户要提交 / 回退 / 改写 git 历史、开隔离工作区做实验、克隆不下来仓库或 submodule、分不清 gh 登录与提交身份、用 jj 干活、配自动发版与发布 CI，或自建 Forgejo / Gitea 与 git-pages 静态站时使用。核心是先认清动的是哪棵树（HEAD / index / worktree）、发版先认清版本真相源是配置文件还是 Git 历史、以及临时绕行不落进仓库长期配置。
 ---
 
 # Git
 
-本 skill 索引 Git 与 jj 的日常操作、隔离工作区、受限网络下的仓库获取，以及自建托管。发版 / 发布 CI（Commitizen、semantic-release、Registry OIDC）由 `software` skill 覆盖。
+本 skill 索引 Git 与 jj 的日常操作、隔离工作区、受限网络下的仓库获取、发版 / 发布 CI，以及自建托管。
 
 ## 精准操作（有并发/无关改动时只提交、暂存、丢弃、amend 一处）
 
@@ -36,6 +36,16 @@ forge 指 Git 托管加一圈协作服务（issue、review、CI、包仓库）�
 ## git-pages 静态站托管（Git forge → 网站，GitHub Pages 替代）
 
 [git-pages](https://codeberg.org/git-pages/git-pages) 把某个 Git 仓库某分支的内容直接 serve 成静态网站（文件按路径即 URL、图片等资源原样出，不用内联 data-URI），S3 或文件系统后端，配 Caddy on-demand TLS 全自动签证。是 `software` skill 里 docs-share「S3 presigned 直链」模型的**另一条路线**（docs-share 本身也已迁到这套）。核心要点见 [references/git-pages.md](references/git-pages.md)：**最关键的决策是公开库 vs 私有库走不同发布路径**——webhook（POST）让 git-pages 匿名 clone、**只对公开库有效**（私有库必 401）；私有库要走**归档 PUT + `Forge-Authorization` token**（内容在请求体、不 clone），典型是 Forgejo Action 打 tar + curl PUT。还覆盖：一个项目下用 `path` 发布多个子站 / 不可猜路径及首次初始化、matching / non-matching wildcard 的 token 边界、预装 MkDocs runner image 和 checkout/依赖加速、metadata 枚举封锁、S3 桶布局（`blob`/`.index`/`.exists` 语义，`.exists` 驱动 on-demand TLS 且故意不随删站清除）、wildcard 映射、`Dry-Run` 头验链路，以及 `git archive` pax header、runner 单并发堵塞等排障。另含 Codeberg Pages / v2 迁移、同类实现对比、自建整套与生命周期、鉴权源码导读。
+
+## 自动发版与发布 CI
+
+跨 Python 与 Node 的自动发版先选版本真相源：Commitizen 由配置文件和显式 `cz bump` 决定版本，
+semantic-release 则在 CI 中分析 Git 历史。覆盖：QuantumAtlas 式 PEP 621 配置、PEP 440 的
+a/b/rc/dev/post、CHANGELOG 增量更新与 prerelease / 正式段、`pre_bump_hooks` 失败后的半途状态，
+以及 tag 或配置更新触发的 GitHub Release + PyPI OIDC；semantic-release 的提交分析、插件生命
+周期、npm 首次 web auth 发布与版本基线、Trusted Publisher OIDC、GitHub `environment:`、
+staged publishing、Bun 多平台二进制 + checksum 模板和端到端验证。见
+[references/release-ci.md](references/release-ci.md)。
 
 ## 双向 SSH 镜像（不推荐，存档）
 

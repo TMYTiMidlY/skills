@@ -1,11 +1,11 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、PostgreSQL 读写性能量化（容器 / 存储介质 / 网络三层的 `fio`·`pgbench` 测法与实测、tablespace 冷热分层、iSCSI 网络存储的瓶颈归因）、Commitizen / semantic-release 发版与发布 CI（配置版本源、CHANGELOG、GitHub Release、npm/PyPI OIDC Trusted Publishing）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、USTC Overleaf/olcli（无头鉴权、项目同步、内部 API、OT/评论/修订）、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Docker Engine 安装（官方 apt 仓库法）与多用户共用（docker 组、`sg`/重登生效、组≈免密 root 的安全取舍）、Coolify 与 Dokploy 自托管 PaaS（端口所有权、前置反代、工作负载边界与清理）、Go 工具链（模块 / `go install` / 依赖解析 / GOPROXY）、Windows/Office 激活与 macOS 杂项等。Git / jj 命令行操作、隔离工作区、受限网络克隆、自建 Forgejo 与 git-pages 转用 `git` skill；Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、PostgreSQL 读写性能量化（容器 / 存储介质 / 网络三层的 `fio`·`pgbench` 测法与实测、tablespace 冷热分层、iSCSI 网络存储的瓶颈归因）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、USTC Overleaf/olcli（无头鉴权、项目同步、内部 API、OT/评论/修订）、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Docker Engine 安装（官方 apt 仓库法）与多用户共用（docker 组、`sg`/重登生效、组≈免密 root 的安全取舍）、Coolify 与 Dokploy 自托管 PaaS（端口所有权、前置反代、工作负载边界与清理）、Go 工具链（模块 / `go install` / 依赖解析 / GOPROXY）、Windows/Office 激活与 macOS 杂项等。Git / jj 命令行操作、隔离工作区、受限网络克隆、自动发版与发布 CI、自建 Forgejo 与 git-pages 转用 `git` skill；Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
 ---
 
 # Software
 
-Git 与 jj 的日常操作、隔离工作区、受限网络获取、自建 forge 与 git-pages 已迁往 `git` skill；本 skill 仍覆盖发版 / 发布 CI。
+Git 与 jj 的日常操作、隔离工作区、受限网络获取、发版 / 发布 CI、自建 forge 与 git-pages 已迁往 `git` skill。
 
 ## PostgreSQL 读写性能
 
@@ -14,16 +14,6 @@ Git 与 jj 的日常操作、隔离工作区、受限网络获取、自建 forge
 ## SSH
 
 SSH 密钥 passphrase、ssh-agent、非交互环境（CI / `bash -c`）私钥带 passphrase 又无解锁 agent 导致 `Server accepts key` 却 `Permission denied` 的诊断与复用常驻 agent 解法、RemoteForward 代理转发、主机密钥校验（known_hosts、`CheckHostIP` 默认及 OpenSSH 与 asyncssh 等第三方库对 IP 的处理差异——同一主机换 IP 后 OpenSSH 沉默而第三方库报 `Host key is not trusted` 的根因与修复）、ControlMaster 连接复用、裸 ssh/scp 跑命令与交互式 sudo（`ssh -t`）及远端文件编辑等通用 SSH 用法见 [references/ssh.md](references/ssh.md)。
-
-## 自动发版与发布 CI
-
-跨 Python 与 Node 的自动发版先选版本真相源：Commitizen 由配置文件和显式 `cz bump` 决定版本，
-semantic-release 则在 CI 中分析 Git 历史。覆盖：QuantumAtlas 式 PEP 621 配置、PEP 440 的
-a/b/rc/dev/post、CHANGELOG 增量更新与 prerelease / 正式段、`pre_bump_hooks` 失败后的半途状态，
-以及 tag 或配置更新触发的 GitHub Release + PyPI OIDC；semantic-release 的提交分析、插件生命
-周期、npm 首次 web auth 发布与版本基线、Trusted Publisher OIDC、GitHub `environment:`、
-staged publishing、Bun 多平台二进制 + checksum 模板和端到端验证。见
-[references/release-ci.md](references/release-ci.md)。
 
 ## 包管理器全景 / 分类对比（Nix vs apt、choco/winget/Scoop、npm/pnpm/bun、pip…）
 
