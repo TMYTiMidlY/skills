@@ -80,9 +80,11 @@
 | `superpowers/using-superpowers` | [obra/superpowers](https://github.com/obra/superpowers) | 对话开始时的强制入口：规定如何发现和调用 skill，要求任何回复（含澄清提问）前先完成 skill 调用 |
 | `superpowers/verification-before-completion` | [obra/superpowers](https://github.com/obra/superpowers) | 声称工作完成/已修复/测试通过前，要求先跑验证命令并确认输出，证据先于断言 |
 | `superpowers/writing-plans` | [obra/superpowers](https://github.com/obra/superpowers) | 已有 spec 或需求、动手写代码前，写一份假设工程师零上下文的完整实施计划 |
-| `superpowers/writing-skills` | [obra/superpowers](https://github.com/obra/superpowers) | 编写/编辑/验证新 skill 的方法论：把写 skill 本身当作对流程文档做 TDD |<!-- skills-table:end -->
+| `superpowers/writing-skills` | [obra/superpowers](https://github.com/obra/superpowers) | 编写/编辑/验证新 skill 的方法论：把写 skill 本身当作对流程文档做 TDD |
+| `worktrunk/worktrunk` | [max-sixty/worktrunk](https://github.com/max-sixty/worktrunk) | worktrunk（`wt` CLI）的配置与排障：用户配置 vs 项目配置的权限边界、10 种 hook 选型、LLM commit message 接外部命令，reference/ 是 worktrunk.dev 文档的同步副本 |
+| `worktrunk/wt-switch-create` | [max-sixty/worktrunk](https://github.com/max-sixty/worktrunk) | 以「建 worktree 并把本会话切进去」开启一次任务：分支名/仓库路径/任务三段参数的解析规则，以及宿主原生入口与 `wt` 命令两条创建路径的取舍 |<!-- skills-table:end -->
 
-`ponytail/` 和 `superpowers/` 与上面其他条目不同：上游本身是一个打包了多个 skill 的仓库（分别是 6 个和 14 个），不是单一能力，所以嫁接时多套了一层以仓库名命名的目录，保留归属、也不与本仓已有的同类 skill（如 `tdd`、`git`、`diagnose`）合并或去重。两者也有一点相似：都不满足于"等用户调用"，而是各自想办法让自己在没人主动喊它时也生效——`ponytail` 靠 Claude Code/Codex 等宿主的生命周期 hook 在每次会话/每条消息注入规则；`superpowers` 的 `using-superpowers` 则是在 skill 正文里直接写死"对话开始时必须先调用本 skill，包括在回答任何澄清性提问之前"。两种"强迫生效"的实现层级不同（前者是宿主机制，后者是文档层面的自我指令），但目的一致。
+`ponytail/`、`superpowers/` 和 `worktrunk/` 与上面其他条目不同：上游本身是一个打包了多个 skill 的仓库（分别是 6 个、14 个和 2 个），不是单一能力，所以嫁接时多套了一层以仓库名命名的目录，保留归属、也不与本仓已有的同类 skill（如 `tdd`、`git`、`diagnose`）合并或去重。前两者还有一点相似：都不满足于"等用户调用"，而是各自想办法让自己在没人主动喊它时也生效——`ponytail` 靠 Claude Code/Codex 等宿主的生命周期 hook 在每次会话/每条消息注入规则；`superpowers` 的 `using-superpowers` 则是在 skill 正文里直接写死"对话开始时必须先调用本 skill，包括在回答任何澄清性提问之前"。两种"强迫生效"的实现层级不同（前者是宿主机制，后者是文档层面的自我指令），但目的一致。`worktrunk/` 则是另一类：它是某个 CLI 工具（`wt`）随仓库分发的官方配套 skill，正文假定该二进制已装好，`reference/` 直接同步自其文档站。
 
 此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 
