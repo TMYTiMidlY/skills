@@ -1,8 +1,8 @@
-# 旧 Android 游戏保存与离线修复
+# Android APK 逆向与保存
 
 旧手游保存不是简单的“解包再签名”：要同时理解 native 游戏结构、数据资产、失效在线服务、签名边界和存档位置。本文以《爱养成2》与《爱养成3》的 Android 重打包版为实测案例，记录可复用的判断方法。
 
-> 实测快照：《爱养成2》2.9.7.4（`cn.actcap.ayc2`）、《爱养成3》1.7.4（`cn.actcap.ayc3`），HarmonyOS DataBackup 6.1.0.110、卓易通 1.0.10.60。结论均由反汇编、解密认证标签或成品反编译验证；未做真机逐商品回归的部分会明确标注。
+> 实测快照：《爱养成2》2.9.7.4（`cn.actcap.ayc2`）、《爱养成3》1.7.4（`cn.actcap.ayc3`），HarmonyOS DataBackup 6.1.0.110、卓易通 1.0.10.60。结论均由反汇编、解密认证标签、成品反编译或真机操作验证。
 
 ## <a id="application-structure"></a>应用结构
 
@@ -90,16 +90,69 @@ rewardId||选项文本||跳转行号
 爱养成3：Fiap.android_pay(productId) -> Base.pay(productId, 1)
 ```
 
-其中三代的第二个参数 `1` 来自原版购买成功路径。这个改法没有修改 native 库、商品编号、价格文字或存档实现，只把失效的支付传输替换为原版已有的本地成功回调。
+其中《爱养成3》的第二个参数 `1` 来自原版购买成功路径。这个改法没有修改 native 库、商品编号、价格文字或存档实现，只把失效的支付传输替换为原版已有的本地成功回调。
 
 验收不能只看 smali：
 
 1. 重建 APK。
 2. 重新签名并验证 v2/v3 签名。
 3. 从最终 APK 反编译目标类，确认成品里确实调用 `Base.pay(...)`。
-4. 真机逐商品检查重复购买、一次性解锁、货币和存档；本案例完成了前三步，第四步尚未完成。
+4. 真机点击原商城商品，确认奖励实际发放。
+
+本案例四步均已完成：修改版可正常安装运行，点击商品后会直接进入原生发奖逻辑并取得奖励。
 
 重新签名的 APK 不能覆盖原签名安装。用于保存版的签名密钥也应长期保留，否则保存版自己的后续更新仍会再次遇到签名不一致。
+
+## <a id="build-verify-loop"></a>构建与成品反编译
+
+多 Dex APK 应先定位目标类实际落在哪个 smali 目录，不能假定总在 `smali/`：
+
+```bash
+find <decoded-apk> -path '*/com/catcap/Catcap.smali'
+```
+
+本案例使用 [Apktool 2.9.3](https://github.com/iBotPeaches/Apktool/releases/tag/v2.9.3) 解包和重建。只改 smali、不需要重解资源时可用：
+
+```bash
+java -jar apktool.jar d -f -r -o <decoded-apk> <input.apk>
+
+# 修改 <decoded-apk>/smali_classes*/com/catcap/Catcap.smali
+
+java -jar apktool.jar b <decoded-apk> -o <unsigned.apk>
+unzip -tq <unsigned.apk>
+```
+
+改包后原签名失效。可用 [uber-apk-signer 1.3.0](https://github.com/patrickfav/uber-apk-signer/releases/tag/v1.3.0) 同时 zipalign、签 v2/v3 并验证：
+
+```bash
+java -jar uber-apk-signer.jar \
+  -a <unsigned.apk> \
+  -o <signed-output-dir> \
+  --allowResign
+```
+
+签名工具报告成功只能证明 APK 结构和签名可安装，不能证明修改进入了最终 Dex。最后用 [jadx 1.5.1](https://github.com/skylot/jadx/releases/tag/v1.5.1) 直接反编译**签名后的成品**：
+
+```bash
+jadx \
+  --single-class com.catcap.Catcap \
+  --single-class-output <Catcap.java> \
+  <signed.apk>
+
+rg -n 'Base\.pay' <Catcap.java>
+```
+
+期望看到：
+
+```java
+// 爱养成2
+Base.pay(productId);
+
+// 爱养成3
+Base.pay(productId, 1);
+```
+
+这条“成品反编译”检查能抓住几类常见错误：改错 Dex、构建时复用了旧产物、编辑了未被打包的解码目录，或签名时拿错 APK。
 
 ## <a id="save-data"></a>存档文件
 
