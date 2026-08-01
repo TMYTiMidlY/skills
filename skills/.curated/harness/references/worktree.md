@@ -1,6 +1,6 @@
-# Worktree 支持横向对照：Copilot CLI / Codex / Claude Code
+# Worktree 支持横向对照：三家宿主原生能力与第三方 CLI
 
-多 agent 并行开发时常见诉求是"每个 agent 一个隔离 git worktree"。这份笔记核实三家 coding agent 宿主**原生**对 worktree 的支持程度——哪家有专门工具、哪家只是"感知"、哪家完全没有，全部标注一手来源，不转述未核实的说法。
+多 agent 并行开发时常见诉求是"每个 agent 一个隔离 git worktree"。这份笔记核实三家 coding agent 宿主**原生**对 worktree 的支持程度——哪家有专门工具、哪家只是"感知"、哪家完全没有；原生能力不够时的外部补充（跨宿主 skill、[第三方 CLI](#third-party-cli)）另起一节。全部标注一手来源，不转述未核实的说法。
 
 ## 结论先行
 
@@ -92,7 +92,7 @@ claude --worktree "#1234"        # 从指定 GitHub PR 建 worktree（fetch pull
 
 `codex-rs/core/src/tools/handlers/multi_agents.rs:5` 注释：spawn 出的子 agent 会继承 provider、approval policy、sandbox 和 **cwd**——即多个子 agent **共享同一个工作目录**，靠上下文/进程隔离而非文件系统隔离。`multi_agents_v2/` 目录（`spawn.rs`/`wait.rs`/`send_message.rs`/`interrupt_agent.rs`/`list_agents.rs`/`followup_task.rs`）是 actor 式消息编排，管的是"跟哪个子 agent 对话、等它、打断它"，不涉及给它分配独立目录。
 
-**含义**：想让多个 Codex 实例各自在独立 worktree 里并行工作，Codex 自己给不了这个能力，得靠外部编排——自己写脚本先 `git worktree add` 再各起一个 `codex` 进程，或者用 claude-squad / worktrunk / workmux 这类第三方 CLI 顶层管理。
+**含义**：想让多个 Codex 实例各自在独立 worktree 里并行工作，Codex 自己给不了这个能力，得靠外部编排——自己写脚本先 `git worktree add` 再各起一个 `codex` 进程，或者用[第三方 CLI](#third-party-cli) 在顶层管理。
 
 ---
 
@@ -122,6 +122,37 @@ claude --worktree "#1234"        # 从指定 GitHub PR 建 worktree（fetch pull
 2. **Step 1a 优先用原生工具**：如果宿主提供类似 `EnterWorktree`/`WorktreeCreate`/`--worktree` 的机制就用它，skill 原文把"有原生工具却还去手动 `git worktree add`"列为**头号错误**（会产生宿主看不见、管理不了的"幽灵状态"）——**这一步在 Claude Code 上成立**，因为 `EnterWorktree` 真实存在。
 3. **Step 1b git 回退**：没有原生工具时才手动 `git worktree add`，并强制在建之前用 `git check-ignore` 确认目标目录已被 gitignore——**这一步在 Codex 和 Copilot CLI 上都会被触发**，因为两者在 Step 1a 都没有可用的原生工具。
 
+<a id="third-party-cli"></a>
+
+## 第三方 worktree CLI 与 agent 编排器
+
+宿主原生能力不够时的外部补充。**分类依据是"谁拥有 agent 的生命周期"，不是谁功能多**：
+
+- **worktree 的 UX 层**：只管建 / 切 / 删 / 合并 worktree 本身，不持有"哪个 agent 在跑"的状态。传个"建完顺手起某条命令"的参数不等于会话被追踪——换 agent、或压根不跑 agent 只手改代码，对它都一样。
+- **agent 编排器**：自己起 tmux 会话、拉起 agent 进程、维护"谁在跑 / 谁在等输入"的 TUI 面板；worktree 只是它隔离每个 agent 的副产物。
+
+| 仓库 | ★ | 语言 / 许可 | 类别 |
+|---|---|---|---|
+| [`max-sixty/worktrunk`](https://github.com/max-sixty/worktrunk) | 6.2K | Rust，MIT OR Apache-2.0 | worktree UX 层，**首选** |
+| [`smtg-ai/claude-squad`](https://github.com/smtg-ai/claude-squad) | 8.2K | Go，AGPL-3.0 | agent 编排器（tmux + worktree + TUI） |
+| [`raine/workmux`](https://github.com/raine/workmux) | 2.0K | Rust，MIT | worktree + tmux window |
+
+★ / 许可 / 活跃度为 2026-08-01 GitHub API 读数，三者均在近两天有 push。worktrunk 的 SPDX 被 GitHub 判为 `NOASSERTION`，实际 `LICENSE` 首行写明双许可。
+
+两层不互斥，可以叠着用。反直觉的一点：**编排器在合并上反而更原始**——claude-squad 是手动 push 分支再走 `gh` 建 PR（README 级说法，2026-07 调研，未读源码核实），而"只管 worktree"的 worktrunk 反倒把 squash → rebase → 合并 → 删 worktree 做成了一条命令。优化目标不同，不存在哪层在每个维度都更完备。
+
+### worktrunk
+
+以下核实自本地 clone 的 `v0.71.0`（commit `bfbc2e2`，2026-08-01），非 README 转述。
+
+- **比原生 `git worktree` 多出来、且没法用小脚本轻易复刻的只有一条：建完自动 `cd`。** 外部子进程天然改不了父 shell 的 cwd，所以必须装 shell 集成——往 rc 文件写一行惰性 `eval "$(wt config shell init <shell>)"`，把 `wt` 重定义成"二进制退出后读临时文件里的目标路径、再 `builtin cd`"的 shell 函数。其余（删 worktree 顺带删分支、post-create hook 装依赖 / 复制 `.env`、带 ahead/behind 的状态表、合并后原子清理）自己攒一套脚本也能凑出来，它的价值是坑别人踩过并维护着，不是原理上的黑科技。
+- **命令面很小**：`switch` / `list` / `remove` / `merge` / `step` / `hook` / `config`。
+- **不绑任何 LLM 厂商、不需要 API key**：`[commit.generation]` 只是把拼好的 prompt 管道传给你配的任意外部命令（`claude -p`、`codex exec`、`llm`、`aichat` 等），读其 stdout 当 commit message。**不配就静默兜底**——普通 commit 用 `WIP: Changes` / `Changes to <文件>`（`src/llm.rs:809-816`），squash 用 `Squash commits from <分支>` + 原 commit 标题列表（`src/llm.rs:939`），只往 stderr 打一行提示，不报错、不阻塞。只有"配了、但那条外部命令执行失败"才报错。
+- **`wt merge` 没有 `-m`/`--message`**（`src/cli/mod.rs:531-570` 只有目标分支 + `--[no-]squash` / `--[no-]commit` / `--[no-]rebase` / `--[no-]remove` / `--no-ff`）。要自己写消息是**绕开**而非传参：先 `git commit -m …`（或本来就是 agent 提的）再 `wt merge --no-commit`；或 `--no-squash` 保留原有多条 commit。**没有任何自动解冲突能力**，冲突就是普通 git rebase 冲突，仍需人或 agent 介入。
+- **仓库自带 agent 侧接入**：`skills/`（`worktrunk`、`wt-switch-create` 两个 Agent Skill）、`plugins/`（Claude / Codex / OpenCode）、`hooks/hooks.json`、`gemini-extension.json`——"给 agent 用"是它的一等公民场景，而不是事后适配。
+
+安装渠道取舍：官方列表里 Homebrew 与 Cargo 是一等公民，conda-forge / Pixi 那条标注为社区维护 feedstock。GitHub Release 页上的 `curl | sh` 是 cargo-dist 生成的脚本（自带各平台 sha256 校验），但它默认装进 `$CARGO_HOME/bin` 并挨个尝试改 `.profile` / `.bashrc` / `.bash_profile` / `.zshrc` / fish `conf.d` 等 6-7 个 rc 文件，侵入性明显大于走包管理器 + 单独一步 shell 集成。
+
 ## 小结对照表
 
 | 能力 | Claude Code | Codex | Copilot CLI |
@@ -134,4 +165,4 @@ claude --worktree "#1234"        # 从指定 GitHub PR 建 worktree（fetch pull
 | 自己能判断"我在不在 worktree 里" | ✅ | ✅（文件系统探查，不调用 git）| 未见专门逻辑 |
 | 开源程度 | 闭源 | 真开源（Apache-2.0）| 闭源 |
 
-**跨宿主统一方案**：装 obra/superpowers（或照抄它 Step 0/1a/1b 的思路自写一个项目级 skill），在 Claude Code 上吃到 `EnterWorktree` 原生加速和自动清理，在 Codex/Copilot CLI 上自动回退到手动 `git worktree add` + `git check-ignore` 校验，行为在三个宿主上保持一致，不用为每个宿主单独维护一套逻辑。若追求更强的"多 agent 编排"（而非单纯"开一个 worktree"），第三方 CLI（claude-squad、worktrunk、workmux 等）在这三个宿主之上再加一层进程/tmux 编排，弥补的正是 Codex/Copilot CLI 缺失的"原生并行+隔离"能力。
+**跨宿主统一方案**：装 obra/superpowers（或照抄它 Step 0/1a/1b 的思路自写一个项目级 skill），在 Claude Code 上吃到 `EnterWorktree` 原生加速和自动清理，在 Codex/Copilot CLI 上自动回退到手动 `git worktree add` + `git check-ignore` 校验，行为在三个宿主上保持一致，不用为每个宿主单独维护一套逻辑。若追求更强的"多 agent 编排"（而非单纯"开一个 worktree"），[第三方 CLI](#third-party-cli) 在这三个宿主之上再加一层进程 / tmux 编排，弥补的正是 Codex/Copilot CLI 缺失的"原生并行+隔离"能力；只想把开 worktree 这件事本身变顺手，则用 worktrunk 那类纯 UX 层即可。
