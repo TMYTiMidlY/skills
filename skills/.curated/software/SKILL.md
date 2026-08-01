@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、PostgreSQL 读写性能量化（容器 / 存储介质 / 网络三层的 `fio`·`pgbench` 测法与实测、tablespace 冷热分层、iSCSI 网络存储的瓶颈归因）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、USTC Overleaf/olcli（无头鉴权、项目同步、内部 API、OT/评论/修订）、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Docker Engine 安装（官方 apt 仓库法）与多用户共用（docker 组、`sg`/重登生效、组≈免密 root 的安全取舍）、Coolify 与 Dokploy 自托管 PaaS（端口所有权、前置反代、工作负载边界与清理）、Go 工具链（模块 / `go install` / 依赖解析 / GOPROXY）、Windows/Office 激活与 macOS 杂项等。Git / jj 命令行操作、隔离工作区、受限网络克隆、自动发版与发布 CI、自建 Forgejo 与 git-pages 转用 `git` skill；Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列方面的问题可先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、WSL 与 Windows 宿主互操作（PowerShell/UAC/cmd）、挂载与 SMB/CIFS 文件共享、PostgreSQL 读写性能量化（容器 / 存储介质 / 网络三层的 `fio`·`pgbench` 测法与实测、tablespace 冷热分层、iSCSI 网络存储的瓶颈归因）、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、USTC Overleaf/olcli（无头鉴权、项目同步、内部 API、OT/评论/修订）、文档格式转换（pandoc/feishu2md/MinerU）与 Markdown→PDF 导出、自托管文档分享（S3 直链）、本地中文 ASR、OpenList 网盘聚合、Docker Engine 安装（官方 apt 仓库法）与多用户共用（docker 组、`sg`/重登生效、组≈免密 root 的安全取舍）、Coolify 与 Dokploy 自托管 PaaS（端口所有权、前置反代、工作负载边界与清理）、Go 工具链（模块 / `go install` / 依赖解析 / GOPROXY）、pixi 全局环境（清单驱动、trampoline、`update` 取代已移除的 `upgrade`、`pixi exec` 临时环境）、Windows/Office 激活与 macOS 杂项等。Git / jj 命令行操作、隔离工作区、受限网络克隆、自动发版与发布 CI、自建 Forgejo 与 git-pages 转用 `git` skill；Agent harness、Copilot CLI/SDK/MCP 与会话导出等内部架构问题转用 `harness` skill。
 ---
 
 # Software
@@ -22,6 +22,10 @@ SSH 密钥 passphrase、ssh-agent、非交互环境（CI / `bash -c`）私钥带
 ## Go 工具链（去中心化模块 / `go install` / 解析与版本 / cgo 坑）
 
 Go 的包生态是**去中心化**的：没有 PyPI/npm/crates.io 那样的中心注册仓库，import 路径**就是**源码地址（`github.com/…`、`gitea.com/…`、`codeberg.org/…/v2`），`go install pkg@version` 直接从对应 VCS host 拉源码编译成二进制丢进 `$GOBIN`；`proxy.golang.org` 只是惰性缓存镜像不是注册中心，"发版"= 推一个 git tag。覆盖：`go` 无中心仓库的事实与对 PyPI/npm 的对照、原生装法 `go install` / `go run pkg@version`（`@latest`/`@vX`/`@commit` 版本选择、`GOBIN`/`GOPATH`、`@ver` 时忽略当前 `go.mod` 不污染项目依赖、Go 1.16 起装工具专用它、`/vN` 主版本进路径）、**导入路径→仓库的解析机制**（已知托管站规则 / `.git` 后缀 / vanity 路径 `?go-get=1` + `<meta name="go-import">` 重定向 + Go 1.25 subdir + `mod` 代理变体）、**版本模型**（SemVer、`/vN` 共存、伪版本、MVS 最小版本选择）、`go.mod`/`go.sum`/模块缓存、GOPROXY/GOSUMDB/GOPRIVATE（默认 `proxy.golang.org` + `sum.golang.org`、`direct` 回落、私有模块绕过、墙内换 `goproxy.cn`）、`go install` 遇 `replace` 指令为何失败（replace 只对主模块生效）、从 module proxy 装 vs 本地 clone build 的 `vcs.*` 戳/`+dirty` 判别、以及 **`pixi global install go`（conda-forge 包）的 cgo 坑**（`DefaultCC=x86_64-conda-linux-gnu-cc` 被编译期烧进 go 二进制、缺配套编译器致 cgo 构建失败，判别四连 + 修法 `pixi global install --environment go c-compiler`）见 [references/go.md](references/go.md)。
+
+## pixi（全局环境 / trampoline / 升级与临时环境）
+
+pixi 自身的操作模型：`pixi global` 的真相源是清单 `~/.pixi/manifests/pixi-global.toml`（`[envs.X]` 的 `dependencies` / `exposed` / `channels` 各管什么、手改后 `pixi global sync` 对齐、子命令按"改清单哪一部分"分工）；一个包默认独占一个同名环境、`-e/--environment` 才是塞进同一环境的开关；`~/.pixi/bin/<命令>` **不是软链而是同一个 trampoline 二进制的硬链接**，真实目标与注入的 `CONDA_PREFIX`/`PATH` 写在 `trampoline_configuration/<命令>.json` 里（排障别用 `readlink`）；`pixi global upgrade` **已被移除**、改用 `pixi global update <环境名>`；`pixi search` 一次回答"能不能 pixi 装"和"版本落后多少"；`pixi exec -s <包> -- <命令>` 是不留常驻环境的临时跑法（`uv run --with` 的 conda 版）。见 [references/pixi.md](references/pixi.md)。conda-forge 版 go 的 cgo 坑仍在 [references/go.md](references/go.md#cgo-pitfall)。
 
 ## Zellij
 
