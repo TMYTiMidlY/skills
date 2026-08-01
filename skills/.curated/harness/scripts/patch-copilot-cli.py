@@ -33,7 +33,6 @@ pkg cache 里运行时真正跑的 app.js（见 harness/references/copilot-patch
                     把 tiers-live 的守卫短路掉，列表里显示的窗口也是小的那个）
   tiers-startup     context tier 启动半：settings 里没有 contextTier 时，交互启动兜底
                     long_context（否则「没配过 / 被抹过」的新会话直接掉回小窗口）
-                    ⚠️ 1.0.74 起该守卫已整体下沉到 native (.node)，app.js 无锚点可打 → 报 N/A
 
 用法：  patch-copilot-cli.py            # dry-run，只报告命中/skip，不写
         patch-copilot-cli.py --apply   # 落盘（自动备份 + node --check + 失败回滚）
@@ -302,8 +301,6 @@ def p_tiers_live(src):
                                                 f"contextTier:({tier}??{guard})/*{mk}*/,")
            + src[m.end():])
     return src, f"live tier guard (switchTo arg only, model={mid}, alias={alias})", "apply"
-
-
 
 
 def p_tiers_picker(src):
