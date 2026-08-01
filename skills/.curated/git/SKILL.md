@@ -13,9 +13,9 @@ description: 用户要提交 / 回退 / 改写 git 历史、开隔离工作区�
 
 ## 隔离工作区（实验性改动 / 并行分支）
 
-给"可能出错或需要并行的改动"开隔离工作区，避免 stash / reset 频繁切换。两个判据互相独立：**有没有 submodule** 决定用哪套机制（无则 `git worktree`，有则共享 clone——因为 submodule 的定位字段 `core.worktree` 是单值、表达不了 N 个工作区），**要不要编译** 决定要不要把 submodule 拉下来（docs 类任务跳过 submodule 实测省 83 倍时间、122 倍空间）。建立 / 分支流转 / 拆除 / 占盘实测见 [references/workspace.md](references/workspace.md)。
+给"可能出错或需要并行的改动"开隔离工作区，避免 stash / reset 频繁切换。两个判据互相独立：**有没有 submodule** 决定用哪套机制（无则 `git worktree`，有则默认共享 clone——共享 gitdir 上的 `core.worktree` 是单值、表达不了 N 个工作区，实测边界与例外见下条），**要不要编译** 决定要不要把 submodule 拉下来（docs 类任务跳过 submodule 实测省 83 倍时间、122 倍空间）。建立 / 分支流转 / 拆除 / 占盘实测见 [references/workspace.md](references/workspace.md)。
 
-`core.worktree` 劫持、`--force` 累积失效注册、`submodule foreach --recursive` 的遍历盲区、手删 `worktrees/` 连活注册一起删等五个坑，以及动手前的诊断与恢复流程见 [references/submodule-hazards.md](references/submodule-hazards.md)。
+`core.worktree` 劫持（含它**不**触发的那条路径与实测矩阵）、`--force` 累积失效注册、`submodule foreach --recursive` 的遍历盲区、手删 `worktrees/` 连活注册一起删等坑，以及动手前的诊断与恢复流程见 [references/submodule-hazards.md](references/submodule-hazards.md)。
 
 ## 受限网络下的仓库获取
 
