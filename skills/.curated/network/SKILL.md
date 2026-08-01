@@ -1,11 +1,11 @@
 ---
 name: network
-description: 本机与客户端的代理、泄漏控制、远程接入和 WSL ↔ Windows ↔ 远端网络管道。用于 Mihomo/Clash 配置与运行态排障、DNS/WebRTC 泄漏、协议与 TUN 路由，以及 3x-ui、Hysteria2、EasyTier 客户端或共享 Linux 节点部署；Caddy 反代与网络质量检测由 vps-maintenance skill 覆盖。
+description: 本机与客户端的代理、泄漏控制、远程接入、受限网络下的 Git 获取和 WSL ↔ Windows ↔ 远端网络管道。用于 Mihomo/Clash 配置与运行态排障、DNS/WebRTC 泄漏、Git clone/submodule 镜像与离线导入、协议与 TUN 路由，以及 3x-ui、Hysteria2、EasyTier 客户端或共享 Linux 节点部署；Caddy 反代与网络质量检测由 vps-maintenance skill 覆盖。
 ---
 
 # Network
 
-本 skill 索引客户端代理、远程接入、组网管道与服务端节点入口。Caddy 反代和网络质量检测由 `vps-maintenance` skill 覆盖。
+本 skill 索引客户端代理、受限网络下的 Git 获取、远程接入、组网管道与服务端节点入口。Caddy 反代和网络质量检测由 `vps-maintenance` skill 覆盖。
 
 ## Mihomo / Clash 客户端与泄漏控制
 
@@ -14,6 +14,10 @@ Mihomo 产品与配置发现、GUI 配置链、流量选择、协议性能、RES
 ## 共享 Linux 节点
 
 Mihomo TUN、systemd-resolved、EasyTier、双层 Caddy / OAuth 和多用户 Zellij Web / VS Code Serve Web 的组合部署见 [references/setup.md](references/setup.md)。该文描述整套共享节点；Mihomo 本身的配置、运行态和泄漏理论仍以 [mihomo.md](references/mihomo.md) 为准。
+
+## 受限网络下的 Git 获取
+
+GitHub 的 ghfast 临时改写、GitLab 镜像分流、递归 submodule、完全离线的 bare mirror / bundle，以及只缺目标提交时的对象导入见 [references/git-clone.md](references/git-clone.md)。
 
 ## 远程接入
 
