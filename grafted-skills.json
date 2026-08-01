@@ -398,5 +398,21 @@
     "synced_commit": "711d895",
     "synced_date": "2026-06-25T02:23:23Z",
     "description": "编写/编辑/验证新 skill 的方法论：把写 skill 本身当作对流程文档做 TDD"
+  },
+  ".experimental/worktrunk/worktrunk": {
+    "repo": "max-sixty/worktrunk",
+    "path": "skills/worktrunk",
+    "branch": "main",
+    "synced_commit": "e1745db",
+    "synced_date": "2026-07-31T01:33:30Z",
+    "description": "worktrunk（`wt` CLI）的配置与排障：用户配置 vs 项目配置的权限边界、10 种 hook 选型、LLM commit message 接外部命令，reference/ 是 worktrunk.dev 文档的同步副本"
+  },
+  ".experimental/worktrunk/wt-switch-create": {
+    "repo": "max-sixty/worktrunk",
+    "path": "skills/wt-switch-create",
+    "branch": "main",
+    "synced_commit": "a27cbd4",
+    "synced_date": "2026-07-29T00:07:36Z",
+    "description": "以「建 worktree 并把本会话切进去」开启一次任务：分支名/仓库路径/任务三段参数的解析规则，以及宿主原生入口与 `wt` 命令两条创建路径的取舍"
   }
 }
