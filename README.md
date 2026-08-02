@@ -11,7 +11,7 @@
 | `manage-skills` | 创建、拆分、审查、合并、维护本仓库里 skill 的规范与工作流 |
 | `harness` | Agent harness / runtime 架构知识库：Copilot CLI / SDK / MCP / session export、Claude Code / Codex 对照、CLI subprocess / SDK client / extension host / JSON-RPC 取舍、Hermes agent（systemd / backend / provider / skill 体系） |
 | `git` | Git 与 jj：并发脏区下的精准提交/暂存/丢弃/amend、隔离工作区（worktree 与共享 clone）、受限网络下的 clone/submodule 与离线传输、gh 认证 vs 提交身份、Commitizen/semantic-release 自动发版与 npm/PyPI OIDC、自建 Forgejo/Gitea forge 与 git-pages 静态站 |
-| `software` | SSH 与 systemd 服务、Zellij、Windows/WSL 互操作与 WSL2 内存模型、挂载与 SMB/CIFS、PostgreSQL 读写性能量化（容器 / 存储介质 / 网络三层）、包管理器全景（Nix / apt / npm / pip / pixi / uv）、Go 工具链、Docker 安装与多用户共用、Coolify 与 Dokploy、RustFS / SeaweedFS 对象存储客户端、USTC Overleaf/olcli、格式转换（pandoc / feishu2md / MinerU）、自托管文档分享、OpenList、本地中文 ASR、Windows/Office 激活与 macOS 杂项 |
+| `software` | SSH 与 systemd 服务、Zellij、Windows/WSL 互操作与 WSL2 内存模型、挂载与 SMB/CIFS、Linux 回收站（trash-cli）、PostgreSQL 读写性能量化（容器 / 存储介质 / 网络三层）、包管理器全景（Nix / apt / npm / pip / pixi / uv）、Go 工具链、Docker 安装与多用户共用、Coolify 与 Dokploy、RustFS / SeaweedFS 对象存储客户端、USTC Overleaf/olcli、格式转换（pandoc / feishu2md / MinerU）、自托管文档分享、OpenList、本地中文 ASR、ChatGPT 网页端自动化、Windows/Office 激活与 macOS 杂项 |
 | `network` | Mihomo/Clash 客户端与泄漏控制、远程接入、WSL ↔ Windows ↔ 远端网络管道，以及 3x-ui、Hysteria2、EasyTier 客户端 |
 | `vps-maintenance` | VPS 初始化与服务器侧安全配置、BBR、EasyTier、Caddy（含 caddy-security）、error-pages、OpeniLink Hub 自托管部署、网络质量检测 |
 | `docker-maintenance` | Hermes Docker 后端等受限容器内的环境探测、只读挂载识别、受限 CLI 安装、OAuth device flow、SSH key 生成 |
