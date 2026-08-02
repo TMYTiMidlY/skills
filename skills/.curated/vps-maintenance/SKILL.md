@@ -163,10 +163,6 @@ Caddy 反向代理、域名/IP 模式、local root CA、Caddyfile 修改流程�
 
 尤其是修改 Caddyfile、EasyTier、SSH 转发、systemd 单元、防火墙规则时，不要凭记忆改，先读对应 reference。
 
-### 代理服务（自建梯子）
-
-3x-ui/Xray 面板的服务端节点配置——直接接管对外端口（REALITY 免证书 / 面板 acme 证书直连 / Hysteria2 UDP）与结合 Caddy 反代两套官方方案、在 3x-ui 里加 Hysteria2 inbound、独立 systemd 版 Hysteria2 服务端搭建——**都已移到 `network` skill**（见其 3x-ui.md、hysteria2.md）。本 skill 只保留 Caddy 反代本身（[references/caddy.md](references/caddy.md)）与网络质量检测。
-
 ### 微信 ClawBot Hub（OpeniLink Hub）
 
 自托管微信 ClawBot/iLink 消息平台 `oih`（二进制 / docker，默认 SQLite，监听 `:9800`）的部署：最小起步、PostgreSQL/MinIO 生产 compose、关键 env、Caddy 反代，以及 **`RP_ORIGIN`/`RP_ID` 必须等于对外 origin 否则 Passkey 登录失败** 这个必踩坑见 [references/wechat-clawbot.md](references/wechat-clawbot.md)。**收发消息 / Bot/管理 API / scope 等使用侧操作由 `wechat-clawbot` skill 覆盖。**
