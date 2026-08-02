@@ -163,3 +163,39 @@ stat -c%d /tmp "$HOME"                    # 两个 device id 相同 = 同一文�
 
 - 要跨 `wsl --shutdown` 保命的东西**别放 `/tmp`**，放 `$HOME` 下（家目录在持久盘、无 `D` 清空规则）。
 - `trash-put /tmp/xxx` 能"救"文件：回收站在 `~/.local/share/Trash/`（家目录），不受 `/tmp` 的 `D` 规则影响、也不自动过期（要手动 `trash-empty`）。且因 `/tmp` 与 `$HOME` 同一文件系统，trash 是**瞬时 rename 不拷贝**，几百 MB 也秒删。相关见 [trash.md](trash.md)。
+
+## <a id="wsl-boot-time"></a>WSL 的开机时刻与重启判定
+
+判断一台 WSL2 发行版什么时候启动、上次跑到什么时候，常用来源在 WSL 下会互相矛盾：
+
+| 来源 | 读的是什么 | WSL2 下是否可信 |
+|---|---|---|
+| `uptime -s`、`/proc/stat` 的 `btime` | 内核记录的启动时刻 | 可能是上次**关机**的时刻 |
+| `who -b`（读 `/var/log/wtmp`） | systemd 启动时写下的登录记录 | 反映真实启动，但依赖 wtmp 完好 |
+| `journalctl --list-boots` | 每个 boot 的首末条日志时间 | 以此为准 |
+
+`btime` 不是直接记下来的，而是内核在启动时用「当前墙钟时间 − 已运行时间」算出来的。WSL2 的虚拟 RTC 以**上次关机前后的时刻**做种子，等时间同步把钟拨正，`btime` 早已算完并固定，于是它保留的是上一次关机的时刻。
+
+**误差恰好等于虚拟机的停机时长**，这让它格外有迷惑性：`wsl --shutdown` 后立刻重启，三个来源看起来完全一致；停了一天再开，`uptime -s` 就差出一整天，而且给出的是一个**看起来很合理的过去时刻**，没有任何异常提示。实测过的一次分歧：虚拟机某日 06:28 停止、次日 11:28 才重新启动，重启后 `uptime -s` 报的是前一日 06:29——正是上次停止的时刻。
+
+```bash
+journalctl --list-boots        # 排查重启时间点一律以它为准
+```
+
+宿主 Windows 的开机时刻是另一套来源，与 guest 无关：
+
+```powershell
+(Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+```
+
+> 三个来源的分歧与 `journalctl --list-boots` 的可靠性为实测。"虚拟 RTC 以上次关机时刻做种子"是由 `btime` 恰好落在上次关机时刻这一现象反推的机制解释，未在官方文档中核实。
+
+## <a id="misc-diff"></a>5.1 与 7 的其余差异
+
+除了 [文本编码](#encoding) 那三个开关，剩下这些差异影响面小，记一笔备查：
+
+- 〔7〕`Invoke-WebRequest` 不走 IE 引擎，跨平台；〔5.1〕还吃 IE 设置（兼容性差）。
+- 〔7〕支持 `&&` / `||` 链式（与 bash 一致）；〔5.1〕不支持。
+- 〔7〕在 .NET 6+ 上跑 `Get-Process` 等的速度通常比 5.1 快一倍。
+- 同名命令的参数集可能不同，用前先查而不是凭记忆：`Get-Command <cmdlet> -Syntax`。例如 `Format-Hex -Count` 只有〔7〕有，〔5.1〕要改用 `... | Select-Object -First N` 限制管道。
+
