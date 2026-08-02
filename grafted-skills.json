@@ -414,5 +414,13 @@
     "synced_commit": "a27cbd4",
     "synced_date": "2026-07-29T00:07:36Z",
     "description": "以「建 worktree 并把本会话切进去」开启一次任务：分支名/仓库路径/任务三段参数的解析规则，以及宿主原生入口与 `wt` 命令两条创建路径的取舍"
+  },
+  ".experimental/ax": {
+    "repo": "yusukebe/ax",
+    "path": "skills/ax",
+    "branch": "main",
+    "synced_commit": "2d3afe1",
+    "synced_date": "2026-07-24T02:34:38Z",
+    "description": "ax CLI —— 抓取网页并抽取结构化数据，替代 curl + 一次性解析脚本"
   }
 }
