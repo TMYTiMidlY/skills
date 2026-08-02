@@ -30,7 +30,7 @@ wsl -l -v          # docker-desktop 为 Stopped 说明引擎不存在，问题�
 
 ## <a id="storage-terms"></a>存储介质与虚拟磁盘术语
 
-换页落到什么介质上，决定了上面那个"特别慢"到底有多慢。相关的几个名词：
+换页最终要落到磁盘上，中间隔着几层，各层有各自的名词：
 
 - **NVMe**（Non-Volatile Memory Express）：直接挂在 PCIe 总线上的固态硬盘访问协议，取代为机械盘设计的 SATA/AHCI。特点是队列深度大、并发能力强、延迟在微秒量级。日常说的"NVMe 盘"就是走这套协议的 SSD。
 - **VHD / VHDX**（Virtual Hard Disk）：微软的虚拟磁盘格式，本质是宿主文件系统上的**一个大文件**，被虚拟机当成一整块硬盘使用。VHDX 是后继格式，支持更大容量和动态扩展。WSL2 的根文件系统（`ext4.vhdx`）与 swap（`swap.vhdx`）都是这种。
@@ -43,33 +43,83 @@ VHDX 有两个影响容量规划的性质：
 
 两者合起来意味着 swap 大小要按**能承受的磁盘峰值占用**来定，而不是按"反正用不到那么多"。默认 swap 落在 `%Temp%`（通常在系统盘），系统盘余量紧张时用 `swapFile` 显式挪到空间充裕的盘。
 
-guest 的一次磁盘 I/O 要穿过 guest 块设备层 → VHDX → 宿主文件系统 → 物理盘，比裸盘多几层。顺序大块读写影响有限，**随机小 I/O 惩罚明显**——而换页恰好是随机小 I/O。各级访问延迟的量级：
+## <a id="paging-paths"></a>三条换页路径
+
+"页被换到哪里去了"在 WSL2 上有三个不同的答案。区别不在物理介质，而在**谁做的决定**和 **guest 能不能看见**：
+
+| 路径 | 换的是什么页 | 决定者 | 落到哪个文件 | guest 可见 |
+|---|---|---|---|---|
+| 文件页重新读回 | mmap 进来的可执行文件与共享库，以及被回收掉的页缓存 | guest 内核 | `ext4.vhdx`；`/mnt/c` 下的文件走 9p（`drvfs`）直达宿主文件系统 | 是，计入 major fault |
+| 匿名页换出换入 | 进程堆栈等没有文件做后备的内存 | guest 内核 | `swap.vhdx` | 是，计入 swap in/out |
+| 宿主换出虚拟机内存 | 虚拟机工作集里宿主认为冷的部分 | 宿主内核 | `pagefile.sys` | **否** |
+
+第三条对 guest 完全隐形：guest 内核以为那一页好端端待在自己的物理内存里，访问时不产生 Linux 意义上的缺页，线程只是在虚拟化层里停住，等宿主把页取回来。所以 guest 侧 `/proc/vmstat` 的缺页与 swap 计数全都正常，唯一症状是"什么都没做但就是很慢"。
+
+> 前两条路径的落点可当场核对：`findmnt -no SOURCE,FSTYPE /mnt/c` 给出 `9p`，`swapon --show` 给出 guest 侧的 swap 块设备（注意这里显示的是 `/dev/sdX` 而不是 `swap.vhdx`，后者是它在宿主上的对应文件）。第三条不可见源于虚拟化的两级地址转换——宿主那一级的缺页由硬件直接交给宿主内核处理，不经过 guest 内核，因而不进 guest 的任何计数；这是虚拟化通用原理，不是 WSL 特有行为。
+
+**三条路径的物理终点是同一块盘。** `ext4.vhdx`、`swap.vhdx`、`pagefile.sys` 都是宿主 NTFS 卷上的文件，那个卷坐在物理盘（现代机器上通常是 NVMe SSD）上。虚拟磁盘、宿主文件系统、物理介质是同一条路上依次经过的三层。真正拉开延迟差距的是另外两件事：
+
+- **层数**：guest 的一次磁盘 I/O 要穿过 guest 块设备层 → VHDX → 宿主文件系统 → 物理盘，比裸盘多几层。顺序大块读写影响有限，**随机小 I/O 惩罚明显**——而换页恰好是随机小 I/O。
+- **竞争**：宿主自己也在换页时，两条路径的 I/O 在同一块盘上排队。此时延迟不再由介质决定，而由队列长度决定，这是唯一能把微秒级拖到秒级的因素。
 
 | 情况 | 量级 | 相对倍数 |
 |---|---|---|
 | 页在物理内存中 | ~100 ns | 1× |
-| 缺页，从 NVMe SSD 读回 | ~100 µs | ~10³ |
-| 缺页，从 VHD 上的 swap 读回，且宿主同时在换页 | 毫秒 ~ 秒 | 10⁴ ~ 10⁷ |
+| 缺页，固态盘无争用 | ~100 µs | ~10³ |
+| 缺页，且宿主同时在换页、抢同一块盘 | 毫秒 ~ 秒 | 10⁴ ~ 10⁷ |
 
 > 前两行是通用量级；第三行为 WSL2 环境下的观察区间，受宿主负载影响很大，不是稳定基准。
+
+第一条路径与 swap 无关：内存充裕、swap 一页没写的时候它也在持续发生。`autoMemoryReclaim=dropCache` 主动丢掉的正是页缓存，代价就是这些文件页下次访问要重新读盘。
+
+第三条既然 guest 看不见，就只能靠**症状的形状**把它认出来。两层各自的形状不同：
+
+| 观察到的形状 | 更像哪一层 |
+|---|---|
+| 延迟中位数整体抬高，guest 内核有回收 / OOM 相关消息，swap 用量上涨 | guest 自己在换页或颠簸 |
+| 延迟中位数不变、只有离散的秒级尖峰，多个互不相干的进程同时被冻住，guest 内核一条消息都没有 | 宿主在换出这台虚拟机 |
+
+判据的道理在于代价摊在哪里：guest 侧回收要靠内核持续扫描页表，开销分摊到所有操作上，中位数必然跟着抬；宿主换页则是"平时全速运行，碰到被换走的页才整台停住"，中位数不受影响，只在最大值上留下秒级尖峰。有事件循环或心跳延迟统计的服务（Node 服务、编辑器后端等）最容易看出这个差别；多个无关进程在同一时刻卡住同样的秒数，也只有整台虚拟机被按住才解释得通。
+
+两种形状对应的旋钮不同、不能互换：guest 侧颠簸调 [swap 容量与 `vm.swappiness`](#swap-semantics)，宿主换页只能调 [`memory=` 上限](#cap-vs-reservation) 或减少宿主上的其他占用——**guest 的 swap 配多大都影响不到宿主那一层**。
+
+> 这组判据是从两层机制的代价分布反推出来的，不是控制实验结论。要真正确认第三条正在发生，仍需在运行期间采样宿主侧的性能计数器。
 
 ## <a id="cap-vs-reservation"></a>内存上限、预留与超售
 
 `.wslconfig` 里的 `memory=` 是**上限（cap）**，不是**预留（reservation）**：它表达"这台虚拟机最多能长到多大"，而不是"现在就从 Windows 划走这么多"。设置后 Windows 侧当场不会少一个字节，实际占用要等虚拟机真的长起来才出现。
 
-Windows 的内存管理是**超售（overcommit）**的：先答应分配，等进程真正访问那块内存时才现掏物理页（按需分页）。物理内存不够时它不会拒绝，而是把较冷的页写进页面文件顶上；真到提交上限才开始拒绝分配。因此超售本身的直接后果是变慢，不是崩溃。
+Windows 的内存管理是**超售（overcommit）**的：先答应分配，等进程真正访问那块内存时才现掏物理页（按需分页）。物理内存不够时它不会拒绝，而是把较冷的页写进页面文件顶上；真到 [提交上限](#commit-accounting) 才开始拒绝分配。因此超售本身的直接后果是变慢，不是崩溃。
 
-这里的记账口径是**提交量（commit charge）**——所有已经答应给出去的内存总和；能不能再答应，看的是**提交上限（commit limit）**：
+## <a id="commit-accounting"></a>提交量与提交上限
 
-```
-提交上限 = 物理内存 + 页面文件大小
-```
+两层系统各有一套**提交记账**：记录"已经答应给出去多少内存"，以及"还能不能再答应"。两套术语同构、变量互不相干，先把名字对齐：
 
-这么定的理由是，Windows 承诺的是"你要用的时候一定有地方放"，而不是"一定放在内存条里"——放不进内存就写进页面文件，同样算兑现承诺。所以上限自然是"内存能装的 + 磁盘能顶的"。例如物理内存 512 GiB、页面文件 238 GiB 的机器，提交上限为 750 GiB。读法：
+| | Windows（宿主） | Linux（WSL2 guest） |
+|---|---|---|
+| 已承诺总量 | system commit charge，计数器 `\Memory\Committed Bytes` | `Committed_AS`（AS = address space），见 `/proc/meminfo` |
+| 上限 | system commit limit，计数器 `\Memory\Commit Limit` | `CommitLimit`，见 `/proc/meminfo` |
+| 上限怎么算 | 物理内存 + 所有页面文件之和 | `SwapTotal` + `MemTotal` × `vm.overcommit_ratio` / 100（比例默认 50） |
+| 承接私有页的后备存储 | 页面文件 `pagefile.sys` | swap 设备：guest 里是一块 `/dev/sdX` 块设备，宿主侧对应文件 `swap.vhdx` |
+| 是否强制执行 | 始终执行 | 仅 [`vm.overcommit_memory`](#guest-sysctl) 取 `2` 时执行 |
+
+两侧的后备存储处在**同一层次**：都只承接没有文件做后备的私有 / 匿名页；有文件后备的页两边都是回到原文件去，不占记账额度（内核文档的措辞是 "the file is the map not swap"）。Windows 侧从不用 "swap" 这个词，Linux 侧从不用"页面文件"，两边的公式各填各自的那一份。guest 的 `swap.vhdx` 属于 guest 那一层的记账；在 Windows 眼里它是宿主文件系统上的一个普通数据文件。
+
+> Windows 侧术语与"上限 = 物理内存 + 所有页面文件之和"出自 [Microsoft Learn: Introduction to the page file](https://github.com/MicrosoftDocs/SupportArticles-docs/blob/263466baac8db65214c972c872454097957e069e/support/windows-client/performance/introduction-to-the-page-file.md)（锁到该页元数据给出的 commit）；Linux 侧出自内核文档 [Overcommit Accounting](https://www.kernel.org/doc/html/v6.12/mm/overcommit-accounting.html)（锁到 v6.12），"the file is the map not swap" 是其原文措辞。guest 侧那条公式已按 `/proc/meminfo` 的实际数值验算过。
+
+宿主这一层的上限之所以这么算，是因为 Windows 承诺的是"你要用的时候一定有地方放"，而不是"一定放在内存条里"——放不进内存就写进页面文件，同样算兑现承诺，所以上限自然是"内存能装的 + 磁盘能顶的"。例如物理内存 512 GiB、页面文件 238 GiB 的机器，提交上限为 750 GiB。两个数的读法：
 
 ```powershell
 Get-Counter '\Memory\Committed Bytes', '\Memory\Commit Limit'
 ```
+
+guest 那一层公式可当场验算：
+
+```bash
+grep -E 'MemTotal|SwapTotal|CommitLimit|Committed_AS' /proc/meminfo
+```
+
+WSL2 把 `vm.overcommit_memory` 设为 `1`（永不拒绝），因此 `CommitLimit` 照算不误却不生效，`Committed_AS` 超过它也不会有任何报错。**guest 侧默认没有"分配被拒绝"这道闸**，这是它比宿主更容易一路撞到内存耗尽的原因。
 
 三个检查者各管各的一段，"虚拟机上限 + Windows 自身需求"这个和没有人负责：
 
@@ -81,7 +131,7 @@ Get-Counter '\Memory\Committed Bytes', '\Memory\Commit Limit'
 
 于是 Windows 那道检查的分母是提交上限而不是物理内存：虚拟机上限 480 GiB 加宿主自身 56 GiB 得 536 GiB，小于 750 GiB 便合法放行，而它已经超过 512 GiB 物理内存，超出部分要靠页面文件兜底。**提交上限管的是"承诺不超发"，物理内存管的是"承诺兑现得快不快"，只有前者有人查。**定 `memory=` 时应按物理内存减去宿主实测占用来算，这个和不交给任何自动机制把关。
 
-虚拟机被换页时的恶化速度比普通进程被换页更快：guest 内核自己也在做内存管理，它认为是热页、要留在内存里的页，宿主可能恰好换到磁盘上；guest 做内存回收时扫描页表的动作又会逼宿主把刚换出的页读回来。两个内存管理器互相看不见对方的意图。
+宿主换出虚拟机内存（[三条换页路径](#paging-paths) 里的第三条）的恶化速度比换出普通进程更快：guest 内核自己也在做内存管理，它认为是热页、要留在内存里的页，宿主可能恰好换到磁盘上；guest 做内存回收时扫描页表的动作又会逼宿主把刚换出的页读回来。两个内存管理器互相看不见对方的意图。
 
 > 机制描述基于虚拟化通用原理（语义鸿沟 / double paging）。要在具体场景中坐实，需要在作业运行期间采样宿主侧性能计数器。
 
@@ -139,7 +189,7 @@ Get-Counter '\Memory\Committed Bytes', '\Memory\Commit Limit'
 
 - **`vm.swappiness`**（Linux 默认 60，取值 0–200）：内存吃紧时，内核在"回收文件缓存"和"回收匿名内存（进程堆栈，必须先写进 swap）"之间的**倾向权重**，数值高偏向后者。它不是"最多用多少比例的 swap"。调低（如 10）能推迟颠簸，属于缓解手段——内存真到底时该用 swap 还是会用。
 
-- **`vm.overcommit_memory`**：`0` 启发式判断、`1` 永不拒绝、`2` 按 `overcommit_ratio` 严格限额。WSL2 环境下取值为 `1`，且不来自 `/etc/sysctl.conf`、`/etc/sysctl.d/`、`/run/sysctl.d/`、`/usr/lib/sysctl.d/` 中的任何条目，是运行时设定的。含义是内核对内存申请永远说 yes，进程可以一路申请到把整个虚拟机撞满，申请阶段不会有任何报错。改成 `2` 能让程序拿到干净的"内存不足"错误并自行退出，代价是很多程序会乐观超额申请、可能被误伤。
+- **`vm.overcommit_memory`**：`0` 启发式判断（明显离谱的申请才拒绝，Linux 默认）、`1` 永不拒绝、`2` 严格限额（即真正执行 [guest 侧的 `CommitLimit`](#commit-accounting)）。WSL2 环境下取值为 `1`，且不来自 `/etc/sysctl.conf`、`/etc/sysctl.d/`、`/run/sysctl.d/`、`/usr/lib/sysctl.d/` 中的任何条目，是运行时设定的。含义是内核对内存申请永远说 yes，进程可以一路申请到把整个虚拟机撞满，申请阶段不会有任何报错。改成 `2` 能让程序拿到干净的"内存不足"错误并自行退出，代价是很多程序会乐观超额申请、可能被误伤。
 
 ## <a id="oom-livelock"></a>OOM killer 的触发条件与回收活锁
 
@@ -174,6 +224,8 @@ cat /proc/pressure/memory     # 文件存在即内核支持 PSI
 ```bash
 systemctl is-active systemd-oomd
 ```
+
+这类守护进程的作用范围**只到 guest 内部**。宿主换出这台虚拟机的内存时，guest 以为那些页好端端待在自己手里，PSI 读数是正常的，任何按压力阈值动作的守护进程都不会触发。换句话说，它防的是 guest 侧耗尽，防不住 [三条换页路径](#paging-paths) 里的第三条；那一层要靠把工作集压进宿主装得下的范围来防。
 
 ## <a id="accounting"></a>guest 与 host 的内存计量口径
 
@@ -277,3 +329,18 @@ srun -N1 -n1 --mem=100M bash -lc '
 - 无调度器场景下用 systemd 临时作用域给进程组套 cgroup 限制，例如通过 `systemd-run --scope` 指定 `MemoryMax` / `MemoryHigh` / `MemorySwapMax`。
 
 在 guest 里跑轮询总 RSS 的看门狗脚本可以作为补充，但它读的是 guest 侧数字，看不见宿主是否正在为这台虚拟机换页。因此它的阈值按物理内存倒推着定，不按 guest 的 `free` 定。
+
+## <a id="config-example"></a>配置取值示例
+
+把上面几层落成具体数值。以 512 GiB 物理内存、跑 MPI 数值作业的机器为例：
+
+| 起因 | 该拧的旋钮 | 示例取值 |
+|---|---|---|
+| 虚拟机工作集逼近物理内存，宿主开始换出它 | `.wslconfig` 的 `memory=`，压到"物理内存 − 宿主实测占用"以内 | `memory=384GB`，留约 128 GiB 给 Windows |
+| swap 建在虚拟磁盘上，且大到足以让内核长期判定"回收有进展"而不触发 OOM | `.wslconfig` 的 `swap=`，缩到只够缓存冷页 | `swap=32GB`；不显式写会按 `memory` 的 25% 折算成 96 GiB |
+| 回收行为不确定，宿主内存归还时机不可控 | `.wslconfig` 的 `autoMemoryReclaim`，显式写出而非依赖默认 | `autoMemoryReclaim=dropCache` |
+| 调度器认的额度大于虚拟机真正装得下的量，作业被放行后才撞墙 | `slurm.conf` 的 `RealMemory` 与 `MaxMemPerNode` | `RealMemory=286720`（280 GiB），给非 Slurm 负载留约 98 GiB |
+| 作业不写 `--mem` 就独占整个节点 | `slurm.conf` 的 `DefMemPerNode` | `DefMemPerNode=16384` |
+| 并发数 × 单进程峰值超出作业额度 | 并发数，按实测单进程峰值倒推 | 单进程实测峰值 47.8 GiB、额度 280 GiB 时取 4 路而非 8 路 |
+
+生效方式不同：`.wslconfig` 要 `wsl --shutdown` 后重启虚拟机；`slurm.conf` 改完 `scontrol reconfigure` 热加载即可，改前留一份带时间戳的备份。改完 `memory=` 后按 [计量口径](#accounting) 那节的方法复核两侧数字，确认虚拟机上限加宿主实测占用确实落在物理内存以内。
