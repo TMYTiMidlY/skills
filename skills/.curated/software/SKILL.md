@@ -51,13 +51,13 @@ ChatGPT 网页端 Pro / Extended 自动化、`steipete/oracle` browser engine、
 
 WSL 挂载 Windows 盘、UNC/SMB 共享、`drvfs/9p` 小文件性能、CIFS 凭据与 `mount.cifs` 排障见 [references/mount.md](references/mount.md)。
 
-## WSL2 与 Slurm 的内存模型
+## Windows / WSL2 的内存模型
 
-guest / host / 物理内存三者的语义差别（`memory=` 是上限不是预留；所有发行版共用同一台虚拟机，所以 Docker 引擎与 WSL integration 随虚拟机一起存亡）、Windows 超售与"虚拟机上限 + 宿主需求 ≤ 物理内存"这个无人把关的和、NVMe / VHDX / 页面文件的术语与 VHDX 动态扩展但不自动缩回对 swap 容量规划的影响、缺页机制与各级访问延迟量级、swap 能扩总容量却扩不了活跃工作集（冷页划算、热工作集颠簸）、`.wslconfig` 内存相关键的默认值（`swap` 缺省按内存 25% 折算、`autoMemoryReclaim` 缺省为 `dropCache` 而非关闭）、guest 侧 `vm.swappiness` 与 `vm.overcommit_memory` 的含义、OOM killer 以"回收有无进展"为判据导致大 swap 下的回收活锁与 PSI / 早期 OOM 守护进程的补位、guest `free` 的 `used` 不含缓存所以两侧要用 `MemTotal−MemFree` 对比（附双侧同步采样的对应关系、固定虚拟机开销与宿主侧退还滞后），以及 Slurm 侧 `RealMemory` / `DefMemPerNode` / `MaxMemPerNode` 与 `task/cgroup` 的协同、限制挂在 job 层而叶子 task cgroup 显示 `max` 的层级落点、绕过调度器的裸 `mpiexec` 如何补上限额，见 [references/memory.md](references/memory.md)。
+guest / host / 物理内存三者的语义差别（`memory=` 是上限不是预留；所有发行版共用同一台虚拟机，所以 Docker 引擎与 WSL integration 随虚拟机一起存亡）、页与缺页机制、NVMe / VHDX / 页面文件的术语与各级访问延迟量级（VHDX 动态扩展但不自动缩回，决定 swap 容量该怎么规划）、Windows 的提交量与提交上限记账（上限 = 物理内存 + 页面文件，所以"虚拟机上限 + 宿主需求 ≤ 物理内存"这个和无人把关）、swap 能扩总容量却扩不了活跃工作集（冷页划算、热工作集颠簸）、`.wslconfig` 内存相关键的默认值（`swap` 缺省按内存 25% 折算、`autoMemoryReclaim` 缺省为 `dropCache` 而非关闭）、guest 侧 `vm.swappiness` 与 `vm.overcommit_memory` 的含义、OOM killer 以"回收有无进展"为判据导致大 swap 下的回收活锁与 PSI / 早期 OOM 守护进程的补位、guest `free` 的 `used` 不含缓存所以两侧要用 `MemTotal−MemFree` 对比（附双侧同步采样的对应关系、固定虚拟机开销与宿主侧退还滞后），以及 Slurm 侧 `RealMemory` / `DefMemPerNode` / `MaxMemPerNode` 与 `task/cgroup` 的协同、限制挂在 job 层而叶子 task cgroup 显示 `max` 的层级落点、绕过调度器的裸 `mpiexec` 如何补上限额，见 [references/memory.md](references/memory.md)。
 
 ## Linux 回收站（trash-cli / gio trash）
 
-`trash-cli` 与 GLib `gio trash` 是两套实现但遵循同一 FreeDesktop Trash 规范（同一 `~/.local/share/Trash/`、`files/`+`info/*.trashinfo` 配对、`.Trash-$uid` 卷内逻辑），互通可混用。覆盖回收站两半结构、坏 `.trashinfo` 的真实影响与正确处置（不会让 `trash-rm`/`trash-empty` 整库罢工，但坏项删不掉、需手动补回 `Path=`）、`trash-rm` 匹配规则（`/` 开头按整路径否则按 basename，附 `filter.py` 源码与正确写法）、gio 无选择性永久删单项（附 `gio-tool-trash.c` 源码）、删挂载盘文件两者同规范的卷内落点见 [references/trash.md](references/trash.md)。
+`trash-cli` 与 GLib `gio trash` 是两套实现但遵循同一 FreeDesktop Trash 规范（同一 `~/.local/share/Trash/`、`files/`+`info/*.trashinfo` 配对、`.Trash-$uid` 卷内逻辑），互通可混用。覆盖回收站两半结构（含 `Path=` 在卷内回收站是**卷内相对路径**、`trash-put` 同卷只是 rename **不释放空间**）、**回收站条目名不是原文件名**（重名追加 `_N` 且加在扩展名之后、超 100 次改随机数、超长会截断，所以按条目名扩展名筛选会大量漏项，必须读 `Path=`；同一原始路径可对应多个条目、`trash-rm` 会一并删光）、坏 `.trashinfo` 的影响范围（解析错误会跳过继续，但**删除失败会抛异常中止整批**、剩余项静默不处理）、`trash-rm` 匹配规则（`/` 开头按整路径否则按 basename，附 `filter.py` 源码与正确写法）、gio 无选择性永久删单项（附 `gio-tool-trash.c` 源码）、删挂载盘文件两者同规范的卷内落点、以及 **fstype 白名单导致的卷发现失败**（`trash-put` 走 `ismount` 上溯所以总对，`trash-list`/`trash-rm`/`trash-empty` 走白名单过滤；上游把 WSL 的 `9p` 写成 `'p9'`，2022 年引入至今未修，附 issue #242 里"作者无 Windows 机器代测、报告者只验证了 put"的存活原因，以及 #256/#412 表明同机制也坑 virtiofs 等其他文件系统；绕过用 `TRASH_VOLUMES`，它同时是约 94× 的提速开关）见 [references/trash.md](references/trash.md)。
 
 ## RustFS + MinIO mc 客户端
 
@@ -67,7 +67,7 @@ RustFS（Rust 实现的 S3 兼容对象存储，github.com/rustfs/rustfs）+ Min
 
 ## Windows / WSL 宿主侧速记
 
-跑在 Windows 宿主上的小经验：PowerShell 5.1 vs 7（pwsh）的运行时与默认 encoding 差异、为什么从 WSL/agent shell 调 PowerShell 优先用 pwsh 7 避开中文 GBK decode 炸 channel、从 WSL 弹 UAC 拿管理员权限（`Start-Process -Verb RunAs` + 文件标记跨上下文传结果）、cmd.exe 不接 UNC 当 CWD、Windows 回收站与 `trash-put` 的关系、**WSL `/tmp` 每次 `wsl --shutdown` 后被清空的真因（systemd-tmpfiles `D /tmp` 规则 + boot `--remove`，不是 tmpfs；`30d` age 只管周期清理不管 boot 全清；保命放 `$HOME`/`trash-put`）** 见 [references/windows.md](references/windows.md)。
+跑在 Windows 宿主上的小经验：PowerShell 5.1（Desktop）与 7（pwsh，Core）两套运行时的辨认（含 `v1.0` 目录名是历史遗留、`SysWOW64` 下另有 32 位副本）、**文本编码的三个独立开关**（`[Console]::OutputEncoding` 写 stdout 的字节两版相同都是系统 codepage、`$OutputEncoding` 管道送进原生程序时 5.1 用 `us-ascii` 会不可逆丢字、落盘 cmdlet 默认编码 5.1 是 UTF-16LE+BOM 而 7 是 UTF-8 无 BOM）与接收端按 UTF-8 严格解码时的对策排序（结果落盘 ＞ 设 `OutputEncoding` ＞ 管 `iconv`）见 [编码章节](references/windows.md#encoding)；原生程序参数数组、cmdlet splatting 与 `-LiteralPath`、落地成 `.ps1` 用 `-File` 跑（含 `-NonInteractive` 把挂死变失败、别习惯性加 `-ExecutionPolicy Bypass`）见 [命令与参数的传递](references/windows.md#invocation)；从 WSL 弹 UAC 拿管理员权限并靠文件标记跨上下文回传结果见 [提权章节](references/windows.md#elevation)。另有 cmd.exe 不接 UNC 当 CWD、跨用户判断软件最后使用时间（`%USERPROFILE%` 的 `LastWriteTime` 不可信）、Windows 回收站与 `trash-put` 的分工、**WSL `/tmp` 每次 `wsl --shutdown` 后被清空的真因（systemd-tmpfiles `D /tmp` 规则 + boot `--remove`，不是 tmpfs；`30d` age 只管周期清理不管 boot 全清；保命放 `$HOME`/`trash-put`）** 见 [references/windows.md](references/windows.md)。
 
 ## Windows / Office 激活
 
