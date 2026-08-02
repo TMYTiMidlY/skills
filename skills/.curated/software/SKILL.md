@@ -51,6 +51,10 @@ ChatGPT 网页端 Pro / Extended 自动化、`steipete/oracle` browser engine、
 
 WSL 挂载 Windows 盘、UNC/SMB 共享、`drvfs/9p` 小文件性能、CIFS 凭据与 `mount.cifs` 排障见 [references/mount.md](references/mount.md)。
 
+## WSL2 与 Slurm 的内存模型
+
+guest / host / 物理内存三者的语义差别（`memory=` 是上限不是预留；所有发行版共用同一台虚拟机，所以 Docker 引擎与 WSL integration 随虚拟机一起存亡）、Windows 超售与"虚拟机上限 + 宿主需求 ≤ 物理内存"这个无人把关的和、NVMe / VHDX / 页面文件的术语与 VHDX 动态扩展但不自动缩回对 swap 容量规划的影响、缺页机制与各级访问延迟量级、swap 能扩总容量却扩不了活跃工作集（冷页划算、热工作集颠簸）、`.wslconfig` 内存相关键的默认值（`swap` 缺省按内存 25% 折算、`autoMemoryReclaim` 缺省为 `dropCache` 而非关闭）、guest 侧 `vm.swappiness` 与 `vm.overcommit_memory` 的含义、OOM killer 以"回收有无进展"为判据导致大 swap 下的回收活锁与 PSI / 早期 OOM 守护进程的补位、guest `free` 的 `used` 不含缓存所以两侧要用 `MemTotal−MemFree` 对比（附双侧同步采样的对应关系、固定虚拟机开销与宿主侧退还滞后），以及 Slurm 侧 `RealMemory` / `DefMemPerNode` / `MaxMemPerNode` 与 `task/cgroup` 的协同、限制挂在 job 层而叶子 task cgroup 显示 `max` 的层级落点、绕过调度器的裸 `mpiexec` 如何补上限额，见 [references/memory.md](references/memory.md)。
+
 ## Linux 回收站（trash-cli / gio trash）
 
 `trash-cli` 与 GLib `gio trash` 是两套实现但遵循同一 FreeDesktop Trash 规范（同一 `~/.local/share/Trash/`、`files/`+`info/*.trashinfo` 配对、`.Trash-$uid` 卷内逻辑），互通可混用。覆盖回收站两半结构、坏 `.trashinfo` 的真实影响与正确处置（不会让 `trash-rm`/`trash-empty` 整库罢工，但坏项删不掉、需手动补回 `Path=`）、`trash-rm` 匹配规则（`/` 开头按整路径否则按 basename，附 `filter.py` 源码与正确写法）、gio 无选择性永久删单项（附 `gio-tool-trash.c` 源码）、删挂载盘文件两者同规范的卷内落点见 [references/trash.md](references/trash.md)。
