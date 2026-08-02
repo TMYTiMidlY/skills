@@ -74,7 +74,7 @@ Shizuku 引导用户以 root（uid=0）或 ADB / shell（uid=2000）身份启动
 
 ### <a id="shizuku-integration"></a>接入、会话与 root 模式
 
-- **目标应用必须自行集成 Shizuku SDK**：加入依赖、在清单中声明 `ShizukuProvider`，并完成类似运行时权限的授权流程。不能拿 Shizuku 直接操作没有适配的第三方应用；这也排除了"用 Shizuku 取出一个停服老游戏存档"的设想。
+- **调用方应用必须自行集成 Shizuku SDK**（指想要提权的那个应用，不是被取数的应用）：加入依赖、在清单中声明 `ShizukuProvider`，并完成类似运行时权限的授权流程。不能拿 Shizuku 直接操作没有适配的第三方应用；这也排除了"用 Shizuku 取出一个停服老游戏存档"的设想。
 - **通过 ADB 启动的会话重启后失效**，每次开机都要重新启动。Android 11+ 可使用系统无线调试直接在设备上完成，无需连接电脑；root 用户可以改用 Magisk 模块 Sui，使其开机自动生效。
 - **root 模式（uid=0）是否能读取私有目录，官方没有给出明确说明**。uid=0 通常能绕过 DAC，但 Android 的 SELinux enforcing 对 root 仍有限制，因此这一项只能标为"未知"，需要实测。
 
