@@ -11,16 +11,17 @@
 | `manage-skills` | 创建、拆分、审查、合并、维护本仓库里 skill 的规范与工作流 |
 | `harness` | Agent harness / runtime 架构知识库：Copilot CLI / SDK / MCP / session export、Claude Code / Codex 对照、CLI subprocess / SDK client / extension host / JSON-RPC 取舍、Hermes agent（systemd / backend / provider / skill 体系） |
 | `git` | Git 与 jj：并发脏区下的精准提交/暂存/丢弃/amend、隔离工作区（worktree 与共享 clone）、受限网络下的 clone/submodule 与离线传输、gh 认证 vs 提交身份、Commitizen/semantic-release 自动发版与 npm/PyPI OIDC、自建 Forgejo/Gitea forge 与 git-pages 静态站 |
-| `software` | SSH、systemd、USTC Overleaf/olcli、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享客户端、Windows/macOS 操作与激活、远程桌面 / WSL 网络、EasyTier 客户端 |
+| `software` | SSH 与 systemd 服务、Zellij、Windows/WSL 互操作与 WSL2 内存模型、挂载与 SMB/CIFS、PostgreSQL 读写性能量化（容器 / 存储介质 / 网络三层）、包管理器全景（Nix / apt / npm / pip / pixi / uv）、Go 工具链、Docker 安装与多用户共用、Coolify 与 Dokploy、RustFS / SeaweedFS 对象存储客户端、USTC Overleaf/olcli、格式转换（pandoc / feishu2md / MinerU）、自托管文档分享、OpenList、本地中文 ASR、Windows/Office 激活与 macOS 杂项 |
 | `network` | Mihomo/Clash 客户端与泄漏控制、远程接入、WSL ↔ Windows ↔ 远端网络管道，以及 3x-ui、Hysteria2、EasyTier 客户端 |
-| `vps-maintenance` | VPS 初始化、Caddy（含 caddy-security）、EasyTier、网络质量检测 |
+| `vps-maintenance` | VPS 初始化与服务器侧安全配置、BBR、EasyTier、Caddy（含 caddy-security）、error-pages、OpeniLink Hub 自托管部署、网络质量检测 |
 | `docker-maintenance` | Hermes Docker 后端等受限容器内的环境探测、只读挂载识别、受限 CLI 安装、OAuth device flow、SSH key 生成 |
 | `docs-writer` | 三类中文文档产出（论文 / docx 小汇报 / PPT）：python-docx cookbook、二次核验、AI 标注、引用核查、GB/T 7714、占位符工作流 |
 | `mess` | 记录排查过的疑难杂症和踩坑经历 |
 | `plan` | 先规划再实施：产出面向另一 AI 的分步可验证实施文档，含设计考量与注意事项 |
-| `autopilot` | 自动推进式任务系统：cron 触发 Hermes session 在容器内自主推进任务、开 PR、汇报进度（规划侧默认 Claude Code） |
-| `browser-use` | 浏览器自动化：MCP 控制浏览器、绕过下载限制、提取 pdf.js 等嵌入数据 |
+| `dredge-up` | 会话收尾盘点：把聊过 / 承诺过却被后续任务压栈沉底的事逐条捞回来，专门揪"说过却漏做"的遗漏项 |
+| `browser-use` | 浏览器自动化：Playwright（CLI / MCP / 脚本）、Camoufox 反指纹、接管已有 Chrome 登录态、绕过下载限制、提取 pdf.js 等嵌入数据 |
 | `reversing` | 移动端静态逆向：APK 解包与资产解密、缺工具时读 native 库（含 AArch64 / Thumb 的坑）、从界面文案反查代码、数值规则表语义与截胡分析、设备侧取数通道（adb / Shizuku / 鸿蒙 HDC 的权限边界、ANCO 容器、HMOSBackup 6.1 解密）、爱养成系列还原实例与结局条件汇报格式 |
+| `wechat-clawbot` | 用 OpeniLink Hub（微信 ClawBot / iLink 协议平台）收发微信消息、管理 Bot/App 与 scope 权限；分清 Bot API（程序用 app_token）与管理 API（后台登录 session）两套 |
 
 ### 嫁接自其他仓库
 
