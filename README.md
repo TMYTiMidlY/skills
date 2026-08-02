@@ -20,7 +20,7 @@
 | `plan` | 先规划再实施：产出面向另一 AI 的分步可验证实施文档，含设计考量与注意事项 |
 | `autopilot` | 自动推进式任务系统：cron 触发 Hermes session 在容器内自主推进任务、开 PR、汇报进度（规划侧默认 Claude Code） |
 | `browser-use` | 浏览器自动化：MCP 控制浏览器、绕过下载限制、提取 pdf.js 等嵌入数据 |
-| `reversing` | 移动端静态逆向：APK 解包与资产解密、缺工具时读 native 库（含 AArch64 / Thumb 的坑）、从界面文案反查代码、数值规则表语义与截胡分析、鸿蒙 ANCO 容器边界与 HMOSBackup 6.1 解密、爱养成系列还原实例与结局条件汇报格式 |
+| `reversing` | 移动端静态逆向：APK 解包与资产解密、缺工具时读 native 库（含 AArch64 / Thumb 的坑）、从界面文案反查代码、数值规则表语义与截胡分析、设备侧取数通道（adb / Shizuku / 鸿蒙 HDC 的权限边界、ANCO 容器、HMOSBackup 6.1 解密）、爱养成系列还原实例与结局条件汇报格式 |
 
 ### 嫁接自其他仓库
 

@@ -222,7 +222,24 @@ WUD_Default.bin.bac
 /data/user/0/<android-package>/files/WUD_Default.bin
 ```
 
-卸载原签名 APK 前必须**实际取得**主文件和 `.bac`、记录大小与哈希；仅确认 `allowBackup=true` 不够。鸿蒙 / 卓易通环境下的取数边界见 [鸿蒙与 ANCO 容器](harmonyos.md)。
+**该迁移哪些文件**（两代同构，`cn.actcap.ayc2` / `cn.actcap.ayc3` 各自一份，不要混用）：
+
+| 文件 | 作用 | 要不要带 |
+|---|---|---|
+| `files/WUD_Default.bin` | 主存档 | 必须 |
+| `files/WUD_Default.bin.bac` | 滚动备份 | 必须（主档损坏时改名顶上） |
+| `files/UserDefault.xml` | 音乐、语言等偏好 | 可选 |
+| `shared_prefs/anti_key.xml` | 防沉迷状态 | 可选 |
+| `shared_prefs/first_key.xml` | 首次确认状态 | 可选 |
+| `shared_prefs/pay_request_ids.xml` | 旧支付待处理订单 | **不要带** |
+
+**导出前先让游戏落盘**：游戏内正常保存 → 回主界面等几秒 → 完全强制停止，再取文件。
+
+**关键结论：`WUD_Default.bin` 用游戏自身的固定密钥，不绑定 APK 签名**，所以原版存档能被重新签名的修改版直接读取，不需要任何转换。这条让"先导出存档、再换装重签名版"这条路成立。
+
+**回贴时属主和权限位比文件内容更容易出错**：先启动新装的版本一次让它建好私有目录再强制停止，然后逐文件覆盖（不要整个替换数据目录），属主须与新生成的文件一致、权限通常 `0600`。属主错了的症状是游戏**把存档当作不存在**、直接当新档开档，不报错——很容易误判成存档不兼容。
+
+卸载原签名 APK 前必须**实际取得**主文件和 `.bac`、记录大小与哈希；仅确认 `allowBackup=true` 不够。各条取数通道的权限边界（含无 root 真机为何一律读不到、鸿蒙 / 卓易通环境的额外隔离）见 [设备侧取数通道](adb.md)。
 
 ## <a id="store-repair"></a>停服后商城的本地发货
 

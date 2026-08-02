@@ -10,7 +10,7 @@ description: 静态逆向移动端应用与游戏，把"它到底按什么规则
 ## 主题边界
 
 - [APK 与 native 库的静态逆向](references/apk.md)：跨应用通用方法。解包分层、资产加解密、缺成套工具时读 native 库、从界面文案反查代码、数值规则表的语义还原、失效在线服务的本地替代、改包后的验证。
-- [鸿蒙与 ANCO 容器](references/harmonyos.md)：平台侧实测。ANCO（鸿蒙里跑 Android 应用的容器）数据边界、HDC 权限墙、宿主备份到底覆盖什么、HMOSBackup 6.1 `encryptionType=2` 的解密链、迁移路径的可行域。
+- [设备侧取数通道](references/adb.md)：怎么把应用私有数据从设备上取出来。adb / Shizuku / 鸿蒙 HDC 各自的权限边界（含"为什么 uid=2000 一律读不了 `/data/user/0`"）、ANCO 容器隔离、厂商备份的实际覆盖范围、HMOSBackup 6.1 `encryptionType=2` 解密链、迁移路径的可行域。
 - [爱养成系列](references/aiyangcheng.md)：单个应用族的完整还原实例，并规定了结局达成条件的汇报格式——用户问"某结局怎么达成"时按 [结局达成条件的汇报格式](references/aiyangcheng.md#report-format) 回答。
 
 ## 通用判断
