@@ -27,7 +27,8 @@
 
 | Skill | 来源 | 说明 |
 | --- | --- | --- |
-| `qiuzhi-skill-creator` | [秋芝2046](https://space.bilibili.com/385670211) | 交互式引导创建新的 skill |<!-- skills-table:begin -->
+| `qiuzhi-skill-creator` | [秋芝2046](https://space.bilibili.com/385670211) | 交互式引导创建新的 skill |
+| `upstream` | [NightGlow0826](https://github.com/NightGlow0826) | 把本地取证压缩成 handoff 交给网页版 Pro 模型做深度规划 / 架构评审，回来后本地继续执行与验证 |<!-- skills-table:begin -->
 | `slidev` | [slidevjs/slidev](https://github.com/slidevjs/slidev) | Slidev 官方 skill |
 | `doc-coauthoring` | [anthropics/skills](https://github.com/anthropics/skills) | 文档协作工作流 |
 | `docx` | [anthropics/skills](https://github.com/anthropics/skills) | Word 文档操作 |
