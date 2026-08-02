@@ -1,70 +1,82 @@
 # 设备侧取数通道：adb / Shizuku / HDC / ANCO
 
-要把一个 App 的私有数据（存档、配置）从设备上取出来，走哪条通道、各自卡在哪。这是重打包保存类工作的**前置条件**——重签名包装不上原签名应用的位置，必须先卸载，一卸载数据就没了，所以取数必须排在改包之前。
+## <a id="channel-overview"></a>通道概览
 
-先给结论表，`无 root 真机` 是最常见也最难的一格：
+把 App 的私有数据（存档、配置）从设备取出，是重打包保存类工作的前置条件。重签名包不能覆盖安装到原签名应用的位置，通常要先卸载；卸载会删除私有数据，因此必须先完成取数。
 
-| 通道 | 能读任意 App 私有目录吗 | 卡在哪 |
+`无 root 真机` 是最常见、也最受限制的场景：
+
+| 通道 | 能读任意 App 私有目录吗 | 限制 |
 |---|---|---|
-| `adb shell`（无 root） | **不能** | 进程是 uid=2000(shell)，被 DAC + SELinux 拦住 |
-| `adb root`（模拟器 / userdebug 构建） | 能 | 正式用户版拒绝，`adbd cannot run as root in production builds` |
-| Shizuku（ADB 模式） | **不能** | 同样是 uid=2000，官方明文说了读不了 |
-| Shizuku（root 模式） | 取决于 SELinux | 需要已 root 的设备；官方未就此给出明确说明 |
+| `adb shell`（无 root） | **不能** | 进程是 uid=2000(shell)，被 DAC 与 SELinux 拦截 |
+| `adb root`（模拟器 / userdebug 构建） | 能 | 正式用户版拒绝，报 `adbd cannot run as root in production builds` |
+| Shizuku（ADB 模式） | **不能** | 同样是 uid=2000；官方明确说明不能读取 |
+| Shizuku（root 模式） | 取决于 SELinux | 需要已 root 的设备；官方没有给出明确结论 |
 | `adb backup` | 受应用清单控制 | 依赖 `allowBackup=true`，且已在新版 Android 上废弃 |
-| 鸿蒙 HDC | **不能** | 同为 uid=2000，且 ANCO 容器另有一层隔离 |
-| 厂商备份 / 云备份 | 看实现 | 实测某鸿蒙壳应用的备份不含内层 Android 应用数据 |
+| 鸿蒙 HDC | **不能** | 同为 uid=2000，ANCO 容器还增加了一层隔离 |
+| 厂商备份 / 云备份 | 取决于实现 | 实测某鸿蒙壳应用的备份不含内层 Android 应用数据 |
 
 ## <a id="private-data-paths"></a>私有数据的位置与权限模型
 
-Android 应用的私有目录有两个等价写法，指的是同一个位置：
+Android 应用私有目录有两个等价写法，指向同一位置：
 
 ```text
 /data/user/0/<package>/          # 多用户体系下的规范路径
 /data/data/<package>/            # 主用户的传统别名
 ```
 
-里面通常分成 `files/`（应用自己写的文件，存档多在这）和 `shared_prefs/`（键值偏好，XML）。
+目录中通常包含 `files/`（应用自行写入的文件，存档多在这里）和 `shared_prefs/`（XML 形式的键值偏好）。
 
-**读不到不是因为"没开权限"，是两层机制叠加：**
+无法读取并不只是"没有打开某个权限"，而是两层机制共同作用：
 
-- **DAC（自主访问控制，就是 Unix 的属主 / 权限位）**：每个应用装上后拿到一个专属 uid，私有目录归它所有，别的 uid 直接被拒。
-- **SELinux MAC（强制访问控制，在 DAC 之上再判一次）**：即使 uid 对得上，安全上下文不匹配照样拒绝。
+- **DAC（自主访问控制，即 Unix 的属主与权限位）**：每个应用安装后获得专属 uid，私有目录归该 uid 所有，其他 uid 会被直接拒绝。
+- **SELinux MAC（强制访问控制，在 DAC 之上再次判断）**：即使 uid 匹配，安全上下文不匹配仍会拒绝访问。
 
-`adb shell` 拿到的进程是 **uid=2000(shell)**，两层都不满足。这就是为什么"我明明开了 USB 调试却还是 permission denied"——调试授权给的是 shell 身份，不是数据访问权。
+`adb shell` 进程的身份是 **uid=2000(shell)**，两层条件都不满足。因此，打开 USB 调试后仍出现 `permission denied` 并不矛盾：调试授权给的是 shell 身份，不是目标应用的数据访问权。
 
-## <a id="adb-routes"></a>adb 的可行与不可行路径
+## <a id="adb-routes"></a>adb 权限、备份与恢复
 
-**`adb root` 只在模拟器和 userdebug / eng 构建上可用。** 可用时最省事：`adb root` 之后直接 `adb pull` / `adb push` 私有目录。正式零售固件的 `adbd` 编译时就禁掉了这条路，执行会直接报错，不是权限没配对。
+### <a id="adb-root"></a>`adb root` 的构建限制
 
-**`adb backup` 依赖应用自己允许，且已被废弃。** 应用清单里的 `android:allowBackup` 为 `false` 时框架直接拒绝。即使为 `true`，`adb backup` 在较新的 Android 上已标记废弃，不少厂商实现里实际已经不可用或只备份系统数据。
+`adb root` 只在模拟器和 userdebug / eng 构建中可用。可用时可以在 `adb root` 后直接用 `adb pull` / `adb push` 访问私有目录。正式零售固件在编译 `adbd` 时就禁用了这条路径；执行失败不是权限没有配置好。
+
+### <a id="adb-backup"></a>`adb backup` 的适用范围
+
+`adb backup` 依赖应用自行允许备份。清单中的 `android:allowBackup` 为 `false` 时，框架会直接拒绝；即使为 `true`，`adb backup` 在较新的 Android 上也已标记废弃，不少厂商实现中已经不可用，或只能备份系统数据。
 
 > 来源边界：`allowBackup` 与 `adb backup` 的废弃属于 Android 平台政策，不在 Shizuku 等第三方项目的文档范围内；本条按平台公开行为陈述，具体到某设备某版本是否还能用，需实机验证。
 
-**恢复比备份更容易翻车，属主和权限位必须对。** 把文件贴回私有目录时：
+### <a id="restore-ownership"></a>文件恢复的属主与权限
 
-- 覆盖单个文件，不要整个替换应用数据目录。
-- 文件属主必须与应用新生成的文件一致，权限通常是 `0600`。**属主错了的典型症状是"应用把存档当作不存在"**——不报错、不崩溃，直接当新档开始，很容易误判成存档格式不兼容。
-- 先让新装的应用**启动一次再强制停止**，让它自己把私有目录和属主建好，再往里贴文件。
+恢复通常比备份更容易出错。把文件放回私有目录时：
+
+- 逐个覆盖文件，不要替换整个应用数据目录。
+- 文件属主必须与应用新生成的文件一致，权限通常为 `0600`。**属主错误的典型症状是应用把存档当作不存在**：它不报错、不崩溃，而是直接建立新档，很容易被误判为存档格式不兼容。
+- 先启动新安装的应用一次，再强制停止，让应用自行创建私有目录并确定属主；之后再放回文件。
 
 ## <a id="shizuku"></a>Shizuku 的能力边界
 
-Shizuku 常被当成"无 root 提权"的银弹，但它**解决不了取私有数据这件事**，值得先说清楚免得白折腾。
+Shizuku 常被当成"无 root 提权"的通用方案，但在 ADB 模式下，它解决不了读取其他应用私有数据的问题。
 
-**它是什么**：引导用户以 root（uid=0）或 ADB/shell（uid=2000）身份启动一个常驻服务进程，再把该进程的 Binder 句柄分发给集成了 Shizuku SDK 的应用；应用通过这个句柄让高权限进程**代为调用系统 API**，省掉"起 su 子进程执行命令再解析文本输出"的旧路子。
+### <a id="shizuku-model"></a>身份与调用模型
+
+Shizuku 引导用户以 root（uid=0）或 ADB / shell（uid=2000）身份启动常驻服务，再把该服务的 Binder 句柄分发给集成 Shizuku SDK 的应用。应用通过句柄让高权限进程**代为调用系统 API**，替代"启动 su 子进程并解析文本输出"的旧路径。
 
 > 官方定义："With Shizuku API, you can call your Java/JNI code with root/shell (ADB) identity." —— [Shizuku-API README](https://github.com/RikkaApps/Shizuku-API/blob/a27f6e4151ba7b39965ca47edb2bf0aeed7102e5/README.md)
 
-**关键限制——ADB 模式读不了别的应用的数据目录。** 官方文档在对比 ADB 与 ROOT 权限差异时明文写道：
+### <a id="shizuku-adb-limit"></a>ADB 模式的文件访问限制
+
+官方文档在比较 ADB 与 ROOT 权限时明确写道：
 
 > "In the Linux world, the privilege is determined by Shell's uid, capabilities, SELinux context, etc. For example, **Shell (ADB) cannot access other apps' data files `/data/user/0/<package>`**." —— [Shizuku-API README，"Differents of the privilege betweent ADB and ROOT"](https://github.com/RikkaApps/Shizuku-API/blob/a27f6e4151ba7b39965ca47edb2bf0aeed7102e5/README.md)
 
-道理和上一节一样：ADB 模式下 Shizuku 服务进程本身就是 uid=2000，它没有比 `adb shell` 更高的 Linux 权限。Shizuku 提升的是**能调哪些系统 API**（shell 身份被授予了 `INSTALL_PACKAGES`、`WRITE_SECURE_SETTINGS`、`FORCE_STOP_PACKAGES` 等一批特殊 Android 权限），不是**能读哪些文件**。这两件事常被混为一谈。
+原因与 `adb shell` 相同：ADB 模式的 Shizuku 服务本身就是 uid=2000，并没有更高的 Linux 文件权限。Shizuku 扩展的是**可调用的系统 API**——shell 身份拥有 `INSTALL_PACKAGES`、`WRITE_SECURE_SETTINGS`、`FORCE_STOP_PACKAGES` 等特殊 Android 权限——而不是**可读取的文件范围**。这两类能力不能混为一谈。
 
-**还有三条会影响可行性判断的事实：**
+### <a id="shizuku-integration"></a>接入、会话与 root 模式
 
-- **目标应用必须自己集成 Shizuku SDK**（加依赖、在清单里声明 `ShizukuProvider`、走一套类似运行时权限的授权流程）。不能拿它去操作一个没适配过的第三方应用——这直接排除了"用 Shizuku 掏一个停服老游戏的存档"这类想法。
-- **ADB 方式启动的会话重启即失效**，每次开机要重新用 adb 拉起来。Android 11+ 可以用系统内置的无线调试在设备上直接完成、不用连 PC；root 用户则改用 Magisk 模块 Sui，开机自动生效。
-- **root 模式（uid=0）下能不能读私有目录，官方没给明确说法**。uid=0 一般能绕过 DAC，但 Android 的 SELinux enforcing 对 root 同样有约束。这一格标"未知"，要用得实测。
+- **目标应用必须自行集成 Shizuku SDK**：加入依赖、在清单中声明 `ShizukuProvider`，并完成类似运行时权限的授权流程。不能拿 Shizuku 直接操作没有适配的第三方应用；这也排除了"用 Shizuku 取出一个停服老游戏存档"的设想。
+- **通过 ADB 启动的会话重启后失效**，每次开机都要重新启动。Android 11+ 可使用系统无线调试直接在设备上完成，无需连接电脑；root 用户可以改用 Magisk 模块 Sui，使其开机自动生效。
+- **root 模式（uid=0）是否能读取私有目录，官方没有给出明确说明**。uid=0 通常能绕过 DAC，但 Android 的 SELinux enforcing 对 root 仍有限制，因此这一项只能标为"未知"，需要实测。
 
 > 版本口径：以上依据 Shizuku [v13.6.0](https://github.com/RikkaApps/Shizuku/releases/tag/v13.6.0)（2025-05-25）及同期 Shizuku-API 文档；要求 Android 6.0+。**本条整节未在本地环境实测**，是照官方文档整理的能力边界。
 
@@ -72,39 +84,47 @@ Shizuku 常被当成"无 root 提权"的银弹，但它**解决不了取私有�
 
 > 实测快照：HarmonyOS DataBackup 6.1.0.110、卓易通 1.0.10.60，正式用户版（非可调试构建）。本节及以下均由实机操作与解密验证。
 
-HDC（HarmonyOS Device Connector）是鸿蒙的设备调试协议，能力类似 Android ADB，定义与命令见 [OpenHarmony HDC README](https://github.com/openharmony/developtools_hdc/blob/5a8e35d0299f19ce9adac8b54756c5b8be58b9ff/README_zh.md)。
+HDC（HarmonyOS Device Connector）是鸿蒙的设备调试协议，能力类似 Android ADB。定义与命令见[OpenHarmony HDC README](https://github.com/openharmony/developtools_hdc/blob/5a8e35d0299f19ce9adac8b54756c5b8be58b9ff/README_zh.md)。
 
-卓易通一类 ANCO 环境里，鸿蒙应用只是**容器管理器**；Android 应用及其私有数据位于内层 LXC / iSulad 容器。宿主上可能把数据映射为：
+### <a id="anco-storage"></a>容器数据位置
+
+在卓易通一类 ANCO 环境中，鸿蒙应用只是**容器管理器**；Android 应用及其私有数据位于内层 LXC / iSulad 容器。宿主可能把数据映射到：
 
 ```text
 /mnt/data/ANCO_APP_DATA/<android-package>/
 ```
 
-**`mountinfo` 里看得见挂载，只证明路径存在，不证明当前身份读得到。** 这是最容易误判的一步——看到路径就以为拿到数据了。实测的四道墙：
+`mountinfo` 中能看到挂载，只能证明路径存在，不能证明当前身份有权读取。看到路径就认为数据已经可取，是最容易发生的误判。
 
-- HDC shell 身份是 `uid=2000(shell)`，即便带上 `file_manager` 组，目录遍历仍被 ANCO / SELinux 拒绝。
-- `hdc file recv` 由 daemon 代为读取，仍然撞同一个 `permission denied`——换传输方式绕不过权限。
-- 正式用户版拒绝 `hdc smode`，提示设备不是可调试构建。
+### <a id="hdc-access"></a>HDC 访问限制
+
+实测存在以下访问边界：
+
+- HDC shell 身份是 `uid=2000(shell)`；即使附带 `file_manager` 组，目录遍历仍会被 ANCO / SELinux 拒绝。
+- `hdc file recv` 虽由 daemon 代为读取，仍会遇到同一个 `permission denied`；更换传输命令绕不过权限边界。
+- 正式用户版拒绝 `hdc smode`，并提示设备不是可调试构建。
 - 容器网络没有开放常见的 Android ADB 端口。
 
-**端口可达不等于协议可用。** 曾据"某内网地址上有端口开着"推断那是 ADB/HDC 服务，事后证明该地址只是虚拟组网分配的，端口开着仅说明经组网可达，与协议无关。要匹配 HDC 协议并完成设备侧授权后才能建立 shell。
+### <a id="protocol-identification"></a>协议识别
+
+端口可达不等于协议可用。曾经根据"某内网地址上有端口开放"推断它是 ADB / HDC 服务，事后确认该地址只是虚拟组网分配的地址；端口开放只说明经组网可达，与实际协议无关。只有匹配 HDC 协议并完成设备侧授权，才能建立 shell。
 
 ## <a id="host-backup-scope"></a>宿主备份的覆盖范围
 
-在华为「数据备份 → 外部存储」里勾选卓易通，得到的是**卓易通这个 HarmonyOS bundle 自己的备份**。解密后 TAR 成员只有：
+在华为「数据备份 → 外部存储」中勾选卓易通，得到的是**卓易通这个 HarmonyOS bundle 自身的备份**。解密后的 TAR 成员只有：
 
 ```text
 /data/storage/el2/base/files/...
 /data/storage/el2/base/haps/<module>/...
 ```
 
-没有 `/mnt/data/ANCO_APP_DATA/`、没有 Android 包名、没有内层应用的存档文件（本案例要找的 `WUD_Default.bin` 完全不在其中）；对成员内容做全文扫描也搜不到相关引用。
+其中没有 `/mnt/data/ANCO_APP_DATA/`、Android 包名或内层应用存档；本案例需要的 `WUD_Default.bin` 完全不在其中，对成员内容做全文扫描也找不到相关引用。
 
-**「备份成功」与「目标数据已进入备份」是两个独立结论。** 看到应用出现在备份列表里、看到备份包体积非零，都不能推出后者。唯一可靠的验证是解密备份、列出 TAR 成员、确认目标文件在里面。
+**"备份成功"与"目标数据已进入备份"是两个独立结论。** 应用出现在备份列表中、备份包体积非零，都不能推出目标数据已经被包含。唯一可靠的验证方式是解密备份、列出 TAR 成员，并确认目标文件确实存在。
 
 ## <a id="hmosbackup-crypto"></a>HMOSBackup 6.1 加密格式
 
-外部存储备份会话含一个顶层 `.info.json`；每个模块有自己的 `.info.json`、`manage.json` 和 `part.0.tar`。以下是 `encryptionType=2` 的完整解密链。
+外部存储备份会话包含一个顶层 `.info.json`；每个模块有各自的 `.info.json`、`manage.json` 和 `part.0.tar`。以下是 `encryptionType=2` 的完整解密链。
 
 ### <a id="outer-key"></a>外层备份密钥
 
@@ -117,7 +137,7 @@ wrapKey = PBKDF2-HMAC-SHA256(
 )
 ```
 
-`Base64Decode(backupKey)` 共 68 字节，布局：
+`Base64Decode(backupKey)` 共 68 字节，布局如下：
 
 ```text
 offset  0..11   12-byte header      实测为三个大端整数 0000000c 00000010 00000000
@@ -126,7 +146,7 @@ offset 28..51   24-byte ciphertext
 offset 52..67   16-byte GCM tag
 ```
 
-解密时取 `body = 解码结果[28:]`（即 24 字节密文 + 16 字节 tag 共 40 字节），用 AES-256-GCM：
+取 `body = 解码结果[28:]`，也就是 24 字节密文与 16 字节 tag 共 40 字节，再使用 AES-256-GCM 解密：
 
 ```text
 key        = wrapKey
@@ -138,9 +158,9 @@ tag        = body[-16:]
 
 ⚠️ 待验证：nonce 用的是**会话元数据里的 `backupIv` 字段**，而不是内嵌在 `backupKey` 里 offset 12 处的那 16 字节。这两者是否恒等、内嵌字段是否根本不参与解密，当时没有单独对照验证——重做时值得先把两段字节打出来比一比，能省掉一轮排查。
 
-解出的明文是一段 Base64 形式的短文本。**派生模块密钥时用它的文本字节本身，不要再做一次 Base64 解码**——这里最容易多解一层，之后所有 GCM 校验都会失败，且失败点离真正的原因很远。
+解出的明文是一段 Base64 形式的短文本。派生模块密钥时要使用**这段文本自身的字节**，不要再次 Base64 解码。多解一层会使后续所有 GCM 校验失败，而且失败点离真实原因很远。
 
-### <a id="module-key"></a>模块密钥与文件
+### <a id="module-key"></a>模块密钥与文件解密
 
 ```text
 moduleKey = PBKDF2-HMAC-SHA256(
@@ -151,7 +171,7 @@ moduleKey = PBKDF2-HMAC-SHA256(
 )
 ```
 
-模块的 `manage.json` 和 `part.0.tar` 用同一套：
+模块的 `manage.json` 与 `part.0.tar` 使用同一组参数：
 
 ```text
 AES-256-GCM
@@ -160,25 +180,36 @@ aad     = empty
 payload = ciphertext || 16-byte tag
 ```
 
-**按顺序验证，每步都卡死再进下一步：**
+### <a id="backup-validation"></a>解密结果验证
 
-1. GCM 标签必须通过（这一步就能否掉绝大多数密钥派生错误）。
-2. `manage.json` 应解成合法 UTF-8 JSON，并从中读出 TAR 明文的 `st_size`。
-3. TAR 明文长度应与 `st_size` 完全相同，且 `tar -tf` 能正常列出成员。
-4. 再检查成员路径与内容是否真的包含目标数据——前三步全过也可能只是备份了无关模块，见上一节。
+按以下顺序逐步验证，前一步不通过就不要继续：
 
-**解密失败时先别断定密码错。** 实测中一次失败同时存在两种可能（密码给错、或密钥派生格式判断有误），单看失败结果无法区分。当时的判别办法是拿同一个密码去系统「恢复」界面试，看它认不认这个备份——把"密码对不对"和"我的实现对不对"拆成两个独立问题。
+1. GCM 标签必须通过；这一步可以排除绝大多数密钥派生错误。
+2. `manage.json` 应解密为合法的 UTF-8 JSON，并能从中读出 TAR 明文的 `st_size`。
+3. TAR 明文长度应与 `st_size` 完全一致，且 `tar -tf` 能正常列出成员。
+4. 最后检查成员路径和内容是否真正包含目标数据。前三步全部通过，也可能只是成功解出了无关模块，见[宿主备份的覆盖范围](#host-backup-scope)。
 
-密码通过环境变量、凭据代理或无回显输入传入，避免进入命令行参数、shell history 和日志；中间派生出的 master text 同样不该打印。
+### <a id="backup-troubleshooting"></a>解密失败与凭据处理
 
-## <a id="migration-options"></a>迁移路径的可行域
+解密失败时，不要立刻断定密码错误。实测中，同一个失败结果可能来自两类原因：密码输入错误，或密钥派生格式判断错误；仅凭 GCM 失败无法区分。当时的判别办法是把同一密码输入系统「恢复」界面，观察系统是否接受该备份，从而把"密码是否正确"与"实现是否正确"拆成两个独立问题。
 
-当上述通道都取不到数据时，剩下的方向只有能跨越隔离边界的机制：
+密码通过环境变量、凭据代理或无回显输入传入，避免进入命令行参数、shell history 和日志。中间派生出的 master text 同样不应打印。
 
-- 厂商提供、且**明确声明包含目标应用数据**的迁移 / 克隆接口（ANCO 环境下要特别确认它进不进内层容器）；
-- 可调试或已授权的系统镜像，能进入容器 namespace 或直接读对应挂载；
-- **原签名应用自身提供的导出功能**，导出后再由新签名版本导入。
+## <a id="migration-options"></a>跨隔离边界的迁移机制
 
-**顺序不能反：没有原签名密钥时，不能先装带导出功能的重签名版本**——重签名包装不上原签名应用的位置，装之前必须卸载，一卸载数据就没了。先解决导出，再动原包。
+### <a id="migration-candidates"></a>候选机制
 
-破坏性操作前，至少满足其一：已实际取得主存档与滚动备份（有大小与哈希），或已在一次性设备 / 克隆环境里验证过迁移机制确实能恢复目标应用的数据。
+当上述通道都无法读取数据时，剩余方向只能是能够跨越隔离边界的机制：
+
+- 厂商提供、且**明确声明包含目标应用数据**的迁移或克隆接口；在 ANCO 环境中，还要确认它是否进入内层容器。
+- 可调试或已授权的系统镜像，可以进入容器 namespace（命名空间）或直接读取对应挂载。
+- **原签名应用自身提供的导出功能**，先导出，再由新签名版本导入。
+
+### <a id="migration-prerequisites"></a>迁移前置检查
+
+顺序不能反：没有原签名密钥时，不能先安装带导出功能的重签名版本。重签名包无法覆盖原签名应用；安装前必须卸载，而卸载会删除数据。必须先解决导出，再动原包。
+
+破坏性操作前，至少满足以下条件之一：
+
+- 已实际取得主存档与滚动备份，并记录文件大小和哈希；只确认 `allowBackup=true` 或看到备份工具报告成功，都不等于数据已经到手。
+- 已在一次性设备或克隆环境中验证迁移机制确实能恢复目标应用数据。
