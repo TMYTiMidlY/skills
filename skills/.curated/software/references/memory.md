@@ -204,12 +204,16 @@ WSL2 把 `vm.overcommit_memory` 设为 `1`（永不拒绝），因此 `CommitLim
 | 键 | 默认值 | 说明 |
 |---|---|---|
 | `memory` | Windows 物理内存的 50% | 虚拟机内存上限。写法 `384GB` / `512MB`，省略单位按字节 |
-| `swap` | **内存大小的 25%**，向上取整到 GB | 虚拟机 swap 大小，`0` 为禁用 |
+| `swap` | **虚拟机内存上限（`memory` 的取值）的 25%**，向上取整到 GB | 虚拟机 swap 大小，`0` 为禁用 |
 | `swapFile` | `%Temp%\swap.vhdx` | swap 虚拟磁盘路径 |
 | `processors` | 与 Windows 逻辑处理器数相同 | 分配给虚拟机的逻辑处理器数 |
 | `autoMemoryReclaim`（`[experimental]` 段） | **`dropCache`** | 见下 |
 
 `swap` 与 `autoMemoryReclaim` 的默认值都不是"关闭"：不写 `swap=` 会按 `memory` 的 25% 自动折算（`memory=480GB` 对应 120 GiB swap），不写 `autoMemoryReclaim` 时回收机制仍在工作。要控制这两项必须显式写出来。
+
+两个默认值叠加时基数会连乘：`memory` 不写时是物理内存的 50%，`swap` 再取它的 25%，最终等于**物理内存的 12.5%**。512 GiB 的机器什么都不配，拿到的是 256 GiB 虚拟机内存加 64 GiB swap。
+
+> `swap` 默认值的基数在官方文档里有两种措辞：键表写 "25% of memory size on Windows"，同页示例注释写 "25% of available RAM"，两者基数不同。以前者为准——`memory=480GB` 时内核日志记录的 swap 设备为 `125829120k`，恰为 480 GiB 的 25%，而非物理内存 512 GiB 的 25%。
 
 `autoMemoryReclaim` 三个取值：
 
@@ -233,7 +237,17 @@ WSL2 把 `vm.overcommit_memory` 设为 `1`（永不拒绝），因此 `CommitLim
 
 ### <a id="accounting"></a>两侧内存用量的核对
 
-**`free` 的 `used` 列刻意不含页缓存**（内核认为缓存随时可回收，不算真正占用），而宿主看到的是虚拟机的**全部**工作集，缓存也是实实在在的物理页。因此两侧对比要用 `MemTotal − MemFree`：
+两侧的数要可比，先得选对 guest 侧的口径。`/proc/meminfo` 里三个量的含义：
+
+| 字段 | 含义 |
+|---|---|
+| `MemTotal` | 内核可支配的物理内存总量。guest 里就是虚拟机拿到的额度，比 `.wslconfig` 的 `memory=` 略小（内核自身预留掉一部分） |
+| `MemFree` | 完全空着、一个字节都没装的页 |
+| `MemAvailable` | 内核估计"还能拿给新进程用多少"，把可回收的缓存算作可用，但排除掉估计回收不动的部分 |
+
+因此 **`MemTotal − MemFree` = 所有已经装了东西的页**，无论装的是进程数据还是文件缓存。这正是宿主眼里这台虚拟机占住的物理页数量，所以两侧可比。
+
+而 `free` 的 `used` 列**刻意不含页缓存**（内核认为缓存随时可回收，不算真正占用），它算的是 `MemTotal − MemAvailable`。注意 `used` 也**不等于** `MemTotal − MemFree − buff/cache`——`MemAvailable` 还额外扣掉了那部分回收不动的缓存，两者会差出几 GiB。要含缓存的口径就直接相减，别拿 `used` 加 `buff/cache` 凑：
 
 ```bash
 # guest 侧：含缓存的真实占用
