@@ -39,10 +39,6 @@ Zellij Web client、HTTPS 证书要求、login token/session token、反代注�
 
 多用户共享服务、systemd 模板单元与按 UID 分配端口、systemd `LoadCredential` 注入密钥，**user 级服务（`systemctl --user`）与 `loginctl enable-linger` 常驻**（user manager 生命周期默认绑 login session、登出即被杀、开机不自启的坑），以及 **stdout 块缓冲导致 journal 看不到服务卡死前最后输出**（`StandardOutput=journal` 接的是管道不是 TTY；Python 要 `PYTHONUNBUFFERED=1`，`stdbuf` 对它无效）见 [references/service.md](references/service.md)。
 
-## Agent harness / Copilot CLI
-
-GitHub Copilot CLI / SDK / MCP / session export 与跨 Claude Code、Codex 等 coding agent 的 runtime / harness 架构笔记已拆到 `harness` skill。`software` 只保留相邻的软件运维主题，例如 Zellij、SSH、Git、systemd、Windows/WSL 与对象存储客户端。
-
 ## ChatGPT 网页端自动化
 
 ChatGPT 网页端 Pro / Extended 自动化、`steipete/oracle` browser engine、Windows Chrome DevTools、WSL Mirror / NAT 差异、以及必须用 network payload 验证真实模型与 thinking effort 的经验见 [references/oracle-pro.md](references/oracle-pro.md)。
