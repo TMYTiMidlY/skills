@@ -99,10 +99,9 @@ done
 写、改、审查、重构任何 skill 都按 [references/conventions.md](references/conventions.md) 的要求来——那是唯一出处，含完整理由与正反例。**别在这里或别的 skill 里重抄规则，要提就写条目名链过去。** 速览（点进 conventions 看细节）：
 
 - **内容**：像人类一样说话｜不说废话｜命令 / 配置简洁准确｜图形界面流程具体｜客观完整地讲述内容｜自然穿插踩坑 / 排障｜个人配置不入正文
-- **正确性**：先核对正文附近引用块，再联网搜索一手来源交叉验证｜冲突、证据不足和本仓约定明确标记｜来源与置信度紧跟对应结论
 - **引用**：引用做成可点击 Markdown 链接（跨 skill 例外）｜跨 skill 只写 skill 名 + 能力边界、不写任何文件路径｜同 skill 内用相对路径｜章节跳转用显式 `<a id>` 锚点（不用标题派生 slug）｜引上游源码 / 文档锁到版本（别指 `main` / `latest` 滚动 ref）
 - **标题**：命名"这节是什么"、不预告结论 / 计数 / 排名｜不编号、不用 §N 交叉引用｜并列小节靠客观属性区分｜改带 `<a id>` 的标题只改文字
-- **结构**：渐进式披露三层按需加载、分工清楚｜单文件长度不是拆分理由｜重构不重不漏｜脚本用 `uv` + PEP 723 内联依赖｜不绑定特定 AI 工具名｜frontmatter `name` 与目录名一致｜README 与 skill 状态同步
+- **结构**：渐进式披露三层按需加载、分工清楚｜单文件长度不是拆分理由｜脚本用 `uv` + PEP 723 内联依赖｜不绑定特定 AI 工具名｜frontmatter `name` 与目录名一致｜README 与 skill 状态同步
 
 ## 重构已有文档
 
@@ -110,7 +109,7 @@ done
 
 ## 审查现有 skills
 
-用户让"审查 / 检查所有 skill 是否合规"时，走跨多 skill 的合规扫描：逐条核对 [references/conventions.md](references/conventions.md) 每项，外加只在审查时做的跨 skill 专项检查（嫁接 LICENSE、是否落后上游、`name` 全局唯一）。默认**只审不改**。完整流程、输出格式与专项检查见 [references/review.md](references/review.md)。
+用户让"审查 / 检查所有 skill 是否合规"时，走跨多 skill 的合规扫描：逐条核对 [references/conventions.md](references/conventions.md) 每项，核验文档内容正确性，再做跨 skill 专项检查（嫁接 LICENSE、是否落后上游、`name` 全局唯一）。默认**只审不改**。完整流程、输出格式与专项检查见 [references/review.md](references/review.md)。
 
 ## 解决合并冲突
 
