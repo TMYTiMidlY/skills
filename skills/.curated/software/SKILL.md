@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列主题的问题先来这里查。涵盖 SSH 与 systemd 服务、Zellij 终端复用、Windows / WSL 互操作（PowerShell / UAC）与 WSL2 内存模型（含 Slurm 内存限额）、挂载与 SMB/CIFS 文件共享、Linux 回收站（trash-cli）、PostgreSQL 读写性能与 SSD/HDD 存储介质选型、包管理器全景（apt / Nix / npm / pip / conda）与 pixi、uv、Go 工具链、Docker 安装与多用户共用、Coolify 与 Dokploy 自托管 PaaS、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、USTC Overleaf/olcli、文档格式转换（pandoc / feishu2md / MinerU）、自托管文档分享、OpenList 网盘聚合、本地中文 ASR、ChatGPT 网页端自动化、Windows/Office 激活与 macOS 杂项。Git / jj 操作与发版 CI 转用 `git` skill；Agent harness、Copilot CLI/SDK/MCP 与会话导出转用 `harness` skill。
+description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列主题的问题先来这里查。涵盖 SSH 与 systemd 服务、MkDocs 文档站（配置、导航、Material/PyMdown、KaTeX/MathJax、开发站与 Pages 分离、浏览器编辑与 Git-backed CMS、Git 修改记录、常驻作者服务）、Zellij 终端复用、Windows / WSL 互操作（PowerShell / UAC）与 WSL2 内存模型（含 Slurm 内存限额）、挂载与 SMB/CIFS 文件共享、Linux 回收站（trash-cli）、PostgreSQL 读写性能与 SSD/HDD 存储介质选型、包管理器全景（apt / Nix / npm / pip / conda）与 pixi、uv、Go 工具链、Docker 安装与多用户共用、Coolify 与 Dokploy 自托管 PaaS、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、USTC Overleaf/olcli、文档格式转换（pandoc / feishu2md / MinerU）、自托管文档分享、OpenList 网盘聚合、本地中文 ASR、ChatGPT 网页端自动化、Windows/Office 激活与 macOS 杂项。Git / jj 操作与发版 CI 转用 `git` skill；Agent harness、Copilot CLI/SDK/MCP 与会话导出转用 `harness` skill。
 ---
 
 # Software
@@ -38,6 +38,10 @@ Zellij Web client、HTTPS 证书要求、login token/session token、反代注�
 ## Service / systemd
 
 多用户共享服务、systemd 模板单元与按 UID 分配端口、systemd `LoadCredential` 注入密钥，**user 级服务（`systemctl --user`）与 `loginctl enable-linger` 常驻**（user manager 生命周期默认绑 login session、登出即被杀、开机不自启的坑），以及 **stdout 块缓冲导致 journal 看不到服务卡死前最后输出**（`StandardOutput=journal` 接的是管道不是 TTY；Python 要 `PYTHONUNBUFFERED=1`，`stdbuf` 对它无效）见 [references/service.md](references/service.md)。
+
+## MkDocs
+
+从 Markdown 源文件、`mkdocs.yml`、主题、插件和扩展的基本模型开始，逐步覆盖原生 `nav`、awesome-pages 的 `.pages`、front matter 权重、Material/PyMdown、KaTeX/MathJax、开发站与静态 Pages 的行为分离、浏览器整页/WYSIWYG/内容块编辑、Sveltia 等 Git-backed CMS、Git 修改时间与最近更新、strict/validation、常驻 user service、同域 HTTP+WSS 作者网关及分层排障，见 [references/mkdocs.md](references/mkdocs.md)。公网 TLS 与身份认证转用 `vps-maintenance` skill；EasyTier、端口转发与 WSL/宿主网络转用 `network` skill；Forgejo Actions 与 git-pages 发布协议转用 `git` skill。
 
 ## ChatGPT 网页端自动化
 
