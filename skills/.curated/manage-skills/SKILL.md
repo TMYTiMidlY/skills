@@ -98,14 +98,15 @@ done
 
 写、改、审查、重构任何 skill 都按 [references/conventions.md](references/conventions.md) 的要求来——那是唯一出处，含完整理由与正反例。**别在这里或别的 skill 里重抄规则，要提就写条目名链过去。** 速览（点进 conventions 看细节）：
 
-- **内容**：概念优先、说人话｜命令 / 示例优先｜每条说法有据、来源与置信度就近｜踩坑 / 排障紧贴主题｜少写"给 agent 自动执行的操作流程"（reference 只描述目标产物）｜不过度限制、少堆告诫｜个人配置不入正文、脱敏用占位符
+- **内容**：像人类一样说话｜不说废话｜命令 / 配置简洁准确｜图形界面流程具体｜客观完整地讲述内容｜自然穿插踩坑 / 排障｜个人配置不入正文
+- **正确性**：先核对正文附近引用块，再联网搜索一手来源交叉验证｜冲突、证据不足和本仓约定明确标记｜来源与置信度紧跟对应结论
 - **引用**：引用做成可点击 Markdown 链接（跨 skill 例外）｜跨 skill 只写 skill 名 + 能力边界、不写任何文件路径｜同 skill 内用相对路径｜章节跳转用显式 `<a id>` 锚点（不用标题派生 slug）｜引上游源码 / 文档锁到版本（别指 `main` / `latest` 滚动 ref）
 - **标题**：命名"这节是什么"、不预告结论 / 计数 / 排名｜不编号、不用 §N 交叉引用｜并列小节靠客观属性区分｜改带 `<a id>` 的标题只改文字
-- **结构**：渐进式披露三层（description → SKILL.md → references）、单文件长度不是拆分理由｜脚本用 `uv` + PEP 723 内联依赖｜不绑定特定 AI 工具名｜frontmatter `name` 与目录名一致｜README 与 skill 状态同步
+- **结构**：渐进式披露三层按需加载、分工清楚｜单文件长度不是拆分理由｜重构不重不漏｜脚本用 `uv` + PEP 723 内联依赖｜不绑定特定 AI 工具名｜frontmatter `name` 与目录名一致｜README 与 skill 状态同步
 
 ## 重构已有文档
 
-把一篇已成型的文档（SKILL.md 或 reference）做结构性重排 / 打磨——理顺标题树、章节归属、来源组织，且不丢信息。核心：**先给「改后大纲」供审阅、批准后才动手**，全程对照 [references/conventions.md](references/conventions.md) 的要求逐条过。完整四步流程与大纲格式见 [references/refactor.md](references/refactor.md)。
+把一篇已成型的文档（SKILL.md 或 reference）做深度重构：核验事实，理顺标题树、章节归属和来源组织，做到语义不漏、重复不留。核心：**先给改后大纲和覆盖台账供审阅，批准后才动手**，全程对照 [references/conventions.md](references/conventions.md) 逐条核对。完整流程与大纲格式见 [references/refactor.md](references/refactor.md)。
 
 ## 审查现有 skills
 
