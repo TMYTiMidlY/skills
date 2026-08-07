@@ -211,9 +211,9 @@
     "repo": "hugohe3/ppt-master",
     "path": "skills/ppt-master",
     "branch": "main",
-    "synced_commit": "9c98a6e",
-    "synced_date": "2026-05-27T12:19:59Z",
-    "description": "AI 多角色协作把 PDF/DOCX/URL/Markdown 转成原生可编辑 PPTX（真 DrawingML 形状/文本框）"
+    "synced_commit": "4dcf3c9",
+    "synced_date": "2026-08-07T03:27:39Z",
+    "description": "AI 多角色协作生成原生可编辑 PPTX，并创建/复用 Brand、Style、Layout、Deck 模板或填充/增强现有 PPTX"
   },
   ".experimental/humanizer-zh": {
     "repo": "op7418/Humanizer-zh",

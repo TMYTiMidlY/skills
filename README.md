@@ -39,7 +39,7 @@
 | `frontend-skill` | [openai/skills](https://github.com/openai/skills) | 高质量前端页面构建 |
 | `grill-with-docs` | [mattpocock/skills](https://github.com/mattpocock/skills) | 结合项目文档压力测试计划 |
 | `grill-me` | [mattpocock/skills](https://github.com/mattpocock/skills) | 通过连续追问压力测试方案 |
-| `ppt-master` | [hugohe3/ppt-master](https://github.com/hugohe3/ppt-master) | AI 多角色协作把 PDF/DOCX/URL/Markdown 转成原生可编辑 PPTX（真 DrawingML 形状/文本框） |
+| `ppt-master` | [hugohe3/ppt-master](https://github.com/hugohe3/ppt-master) | AI 多角色协作生成原生可编辑 PPTX，并创建/复用 Brand、Style、Layout、Deck 模板或填充/增强现有 PPTX |
 | `handoff` | [mattpocock/skills](https://github.com/mattpocock/skills) | 把当前对话压缩成 handoff 文档，便于另一个 agent 接手；自动建议下一步可用 skill、去除敏感信息、保存到临时目录 |
 | `prototype` | [mattpocock/skills](https://github.com/mattpocock/skills) | 构建可丢弃的原型快速打磨设计：分"可运行 terminal app"（验证状态/业务逻辑）与"多套 UI 变体可切换路由"两条路线 |
 
