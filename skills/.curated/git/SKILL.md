@@ -1,6 +1,6 @@
 ---
 name: git
-description: 用户要提交 / 回退 / 改写 git 历史、开隔离工作区做实验、克隆不下来仓库或 submodule、分不清 gh 登录与提交身份、用 jj 干活、配自动发版与发布 CI，或自建 Forgejo / Gitea 与 git-pages 静态站时使用。核心是先认清动的是哪棵树（HEAD / index / worktree）、发版先认清版本真相源是配置文件还是 Git 历史、以及临时绕行不落进仓库长期配置。
+description: 处理 Git/jj 提交与历史、隔离工作区、受限网络获取、身份认证、发版 CI 或自建 forge/静态站时使用。核心是先分清 HEAD、暂存区和工作区，再选择可回滚且不污染长期配置的操作。
 ---
 
 # Git

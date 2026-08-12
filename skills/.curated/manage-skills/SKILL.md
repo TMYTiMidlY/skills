@@ -1,6 +1,6 @@
 ---
 name: manage-skills
-description: 安装、卸载、创建、拆分、重命名、审查、解决分叉分支的合并冲突，或维护本地 skills 时使用；关注 skill 边界、触发描述、跨 skill 引用规范、渐进式披露三层结构（description → SKILL.md → references），以及个人配置与 skill 正文分离。
+description: 创建、安装、重构、审查或合并本地 skill 时使用。核心是维护清晰的能力边界、渐进式文档结构、可追踪的安装链接与一致的仓库规范。
 ---
 
 # Manage Skills

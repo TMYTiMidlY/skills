@@ -1,6 +1,6 @@
 ---
 name: vps-maintenance
-description: 新服务器/VPS 初始化、服务器侧安全配置、网络质量检测、BBR/EasyTier/Caddy/caddy-security/error-pages 等服务安装配置时使用；远程操作优先使用 portal MCP server，缺失时遵循 software skill 的 SSH 规范。
+description: 初始化或维护 VPS/服务器时使用，涵盖安全加固、网络与 IP 质量检查、反向代理和基础服务部署。远程操作优先使用 portal；客户端网络与微信 Bot 操作分别转用 network、wechat-clawbot skill。
 ---
 
 # VPS Maintenance

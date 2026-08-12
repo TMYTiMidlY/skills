@@ -1,6 +1,6 @@
 ---
 name: harness
-description: Agent harness / runtime 架构知识库。调试或设计 Copilot CLI / Copilot SDK / Claude Code / Codex / Hermes / pi / Kimi Code 等 coding agent 的 runtime，处理 MCP / 工具注入、会话存储与导出、配置发现（指令 / hooks / skills）与 Agent Skills 官方目录规范（`assets/` 等），或在 CLI 子进程 / SDK client / extension host / JSON-RPC / HTTP 等集成形态间取舍、用代码编排 coding agent 时使用；Hermes agent 的常驻服务 / 多后端 / provider 接入 / skill 体系整体在此。
+description: 设计、集成或排查 Copilot、Claude Code、Codex、Hermes、pi 等 coding agent runtime 时使用。核心是从工具注入、配置发现、会话存储和进程/SDK 接口理解并编排 agent。
 ---
 
 # Harness

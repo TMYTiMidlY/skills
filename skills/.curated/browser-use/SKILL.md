@@ -1,6 +1,6 @@
 ---
 name: browser-use
-description: 浏览器自动化操作 —— 用 Playwright（CLI / MCP / Python·Node 脚本）、Camoufox（反指纹 Firefox）或接管已有 Chrome 登录态来操控页面、截图、填表、下载受保护文件、提取 pdf.js 嵌入数据。当用户提到浏览器自动化、网页截图、下载浏览器预览的 PDF、绕过下载限制、提取嵌入数据、反爬/指纹，或问 Playwright 该用 uv 还是 npm 装、该用 MCP 还是 CLI 时触发。
+description: 需要自动操作网页、复用浏览器登录态、截图填表、下载受保护文件或提取嵌入数据时使用。默认从 Playwright 开始，遇到指纹风控再用 Camoufox，并优先从页面网络与阅读器接口获取真实数据。
 ---
 
 # Browser Use Skill
