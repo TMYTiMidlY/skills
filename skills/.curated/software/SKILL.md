@@ -1,6 +1,6 @@
 ---
 name: software
-description: 配置或排查本地软件、CLI、语言工具链与自托管服务时使用，覆盖数据库、对象存储、Overleaf、文档工具及 Windows/WSL 等常见场景。底层 I/O、Git、网络链路和 agent runtime 由对应专门 skill 处理。
+description: 本地软件、CLI 工具与自托管服务的配置和排障知识库。用于 SSH/systemd、终端与包管理工具、语言工具链、PostgreSQL、S3 对象存储、Docker/PaaS、Overleaf/OpenList、文档处理与发布，以及 Windows/WSL/macOS 日常软件问题。
 ---
 
 # Software
