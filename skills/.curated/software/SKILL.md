@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的客户端配置与排障笔记集，遇到下列主题的问题先来这里查。涵盖 SSH 与 systemd 服务、MkDocs 文档站（配置、导航、Material/PyMdown、KaTeX/MathJax、开发站与 Pages 分离、浏览器编辑与 Git-backed CMS、Git 修改记录、常驻作者服务）、Zellij 终端复用、Windows / WSL 互操作（PowerShell / UAC）与 WSL2 内存模型（含 Slurm 内存限额）、挂载与 SMB/CIFS 文件共享、Linux 回收站（trash-cli）、PostgreSQL 读写性能与 SSD/HDD 存储介质选型、包管理器全景（apt / Nix / npm / pip / conda）与 pixi、uv、Go 工具链、Docker 安装与多用户共用、Coolify 与 Dokploy 自托管 PaaS、RustFS / SeaweedFS 与 MinIO mc 对象存储客户端、USTC Overleaf/olcli、文档格式转换（pandoc / feishu2md / MinerU）、自托管文档分享、OpenList 网盘聚合、本地中文 ASR、ChatGPT 网页端自动化、Windows/Office 激活与 macOS 杂项。Git / jj 操作与发版 CI 转用 `git` skill；Agent harness、Copilot CLI/SDK/MCP 与会话导出转用 `harness` skill。
+description: 配置或排查本地软件、CLI、语言工具链与自托管服务时使用，覆盖数据库、对象存储、Overleaf、文档工具及 Windows/WSL 等常见场景。底层 I/O、Git、网络链路和 agent runtime 由对应专门 skill 处理。
 ---
 
 # Software

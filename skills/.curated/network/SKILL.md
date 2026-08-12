@@ -1,6 +1,6 @@
 ---
 name: network
-description: 本机与客户端的代理、泄漏控制、远程接入和 WSL ↔ Windows ↔ 远端网络管道。用于 Mihomo/Clash 配置与运行态排障、DNS/WebRTC 泄漏、协议与 TUN 路由，以及 3x-ui、Hysteria2、EasyTier 客户端或共享 Linux 节点部署；受限网络下的 Git clone/submodule 获取由 git skill 覆盖，Caddy 反代与网络质量检测由 vps-maintenance skill 覆盖。
+description: 配置或排查客户端代理、泄漏防护、远程接入及 WSL/远端网络管道时使用。核心是先还原 DNS、路由和隧道的实际流向，再处理代理或组网工具配置。
 ---
 
 # Network

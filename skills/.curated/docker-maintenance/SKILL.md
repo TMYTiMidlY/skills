@@ -1,6 +1,6 @@
 ---
 name: docker-maintenance
-description: 在 Hermes Docker 后端或类似受限 Docker 容器内做环境探测、写入路径判断、安装受限工具（如 gh CLI）、生成 SSH key 等维护操作时使用。重点是识别宿主 vs 容器 vs WSL、绕过只读 overlay、在没有浏览器时完成外部认证。
+description: 在 Hermes 等受限 Docker 容器内做环境探测和维护时使用。核心是分清宿主、容器与 WSL 边界，在只读挂载或无浏览器条件下安全安装工具、认证并管理持久文件。
 ---
 
 # Docker 维护
