@@ -77,6 +77,10 @@ RustFS（Rust 实现的 S3 兼容对象存储，github.com/rustfs/rustfs）+ Min
 
 推荐应用（VMware Fusion、Mounty + macFUSE NTFS 读写）、应用无法打开的权限修复、外置存储隐藏文件（`.DS_Store` / `.Spotlight-V100` / `.Trashes`）阻止与清理见 [references/macos.md](references/macos.md)。
 
+## 飞书文档中的公式与矢量图
+
+飞书原生公式块、Mermaid/SVG 画板，以及量子线路的两条制作路线——直接生成飞书兼容 SVG，或复用 TikZ/Quantikz 源并经过 PDF→SVG 与路径兼容化——见 [references/feishu.md](references/feishu.md)。其中包含 `<use>` 字形引用、`matrix(...)` 变换在浏览器正常但进入飞书后重叠的实测，以及必须以服务端画板预览验收的流程。
+
 ## 格式转换
 
 pandoc 文档转换（LaTeX→Word）、PDF→图片、feishu2md 飞书/Lark→Markdown，以及 Markdown→PDF 的三档路线——最轻量的 Calibre `ebook-convert`、印刷级 CSS Paged Media 引擎（Prince / Vivliostyle / Paged.js / WeasyPrint 选型、Prince XML 无 sudo pixi 安装与 CJK 字体大坑、引用标签预处理 → pandoc → Prince 一键流水线、Vivliostyle 自定义 CSS）、中文友好的 Typst 路线——全部见 [references/format-conversion.md](references/format-conversion.md)。
