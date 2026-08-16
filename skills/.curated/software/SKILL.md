@@ -17,7 +17,7 @@ SSH 密钥 passphrase、ssh-agent、非交互环境（CI / `bash -c`）私钥带
 
 ## OpenWrt 路由器
 
-从设备硬件 / 原厂固件 / OpenWrt 三层版本识别开始，覆盖小米 AX3000T 的官方 stock-layout 两阶段刷写、Windows 只有一根网线时原厂自适应 WAN/LAN 的诊断与临时 DHCP 管理、原厂分区备份与正式 sysupgrade 的回退边界、OpenWrt 固定端口分工，以及无线 station → WWAN/NAT → 有线 LAN、WPA2-Enterprise 和 Captive Portal 的配置与验收，见 [references/openwrt.md](references/openwrt.md)。客户端代理、EasyTier 与 WSL 网络管道仍由 `network` skill 负责。
+从设备硬件、原厂固件和 OpenWrt 支持状态开始，覆盖小米 AX3000T 的 stock-layout 安装、Windows 单网线接入、原厂备份与回退边界；同时说明 OpenWrt 的 Linux 系统环境、LuCI/UCI/ubus/Dropbear 管理、SSH key-only，以及无线 station → WWAN/NAT、企业认证、Captive Portal、无线 AP 和 WDS/`relayd` 桥接，见 [references/openwrt.md](references/openwrt.md)。客户端代理、EasyTier 与 WSL 网络管道仍由 `network` skill 负责。
 
 ## 包管理器全景 / 分类对比（Nix vs apt、choco/winget/Scoop、npm/pnpm/bun、pip…）
 
