@@ -1,336 +1,126 @@
-# OpenWrt 安装与使用
+# OpenWrt 硬件、安装与网络使用
 
-本文覆盖五个连续主题：确认设备是否受支持、接入原厂系统、安装 OpenWrt、管理 OpenWrt 系统，以及把无线网络作为上游向有线或无线客户端供网。小米 AX3000T RD03 / RD23 是完整案例；其他型号只能复用判断方法，不能复用镜像、分区号或启动变量。
+OpenWrt 是面向路由器和嵌入式网络设备的 Linux 发行版。本文先讲通用的硬件选择、官方安装流程、系统管理和网络模式，最后以小米 AX3000T 为实际案例。
 
-## <a id="compatibility"></a>设备兼容性
+通用安装章节只采用 OpenWrt 官方文档规定的流程；设备案例只补充该型号独有的分区、入口和实测结果，并引用前面的通用概念，不重复把个案写成普遍规则。
 
-### 硬件型号
+## <a id="system"></a>OpenWrt 系统
 
-商品名相同不代表内部硬件相同。先从包装、SKU 和芯片平台确认具体型号，再选择镜像。
+### Linux 发行版与可扩展能力
 
-| 型号 | 芯片平台 | OpenWrt 状态 | 本文适用性 |
-|---|---|---|---|
-| RD03 国行 | MediaTek MT7981B | 支持 | 适用 |
-| RD23 国际版 | MediaTek MT7981B | 支持 | 适用 |
-| RD03v2 国行 | Qualcomm 平台 | 当前不受支持 | 不适用；不要使用 RD03 / RD23 镜像 |
+[OpenWrt 25.12.5 的项目说明](https://github.com/openwrt/openwrt/blob/v25.12.5/README.md#L3-L10)将其定义为面向嵌入式设备的 Linux 操作系统。SSH 登录后进入的就是路由器上实际运行的 OpenWrt，而不是容器或另一个桌面发行版。
 
-RD03v2 可通过包装识别：SKU 为 `DVB4510CN`，条码结尾为 `706330`。OpenWrt 设备页当前明确标记该型号不受支持，因此只能保留原厂系统，或等待专用适配；这不是更换刷写命令就能解决的问题。[OpenWrt Wiki 的 2026-06-07 修订版](https://openwrt.org/toh/xiaomi/ax3000t?rev=1780820319)记录了型号和支持边界。
+OpenWrt 提供 Linux 内核、可写配置层和软件包管理，可以组合 DHCP、DNS、防火墙、VLAN、多 WAN、VPN、无线 AP、无线客户端和策略路由。LuCI 是网页管理入口；UCI 管理 `/etc/config/*`；ubus 提供服务间通信和状态查询；Dropbear 提供 SSH。
 
-### 原厂固件版本
+它的自由度来自完整的网络操作系统，而不只是比原厂固件多几个设置页面。实际能用哪些功能仍取决于硬件驱动、闪存和内存容量，以及目标设备的 OpenWrt 支持状态。
 
-确认硬件受支持后，再检查原厂固件版本。它决定能否通过网页 API 免拆机开启 SSH，以及应使用哪个入口；它不决定 RD03 / RD23 能否运行 OpenWrt。
+### 设备支持
 
-| 机型 | 原厂固件 | 免拆机 SSH 入口 | 处理方式 |
-|---|---|---|---|
-| RD03 国行 | 1.0.47 | `misystem/arn_switch` | 使用对应 API |
-| RD03 国行 | 1.0.64、1.0.84、1.0.90、1.0.91、1.0.98 | `xqsystem/start_binding` | 使用对应 API |
-| RD03 国行 | 1.0.106 | 无已知 API 入口 | 降级，或改用 UART |
-| RD23 国际版 | 1.0.31、1.0.49、1.0.55、1.0.76 | `xqsystem/start_binding` | 使用对应 API |
-| RD23 国际版 | 1.0.90、1.0.91、1.0.92、1.0.97、1.0.103、1.0.104 | `xqsystem/get_icon` | 使用对应 API |
+OpenWrt 镜像必须匹配精确型号和硬件修订版。相同商品名可能对应不同 SoC、NAND、交换芯片或无线芯片；一个修订版受支持，不代表所有同名机器都能使用相同镜像。
 
-UART 不依赖原厂网页漏洞，但需要拆机、串口工具和可靠的恢复准备。它是另一种进入设备的方法，不是“高版本 API 刷写”的变体。
+选购或安装前至少确认：
 
-### OpenWrt 版本与硬件支持
+- [Table of Hardware](https://openwrt.org/toh/start) 或 [Firmware Selector](https://firmware-selector.openwrt.org/) 中存在精确设备 profile；
+- 当前稳定版支持该硬件修订，而不只是开发分支或论坛补丁；
+- 闪存、内存、网口数量和速率满足用途；OpenWrt 的 [8/64 警告](https://openwrt.org/supported_devices/864_warning)明确说明这类设备不足以稳定运行现代版本；
+- 设备页提供可执行的首次安装方法和故障恢复入口；
+- 无线电、交换芯片、LED、按键和硬件加速等板级功能已有驱动。
 
-RD03 / RD23 还可能使用不同的 NAND 和交换芯片。官方 25.12.5 已覆盖设备页列出的已知变体：
+“OpenWrt 上游支持硬件”和“厂商允许从后台安装 OpenWrt”是两件事。部分设备有官方升级入口；部分设备虽然已有上游 profile，首次安装仍需要厂商恢复模式或设备专属权限入口。
 
-| 组件 | 型号 | 首次支持 | 后续修复 |
-|---|---|---|---|
-| NAND | ESMT F50L1G41LB | 23.05.4 | — |
-| NAND | Winbond W25N01KV | 24.10.0-rc1 | 24.10.1 |
-| NAND | Foresee F35SQA001G | 24.10.0-rc3 | 24.10.3 |
-| 交换芯片 | MediaTek MT7531AE | 23.05.4 | — |
-| 交换芯片 | Airoha AN8855 | 24.10.0-rc7 | — |
+## <a id="hardware"></a>OpenWrt 硬件选择
 
-新装时仍应以当前设备页和 Firmware Selector 为准，不要因为商品名相同就使用旧教程的镜像。[25.12.5 设备定义](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/image/filogic.mk#L3271-L3288)同时生成临时启动和正式安装镜像。
+### 选购条件
 
-## <a id="stock-access"></a>原厂系统接入
+先按实际用途决定硬件，而不是先追求最高规格：
 
-### Windows 单网线连接
+- 主路由关注 WAN/LAN 速率、硬件卸载、SQM 和稳定性；
+- 无线 AP 关注无线驱动、频段、空间流和布点；
+- 旅行路由器关注 Wi-Fi 作为 WAN、Captive Portal、MAC clone、便携供电和多上游切换；
+- 实验平台关注串口、恢复分区、可更换存储、SFP、M.2 和无线模块；
+- x86 软路由关注 CPU、网卡驱动和存储，通常另配无线 AP。
 
-小米原厂固件和 OpenWrt 对网口的默认处理不同：
+常见硬件路线可以这样理解：
 
-| 系统 | 网口分工 | Windows 侧配置 | 默认管理入口 |
-|---|---|---|---|
-| 小米原厂固件 | 四口动态判断 WAN/LAN | 取决于被识别的端口 | 原厂地址或临时租约地址 |
-| OpenWrt | 靠近电源的口为 WAN，三个中间口为 LAN | LAN 侧使用 DHCP | `192.168.1.1` |
-
-只有一根网线连接 Windows PC 时，原厂固件可能把该端口判为 WAN，并主动向电脑索要 DHCP 地址。典型现象：
-
-- 物理链路协商到 1 Gbit/s；
-- Windows 只得到 `169.254.x.x`（APIPA，自分配地址），没有网关；
-- 抓包看到路由器从 UDP 68 向 `255.255.255.255:67` 发送 DHCP Discover；
-- 常见管理地址没有 ARP 响应。
-
-此时路由器和电脑都在等待对方提供 DHCP。按成本从低到高处理：
-
-1. 换插另一个路由器网口，或临时连接原厂 Wi-Fi。
-2. 若必须维持单线有线管理，让 Windows 临时充当严格限域的 DHCP server：
-   - 有线口使用独立静态地址，不配置默认网关；
-   - 只响应已核对的路由器 MAC；
-   - 只租出一个隔离子网地址；
-   - 不启用 ICS、网络桥接，也不向 WLAN 广播 DHCP；
-   - 获得管理地址后立即核对 ARP 中的 MAC。
-
-原厂固件是否允许从 WAN 侧访问管理页取决于具体版本。临时 DHCP 进程停止或电脑休眠后，租约也可能失效；应恢复续租服务，而不是盲目更改路由器地址。
-
-Windows 上的多行 PowerShell 应落成 `.ps1`，用 `-NoLogo -NoProfile -NonInteractive -File` 运行；路径与编码规则见 [Windows 命令调用](windows.md#invocation)。
-
-### SSH 入口
-
-按[原厂固件版本表](#compatibility)选择对应 API 并开启 Dropbear。短期 `stok`、管理密码和后续无线密码都应通过带外 secret 注入，不进入脚本、命令参数或对话。
-
-取得 SSH 只代表获得了原厂 Linux 系统的管理入口。开始写入前仍要确认设备型号、活动槽、分区布局、硬件变体和备份完整性。
-
-### 设备状态盘点
-
-先读取原厂系统状态：
-
-```sh
-cat /proc/cmdline
-cat /proc/mtd
-mount
-ubinfo -a
-
-for key in \
-  flag_boot_rootfs flag_last_success flag_boot_success \
-  flag_try_sys1_failed flag_try_sys2_failed; do
-  printf '%s=' "$key"
-  nvram get "$key"
-done
-```
-
-| 检查项 | 用途 | 停止条件 |
+| 路线 | 典型设备 | 主要特点 |
 |---|---|---|
-| `/proc/cmdline` | 确认当前 `firmware=0|1` 和活动 UBI | 与预期槽位不符 |
-| `/proc/mtd` | 确认分区名称、编号和大小 | 名称或大小与设备页不符 |
-| `mount` / `ubinfo -a` | 确认目标槽未被使用 | 准备写入的槽仍挂载 |
-| 启动变量 | 确认下一启动槽和失败计数 | 变量缺失或语义不明 |
-| NAND / 交换芯片日志 | 确认硬件变体 | 当前 OpenWrt 版本不支持 |
+| OpenWrt 原生设备 | OpenWrt One | 出厂运行 OpenWrt，带 LuCI、串口和独立恢复设计 |
+| 基于 OpenWrt 的成品路由器 | GL.iNet、Turris 等 | 厂商提供消费级 UI，部分型号可较容易切换官方 OpenWrt |
+| 旅行路由器 | GL.iNet Beryl AX 等 | 把现有 Wi-Fi 作为 WAN，再提供自己的 LAN 和 AP |
+| 开发板型路由器 | Banana Pi BPI-R4 | 接口和扩展性强，但需要自行处理机箱、模块、启动介质和安装 |
+| x86 小主机 | 通用 Intel / AMD 主机 | 性能和存储充足，安装到磁盘，Wi-Fi 通常交给独立 AP |
+| 上游支持的消费路由器 | 部分普通家用路由器 | 硬件性价比高，但首次安装与恢复高度依赖具体型号 |
 
-不能只按网上教程猜 mtd 号；必须让当前设备的真实输出证明写入目标。
+[OpenWrt One](https://openwrt.org/toh/openwrt/one) 出厂即带当前 OpenWrt 和 LuCI，并提供 NAND/NOR 双启动、USB-C 串口和恢复路径；它适合学习和维护 OpenWrt，但只有一个 WAN 和一个 LAN 口。
 
-## <a id="install"></a>OpenWrt 安装
+[GL.iNet Flint 2](https://openwrt.org/toh/gl.inet/gl-mt6000) 的厂商系统是 OpenWrt fork，可从厂商 Web UI 安装官方 sysupgrade 镜像，U-Boot Web UI 还能独立恢复。厂商分支与上游 OpenWrt 的内核、驱动和功能暴露可能不同，选购时应分别核对。
 
-### 安装流程
+[Banana Pi BPI-R4](https://openwrt.org/toh/sinovoip/bananapi_bpi-r4) 和 [x86 平台](https://openwrt.org/docs/guide-user/installation/openwrt_x86) 更接近可组装网络主机：前者可选 NAND、eMMC、microSD、SFP 和无线模块，后者直接把系统镜像写入磁盘。它们的安装、驱动和无线方案比消费级成品更需要自行集成。
 
-官方文档把整体过程称为安装；“写入”或“刷写”只描述其中把镜像写进闪存的步骤。
+### 旅行路由器
 
-| 阶段 | 使用内容 | 写入范围 | 通过条件 |
-|---|---|---|---|
-| 原厂准备 | 分区备份、散列清单 | 不写 NAND | 备份与镜像均已校验 |
-| 临时系统 | `initramfs-factory.ubi` | 仅非活动槽 | 正确设备以 initramfs 启动 |
-| 正式系统 | `squashfs-sysupgrade.bin` | 重建 OpenWrt 内核和数据区 | `sysupgrade -T` 通过 |
-| 安装验收 | 正式系统和持久 overlay | 不重复写镜像 | 重启后配置与存储正常 |
+旅行路由器的核心不是体积，而是把酒店、校园、热点或手机共享网络作为上游，再建立一个自己控制的 LAN 和无线 AP。典型的 WISP 模式会让上下游处于不同子网，并通过 NAT 和防火墙隔离公共网络。
 
-使用原装电源，保持管理电脑接电且不休眠。任何写入命令出现非零退出、I/O、ECC 或无法解释的坏块错误，都应停止，不继续切换启动槽。
+[GL.iNet 的 Repeater 文档](https://docs.gl-inet.com/router/en/4/interface_guide/internet_repeater/)展示了公共热点登录模式、MAC clone、随机 MAC、BSSID 锁定和企业认证入口。这类厂商 UI 把常见旅行场景产品化，但具体型号和固件版本支持的认证方式仍需逐项核对。
 
-### 原厂分区备份
+上游 OpenWrt 也提供 [Travelmate](https://github.com/openwrt/packages/blob/fc8b2fec0ba9bcda54c0cbb2968a33f6b4637006/net/travelmate/files/README.md)。它管理多个无线 uplink、自动重连、开放热点、Captive Portal 检测和外部登录脚本。双频设备最好用一张无线电连接上游，另一张提供本地 AP；同一无线电同时收发会共享 airtime。
 
-AX3000T 常见原厂布局中至少保留：
+### 定向 CPE 与远距离链路
 
-| 分区 | 内容 |
-|---|---|
-| BL2、FIP | 原厂启动链 |
-| Nvram | 启动变量 |
-| Bdata、Factory、KF | 板级数据、MAC、无线校准及厂商数据 |
-| ubi、ubi1 | 两个原厂固件槽 |
-| overlay、data | 原厂配置与数据 |
+OpenWrt 可以改变网络模式，但不能凭软件产生天线增益。若普通路由器只有在窗边某个位置才能稳定连接，应先测量 RSSI、噪声、重传、上下行吞吐和长时间丢包，再判断问题来自建筑衰减、干扰还是链路距离。
 
-该布局同时记录在 OpenWrt 25.12.5 [AX3000T 升级脚本的 `mtdparts`](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh#L86-L95) 中。
+远端已有普通 AP 时，本地只需一台能作为标准 Wi-Fi station 的定向 CPE，不必在远端再安装配对设备。定向天线需要朝向 AP 所在方向，并同时改善接收和回传。选择 CPE 时还要核对频段、企业认证能力、网口速度、PoE 电压和恢复方式；CPE 可以运行厂商系统、RouterOS 或 OpenWrt，不必为了单纯的射频链路强行使用 OpenWrt。
 
-`Bdata`、`Factory` 和 `KF` 含设备专属的 MAC、板级参数或无线校准数据，只能用于原设备恢复，不能使用其他路由器的备份替代。
+## <a id="installation"></a>OpenWrt 安装
 
-按 `/proc/mtd` 解析实际编号，再用 `nanddump --bb=padbad` 读取，避免跳过坏块后改变镜像的逻辑长度：
+### 设备专属说明
 
-```sh
-nanddump -q --bb=padbad -f /tmp/<partition>.bin /dev/mtd<N>
-```
+OpenWrt 官方明确说明：首次安装是设备专属流程，通用教程不能替代具体设备页。先在 Table of Hardware 或 Firmware Selector 找到精确型号，再按该页面给出的镜像、端口、IP、按钮时序和恢复方法操作。[通用安装说明](https://openwrt.org/docs/guide-user/installation/generic.flashing)只用于理解常见路径。
 
-备份流程：
+官方文档中的常见安装入口包括：
 
-1. 保存 `/proc/mtd`、`/proc/cmdline` 和启动变量。
-2. 把分区读取到路由器 `/tmp`；这里是内存盘，重启即丢。
-3. 复制到电脑；老 Dropbear 或 initramfs 没有 SFTP server 时，Windows OpenSSH 使用 `scp -O` 强制 legacy SCP。
-4. 比较路由器与电脑两端的长度和散列；MD5 只用于传输交叉检查，长期清单使用 SHA-256。
-5. 将备份、散列清单、固件和说明放入一个专属目录，避免临时目录里出现多个无法区分的副本。
+- 在原厂 Web UI 上传设备专用的 factory 镜像；
+- 进入 bootloader 的 Web、TFTP、串口或其他恢复模式；
+- 将镜像写入可移动存储或磁盘，例如开发板和 x86；
+- 使用设备页明确记录的厂商接口或权限入口。
 
-运行中的 overlay 可能变化。备份这类分区时连续读取两次，原始散列一致才接受；不一致就更换备份窗口。
+不要因为另一款设备使用相同 SoC 就照搬分区号、启动变量或恢复文件；也不要修改 bootloader，除非设备页明确要求。
 
-### 分区布局与镜像类型
+### 镜像和安装阶段
 
-AX3000T 有两套不能混用的 OpenWrt 布局：
+多数嵌入式设备使用 factory 镜像完成从原厂系统到 OpenWrt 的首次安装，之后使用 sysupgrade 镜像升级已有 OpenWrt。[官方 sysupgrade 文档](https://openwrt.org/docs/guide-user/installation/sysupgrade.cli)明确区分了两者。x86 等平台通常使用 combined 磁盘镜像，没有相同的 factory/sysupgrade 划分。
 
-| 布局 | bootloader | 镜像名称 | 恢复方式 | 本文范围 |
-|---|---|---|---|---|
-| stock-layout | 保留原厂 bootloader | 名称不含 `ubootmod` | 依赖原厂启动链和备份 | 本文采用 |
-| ubootmod | 替换为 OpenWrt U-Boot | 名称包含 `ubootmod` | 分区和恢复流程均不同 | 不在本文展开 |
+安装前应完成以下准备：
 
-从[官方 Firmware Selector](https://firmware-selector.openwrt.org/?target=mediatek%2Ffilogic&id=xiaomi_mi-router-ax3000t)取得同一版本的两类镜像：
+1. 核对精确设备 profile、目标版本和镜像散列。
+2. 阅读设备页的安装与恢复章节，准备稳定电源和有线管理链路。
+3. 保存现有配置；设备页要求备份 bootloader、校准数据或原厂分区时，先完成并验证备份。
+4. 记录当前系统、分区和启动状态，确认目标存储没有选错。
+5. 只执行设备页规定的首次安装方法，出现 I/O、ECC、散列或兼容性错误立即停止。
 
-| 镜像 | 用途 | 运行时配置 | 使用阶段 |
-|---|---|---|---|
-| `*-initramfs-factory.ubi` | 从非活动槽启动临时 OpenWrt | 位于内存，重启后丢失 | 硬件与布局验收 |
-| `*-squashfs-sysupgrade.bin` | 安装正式 squashfs 与可写 overlay | 写入持久 overlay | 临时系统验收后 |
-
-下载后对照官方 `sha256sums`。stock-layout 流程不能使用任何带 `ubootmod` 的文件。
-
-### 临时系统
-
-#### 写入目标
-
-上传 factory 镜像到路由器 `/tmp` 并再次核对散列。根据当前活动槽选择另一槽：
-
-| 当前 `/proc/cmdline` | 写入目标 | `flag_boot_rootfs` | `flag_last_success` |
-|---|---|---:|---:|
-| `firmware=1 mtd=ubi1` | `/dev/mtd8` | 0 | 0 |
-| `firmware=0 mtd=ubi` | `/dev/mtd9` | 1 | 1 |
-
-当前为槽 1 时：
-
-```sh
-ubiformat /dev/mtd8 -y \
-  -f /tmp/openwrt-25.12.5-mediatek-filogic-xiaomi_mi-router-ax3000t-initramfs-factory.ubi
-
-nvram set boot_wait=on
-nvram set uart_en=1
-nvram set flag_boot_rootfs=0
-nvram set flag_last_success=0
-nvram set flag_boot_success=1
-nvram set flag_try_sys1_failed=0
-nvram set flag_try_sys2_failed=0
-nvram commit
-sync
-```
-
-当前为槽 0 时：
-
-```sh
-ubiformat /dev/mtd9 -y \
-  -f /tmp/openwrt-25.12.5-mediatek-filogic-xiaomi_mi-router-ax3000t-initramfs-factory.ubi
-
-nvram set boot_wait=on
-nvram set uart_en=1
-nvram set flag_boot_rootfs=1
-nvram set flag_last_success=1
-nvram set flag_boot_success=1
-nvram set flag_try_sys1_failed=0
-nvram set flag_try_sys2_failed=0
-nvram commit
-sync
-```
-
-两个代码块只能选择与当前 cmdline 完全匹配的一组。先单独执行 `ubiformat`，确认退出码为 0、进度到 100% 且没有 I/O / ECC 错误；随后设置启动变量并逐项回读，所有值准确后才重启。
-
-#### 临时系统验收
-
-重启后将网线插入三个中间 LAN 口之一，Windows 有线口改回 DHCP，再访问 `192.168.1.1`：
+进入 OpenWrt 后，可用下面的关键命令确认设备身份并检查正式升级镜像：
 
 ```sh
 ubus call system board
-cat /etc/openwrt_release
-cat /proc/mtd
-iw phy | grep Wiphy
-ip -o link show
+sysupgrade -T /tmp/<sysupgrade-image>
+sysupgrade -v /tmp/<sysupgrade-image>
 ```
 
-必须看到正确型号、目标平台、`rootfs_type: initramfs`、交换芯片端口和两张无线电，才进入正式安装。
+升级镜像应放在 RAM 中的 `/tmp` 并先验证 SHA-256。是否保留配置按版本兼容性和设备说明决定；只有明确要清空设置时才加 `-n`。`sysupgrade` 会主动关闭服务和 shell；连接断开本身不能证明升级失败，应等待设备重新启动后再检查版本、存储和网络。
 
-### 正式系统
+### 升级与恢复
 
-上传 sysupgrade 镜像并核对 SHA-256：
+sysupgrade 会替换 OpenWrt 系统和内核。保留设置只会保存指定配置，不会自动保留所有手工安装的软件包或任意数据文件；跨越较大版本时还要遵循升级提示决定是否清空配置。[官方升级说明](https://openwrt.org/docs/guide-user/installation/generic.sysupgrade)要求事先保留当前镜像、配置备份和恢复方案。
 
-```sh
-sha256sum /tmp/openwrt-25.12.5-mediatek-filogic-xiaomi_mi-router-ax3000t-squashfs-sysupgrade.bin
-
-sysupgrade -T \
-  /tmp/openwrt-25.12.5-mediatek-filogic-xiaomi_mi-router-ax3000t-squashfs-sysupgrade.bin
-```
-
-兼容性检查通过后才执行：
-
-```sh
-sysupgrade -n \
-  /tmp/openwrt-25.12.5-mediatek-filogic-xiaomi_mi-router-ax3000t-squashfs-sysupgrade.bin
-```
-
-`sysupgrade` 会主动关闭 shell。客户端在打印 `Commencing upgrade. Closing all shell sessions.` 后可能收到 ubus connection failed 或非零退出；这不能证明升级失败，也不能立刻重跑。等待路由器重新出现，再检查正式系统状态。
-
-### 安装验收
-
-正式启动后检查：
-
-```sh
-ubus call system board
-mount
-df -h
-ubinfo -a
-fw_printenv \
-  boot_wait uart_en flag_boot_rootfs flag_last_success \
-  flag_boot_success flag_try_sys1_failed flag_try_sys2_failed
-dmesg | grep -Ei 'I/O error|uncorrectable|bad block|UBI error'
-```
-
-| 检查项 | 通过条件 |
-|---|---|
-| 根文件系统 | `rootfs_type=squashfs` |
-| 持久存储 | UBIFS overlay 可写且容量正常 |
-| NAND | 没有无法解释的 I/O、ECC 或 UBI 错误 |
-| 启动环境 | 启动变量可读，目标槽正确 |
-| 网络与无线 | LAN DHCP、端口、两张无线电和 LuCI 正常 |
-
-OpenWrt 25.12.5 的升级脚本会把两个失败计数设为 8，以绕开原厂 bootloader 的计数逻辑；看到 8 或继续增长时，先对照版本源码和实际启动结果，不要擅自改回 0。
-
-完成一次正式重启，确认配置没有被清空、overlay 仍可写、管理入口和网络接口均恢复。
-
-### 回退与故障恢复
-
-正式安装会改变恢复条件：
-
-| 所处阶段 | 原厂内容状态 | 回退方式 |
-|---|---|---|
-| 尚未写入 | 全部原样保留 | 停止操作 |
-| 临时系统 | 原厂活动槽、overlay 和 data 通常仍在 | 切回原厂活动槽 |
-| 正式系统 | 原厂 `mtd9 + mtd10 + mtd11` 已被重建 | 使用本机备份配合 TFTP / UART |
-
-OpenWrt 25.12.5 的 [AX3000T DTS](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-ax3000t.dts#L18-L34)把原厂 `mtd8` 映射为 `ubi_kernel`，并把连续的原厂 `mtd9 + mtd10 + mtd11` 合并成新的 `ubi`。[升级脚本](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh#L48-L96)会格式化这两个 OpenWrt 区域并设置启动环境。因此正式安装后不能靠修改一个启动标志恢复原厂系统。
-
-原厂设备页的 TFTP 参数仍有未填写项时，不要从其他小米型号照搬。bootloader 损坏后的高级恢复可参考固定提交的 [`mtk_uartboot`](https://github.com/981213/mtk_uartboot/tree/b0ec7bdf1bab7089df948e745e17d206f3426dc1)，但需要拆机和 UART。
-
-可选的 [`XMiR-Patcher`](https://github.com/openwrt-xiaomi/xmir-patcher/tree/16a46e350e3de2cb3415ab2cb652df53783998dc)能自动化部分小米设备操作；工具可以减少手工步骤，但不能代替机型、版本、目标分区和最终命令的人工核对。
+恢复原厂系统不是 OpenWrt 的统一能力。它取决于设备是否保留原厂 bootloader、恢复分区、厂商镜像、TFTP/UART 入口和本机校准数据。安装前应先知道恢复路径，而不是安装后再假设 factory reset 能还原厂商系统。
 
 ## <a id="management"></a>OpenWrt 系统管理
 
-### Linux 系统环境
+### 系统环境和软件包
 
-[OpenWrt 25.12.5 的项目说明](https://github.com/openwrt/openwrt/blob/v25.12.5/README.md#L3-L10)将 OpenWrt 定义为面向嵌入式设备的 Linux 操作系统。OpenWrt 本身就是路由器运行的 Linux 发行版；SSH 登录后直接进入这个系统。它使用自己的 BusyBox、`ash`、`procd` 和软件包体系，命令与 Ubuntu / Debian 不完全相同。
+OpenWrt 使用 BusyBox、`ash` 和 `procd`，不是 Bash + systemd 的服务器环境。25.12 使用 `apk` 管理软件包；旧教程中的 `opkg` 命令不能直接照搬。[官方迁移说明](https://openwrt.org/docs/guide-user/additional-software/opkg-to-apk-cheatsheet)还明确警告不要用 `apk upgrade` 盲目升级整机，应通过 sysupgrade、Attended Sysupgrade 或 Firmware Selector 更新系统。
 
-| 组件 | 作用 | 与常见服务器发行版的区别 |
-|---|---|---|
-| Linux 内核 | 驱动硬件、网络协议栈和防火墙 | 针对嵌入式设备裁剪 |
-| BusyBox + `ash` | 提供 shell 和常用命令 | 默认不是 Bash，命令选项较少 |
-| squashfs + overlay | 只读基础系统叠加可写配置层 | 恢复出厂配置时可丢弃 overlay |
-| `procd` | 管理服务和进程 | 不使用 systemd |
-| UCI | 集中管理 `/etc/config/*` | 代替各服务分散配置 |
-| `ubus` | 进程间通信和状态查询 | LuCI、网络服务和脚本共用 |
-| `apk` | OpenWrt 25.12 的包管理器 | 不使用 `apt`；旧版教程常写 `opkg` |
-
-[OpenWrt 25.12 的 apk 迁移说明](https://openwrt.org/docs/guide-user/additional-software/opkg-to-apk-cheatsheet)同时说明该版本使用 BusyBox `ash`，并明确禁止用 `apk upgrade` 盲目升级全系统。
-
-### LuCI、UCI 与 ubus
-
-三者操作的是同一套 OpenWrt 系统：
-
-| 入口 | 运行位置 | 用途 |
-|---|---|---|
-| LuCI | 路由器上的 Web 服务，Windows 只运行浏览器 | 日常图形化配置 |
-| UCI | 路由器命令行和 `/etc/config/*` | 读取、修改并持久化配置 |
-| ubus | 路由器内部消息总线 | 查询运行状态、调用服务方法 |
-| SSH | Dropbear 提供的远程 shell | 高级配置、排障和自动化 |
-
-[UCI 官方说明](https://openwrt.org/docs/guide-user/base-system/uci)将其定义为 OpenWrt 服务的统一配置接口；LuCI 也通过相同配置层修改 `/etc/config/*`。[ubus 技术说明](https://openwrt.org/docs/techref/ubus)说明了服务注册、状态查询和 JSON 调用模型。
-
-常用只读命令：
+LuCI、UCI 和 ubus 操作同一套系统配置：
 
 ```sh
 uci show network
@@ -339,54 +129,29 @@ ubus call system board
 ubus call network.interface.lan status
 ```
 
-修改 UCI 后通常需要 `uci commit <package>`，再 reload 或 restart 对应服务；只改文件但不重载服务，不代表运行状态已经更新。
+[UCI](https://openwrt.org/docs/guide-user/base-system/uci) 集中管理 `/etc/config/*`；[ubus](https://openwrt.org/docs/techref/ubus)负责服务注册、状态查询和方法调用。修改 UCI 后要 commit，并 reload 或 restart 对应服务。
 
 ### SSH 与 Dropbear
 
-OpenWrt 使用 Dropbear 提供 SSH。25.12.5 的[默认配置](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/dropbear/files/dropbear.config#L1-L9)启用服务、端口 22、密码认证和 root 密码认证。未设置监听接口时，启动脚本会监听所有地址；防火墙再决定哪些网络能够访问。
+OpenWrt 默认使用 Dropbear。25.12.5 的[默认配置](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/dropbear/files/dropbear.config#L1-L9)启用端口 22 和密码认证；未指定接口时会监听所有地址。默认防火墙允许 LAN 入站、拒绝 WAN 入站，因此 LAN 或绑定到 LAN 的 AP 客户端可以尝试连接 SSH，而 WWAN/WAN 客户端通常被阻止。
 
-| 来源网络 | 默认能否连接 22 端口 | 原因 |
-|---|---|---|
-| 有线 LAN | 能 | LAN zone 默认 `input ACCEPT` |
-| 挂在 LAN 上的无线 AP | 能 | 与有线 LAN 属于同一防火墙区 |
-| WAN / WWAN 上游 | 不能 | WAN zone 默认 `input REJECT` |
-| 独立 guest zone | 取决于配置 | 应明确限制管理端口 |
+监听接口和防火墙是两层控制。完成公钥验证后，可把 Dropbear 直接绑定到 LAN 并关闭 SSH 密码认证。
 
-默认防火墙规则可在 25.12.5 [firewall 配置](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/config/firewall/files/firewall.config#L1-L28)中核对。监听地址和防火墙是两层控制：即使 WAN 防火墙当前阻止访问，仍可把 Dropbear 直接限制在 LAN。
+### <a id="ssh-security"></a>SSH key-only
 
-### <a id="ssh-security"></a>SSH 访问控制
-
-安全顺序是“先安装并验证公钥，再关闭密码认证”。不要先关闭密码，也不要因为公钥文件已经存在就假设私钥端一定能登录。
-
-在管理电脑创建专用 Ed25519 密钥：
+先创建并上传公钥，再强制验证一条不允许密码回退的新连接：
 
 ```sh
 ssh-keygen -t ed25519 -f ~/.ssh/openwrt-router
+cat ~/.ssh/openwrt-router.pub | ssh root@openwrt.lan \
+  'umask 077; cat >> /etc/dropbear/authorized_keys; chmod 600 /etc/dropbear/authorized_keys'
+ssh -i ~/.ssh/openwrt-router -o IdentitiesOnly=yes \
+  -o PasswordAuthentication=no -o BatchMode=yes root@openwrt.lan 'echo key-ok'
 ```
 
-仍使用现有密码登录，把公钥加入路由器：
+私钥带 passphrase 时先加载到 ssh-agent，相关边界见 [SSH 的非交互 agent](ssh.md#agent-noninteractive)。只有看到 `key-ok` 后，才在路由器上执行：
 
 ```sh
-cat ~/.ssh/openwrt-router.pub | \
-  ssh root@192.168.1.1 \
-  'umask 077; mkdir -p /etc/dropbear; cat >> /etc/dropbear/authorized_keys; chmod 600 /etc/dropbear/authorized_keys'
-```
-
-若私钥带 passphrase，先加载到可用的 ssh-agent，相关边界见 [SSH 的非交互 agent](ssh.md#agent-noninteractive)。随后强制禁用密码回退，验证一条全新连接：
-
-```sh
-ssh -i ~/.ssh/openwrt-router \
-  -o IdentitiesOnly=yes \
-  -o PasswordAuthentication=no \
-  -o BatchMode=yes \
-  root@192.168.1.1 'echo key-ok'
-```
-
-只有看到 `key-ok`，才在路由器上限制监听并关闭 SSH 密码认证：
-
-```sh
-uci show dropbear
-
 uci set dropbear.main.DirectInterface='lan'
 uci set dropbear.main.PasswordAuth='off'
 uci set dropbear.main.RootPasswordAuth='off'
@@ -394,139 +159,159 @@ uci commit dropbear
 /etc/init.d/dropbear restart
 ```
 
-25.12.5 的 Dropbear 启动脚本将 `DirectInterface='lan'` 解析为实际的 `br-lan` 并直接绑定接口，同时把两个密码开关转换为 Dropbear 的禁用参数，见[接口绑定](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/dropbear/files/dropbear.init#L236-L250)和[认证参数](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/dropbear/files/dropbear.init#L302-L326)。
+25.12.5 的 Dropbear 脚本会把 `DirectInterface='lan'` 解析到实际 LAN 设备，见[接口绑定](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/dropbear/files/dropbear.init#L236-L250)和[认证参数](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/dropbear/files/dropbear.init#L302-L326)。已有系统若没有名为 `main` 的配置节，应先以 `uci show dropbear` 核对真实名称。
 
-默认配置节名是 `main`；已有系统若使用其他节名，应以 `uci show dropbear` 的真实结果为准。重启 Dropbear 后再开一个新终端测试，并完成一次路由器重启。不要删除 root 系统密码：关闭的是 SSH 密码认证，LuCI 登录和本地恢复仍可使用该密码。
+关闭 SSH 密码认证不等于删除 root 系统密码；LuCI 和本地恢复仍可使用该密码。
+
+### 指示灯和板级功能
+
+LED、按键、交换芯片和无线电是否可用，取决于设备树和驱动支持。受支持的 LED 通常出现在 `/sys/class/leds/`，并通过 `/etc/config/system` 或 LuCI 的 LED Configuration 绑定启动、网络和无线触发器，详见[官方 LED 配置](https://openwrt.org/docs/guide-user/base-system/led_configuration)。
+
+OpenWrt 可以提供标准状态灯，但不保证复刻厂商固件的全部颜色、动画或专有联动。
 
 ## <a id="networking"></a>OpenWrt 网络配置
 
-### WAN 与 LAN
+### WAN、LAN、AP 与 station
 
-AX3000T 首次启动后的默认端口分工：
+WAN 和 LAN 是三层网络与防火墙角色；AP 和 station 是无线接口角色：
 
-| 端口 | 默认角色 | 所属网络 |
-|---|---|---|
-| 靠近电源、标作 Internet 的端口 | WAN | `wan` |
-| 三个中间端口 | LAN | `br-lan` |
+- AP 广播 SSID，供下游客户端接入；
+- station 让路由器作为客户端连接上游 Wi-Fi；
+- station 可以作为 WWAN，再经路由和 NAT 向 LAN/AP 供网；
+- AP 也可以接入现有有线 LAN，成为不做路由的普通无线接入点。
 
-LAN 默认地址为 `192.168.1.1/24`，并向客户端提供 DHCP。WAN/LAN 是交换芯片、DSA 和 VLAN 的软件配置，不是端口的物理能力；系统稳定后可以重新分配，但安装阶段应保持默认拓扑。
+“无线 AP”只说明下游如何接入；“桥接”说明上下游是否处于同一二层网络，两者不能混为一谈。
 
-### 无线网络作为上游
+### 无线网络作为 WAN
 
-目标拓扑：
-
-```text
-上游 Wi-Fi
-    ↓ station
-OpenWrt 的 wwan（DHCP）
-    ↓ WAN 防火墙区：NAT
-br-lan / LAN 端口 / 本地 AP
-    ↓
-下游客户端
-```
-
-配置步骤：
-
-1. 新建 `wwan` DHCP 接口。
-2. 在一张无线电上新建 station，并绑定到 `wwan`。
-3. 将 `wwan` 加入启用 masquerading 的 WAN zone。
-4. 重载网络，验证关联、地址、默认路由、DNS 和下游 NAT。
-
-UCI 骨架：
+旅行路由和 Wi-Fi 转有线通常采用 station → WWAN → WAN firewall → NAT → LAN/AP。关键配置只包括创建 DHCP 型 WWAN、把无线 station 绑定到它，并把 WWAN 加入启用 masquerading 的 WAN zone：
 
 ```sh
 uci set network.wwan=interface
 uci set network.wwan.proto='dhcp'
-
-# 新系统默认 @zone[1] 是 wan；已有配置必须先核对 name。
-test "$(uci get firewall.@zone[1].name)" = wan
-uci add_list firewall.@zone[1].network='wwan'
-
-uci set wireless.upstream=wifi-iface
-uci set wireless.upstream.device='radio1'
 uci set wireless.upstream.mode='sta'
 uci set wireless.upstream.network='wwan'
-uci set wireless.upstream.ssid="$UPSTREAM_SSID"
-uci set wireless.upstream.encryption='sae'
-uci set wireless.upstream.key="$UPSTREAM_KEY"
-uci set wireless.upstream.ieee80211w='2'
-
-uci commit network
-uci commit firewall
-uci commit wireless
-wifi reload
-ifup wwan
 ```
 
-`sae` 适用于 WPA3-Personal；其他认证方式按下节调整。SSID、密码、企业账号和证书应通过 secret 侧信道传入，不在脚本中硬编码。
+设备、SSID、认证参数和凭据按上游网络填写，随后 commit 并 reload 网络与无线。双频设备可把一张无线电用于上游，另一张用于本地 AP；共用同一无线电也能工作，但吞吐和重连过程会互相影响。
 
-### <a id="wireless-auth"></a>无线认证方式
+### <a id="wireless-auth"></a>无线认证
 
-| 网络类型 | 无线关联方式 | 是否需要完整 wpad | 后续登录 |
-|---|---|---|---|
-| WPA2/WPA3 Personal | 预共享密钥 | 通常不需要 | 无 |
-| WPA2-Enterprise | 802.1X + PEAP / TTLS / TLS | 需要 | 在无线配置中提交身份或证书 |
-| Captive Portal | 常见为开放网络，也可能叠加其他加密 | 取决于底层无线认证 | 关联和 DHCP 后在网页完成 |
+| 上游网络 | 认证发生位置 | OpenWrt 侧要求 |
+|---|---|---|
+| 开放网络或 WPA2/WPA3 Personal | 无认证或预共享密钥 | 默认无线客户端能力 |
+| WPA2-Enterprise | 路由器的 wpa_supplicant/wpad 与 AP/RADIUS 认证 | 完整 EAP 参数和 full wpad |
+| Captive Portal | 关联和 DHCP 后，由浏览器或登录脚本完成网页认证 | HTTP 重定向、Portal 处理和可能的 MAC 策略 |
 
-默认镜像常带 `wpad-basic-mbedtls`，可处理普通 WPA2/WPA3 Personal。完整 PEAP、TTLS 和 TLS 客户端应使用 full wpad；OpenWrt 25.12.5 的 [hostapd 包定义](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/hostapd/Makefile#L269-L302)显示各 wpad provider 互相冲突，而 `wpad-openssl` 提供完整 EAP supplicant。
+默认镜像常带 `wpad-basic-mbedtls`，足以处理普通 Personal 网络。PEAP、TTLS、TLS 等企业认证需要 full wpad；25.12.5 的 [hostapd 包定义](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/hostapd/Makefile#L269-L302)显示 `wpad-openssl` 提供完整 EAP supplicant。
 
-先模拟替换事务：
+先模拟替换事务，再决定是否执行：
 
 ```sh
 apk add --simulate wpad-openssl
-```
-
-只有确认事务会一次性替换 basic provider 并补齐依赖后，才执行：
-
-```sh
 apk add wpad-openssl
 ```
 
-若无法原子完成，先缓存完整包集，或通过 Firmware Selector 构建已包含 full wpad 的镜像。不要先手动删除当前 provider，也不要运行 `apk upgrade`。
+只有模拟结果能在同一事务中替换 basic provider 并补齐依赖时才执行第二条；不要先手工删除当前 provider。
 
-Captive Portal 的流程与企业无线认证不同：先完成无线关联和 DHCP，再由下游客户端打开网页认证。Portal 可能按账号、客户端 MAC、IP 或设备策略记账；经过 NAT 的多个客户端能否共享一次登录取决于上游实现。
+Captive Portal 通常由 NAT 后面的电脑或手机打开网页完成。上游看到的往往是路由器 WWAN 的地址和 MAC，因此认证后多个下游设备可能共享连接，但具体结果取决于 Portal 是否绑定账号、IP、MAC、设备数量或应用指纹。Travelmate 可检测 Portal、管理多个 uplink 和调用外部登录脚本；厂商旅行路由器还可能提供登录模式和 MAC clone。
 
-### 向下游设备提供网络
+### AP、NAT 与无线桥接
 
-有线 LAN、无线 AP 和无线桥接不是同一个概念：
+路由 + NAT 会建立自己的下游子网，对上游要求最低，也能把公共网络与本地设备隔离。它适合旅行路由、Wi-Fi 转有线和大多数不受控上游。
 
-| 方式 | 作用 | 下游地址 | 上游要求 |
-|---|---|---|---|
-| 有线 LAN | 通过网线接入 OpenWrt 的 LAN | 由 OpenWrt 或上游分配 | 无无线要求 |
-| 无线 AP | OpenWrt 广播本地 SSID | 取决于 AP 绑定的网络 | 无；AP 只是下游接入方式 |
-| 路由 + NAT | 在上游和下游之间路由并转换地址 | 与上游不同网段 | 普通 Wi-Fi 客户端能力即可 |
-| WDS / 四地址桥接 | 建立真实二层无线桥 | 与上游同网段 | 上游 AP 和客户端都支持兼容 WDS |
-| `relayd` | 在不支持 WDS 时模拟同网段中继 | 表面上与上游同网段 | 安装额外包，行为不等同真实二层桥 |
+WDS/四地址模式是真正的二层无线桥接，会保留客户端 MAC、广播和上游 DHCP，但需要上游 AP 与 station 的实现兼容。官方说明见[无线 WDS 桥接](https://openwrt.org/docs/guide-user/network/wifi/wifiextenders/wds)。
 
-无线 AP 可以连接到 NAT 后的 LAN，也可以成为桥接网络的一部分；“开启 AP”不等于“已经桥接”。WDS 会保留两侧客户端 MAC 和广播流量，官方说明见[无线 WDS 桥接](https://openwrt.org/docs/guide-user/network/wifi/wifiextenders/wds)。上游无法配合 WDS 时可使用 [`relayd` 中继](https://openwrt.org/docs/guide-user/network/wifi/relay_configuration)，但配置和排障成本更高。
+上游不支持 WDS 时，[`relayd` 中继](https://openwrt.org/docs/guide-user/network/wifi/relay_configuration)可以模拟同网段体验，但它不等同真实二层桥接，配置和排障也更复杂。只有确实需要同一广播域、局域网发现或上游 DHCP 时，才需要从 NAT 转向桥接。
 
-同一张无线电同时承担 station 和 AP 时，AP 通常必须跟随上游信道。双频设备可让一张无线电连接上游，另一张承担本地 AP，减少信道耦合。
+### 链路质量
 
-任何绑定到 LAN 的无线 AP 客户端默认都能访问路由器的 LAN 管理服务，包括 LuCI 和 SSH。需要访客网络时，应创建独立防火墙区并明确拒绝管理入口，而不是只换一个 SSID。
+信号格或扫描结果只能说明接收到 AP Beacon 的强度。验收无线 uplink 时还应观察 RSSI、噪声、协商速率、重传、上下行吞吐、连续丢包和重启后的自动重连。
 
-### 网络验收
+建筑玻璃、金属窗框和墙体可能让几十厘米的位置变化产生明显差异。先在安全位置测试不同频段和摆放点；只有普通路由器在最佳位置仍出现上传差、频繁掉线或高重传时，才说明需要定向 CPE 或改变布点。
 
-不要只确认“无线已关联”。至少检查：
+## <a id="ax3000t"></a>小米 AX3000T 案例
+
+本节只记录 AX3000T 的设备差异和一次实际安装结果。factory/sysupgrade、SSH 安全、无线认证和 NAT/桥接原理分别引用[官方安装流程](#installation)、[SSH key-only](#ssh-security)和[网络配置](#networking)。
+
+### 硬件版本与原厂固件
+
+RD03 国行和 RD23 国际版使用 MediaTek MT7981B，官方 OpenWrt 支持。RD03v2 改用 Qualcomm 平台，当前不受支持；包装 SKU `DVB4510CN` 或条码结尾 `706330` 可用于识别。不要把 RD03/RD23 镜像写入 RD03v2。[OpenWrt Wiki 的固定修订](https://openwrt.org/toh/xiaomi/ax3000t?rev=1780820319)记录了这组边界。
+
+原厂固件版本只影响免拆机 SSH 入口：
+
+| 机型与固件 | 设备页记录的入口 |
+|---|---|
+| RD03 1.0.47 | `misystem/arn_switch` |
+| RD03 1.0.64、1.0.84、1.0.90、1.0.91、1.0.98 | `xqsystem/start_binding` |
+| RD03 1.0.106 | 无已知 API；需降级或 UART |
+| RD23 1.0.31、1.0.49、1.0.55、1.0.76 | `xqsystem/start_binding` |
+| RD23 1.0.90、1.0.91、1.0.92、1.0.97、1.0.103、1.0.104 | `xqsystem/get_icon` |
+
+25.12.5 已覆盖设备页列出的 ESMT、Winbond、Foresee NAND，以及 MT7531AE、AN8855 交换芯片变体。新装仍应先读取真实硬件信息，不按商品名猜测。
+
+### Windows 单网线接入
+
+小米原厂固件会动态判断四个网口的 WAN/LAN 角色。电脑单线直连时，端口可能被识别成 WAN，双方都等待 DHCP，Windows 只得到 `169.254.x.x`。
+
+优先换插其他端口或临时连接原厂 Wi-Fi。必须维持有线连接时，Windows 可临时充当只响应目标 MAC 的限域 DHCP server；有线口不设默认网关，不启用 ICS 或桥接。临时租约会随进程停止或电脑休眠而失效。
+
+复杂 PowerShell 应落成 `.ps1` 并按 [Windows 命令调用](windows.md#invocation)执行。
+
+### 原厂盘点与备份
+
+取得 SSH 后先确认活动槽、分区编号和目标槽是否挂载：
 
 ```sh
-ubus call network.interface.wwan status
-iw dev <station-interface> link
-ip -4 route
-ping -c 3 <upstream-gateway>
-ping -c 3 <public-ip>
-nslookup downloads.openwrt.org
+cat /proc/cmdline
+cat /proc/mtd
+ubinfo -a
 ```
 
-| 层次 | 通过条件 |
-|---|---|
-| 无线 | 已关联，信号和协商速率稳定 |
-| 接口 | `wwan` 获得地址和上游网关 |
-| 路由 | 默认路由指向上游 |
-| 公网 | 公网 IP 可达 |
-| DNS | 域名解析成功 |
-| 下游 | 有线 LAN 或本地 AP 客户端能经 OpenWrt 上网 |
-| 持久性 | 重启后自动重连，配置未丢失 |
+实际案例备份了 BL2、Nvram、Bdata、Factory、FIP、两个原厂 UBI 槽、overlay、data 和 KF，共十个关键分区，并在路由器与电脑两端交叉校验。`Bdata`、`Factory`、`Nvram` 和无线校准数据只能用于原设备恢复。
 
-Windows 同时连接其他 Wi-Fi 时，默认路由不能证明有线 NAT 可用。可临时添加一条 `/32` 主机路由，让一个探测 IP 强制经过 OpenWrt LAN 网关，并在测试结束后移除。
+运行中的 overlay/data 连续读取两次，原始散列一致后才接受。老 Dropbear 或 initramfs 没有 SFTP server 时，Windows OpenSSH 使用 `scp -O`。
 
-需要评估远距离无线链路时，再记录 RSSI、SNR、重传、半小时丢包、上下行吞吐和数小时稳定性；短暂 ping 成功不能代表长期链路质量。
+### stock-layout 安装
+
+案例保留原厂 bootloader，使用官方 25.12.5 stock-layout 的 initramfs factory 和 squashfs sysupgrade 镜像；没有使用名称带 `ubootmod` 的镜像。
+
+根据当前活动槽，只写另一槽：
+
+| 当前 cmdline | factory 写入目标 | `flag_boot_rootfs` / `flag_last_success` |
+|---|---|---|
+| `firmware=1 mtd=ubi1` | `/dev/mtd8` | `0` / `0` |
+| `firmware=0 mtd=ubi` | `/dev/mtd9` | `1` / `1` |
+
+关键写入命令只有：
+
+```sh
+ubiformat <inactive-mtd> -y -f /tmp/<initramfs-factory.ubi>
+```
+
+写入成功后，按官方设备页为目标槽设置 `flag_boot_rootfs` 和 `flag_last_success`，同时启用 `boot_wait`、`uart_en`、`flag_boot_success`，并清零两个尝试失败计数。每个变量都回读无误后才重启；不能只替换部分槽位参数。
+
+临时系统必须确认型号、`rootfs_type=initramfs`、交换芯片、三个 LAN、一个 WAN、两张无线电和 LuCI，再按[通用安装章节](#installation)检查并执行正式 sysupgrade。
+
+### 安装后的恢复边界
+
+临时阶段只覆盖非活动槽，原厂活动槽、overlay 和 data 仍在。正式 sysupgrade 会把原厂 `mtd8` 用作 OpenWrt `ubi_kernel`，并把原厂 `mtd9 + mtd10 + mtd11` 合并重建为持久 `ubi`，见 [AX3000T DTS](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-ax3000t.dts#L18-L34)和[升级脚本](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh#L48-L96)。
+
+因此正式安装后不能靠切换启动槽完整回到原厂系统；恢复依赖本机备份和该设备实际可用的 TFTP/UART 路径。设备页仍有未填写的 TFTP 参数时，不从其他小米型号照搬。
+
+### 实测结果
+
+本次设备为 RD03、原厂固件 1.0.64、MT7981 + MT7531AE、128 MiB NAND。官方 25.12.5 stock-layout 经两阶段安装后：
+
+- 正式系统以 squashfs + UBIFS overlay 启动，可写空间约 60.7 MiB；
+- NAND 没有坏块或 I/O 错误，重启后配置保持；
+- 靠近电源的端口为 WAN，三个中间口为 LAN；
+- 两张无线电、LuCI、SSH 和端口均正常；
+- 已实现个人热点 → 5 GHz station → WWAN/NAT → 有线 LAN，重启后自动恢复；
+- 短测信号约 `-51 dBm`，协商速率约 `1200.9 Mbit/s`，公网和 DNS 正常；
+- 已设置 root 密码并拒绝空密码 SSH；SSH key-only 尚需按通用章节完成；
+- 企业认证和 Captive Portal 尚未在该上游环境实际验收，因此文中的支持结论来自官方功能与软件包，不把它写成案例实测。
+
+AX3000T 的公共设备树定义了蓝色和黄色状态灯：启动、failsafe 和升级使用黄色，正常运行使用蓝色，见[固定版本源码](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-common.dtsi#L9-L16)和[GPIO LED 定义](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-common.dtsi#L44-L57)。这些是标准 Linux 状态灯，不保证复刻小米原厂的全部动画。
+
+这次个人热点短测证明了 Wi-Fi 转有线 NAT 和持久重连，但不能替代目标远距离网络的半小时丢包、上下行吞吐和数小时稳定性测试；是否需要定向 CPE 仍应由目标链路实测决定。
