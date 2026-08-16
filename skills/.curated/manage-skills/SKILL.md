@@ -105,7 +105,7 @@ done
 
 ## 重构已有文档
 
-把一篇已成型的文档（SKILL.md 或 reference）做深度重构：核验事实，理顺标题树、章节归属和来源组织，做到语义不漏、重复不留。核心：**先给改后大纲和覆盖台账供审阅，批准后才动手**，全程对照 [references/conventions.md](references/conventions.md) 逐条核对。完整流程与大纲格式见 [references/refactor.md](references/refactor.md)。
+把一篇已成型的文档（SKILL.md 或 reference）做深度重构：核验事实，理顺标题树、章节归属和来源组织，做到语义不漏、重复不留。核心：**先分别提交标题方案和内容迁移表供审阅，两轮批准后才动手**，全程对照 [references/conventions.md](references/conventions.md) 逐条核对。完整流程与审阅格式见 [references/refactor.md](references/refactor.md)。
 
 ## 审查现有 skills
 
