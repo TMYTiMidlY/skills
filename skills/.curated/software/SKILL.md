@@ -17,7 +17,7 @@ SSH 密钥 passphrase、ssh-agent、非交互环境（CI / `bash -c`）私钥带
 
 ## OpenWrt 路由器
 
-从 OpenWrt 的系统组成和设备支持边界讲起，覆盖设备形态、设备专属的首次安装、factory/sysupgrade/combined 镜像、系统升级与恢复、BusyBox/procd/apk、LuCI/UCI/ubus、Dropbear SSH 认证，以及无线 station/WWAN、企业认证、Captive Portal、NAT、WDS、`relayd` 和链路质量；小米 AX3000T 的 stock-layout 安装与实测作为独立案例放在文末，见 [references/openwrt.md](references/openwrt.md)。客户端代理、EasyTier 与 WSL 网络管道仍由 `network` skill 负责。
+从 OpenWrt 的系统组成和设备支持边界讲起，覆盖设备形态、设备专属的首次安装、factory/sysupgrade/combined 镜像、系统升级与恢复、BusyBox/procd/apk、LuCI/UCI/ubus、Dropbear SSH 认证，以及无线 station/WWAN、企业认证、Captive Portal、NAT、WDS、`relayd` 和链路质量；小米 AX3000T 案例采用保留原厂启动程序的安装流程，并记录实测结果，见 [references/openwrt.md](references/openwrt.md)。客户端代理、EasyTier 与 WSL 网络管道仍由 `network` skill 负责。
 
 ## 包管理器全景 / 分类对比（Nix vs apt、choco/winget/Scoop、npm/pnpm/bun、pip…）
 
