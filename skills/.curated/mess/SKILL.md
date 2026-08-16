@@ -7,6 +7,8 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 
 记录排查过程中走过的弯路、最终定位的根因、以及解决方案。每个案例都是一次完整的排查故事，重点不是答案本身，而是**怎么找到答案的**。
 
+收录标准看问题是否低频、难复现，以及排查路径是否值得复用，不按操作系统、软件类型或技术领域划边界。某个领域即使另有系统知识库，其中偶发而棘手的具体案例仍可收录在这里。
+
 遇到用户报告的问题与已有案例相似时，先回顾对应 reference，避免重复走弯路。
 
 ## 案例索引
@@ -73,4 +75,9 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 - **旧浏览器打开 PDF 全白，报 `hashOriginal.toHex is not a function`** → pdf.js 从 `5.4.624` 起删掉了 `Uint8Array.prototype.toHex` 的手写 fallback，standard build 无条件依赖这个很新的 TC39 API；官方唯一正解是改用 legacy build，不是降级也不是自己写 polyfill → [直达](references/pdfjs-tohex.md#symptom)
   - 关键词：`hashOriginal.toHex is not a function`、`Uint8Array.toHex`、`pdfjs-dist`、`legacy build`、`legacy/build/pdf.worker.min.mjs`、`PDF 预览全白`
 
-> Copilot CLI 相关的调研笔记已迁到 `harness` skill（bash 工具 env 黑名单、`COPILOT_ALLOW_ALL` vs `--yolo`、`/rewind` 非 git 拒绝、Walk-Up（向上查找）机制、Custom Instructions、Safety Net 双 bug、项目级 hook 不向上查、`.mcp.json` 上溯与 `${VAR}` 不展开、Skills 发现、`GIT_CONFIG_COUNT` 注入 credential helper、`gh repo fork` SSH 身份错配、Copilot SDK 与 session export 等）。opusplan 模式的模型切换与上下文缓存分析同样已迁往 `harness` skill。
+### Copilot CLI
+
+见 [copilot-cli.md](references/copilot-cli.md)。
+
+- **会话切换模型后，每轮都报 `400 Missing namespace for function_call`** → Copilot CLI 把 Anthropic 产生的 MCP 调用投影进通用历史时保留了 `mcpServerName` 的事件记录，却没有生成 OpenAI Responses 回放所需的 `functionCallNamespaces` 映射；随后请求在模型响应和 MCP 执行前即被 CAPI 拒绝 → [直达](references/copilot-cli.md#mcp-namespace-roundtrip)
+  - 关键词：`Missing namespace for function_call`、`Round-trip the model's function_call item`、`functionCallNamespaces`、`mcpServerName`、`toolu_`、`sessionProjectionRewriteChatHistoryForModelJson`、`切换模型后 400`
