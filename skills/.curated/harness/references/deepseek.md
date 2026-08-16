@@ -59,7 +59,19 @@ Cordis 把 Plugin 当作能力和生命周期的共同边界。一个 Plugin 可
 
 Plugin 之间主要通过 Cordis 的 services 和 events 协作，而不是彼此写死依赖。这样，同一能力可以更换实现，策略也可以插入模型请求或工具执行流程，而无需修改 agent loop 本身。
 
-> **开发入口：** [首个 Plugin 教程](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/index.md) 介绍最小 module、配置校验和清理机制；需要编写 Plugin 时再下钻这些 API 细节。
+最小 Plugin 是一个导出 `apply` 的 module：
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+
+export const name = 'hello-plugin'
+
+export function apply(ctx: Context) {
+  console.log('loaded')
+}
+```
+
+`apply` 是 Plugin 挂载到运行时的入口，`ctx` 则让它访问 Cordis 提供的 services 和 events。实际 Plugin 会通过 `ctx` 注册工具、服务或监听器；Cordis 在 Plugin 卸载时统一撤销这些贡献。配置校验和显式资源清理等开发细节见[首个 Plugin 教程](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/index.md)。
 
 ### Bundle 与 profile
 
@@ -75,18 +87,16 @@ dsh --profile web --dump-config
 
 只有声明 DSH Bundle manifest 的 package 才会成为配置层；普通 dependency 即使安装成功，也不会自动改变运行时。
 
-> **精确规则：** [CLI reference](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md) 记录完整覆盖顺序、整块配置替换和 package 激活条件。
+完整覆盖顺序、配置替换方式和 package 激活条件见 [CLI reference](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md)。
 
 ### Agent preset
 
-dsh 内置四种 Agent preset：
+dsh 内置[四种 Agent preset](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets)：
 
 - **`standard`**：完整 coding agent，包含 shell、文件、后台 jobs、goal、plan、todo、skills、web search、subagent 与 workflow。
 - **`code`**：Code Mode。模型只直接看到 `run_code` 和自动生成的 TypeScript SDK，由代码组合多轮工具调用；其他工具也不能绕过这一入口直接执行。
 - **`minimal`**：固定 system prompt，只保留 persistent Bash 与 `str_replace_editor`，不加载 compaction。
 - **`cordis`**：在 standard 上增加运行时检查和临时动态 Plugin 工具；定义只保存在当前进程内，重启后消失。
-
-> **源码位置：** 四种预设位于 [`apps/cli/config/agent-presets/`](https://github.com/deepseek-ai/deepseek-harness/tree/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets)。
 
 Agent preset 决定模型实际看到的 system prompt、tools 和工作方式。它与 Profile 的区别是：Profile 组装整个应用，preset 只组装某类 Agent。
 
@@ -108,7 +118,7 @@ Cordis Plugin 可以在 prompt 组装、模型请求、工具执行或 turn 结�
 
 默认持久化是每个 session 一份压缩 JSONL，便于保留完整事件流；SQLite backend 则适合把多个 session 集中到一个数据库。两者都处理崩溃后未完整结束的 turn，但当前仍是预发布格式，没有跨版本迁移承诺。
 
-> **实现出处：** 默认 backend 见 [`dsh-base` composition](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/bundle/base/cordis.patch.yml)；JSONL 与 SQLite 的文件布局和恢复细节由各自 package 文档说明。
+默认 backend 可在 [`dsh-base` composition](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/bundle/base/cordis.patch.yml) 中核对。
 
 ## 外部接入
 
@@ -133,7 +143,7 @@ Web UI 默认由 `dsh web` 启动；headless 则使用 `dsh --profile headless "
 
 这些接口属于 agent SDK：外部 orchestrator 驱动完整 Harness，而不是直接调用模型 API。TypeScript 侧由调用者指定 runtime，Python 侧则把 client 与可分发 runtime 拆成两个 package。
 
-> **接口文档：** [ACP server](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/acp/acp/README.md)、[TypeScript SDK](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/sdk/client/README.md)、[Python SDK](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/python/README.md)。
+具体接口分别见 [ACP server](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/acp/acp/README.md)、[TypeScript SDK](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/sdk/client/README.md) 和 [Python SDK](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/python/README.md)。
 
 ## 扩展接口
 
@@ -141,19 +151,17 @@ Web UI 默认由 `dsh web` 启动；headless 则使用 `dsh --profile headless "
 
 ### 模型接入
 
-Web Settings 可配置 DeepSeek，也可添加 Anthropic、OpenAI 等 catalog provider，或手填 OpenAI-compatible endpoint。
+Web Settings 可配置 DeepSeek，也可添加 Anthropic、OpenAI 等 catalog provider。Catalog provider 已经知道 endpoint、API 协议和模型列表，用户主要提供凭据；自定义 provider 则需要填写 provider id、base URL、协议、凭据和模型。
 
-手工添加的 model 默认按 text-only 处理；如果 endpoint 支持图片，需要在 model metadata 中明确声明。dsh 不会自动推断一个自定义 endpoint 的多模态能力。
+凭据写入 `$DSH_HOME/.credentials.yaml`，Settings 只保存对凭据的引用，因此 Web 页面读回配置时不会拿到明文 key。手工添加的 model 默认按 text-only 处理；如果 endpoint 支持图片，需要在 model metadata 中明确声明。dsh 不会自动探测一个自定义 endpoint 的多模态能力。
 
-> **配置细节：** [模型配置指南](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/guide/providers.md) 记录 provider、model metadata 和凭据管理。
+Provider 表单、模型能力声明和凭据行为见[模型配置指南](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/guide/providers.md)。
 
 ### Skills
 
-Skills 为模型提供按需加载的工作方法和领域说明。dsh 同时读取项目级和用户级目录，并兼容 `.dsh/skills` 与通用的 `.agents/skills`；项目内容优先于用户内容，因此同一套 Harness 可以随 workspace 切换技能集合。
+Skills 为模型提供按需加载的工作方法和领域说明。[`dsh-skill-filesystem`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/skill/skill-filesystem/README.md) 同时读取项目级和用户级目录，并兼容 `.dsh/skills` 与通用的 `.agents/skills`；项目内容优先于用户内容，因此同一套 Harness 可以随 workspace 切换技能集合。
 
 Skill 可以是 `<name>/SKILL.md` 目录 bundle，也可以是单个 Markdown 文件。Catalog 只把名称和描述暴露给模型，正文等到真正调用时再加载。
-
-> **发现规则：** [`dsh-skill-filesystem`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/skill/skill-filesystem/README.md) 记录完整目录优先级、frontmatter 字段和 watcher 行为。
 
 ### MCP
 
@@ -163,11 +171,9 @@ MCP 用来把外部工具服务接入 dsh。内置 [`dsh-mcp-client`](https://gi
 
 ### Subagent
 
-Subagent 接口统一了任务委派方式：provider 可以在当前 dsh 进程中创建 child，也可以启动另一套 dsh runtime，或把任务交给本机的 Codex / Claude Code。
+[`dsh-subagent`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/subagent/subagent/README.md) 统一了任务委派方式：provider 可以在当前 dsh 进程中创建 child，也可以启动另一套 dsh runtime，或把任务交给本机的 Codex / Claude Code。
 
 本地 child 可以加入 dsh 自己的 session tree；外部产品则运行独立上下文，parent 通常只收到最终文本，不会自动获得对方的 reasoning、工具过程或产品会话。Codex / Claude Code 的认证和原生配置仍由各自产品负责。
-
-> **Provider 范围：** [`dsh-subagent`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/subagent/subagent/README.md) 记录同进程、SDK、ACP、Codex 与 Claude Code provider 的具体能力差异。
 
 ## 信任边界
 
@@ -191,9 +197,14 @@ MCP stdio server 也是 Host 启动的可执行程序，因此默认 composition
 
 ### 遥测
 
-Telemetry 默认关闭。显式启用后，当前没有通用 redaction rule，导出内容可能包含消息文本、工具参数与结果以及 workspace path。
+Telemetry 是把 Harness 运行记录导出到 OpenTelemetry collector，供集中观测或分析。默认关闭，不会因为启动 Web UI 或运行 Agent 自动上传会话。
 
-> **配置出处：** [CLI reference](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md) 记录具体启用模式和环境变量。
+显式启用时有两种范围：
+
+- `FULL`：持续导出 session events；
+- `FEEDBACK_ONLY`：只有用户记录反馈时，才上传相关的 session log 后缀。
+
+当前没有通用 redaction rule（脱敏规则），因此导出内容可能包含消息文本、工具参数与结果以及 workspace path。`DSH_TELEMETRY_OTLP_URL` 用来选择 collector，`DSH_TELEMETRY_DISABLED` 可以强制关闭。完整环境变量和行为见 [CLI reference](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md)。
 
 ## 插件生态
 
@@ -213,8 +224,6 @@ Web Settings 的 [Plugin list](https://github.com/deepseek-ai/deepseek-harness/b
 
 [`dsh-market@0a2959a`](https://github.com/dsh-market/dsh-market/tree/0a2959a7c7809e46f8ce39149f4e4710d2e0a047) 消费这份 registry，在 Web Settings 提供浏览、搜索、安装、更新和主题切换。它明确说明 “This repo is the market app, not the catalog” 和 “Listing ≠ endorsement”，因此目录收录和市场展示都不构成安全审计或 DeepSeek 背书。
 
-### 指标口径与数据局限
-
 > **指标口径：** Stars 来自 `awesome-dsh-plugin.com/plugins.json` 的 2026-08-16 快照；npm downloads 使用 **2026-08-13 至 08-16** 的 point API。`N/A` 表示新包尚未被 downloads endpoint 收录或查询返回 404，不表示 0。社区 registry 没有真实安装量；“范围”是本次调研依据仓库覆盖的 harness 所作的归类，不是 registry 自带字段。发布初期指标只能描述可见度，不能证明兼容性、留存、质量或生产使用。
 
 ### 插件指标快照
@@ -231,9 +240,16 @@ Web Settings 的 [Plugin list](https://github.com/deepseek-ai/deepseek-harness/b
 | [`dsh-agent-teams`](https://github.com/NanmiCoder/dsh-agent-teams/tree/2b1141248f34ee28870d2e39462c0dbefaa5ffdb) | DSH 专用 | 多 Agent team 与 workflow | 344 | N/A | `dsh plugin --profile web add @nanmicoder/dsh-agent-teams` |
 | [`dsh-market`](https://github.com/dsh-market/dsh-market/tree/0a2959a7c7809e46f8ce39149f4e4710d2e0a047) | DSH 专用 | 社区 Plugin market UI | 301 | [86](https://api.npmjs.org/downloads/point/2026-08-13:2026-08-16/dshmarket) | `dsh plugin --profile web add dshmarket` |
 | [`dsh-at-file`](https://github.com/omdsh-dev/dsh-at-file/tree/9c71e52c483ae589c7979b6ffc8b3a2cd5d8efa4) | DSH 专用 | Composer 中的 `@file` 搜索与附加 | 225 | Git-only | `dsh plugin --profile web add github:omdsh-dev/dsh-at-file` |
+| [`dsh-tianshu-tui`](https://github.com/huiliyi37/dsh-tianshu-tui/tree/650614f992b4fb1d2ca933ad64178dbb7fb0eb51) | DSH 专用 | 完整终端会话工作区，并为视觉桥、TDD / 证据门、记忆和代码检索等 Harness 能力提供交互面 | 174 | [205](https://api.npmjs.org/downloads/point/2026-08-13:2026-08-16/%40huiliyi37%2Fdsh-tianshu-tui) | `dsh plugin --profile web add @huiliyi37/dsh-tianshu-tui` |
 | [`dsh-browser`](https://github.com/Lum1104/dsh-browser/tree/06cdc2320f4de16a8e006e5dd4a9257f336401f2) | DSH 专用 | 通过 Chrome sidebar 操作浏览器 | 167 | Git-only | `dsh plugin --profile web add github:Lum1104/dsh-browser` |
+| [`dsh-vision-router`](https://github.com/ysr666/dsh-vision-router/tree/ddfa6baf3f70ff9ddb2b5e7ff3a09d5840398d1f) | DSH 专用 | 默认免 Key、无 Python 的视觉链，支持多步 grounding、crop、OCR、pixel diff 和截图验证 | 155 | N/A | `dsh plugin --profile web add dsh-vision-router` |
 | [`modsearch`](https://github.com/liustack/modsearch/tree/e1dba224b72651dfe7891990dcaf674098100df2) | 多宿主集成 | Web / X 搜索与抓取，返回结构化证据和引用 | 105 | [141](https://api.npmjs.org/downloads/point/2026-08-13:2026-08-16/%40liustack%2Fmodsearch) | `dsh plugin --profile web add @liustack/modsearch` |
+| [`dsh-openpencil`](https://github.com/ZSeven-W/dsh-openpencil/tree/49b0417a6d6fe7a55056bb1a82d4c348a21a6ca6) | DSH 专用 | 在对话中预览、检查和编辑真实 `.op` 文档，提供交互画布、托管编辑器和 Agent 设计工具 | 85 | [154](https://api.npmjs.org/downloads/point/2026-08-13:2026-08-16/%40zseven-w%2Fdsh-openpencil) | `dsh plugin --profile web add @zseven-w/dsh-openpencil` |
 
 ### 能力重叠
 
-表中 UI 与视觉类能力重叠最明显：`dsh-web-ui-all` 和 `DSH-better-sidebar` 都扩展工作台，`modlens` 与 `dsh-vision-toolkit` 都为文本模型补充视觉能力。Stars 只能帮助发现候选，实际组合仍要看能力是否重复、Plugin 信任范围以及与当前 dsh 版本的兼容性。
+- **终端界面**：`dsh-TUI` 主要复现 Claude Code 风格的全屏交互；`dsh-tianshu-tui` 更像完整终端工作区，包含会话恢复、分叉 / 回退、审批与提问面板，并承接视觉桥、验证门、记忆和代码检索等 Harness 能力。
+- **视觉能力**：`modlens` 偏向把图片转成结构化证据，并可跨多种 Harness 使用；`dsh-vision-toolkit` 提供 UI 还原、长截图 OCR、grounding 等视觉工程 playbooks；`dsh-vision-router` 强调免 Key、无 Python 和自动路由，支持围绕原始像素反复 ground、crop、diff、修正和截图验证。
+- **设计画布**：`dsh-openpencil` 不是普通 Web UI 装饰，而是把 OpenPencil 的 `.op` 文档、画布和编辑器接入 Agent 工作流，让模型操作可继续人工编辑的设计文件。
+
+Stars 只能帮助发现候选，不能替代功能差异、Plugin 信任范围和版本兼容性的判断。
