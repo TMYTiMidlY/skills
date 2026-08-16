@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的配置和排障知识库。用于 SSH/systemd、终端与包管理工具、语言工具链、PostgreSQL、S3 对象存储、Docker/PaaS、Overleaf/OpenList、文档处理与发布，以及 Windows/WSL/macOS 日常软件问题。
+description: 本地软件、CLI 工具与自托管服务的配置和排障知识库。用于 SSH/systemd、OpenWrt、终端与包管理工具、语言工具链、PostgreSQL、S3 对象存储、Docker/PaaS、Overleaf/OpenList、文档处理与发布，以及 Windows/WSL/macOS 日常软件问题。
 ---
 
 # Software
@@ -14,6 +14,10 @@ Git 与 jj 的日常操作、隔离工作区、受限网络获取、发版 / 发
 ## SSH
 
 SSH 密钥 passphrase、ssh-agent、非交互环境（CI / `bash -c`）私钥带 passphrase 又无解锁 agent 导致 `Server accepts key` 却 `Permission denied` 的诊断与复用常驻 agent 解法、RemoteForward 代理转发、主机密钥校验（known_hosts、`CheckHostIP` 默认及 OpenSSH 与 asyncssh 等第三方库对 IP 的处理差异——同一主机换 IP 后 OpenSSH 沉默而第三方库报 `Host key is not trusted` 的根因与修复）、ControlMaster 连接复用、裸 ssh/scp 跑命令与交互式 sudo（`ssh -t`）及远端文件编辑等通用 SSH 用法见 [references/ssh.md](references/ssh.md)。
+
+## OpenWrt 路由器
+
+从设备硬件 / 原厂固件 / OpenWrt 三层版本识别开始，覆盖小米 AX3000T 的官方 stock-layout 两阶段刷写、Windows 只有一根网线时原厂自适应 WAN/LAN 的诊断与临时 DHCP 管理、原厂分区备份与正式 sysupgrade 的回退边界、OpenWrt 固定端口分工，以及无线 station → WWAN/NAT → 有线 LAN、WPA2-Enterprise 和 Captive Portal 的配置与验收，见 [references/openwrt.md](references/openwrt.md)。客户端代理、EasyTier 与 WSL 网络管道仍由 `network` skill 负责。
 
 ## 包管理器全景 / 分类对比（Nix vs apt、choco/winget/Scoop、npm/pnpm/bun、pip…）
 
