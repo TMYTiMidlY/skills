@@ -91,27 +91,29 @@ Cordis 的“热替换”会先卸载旧 Plugin，清除它注册的监听器和
 
 ## <a id="plugin-basics"></a>开发与打包流程
 
-完整流程是：先决定代码放在独立仓库还是 dsh monorepo，写出最小 Plugin 并在本机加载；确认它能运行后，再补功能、检查、打包，并安装到一套新 Profile 中试用，最后发布 package 和发现信息。后续章节只展开各类扩展接口的具体规则。
+完整流程是：先决定代码放在独立仓库，还是放进 dsh monorepo（一个 Git 仓库统一管理 CLI、应用和多个 package 的单仓多包代码库），写出最小 Plugin 并在本机加载；确认它能运行后，再补功能、检查、打包，并安装到一套新 Profile 中试用，最后发布 package 和发现信息。后续章节只展开各类扩展接口的具体规则。
 
-### 选择代码位置
+### <a id="code-location"></a>选择代码位置
 
-先分清代码最终放在哪里。仓库外 Plugin 面向社区安装，仓库内 workspace package 则参与 dsh 自身的构建、类型图、测试和文档约束；两者共享 Cordis 运行模型，但工程规则不同。
+先分清代码最终放在哪里。workspace package 是 dsh monorepo 中被 pnpm workspace 统一管理的子包，通常位于 `packages/<group>/<pkg>/`；这里的 workspace 指多包仓库关系，不是 Agent 当前操作的项目目录。
+
+workspace package 只说明工程归属，不等于“内置 Plugin”。其中有些 package 实现可直接加载的 Plugin，有些只提供类型、公共接口或基础库。某个 workspace package 如果确实是 Plugin，加载后仍按所在位置遵循与社区 Plugin 相同的 Cordis 生命周期和权限边界；区别在工程和分发：前者随 dsh 统一编译、类型检查、测试和发布，后者通常独立成仓库，打包后通过 `dsh plugin --profile <name> add` 安装，不需要修改 dsh 源码。是否随某个 Profile 默认启用，由 Bundle 配置决定，不由 package 是否位于 monorepo 决定。
 
 #### 独立仓库中的 Plugin 与 Bundle
 
 独立开发的 Plugin 从一个普通 TypeScript / JavaScript module 开始。本地检查完成后，再把代码与 `cordis.patch.yml` 打成声明 `dsh.bundle` 的 package；使用者不需要把 Plugin 合入官方 monorepo。
 
-#### dsh 仓库内的 package
+#### dsh monorepo 中的 workspace package
 
-dsh 仓库内的 package 位于 `packages/<group>/<pkg>/`，需要 `package.json`、TypeScript project reference、README、约束声明（invariant）和测试。主进程代码与浏览器代码分别编译，普通 package 只能注册到其中一侧。
+这类 package 需要 `package.json`、TypeScript project reference、README、约束声明（invariant）和测试。主进程代码与浏览器代码分别编译，普通 package 只能注册到其中一侧。
 
 新增 package 时应先找相同角色的现有实现作为模板。工具可看 `packages/shell/tool-bash`，能力的具体实现可看 `packages/shell/bash-local`，模型适配器可看 `packages/llm/llm-deepseek`，Web 界面 Plugin 可看 `packages/client/ui-workflow-run`。
 
-> 来源：[仓库外第一个 Plugin 的加载路径](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/index.md#L7-L64)；[仓库内 package 的文件与注册清单](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-package.md#L7-L43)。
+> 来源：[仓库外第一个 Plugin 与 overlay 加载路径](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/index.md#L7-L64)；[workspace package 的文件、角色与注册清单](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-package.md#L7-L43)；[纯类型 workspace package 示例](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/util/brand/README.md#L1-L5)；[Bundle、Profile 与配置层的关系](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L17-L29)。
 
 ### 先在本机加载最小 Plugin
 
-仓库外 Plugin 可以通过 `--patch` 参数，把一份临时配置加载到现有 Profile：
+仓库外 Plugin 可以通过 `--patch` 把一份临时配置叠加到现有 Profile。官方开发指南把这层配置称为 overlay（覆盖层）：它只在本次启动中追加或覆盖 Plugin 配置，不会改写 Profile 目录中的配置；下次不传 `--patch` 就不再生效。
 
 ```yaml
 - insert:
@@ -197,7 +199,7 @@ Profile 清单保存按顺序应用的 Bundle 列表，由 `dsh plugin` 创建�
 1. Profile 列出的 Bundle patches；
 2. Profile 的 `cordis.patch.yml`；
 3. Harness home 的 `cordis.patch.yml`；
-4. 命令行通过 `--patch` 临时加载的配置。
+4. 命令行通过 `--patch` 临时加载的 overlay。
 
 后层按 row id 替换完整 `config`。Bundle author 应提供可直接使用的默认值，并允许部署者在后层覆盖；不要依赖深合并补齐遗漏字段。
 
