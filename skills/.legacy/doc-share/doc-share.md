@@ -148,7 +148,7 @@ curl -fsI "$WEBDAV_SHARE_URL/local.md" >/dev/null && echo "📎 $WEBDAV_SHARE_UR
 
 ---
 
-把 Markdown 导出为 PDF（自打印 / 研报 / 论文等）见 [pdf-export.md](pdf-export.md)：Prince XML / Vivliostyle / Paged.js / WeasyPrint / Typst 选型对比、pixi 无 sudo 安装、CJK 字体大坑、引用标签预处理流水线。
+把 Markdown 导出为 PDF（自打印 / 研报 / 论文等）见 `software` skill 的 `format-conversion.md` reference：Prince XML / Vivliostyle / Paged.js / WeasyPrint / Typst 选型对比、pixi 无 sudo 安装、CJK 字体大坑、引用标签预处理流水线。
 
 ---
 
