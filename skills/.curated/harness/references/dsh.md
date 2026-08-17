@@ -47,13 +47,13 @@ pnpm dsh web
 
 ## <a id="runtime-composition"></a>运行时组合
 
-dsh 的组合分成 Host 运行时与 Agent 作用域两层。Profile 先把 Bundle、用户配置和临时 overlay 叠成 Host Plugin 树；创建 Agent 时，Agent preset 再把 prompt、tools 和策略挂到该 Agent 的子 Context。
+dsh 的组合分成主进程与单个 Agent 两层。Profile 先应用 Bundle、用户配置和命令行临时配置，组成主进程的 Plugin 树；创建 Agent 时，Agent preset 再为这个 Agent 加入 prompt、tools 和策略。
 
 ```mermaid
 flowchart TD
   P[Profile] --> B1[基础 Bundle]
   P --> B2[界面或运行形态 Bundle]
-  P --> U[用户配置与临时 overlay]
+  P --> U[用户配置与临时 --patch 配置]
   B1 --> H[Host Plugin 树]
   B2 --> H
   U --> H
@@ -74,7 +74,7 @@ flowchart TD
 
 每个已加载 Plugin 都在一个 Cordis Context 中运行，并由一个 Fiber 管理生命周期。Plugin 通过 Context 注册 service、event listener 或 effect；Fiber 卸载时，这些注册随其一起撤销。运行时因此可以热替换一个实现，也可以在同一扩展点叠加审批、重试、日志或压缩策略。
 
-运行时篇只解释这套关系。`apply`、`Config`、依赖注入、effect 和 HMR 的代码写法见 [模块、配置与生命周期](dsh-plugin.md#plugin-runtime)。
+运行时篇只解释这些对象怎样配合。Plugin 的模块形式、配置、依赖和热更新写法见 [模块、配置与生命周期](dsh-plugin.md#plugin-runtime)。
 
 #### Bundle 与 Profile
 
@@ -83,7 +83,7 @@ Profile 从空根开始按顺序应用配置层：
 1. Profile manifest 中列出的各个 Bundle patch；
 2. Profile 自己的 `cordis.patch.yml`；
 3. Harness home 下的全局 `cordis.patch.yml`；
-4. 命令行中的各个 `--patch` overlay。
+4. 命令行通过 `--patch` 临时加载的配置。
 
 后层按 row id 覆盖前层；`config` 是整项替换，不是深合并。普通 dependency 即使安装成功，也不会成为配置层，只有声明 `dsh.bundle` 的 package 才会被加入 Profile。
 
@@ -106,7 +106,7 @@ dsh --profile web --dump-config
 
 Preset 只改变 Agent 子 Context，不替换 Host 的浏览器、Session、持久化或权限服务。空白 Session 可以原子重组到另一 preset；一旦 Session 已产生任何记录便拒绝切换，避免历史工具调用与当前能力集合不一致。修改默认 preset 只影响之后创建的 Session。
 
-创造模式可以让 Agent 复制用户可写的 preset，再修改其中的 Cordis composition。它的 `cordis_mount` 会对 live runtime 执行模型生成的 JavaScript，应按 shell access 对待，不是低权限的可视化配置模式。
+创造模式可以让 Agent 复制一份用户可写的 preset，再修改其中的 Cordis 配置。它的 `cordis_mount` 会在正在运行的 dsh 进程中执行模型生成的 JavaScript，权限接近直接使用 shell，不是低权限的可视化配置模式。
 
 > 来源：[Plugin 组合、Profile、Bundle 与 Agent 执行](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L104)；[CLI 的配置层顺序](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md#L7-L19)；[Agent preset 的重组边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/preset/agent-presets/README.md#L135-L153)；[创造模式的用途与信任说明](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L1-L12)。
 
@@ -124,7 +124,7 @@ Session 是只追加的事件日志。模型历史、Trajectory、恢复、分�
 
 默认 Profile 使用每 Session 一份压缩 JSONL；SQLite backend 可以把多个 Session 集中到一个数据库。两种 backend 共享同一套事件语义，但当前格式仍处于预发布阶段，没有跨版本迁移承诺。
 
-开发新的 durable event、projection 或 replay 逻辑时，转到 [会话数据 Plugin](dsh-plugin.md#session-data-plugins)。
+开发需要持久保存的新事件、从日志计算状态或回放历史时，转到 [会话数据 Plugin](dsh-plugin.md#session-data-plugins)。
 
 > 来源：[Agent turn flow 与 Session log](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L53-L97)；[默认 Profile 的 JSONL backend](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/bundle/base/cordis.patch.yml#L98-L101)；[JSONL 的每 Session 布局与默认压缩](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/README.md#L5-L13)；[SQLite 的共享数据库布局](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-sqlite/README.md#L5-L7)。
 
