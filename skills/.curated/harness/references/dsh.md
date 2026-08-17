@@ -74,7 +74,7 @@ flowchart TD
 
 每个已加载 Plugin 都在一个 Cordis Context 中运行，并由一个 Fiber 管理生命周期。Plugin 通过 Context 注册 service、event listener 或 effect；Fiber 卸载时，这些注册随其一起撤销。运行时因此可以热替换一个实现，也可以在同一扩展点叠加审批、重试、日志或压缩策略。
 
-运行时篇只解释这套关系。`apply`、`Config`、依赖注入、effect 和 HMR 的代码写法见 [Plugin 基础](dsh-plugin.md#plugin-basics)。
+运行时篇只解释这套关系。`apply`、`Config`、依赖注入、effect 和 HMR 的代码写法见 [模块、配置与生命周期](dsh-plugin.md#plugin-runtime)。
 
 #### Bundle 与 Profile
 
@@ -102,11 +102,13 @@ dsh --profile web --dump-config
 | [`standard`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/standard/agent.cordis.yml#L1-L251) | 完整 coding agent，包括 shell、文件、jobs、plan、todo、Skills、Web、Subagent 与 workflow |
 | [`code`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/code/agent.cordis.yml#L1-L6) | 在 standard 上增加 `run_code` 和生成的 TypeScript SDK，由代码组合工具调用 |
 | [`minimal`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/minimal/agent.cordis.yml#L1-L6) | 固定 system prompt，只保留 persistent Bash 与 `str_replace_editor` |
-| [`cordis`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L1-L12) | 在 standard 上增加读写运行时的 Cordis 工具 |
+| [`cordis（创造模式）`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/preset.yml#L1-L3) | 在 standard 上增加运行时检查、Plugin 实验和自定义 Agent preset 创作能力 |
 
 Preset 只改变 Agent 子 Context，不替换 Host 的浏览器、Session、持久化或权限服务。空白 Session 可以原子重组到另一 preset；一旦 Session 已产生任何记录便拒绝切换，避免历史工具调用与当前能力集合不一致。修改默认 preset 只影响之后创建的 Session。
 
-> 来源：[Plugin 组合、Profile、Bundle 与 Agent 执行](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L104)；[CLI 的配置层顺序](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md#L7-L19)；[Agent preset 的重组边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/preset/agent-presets/README.md#L135-L153)。
+创造模式可以让 Agent 复制用户可写的 preset，再修改其中的 Cordis composition。它的 `cordis_mount` 会对 live runtime 执行模型生成的 JavaScript，应按 shell access 对待，不是低权限的可视化配置模式。
+
+> 来源：[Plugin 组合、Profile、Bundle 与 Agent 执行](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L104)；[CLI 的配置层顺序](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md#L7-L19)；[Agent preset 的重组边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/preset/agent-presets/README.md#L135-L153)；[创造模式的用途与信任说明](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L1-L12)。
 
 ### Agent 执行与会话
 
@@ -214,7 +216,7 @@ Host Plugin、Agent 工具、MCP server 和遥测处理的是不同权限主体�
 
 从 Git 安装 TypeScript Plugin 时，包通常依赖 `prepare` 生成构建产物。pnpm 会要求用户在 Profile 的 `pnpm-workspace.yaml` 中加入 `allowBuilds`；这项授权意味着安装期直接执行 package 代码，发生在 Agent sandbox 之外。
 
-不希望用户授权构建脚本时，应发布已经包含产物的 npm package 或 tarball。具体打包流程见开发篇的 [打包、安装与社区生态](dsh-plugin.md#packaging-and-community)。
+不希望用户授权构建脚本时，应发布已经包含产物的 npm package 或 tarball。具体流程见开发篇的 [打包与安装](dsh-plugin.md#packaging-and-installation)。
 
 > 来源：[Git 安装的构建脚本与授权边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/publish.md#L153-L178)；[动态 Cordis VM 的信任说明](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/README.md#L19-L27)。
 
