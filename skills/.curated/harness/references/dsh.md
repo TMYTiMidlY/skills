@@ -41,19 +41,19 @@ pnpm dsh web
 | Web | `dsh web` 或 `dsh --profile web` | 交互式会话、设置、trajectory 和 Plugin UI；默认监听 `127.0.0.1:3080` |
 | headless | `dsh --profile headless "<task>"` | 一次性任务；等待 Agent idle 后输出最后一条 assistant 文本，不启动 HTTP 服务 |
 
-两种形态都以启动命令所在目录作为默认 workspace。Web 与 headless 是不同的 Profile：它们共享基础 Bundle，再分别叠加浏览器应用或一次性 runner。
+两种形态都以启动命令所在目录作为默认 workspace，也就是 Agent 读写文件和执行命令的项目目录。它不是 pnpm 多包仓库中的 workspace package；后者是 dsh 官方 monorepo 内统一管理的子包，见 Plugin 开发篇的[代码位置](dsh-plugin.md#code-location)。Web 与 headless 是不同的 Profile：它们共享基础 Bundle，再分别叠加浏览器应用或一次性 runner。
 
 > 来源：[npm 与源码启动命令](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/README.md#L13-L35)；[Profile、Web alias 与源码运行行为](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md#L7-L84)。
 
 ## <a id="runtime-composition"></a>运行时组合
 
-dsh 的组合分成主进程与单个 Agent 两层。Profile 先应用 Bundle、用户配置和命令行临时配置，组成主进程的 Plugin 树；创建 Agent 时，Agent preset 再为这个 Agent 加入 prompt、tools 和策略。
+dsh 的组合分成主进程与单个 Agent 两层。Profile 先应用 Bundle、用户配置和命令行 `--patch` overlay（覆盖层：只在本次启动叠加，不会改写 Profile 目录中的配置），组成主进程的 Plugin 树；创建 Agent 时，Agent preset 再为这个 Agent 加入 prompt、tools 和策略。
 
 ```mermaid
 flowchart TD
   P[Profile] --> B1[基础 Bundle]
   P --> B2[界面或运行形态 Bundle]
-  P --> U[用户配置与临时 --patch 配置]
+  P --> U[用户配置与临时 --patch overlay]
   B1 --> H[Host Plugin 树]
   B2 --> H
   U --> H
@@ -83,7 +83,7 @@ Profile 从空根开始按顺序应用配置层：
 1. Profile manifest 中列出的各个 Bundle patch；
 2. Profile 自己的 `cordis.patch.yml`；
 3. Harness home 下的全局 `cordis.patch.yml`；
-4. 命令行通过 `--patch` 临时加载的配置。
+4. 命令行通过 `--patch` 临时加载的 overlay。
 
 后层按 row id 覆盖前层；`config` 是整项替换，不是深合并。普通 dependency 即使安装成功，也不会成为配置层，只有声明 `dsh.bundle` 的 package 才会被加入 Profile。
 
