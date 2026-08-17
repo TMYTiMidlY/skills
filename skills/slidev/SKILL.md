@@ -123,7 +123,7 @@ Presenter notes go here
 
 | Feature | Usage | Reference |
 |---------|-------|-----------|
-| Comark syntax | `comark: true` + `{style="color:red"}` | [syntax-comark](references/syntax-mdc.md) |
+| Comark syntax | `comark: true` + `{style="color:red"}` | [syntax-comark](references/syntax-comark.md) |
 | Block frontmatter | `` ```yaml `` instead of `---` | [syntax-block-frontmatter](references/syntax-block-frontmatter.md) |
 | Import slides | `src: ./other.md` | [syntax-importing-slides](references/syntax-importing-slides.md) |
 | Merge frontmatter | Main entry wins | [syntax-frontmatter-merging](references/syntax-frontmatter-merging.md) |
@@ -158,6 +158,7 @@ Presenter notes go here
 | VS Code extension | Install `antfu.slidev` | [editor-vscode](references/editor-vscode.md) |
 | Prettier | `prettier-plugin-slidev` | [editor-prettier](references/editor-prettier.md) |
 | Eject theme | `slidev theme eject` | [tool-eject-theme](references/tool-eject-theme.md) |
+| MCP server (AI agents) | `http://localhost:<port>/__mcp` or `slidev mcp` | [tool-mcp](references/tool-mcp.md) |
 
 ### Lifecycle & API
 
