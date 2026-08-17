@@ -7,7 +7,7 @@
 >
 > 浏览器打开链接时自动进 Markdeep viewer 渲染；脚本 `curl` 拿到的是 raw 原文；自己用 `rclone` / `curl -T` 上传。
 >
-> viewer 壳子在 [`../assets/md-viewer.html`](../assets/md-viewer.html)。  
+> viewer 壳子见 `vps-maintenance` skill 的 `assets/md-viewer.html`。  
 > 客户端上传命令、分享链接用法、Markdeep 写作惯例见 `software` skill 的 `doc-share` reference（`references/doc-share.md`）；本节只覆盖服务端配置。
 
 ### 安装 `caddy-webdav`
