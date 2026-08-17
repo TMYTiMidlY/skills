@@ -1,6 +1,6 @@
 # DeepSeek Harness（dsh）运行时
 
-本文从使用者和集成者视角说明 DeepSeek Harness 的运行方式、组合模型、内置扩展、程序化入口和权限边界。编写、测试和分发 Plugin 的代码路径见 [DeepSeek Harness Plugin 开发](deepseek-plugin-development.md)。
+本文从使用者和集成者视角说明 DeepSeek Harness 的运行方式、组合模型、内置扩展、程序化入口和权限边界。编写、测试和分发 Plugin 的代码路径见 [DeepSeek Harness Plugin 开发](dsh-plugin.md)。
 
 > **来源口径：** 本文按 2026-08-16 的[官方仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)核对。源码与文档链接固定到该状态，但可读文字不展示内部 ref；社区项目链接在开发篇固定到各自调研时的仓库状态。
 
@@ -74,7 +74,7 @@ flowchart TD
 
 每个已加载 Plugin 都在一个 Cordis Context 中运行，并由一个 Fiber 管理生命周期。Plugin 通过 Context 注册 service、event listener 或 effect；Fiber 卸载时，这些注册随其一起撤销。运行时因此可以热替换一个实现，也可以在同一扩展点叠加审批、重试、日志或压缩策略。
 
-运行时篇只解释这套关系。`apply`、`Config`、依赖注入、effect 和 HMR 的代码写法见 [Plugin 基础](deepseek-plugin-development.md#plugin-basics)。
+运行时篇只解释这套关系。`apply`、`Config`、依赖注入、effect 和 HMR 的代码写法见 [Plugin 基础](dsh-plugin.md#plugin-basics)。
 
 #### Bundle 与 Profile
 
@@ -122,7 +122,7 @@ Session 是只追加的事件日志。模型历史、Trajectory、恢复、分�
 
 默认 Profile 使用每 Session 一份压缩 JSONL；SQLite backend 可以把多个 Session 集中到一个数据库。两种 backend 共享同一套事件语义，但当前格式仍处于预发布阶段，没有跨版本迁移承诺。
 
-开发新的 durable event、projection 或 replay 逻辑时，转到 [会话数据 Plugin](deepseek-plugin-development.md#session-data-plugins)。
+开发新的 durable event、projection 或 replay 逻辑时，转到 [会话数据 Plugin](dsh-plugin.md#session-data-plugins)。
 
 > 来源：[Agent turn flow 与 Session log](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L53-L97)；[默认 Profile 的 JSONL backend](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/bundle/base/cordis.patch.yml#L98-L101)；[JSONL 的每 Session 布局与默认压缩](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/README.md#L5-L13)；[SQLite 的共享数据库布局](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-sqlite/README.md#L5-L7)。
 
@@ -214,7 +214,7 @@ Host Plugin、Agent 工具、MCP server 和遥测处理的是不同权限主体�
 
 从 Git 安装 TypeScript Plugin 时，包通常依赖 `prepare` 生成构建产物。pnpm 会要求用户在 Profile 的 `pnpm-workspace.yaml` 中加入 `allowBuilds`；这项授权意味着安装期直接执行 package 代码，发生在 Agent sandbox 之外。
 
-不希望用户授权构建脚本时，应发布已经包含产物的 npm package 或 tarball。具体打包流程见开发篇的 [打包、安装与社区生态](deepseek-plugin-development.md#packaging-and-community)。
+不希望用户授权构建脚本时，应发布已经包含产物的 npm package 或 tarball。具体打包流程见开发篇的 [打包、安装与社区生态](dsh-plugin.md#packaging-and-community)。
 
 > 来源：[Git 安装的构建脚本与授权边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/publish.md#L153-L178)；[动态 Cordis VM 的信任说明](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/README.md#L19-L27)。
 

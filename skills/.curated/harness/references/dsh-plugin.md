@@ -1,6 +1,6 @@
 # DeepSeek Harness（dsh）Plugin 开发
 
-本文面向要编写或维护 dsh Plugin 的开发者，使用 TypeScript、Cordis 配置和仓库中的真实 package 说明扩展点。运行方式、内置扩展的用户行为和完整权限模型见 [DeepSeek Harness 运行时](deepseek.md)。
+本文面向要编写或维护 dsh Plugin 的开发者，使用 TypeScript、Cordis 配置和仓库中的真实 package 说明扩展点。运行方式、内置扩展的用户行为和完整权限模型见 [DeepSeek Harness 运行时](dsh.md)。
 
 > **来源口径：** 本文按 2026-08-16 的[官方仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)核对。代码和文档链接固定到该状态，但可读文字不展示内部 ref。
 
@@ -474,7 +474,7 @@ Profile manifest 则保存按顺序应用的 Bundle 列表，由 `dsh plugin` �
 
 npm package 应在发布前包含运行产物。Git install 获取的是 source；TypeScript package 需要 `prepare` 自行构建，且 pnpm 要求使用者显式 `allowBuilds`。
 
-`allowBuilds` 是执行 package 代码的授权，不受 Agent sandbox 保护。若不希望要求这项授权，可发布带构建产物的 npm package 或 `pnpm pack` tarball。完整权限关系见运行时篇的 [Plugin 与安装脚本](deepseek.md#trust-boundaries)。
+`allowBuilds` 是执行 package 代码的授权，不受 Agent sandbox 保护。若不希望要求这项授权，可发布带构建产物的 npm package 或 `pnpm pack` tarball。完整权限关系见运行时篇的 [Plugin 与安装脚本](dsh.md#trust-boundaries)。
 
 > 来源：[Bundle/Profile manifest、安装和配置顺序](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/publish.md#L9-L128)；[Git build script 与预构建分发](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/publish.md#L153-L178)。
 
