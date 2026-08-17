@@ -63,7 +63,13 @@ export function apply(ctx: Context, config: Config): void {
 提供 Cordis service 的 package 通常 default-export 一个 `Service` subclass：
 
 ```ts
-import { Context, Service } from '@deepseek-ai/cordis'
+import { Service, type Context } from '@deepseek-ai/cordis'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    metrics: MetricsService
+  }
+}
 
 export default class MetricsService extends Service {
   static inject = ['llm']
@@ -408,9 +414,11 @@ Tool、Provider 和 event policy 的单元测试覆盖错误路径、顺序、�
 
 产品可见 Plugin 还要通过 Loader 启动真实 `cordis.yml`，证明 package export、Config、依赖和 composition 都能按发布入口工作。模型、协议或 UI 输出发生变化时，增加 keyless snapshot；真实 provider 行为再由带 key 的 smoke 验证。
 
-仓库内新增 package 的基础检查是：
+仓库内新增 package 先注册 workspace、同步文档，再运行基础检查：
 
 ```sh
+pnpm install
+pnpm run doc-sync
 pnpm run constraints
 pnpm run typecheck
 pnpm run lint
@@ -420,7 +428,7 @@ pnpm run hygiene
 
 实际开发先运行覆盖改动面的最小 test，再根据是否改变 model、protocol、UI 或发布产物升级到 snapshot、browser 或 built-artifact checks。
 
-> 来源：[测试层级、真实入口与 snapshot 要求](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/testing.md#L7-L49)；[仓库内 package 的验证命令](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-package.md#L109-L115)。
+> 来源：[测试层级、真实入口与 snapshot 要求](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/testing.md#L7-L49)；[仓库内 package 的验证命令](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-package.md#L109-L118)。
 
 ## <a id="packaging-and-community"></a>打包、安装与社区生态
 
@@ -482,29 +490,29 @@ npm package 应在发布前包含运行产物。Git install 获取的是 source�
 
 [`awesome-dsh-plugin`](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/tree/c5f287967a26213ffdc77450db542e46899573e1) 维护社区 registry；[`dsh-market`](https://github.com/dsh-market/dsh-market/tree/0a2959a7c7809e46f8ce39149f4e4710d2e0a047) 消费该 registry，在 Web Settings 提供浏览、搜索和安装界面。目录收录与市场展示都不构成 DeepSeek 背书或安全审计。
 
-> **指标截止日期：2026-08-16。** Stars 来自当日社区 registry；npm downloads 为 **2026-08-13 至 08-16** 的 point API。`N/A` 表示 endpoint 当时未收录或返回 404，不表示 0。指标只描述早期可见度，不证明兼容性、质量、留存或生产使用。
-
 #### DSH 专用扩展
 
-| Plugin | 开发形态 | 用途 | Stars | npm downloads | 安装 |
-|---|---|---|---:|---:|---|
-| [`dsh-TUI`](https://github.com/ccch1mneyyy/dsh-TUI/tree/69f093122458e68515a6c3987898f1817d6beccf) | 独立交互界面 | Claude Code 风格全屏 TUI | 1,293 | N/A | `dsh plugin --profile web add @deepseek-harness-tui/dsh-tui` |
-| [`dsh-agent-teams`](https://github.com/NanmiCoder/dsh-agent-teams/tree/2b1141248f34ee28870d2e39462c0dbefaa5ffdb) | Subagent / workflow | 多 Agent team 与 workflow | 344 | N/A | `dsh plugin --profile web add @nanmicoder/dsh-agent-teams` |
-| [`dsh-market`](https://github.com/dsh-market/dsh-market/tree/0a2959a7c7809e46f8ce39149f4e4710d2e0a047) | Web Client / 安装面 | 社区 Plugin market UI | 301 | [86](https://api.npmjs.org/downloads/point/2026-08-13:2026-08-16/dshmarket) | `dsh plugin --profile web add dshmarket` |
-| [`dsh-openpencil`](https://github.com/ZSeven-W/dsh-openpencil/tree/49b0417a6d6fe7a55056bb1a82d4c348a21a6ca6) | 业务 UI / 设计文档 | 在对话中预览和编辑 `.op` 画布 | 85 | [154](https://api.npmjs.org/downloads/point/2026-08-13:2026-08-16/%40zseven-w%2Fdsh-openpencil) | `dsh plugin --profile web add @zseven-w/dsh-openpencil` |
+| Plugin | 开发形态 | 用途 | 安装 |
+|---|---|---|---|
+| [`dsh-TUI`](https://github.com/ccch1mneyyy/dsh-TUI/tree/69f093122458e68515a6c3987898f1817d6beccf) | 独立交互界面 | Claude Code 风格全屏 TUI | `dsh plugin --profile dsh-tui add @deepseek-harness-tui/dsh-tui` |
+| [`dsh-agent-teams`](https://github.com/NanmiCoder/dsh-agent-teams/tree/2b1141248f34ee28870d2e39462c0dbefaa5ffdb) | Subagent / workflow | 多 Agent team 与 workflow | `dsh plugin --profile web add @nanmicoder/dsh-agent-teams` |
+| [`dsh-market`](https://github.com/dsh-market/dsh-market/tree/0a2959a7c7809e46f8ce39149f4e4710d2e0a047) | Web Client / 安装面 | 社区 Plugin market UI | `dsh plugin --profile web add dshmarket` |
+| [`dsh-openpencil`](https://github.com/ZSeven-W/dsh-openpencil/tree/49b0417a6d6fe7a55056bb1a82d4c348a21a6ca6) | 业务 UI / 设计文档 | 在对话中预览和编辑 `.op` 画布 | `dsh plugin --profile web add @zseven-w/dsh-openpencil` |
+
+> dsh-TUI 使用独立的 `dsh-tui` Profile；安装后可运行 `dsh --profile dsh-tui`，也可使用 package 提供的 `dsh-tui` 启动命令。来源：[dsh-TUI 安装与启动](https://github.com/ccch1mneyyy/dsh-TUI/blob/69f093122458e68515a6c3987898f1817d6beccf/README.md#L56-L75)。
 
 #### 多宿主能力
 
-| Plugin | 开发形态 | 用途 | Stars | npm downloads | 安装 |
-|---|---|---|---:|---:|---|
-| [`hindsight`](https://github.com/vectorize-io/hindsight/tree/396f63aafc9b618f04d446e2465cac95aa1cb426/hindsight-integrations/coding-agents) | 记忆 Provider | 长期项目记忆、自动 recall / retain | 20,008 | [371](https://api.npmjs.org/downloads/point/2026-08-13:2026-08-16/%40vectorize-io%2Fhindsight-coding-agents) | `dsh plugin --profile web add @vectorize-io/hindsight-coding-agents` |
-| [`mirage`](https://github.com/strukto-ai/mirage/tree/14f83208abb2b92d9341a10dbaa4cb4786fe7eb2/typescript/packages/dsh) | Filesystem Provider | 用统一虚拟 filesystem 替换本地 FS / Bash provider | 3,447 | N/A | `dsh plugin --profile web add @struktoai/mirage-dsh` |
-| [`modlens`](https://github.com/liustack/modlens/tree/b489d7ad51255a8f98086f6ad0534d840505f747) | 视觉 Tool / Provider | OCR、布局和视觉语义证据 | 1,963 | [1,717](https://api.npmjs.org/downloads/point/2026-08-13:2026-08-16/%40liustack%2Fmodlens) | `dsh plugin --profile web add @liustack/modlens` |
-| [`modsearch`](https://github.com/liustack/modsearch/tree/e1dba224b72651dfe7891990dcaf674098100df2) | Web Tool | Web / X 搜索与结构化引用 | 105 | [141](https://api.npmjs.org/downloads/point/2026-08-13:2026-08-16/%40liustack%2Fmodsearch) | `dsh plugin --profile web add @liustack/modsearch` |
+| Plugin | 开发形态 | 用途 | 安装 |
+|---|---|---|---|
+| [`hindsight`](https://github.com/vectorize-io/hindsight/tree/396f63aafc9b618f04d446e2465cac95aa1cb426/hindsight-integrations/coding-agents) | 记忆 Provider | 长期项目记忆、自动 recall / retain | `dsh plugin --profile web add @vectorize-io/hindsight-coding-agents` |
+| [`mirage`](https://github.com/strukto-ai/mirage/tree/14f83208abb2b92d9341a10dbaa4cb4786fe7eb2/typescript/packages/dsh) | Filesystem Provider | 用统一虚拟 filesystem 替换本地 FS / Bash provider | `dsh plugin --profile web add @struktoai/mirage-dsh` |
+| [`modlens`](https://github.com/liustack/modlens/tree/b489d7ad51255a8f98086f6ad0534d840505f747) | 视觉 Tool / Provider | OCR、布局和视觉语义证据 | `dsh plugin --profile web add @liustack/modlens` |
+| [`modsearch`](https://github.com/liustack/modsearch/tree/e1dba224b72651dfe7891990dcaf674098100df2) | Web Tool | Web / X 搜索与结构化引用 | `dsh plugin --profile web add @liustack/modsearch` |
 
 #### 插件功能重叠
 
-开发选型先看扩展位置，而不是 Stars：
+开发选型先看扩展位置：
 
 - TUI、Web Client Plugin 和协议驱动都能提供“另一套交互面”，但前两者处理呈现，协议驱动处理 wire contract 和 Agent 生命周期。
 - 视觉能力可以是一个返回证据的 Tool，也可以是替换模型或文件能力的 Provider；前者接入简单，后者能改变整个产品的数据路径。

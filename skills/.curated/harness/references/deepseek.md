@@ -2,7 +2,7 @@
 
 本文从使用者和集成者视角说明 DeepSeek Harness 的运行方式、组合模型、内置扩展、程序化入口和权限边界。编写、测试和分发 Plugin 的代码路径见 [DeepSeek Harness Plugin 开发](deepseek-plugin-development.md)。
 
-> **来源口径：** 本文按 2026-08-16 的[官方仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)核对。源码与文档链接固定到该状态，但可读文字不展示内部 ref；社区数据在开发篇另标截止日期。
+> **来源口径：** 本文按 2026-08-16 的[官方仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)核对。源码与文档链接固定到该状态，但可读文字不展示内部 ref；社区项目链接在开发篇固定到各自调研时的仓库状态。
 
 ## <a id="product-position"></a>产品定位与来源口径
 
@@ -19,6 +19,8 @@ DeepSeek Harness（`dsh`）是 DeepSeek 开源的 agent harness。它以 Cordis 
 ```sh
 npx @deepseek-ai/dsh web
 ```
+
+> 无版本号的安装命令跟随 npm 发布版本；截至本文核验日为 [`0.1.0-rc.6`](https://unpkg.com/@deepseek-ai/dsh@0.1.0-rc.6/package.json)。正文实现细节按源码快照核对，其[根版本为 `0.1.0-rc.5`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/package.json#L1-L10)；需要复现该快照时使用下面的源码构建流程。
 
 源码 checkout 需要先安装依赖并构建运行产物：
 
@@ -97,10 +99,10 @@ dsh --profile web --dump-config
 
 | preset | 模型获得的工作方式 |
 |---|---|
-| `standard` | 完整 coding agent，包括 shell、文件、jobs、plan、todo、Skills、Web、Subagent 与 workflow |
-| `code` | 只直接暴露 `run_code` 和生成的 TypeScript SDK，由代码组合工具调用 |
-| `minimal` | 固定 system prompt，只保留 persistent Bash 与 `str_replace_editor` |
-| `cordis` | 在 standard 上增加运行时检查和临时动态 Plugin 工具 |
+| [`standard`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/standard/agent.cordis.yml#L1-L251) | 完整 coding agent，包括 shell、文件、jobs、plan、todo、Skills、Web、Subagent 与 workflow |
+| [`code`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/code/agent.cordis.yml#L1-L6) | 在 standard 上增加 `run_code` 和生成的 TypeScript SDK，由代码组合工具调用 |
+| [`minimal`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/minimal/agent.cordis.yml#L1-L6) | 固定 system prompt，只保留 persistent Bash 与 `str_replace_editor` |
+| [`cordis`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L1-L12) | 在 standard 上增加读写运行时的 Cordis 工具 |
 
 Preset 只改变 Agent 子 Context，不替换 Host 的浏览器、Session、持久化或权限服务。空白 Session 可以原子重组到另一 preset；一旦 Session 已产生任何记录便拒绝切换，避免历史工具调用与当前能力集合不一致。修改默认 preset 只影响之后创建的 Session。
 
@@ -122,7 +124,7 @@ Session 是只追加的事件日志。模型历史、Trajectory、恢复、分�
 
 开发新的 durable event、projection 或 replay 逻辑时，转到 [会话数据 Plugin](deepseek-plugin-development.md#session-data-plugins)。
 
-> 来源：[Agent turn flow 与 Session log](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L53-L97)；[Session subsystem 的类型与持久化语义](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/subsystems/session.md#L1-L120)。
+> 来源：[Agent turn flow 与 Session log](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L53-L97)；[默认 Profile 的 JSONL backend](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/bundle/base/cordis.patch.yml#L98-L101)；[JSONL 的每 Session 布局与默认压缩](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-jsonl/README.md#L5-L13)；[SQLite 的共享数据库布局](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/session/session-persistence-sqlite/README.md#L5-L7)。
 
 ## <a id="builtin-extensions"></a>内置扩展
 
@@ -162,10 +164,10 @@ Web 的 **Settings → Models** 可以配置 DeepSeek、已安装 catalog provid
 |---|---|---|
 | spawn in-process | 当前 dsh 进程中的新 Agent | 继承 cwd、lineage、模型与 Host 服务，不继承父对话 |
 | fork in-process | 当前进程中的新 Agent | 以父 Session 已完成的 turns 作为一次性 seed |
-| ACP | 新 subprocess 中的 Agent | 独立 runtime、Session、模型和工具，通过 ACP 驱动 |
-| Codex | 真实 Codex app-server child | 独立产品上下文，parent 主要获得最终结果 |
-| Claude Code | 官方 Claude Agent SDK child | 独立产品上下文，认证与配置由 Claude Code 负责 |
-| dsh SDK | TypeScript SDK 启动的 dsh runtime | 独立完整 Plugin 树，通过 SDK 协议驱动 |
+| [ACP](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/subagent/subagent-acp/README.md#L5-L21) | 新 subprocess 中的 Agent | 独立 runtime、Session、模型和工具，通过 ACP 驱动 |
+| [Codex](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/subagent/subagent-codex/README.md#L5-L28) | 真实 Codex app-server child | 独立产品上下文，parent 主要获得最终结果 |
+| [Claude Code](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/subagent/subagent-claude-code/README.md#L5-L23) | 官方 Claude Agent SDK child | 独立产品上下文，认证与配置由 Claude Code 负责 |
+| [dsh SDK](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/subagent/subagent-dsh-sdk/README.md#L5-L23) | TypeScript SDK 启动的 dsh runtime | 独立完整 Plugin 树，通过 SDK 协议驱动 |
 
 Provider 可以声明 structured output、persona、tool filter、depth limit 或 continuation 等能力；调用者要求 provider 不支持的能力时应显式失败，而不是静默忽略。
 
