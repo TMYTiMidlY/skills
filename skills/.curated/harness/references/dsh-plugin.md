@@ -127,6 +127,28 @@ dsh web --patch ./cordis.patch.yml
 
 先确认最简单的 module 能成功加载，再逐步加入 Config、service、Tool 或 UI。这样导入路径、配置、依赖和业务逻辑不会同时报错。模块形式和生命周期规则见后文的 [模块、配置与生命周期](#plugin-runtime)。
 
+### <a id="creation-mode-plugin-development"></a>创造模式中的 Plugin 开发
+
+`--patch` 适合从磁盘上的 Plugin 源码启动并逐步走向测试、打包和发布。需要先验证一个想法是否适配当前运行时接口时，可以新建 Session 并选择 [`cordis` preset（创造模式）](dsh.md#creation-mode)：它会直接检查正在运行的 Host 与浏览器，再把模型生成的 JavaScript 作为动态 Plugin 加载，不需要先创建 package、安装依赖或修改 Profile。
+
+动态 Plugin 可以只有 Host 部分、只有浏览器 Client 部分，也可以两者都有。Host 部分可注册 Tool、Service、Event listener、prompt 或 Session 处理逻辑；Client 部分可使用经过查询确认的 Slot 和主题接口增加设置页、侧边栏入口、overlay 或 Tool card；两部分可以通过这个 Plugin 私有的 JSON RPC 通信。代码是普通 JavaScript 函数体，不经过 TypeScript、JSX 或 bundler，也不能直接使用未经运行时检查确认的全局对象。
+
+创造模式按以下顺序工作：
+
+| 阶段 | 工具 | 作用 |
+|---|---|---|
+| 发现接口 | `cordis_inspect_list`、`cordis_inspect_query` | 列出当前 Host / Client 的检查入口，再查询准确的 Service 方法、Event 模式、Builtin、Tool schema、Slot props 或主题 token |
+| 定义版本 | `cordis_define` | 语法检查并记录一个不可变 Package，返回 `pluginId` 和 `packageId`，但尚不执行代码 |
+| 首次运行或切换版本 | `cordis_run` | 首次运行、重启或回滚使用 `run`；切换到另一个 Package 使用 `update` |
+| 检查与修复 | `cordis_inspect_self` | 查看某个 Plugin 的版本指针，或读取指定 Package 的 Host / Client 源码和运行诊断，再追加新 Package 修复 |
+| 暂停或移除 | `cordis_stop`、`cordis_undefine` | stop 撤销运行效果但保留版本；undefine 移除整个动态 Plugin 及其所有版本 |
+
+这里的 Package 是动态 Plugin 的一个不可变代码版本，不是 npm package 或 monorepo workspace package。带 Client 部分的 Package 需要用户批准后才能在浏览器加载，启动和渲染结果可能异步返回；更新失败时，先前成功的 `currentPackageId` 不会被覆盖，因此可以修复目标版本或回滚。
+
+动态 Plugin 只存放在共享 DSH 进程的内存中。它可以跨后续 turn 保持运行，也可能影响同一进程中的其他 Session，但只有定义它的 Session 可以查看和控制；`cordis_stop`、`cordis_undefine`、工具集卸载或 DSH 重启都会让相应效果消失。它不会自动生成 Plugin 文件、修改 `cordis.yml`、安装 package 或转成可发布产物。实验确认后，仍需把实现整理成普通仓库外 Plugin、Bundle 或 dsh workspace package，再补 Config、类型、测试和发布文件。
+
+> 来源：[创造模式的 Plugin 开发流程与 Host / Client 能力](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L10-L47)；[动态代码的执行环境、UI、Tool 与版本规则](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L61-L410)；[当前 `cordis_*` 工具定义](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/src/index.ts#L41-L370)；[Host runner 的运行、版本、进程内存与信任语义](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/README.md#L7-L32)。
+
 ### <a id="verification-and-debugging"></a>实现与检查
 
 每加一层功能，先运行最贴近这次改动的检查，再扩展到实际启动方式、浏览器界面和最终发布包。Plugin 没有启用时，先查 package 能否导入、Config 是否通过校验、必需 service 是否存在，以及同 id 的配置是否被后层覆盖；不要把“依赖安装成功”误判成“Plugin 已经启用”。

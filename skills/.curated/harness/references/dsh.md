@@ -47,7 +47,7 @@ pnpm dsh web
 
 ## <a id="runtime-composition"></a>运行时组合
 
-dsh 的组合分成主进程与单个 Agent 两层。Profile 先应用 Bundle、用户配置和命令行 `--patch` overlay（覆盖层：只在本次启动叠加，不会改写 Profile 目录中的配置），组成主进程的 Plugin 树；创建 Agent 时，Agent preset 再为这个 Agent 加入 prompt、tools 和策略。
+dsh 的组合分成主进程与单个 Agent 两层。Profile 先应用 Bundle、用户配置和命令行 `--patch` overlay（覆盖层：只在本次启动叠加，不会改写 Profile 目录中的配置），组成主进程的 Plugin 树；创建 Agent 时，Agent preset（这个 Session 采用的 Agent 能力配方）再加入 prompt、tools 和策略。
 
 ```mermaid
 flowchart TD
@@ -68,7 +68,7 @@ flowchart TD
 | Plugin | 提供服务、事件监听、工具、策略或 UI | TypeScript / JavaScript module |
 | Bundle | 分发一层可安装的 Plugin 配置 | 带 `dsh.bundle` manifest 的 package |
 | Profile | 选择 Bundle 并保存部署覆盖 | `$DSH_HOME/profiles/<name>` |
-| Agent preset | 为单个 Agent 组合 prompt、tools 与策略 | preset 目录中的 Cordis composition |
+| Agent preset | 决定一个 Session 中的 Agent 使用哪些 prompt、tools 与策略 | preset 目录中的 Cordis composition |
 
 #### Plugin、Context 与 Fiber
 
@@ -93,7 +93,9 @@ dsh plugin --profile web remove <package>
 dsh --profile web --dump-config
 ```
 
-#### Agent preset
+#### <a id="agent-preset"></a>Agent preset
+
+Agent preset 是创建 Agent 时选用的一份 Cordis 组合配方，存放为一个包含 `agent.cordis.yml` 的目录；其中的 Plugin rows 决定 Agent 可见的工具、persona、system prompt、压缩策略、workflow 和 Subagent 入口，可选的 `preset.yml` 提供显示名称与说明。Profile 决定整个 dsh Host 进程及共享服务怎样启动；preset 决定选择它的 Agent 看到哪些工具和提示，以及挂载哪些 Agent 侧 Plugin。
 
 官方随附四种 preset：
 
@@ -102,13 +104,24 @@ dsh --profile web --dump-config
 | [`standard`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/standard/agent.cordis.yml#L1-L251) | 完整 coding agent，包括 shell、文件、jobs、plan、todo、Skills、Web、Subagent 与 workflow |
 | [`code`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/code/agent.cordis.yml#L1-L6) | 在 standard 上增加 `run_code` 和生成的 TypeScript SDK，由代码组合工具调用 |
 | [`minimal`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/minimal/agent.cordis.yml#L1-L6) | 固定 system prompt，只保留 persistent Bash 与 `str_replace_editor` |
-| [`cordis（创造模式）`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/preset.yml#L1-L3) | 在 standard 上增加运行时检查、Plugin 实验和自定义 Agent preset 创作能力 |
+| [`cordis（创造模式）`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/preset.yml#L1-L3) | 在 standard 上增加运行时检查、动态 Plugin 实验和自定义 Agent preset 创作能力 |
 
-Preset 只改变 Agent 子 Context，不替换 Host 的浏览器、Session、持久化或权限服务。空白 Session 可以原子重组到另一 preset；一旦 Session 已产生任何记录便拒绝切换，避免历史工具调用与当前能力集合不一致。修改默认 preset 只影响之后创建的 Session。
+Session 创建时加入所选 preset 的组合；空白 Session 可以原子切换到另一 preset，一旦已经产生记录便拒绝切换，避免历史工具调用与当前能力集合不一致。修改默认 preset 或用户 preset 文件只影响之后创建的 Session。用户自建 preset 通常放在 `$DSH_HOME/.agent-presets/<id>/`；修改官方 preset 时应先复制成用户 preset，不直接改随安装提供的目录。
 
-创造模式可以让 Agent 复制一份用户可写的 preset，再修改其中的 Cordis 配置。它的 `cordis_mount` 会在正在运行的 dsh 进程中执行模型生成的 JavaScript，权限接近直接使用 shell，不是低权限的可视化配置模式。
+##### <a id="creation-mode"></a>创造模式
 
-> 来源：[Plugin 组合、Profile、Bundle 与 Agent 执行](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L104)；[CLI 的配置层顺序](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md#L7-L19)；[Agent preset 的重组边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/preset/agent-presets/README.md#L135-L153)；[创造模式的用途与信任说明](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L1-L12)。
+`cordis` preset 是 standard coding agent 加上运行时自省、动态 Plugin 和 preset 创作能力。它除了辅助 Plugin 开发，还可以承担以下工作：
+
+| 用途 | 能做什么 | 持久性 |
+|---|---|---|
+| 运行时检查与排障 | 查询当前 Host 和浏览器提供的 Service、Event、Tool、UI Slot 与主题接口，检查动态 Plugin 的源码、版本指针和失败诊断 | 只读，不修改配置 |
+| 临时调整 | 在运行中的进程里增加工具、prompt 或事件监听，或调整主题和局部 Web UI，用于验证一个小改动 | 动态 Plugin 只存在于进程内存，停止、移除或重启后消失 |
+| Agent 定制 | 复制已有 preset，再调整工具组合、persona、prompt、压缩策略或 Subagent 入口，并验证新组合能否挂载 | 写入用户 preset，供之后创建的 Session 使用 |
+| Plugin 开发 | 先读取真实接口，再定义、运行、更新和回滚动态 Plugin | 详细流程见开发篇的[创造模式中的 Plugin 开发](dsh-plugin.md#creation-mode-plugin-development) |
+
+创造模式仍受 Host 与 Agent 两层的边界约束：Session 持久化、sandbox、审批、模型路由和跨 Session 的注册表属于 Host，不能仅靠 Agent preset 改成每个 Session 私有的实现。动态 Plugin 代码会接触真实运行时，安全上应按 shell 权限看待。
+
+> 来源：[Plugin 组合、Profile、Bundle 与 Agent 执行](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L104)；[Agent preset 的组成、挂载、切换与创作](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/preset/agent-presets/README.md#L1-L58)；[用户 preset 目录与信任边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/preset/agent-presets/README.md#L94-L145)；[创造模式的定位](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/preset.yml#L1-L3)与 [Host / Agent 分层](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L20-L27)；[当前动态 Plugin 工具与版本操作](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/src/index.ts#L41-L370)；[进程内存与信任边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/README.md#L26-L32)。
 
 ### Agent 执行与会话
 
@@ -210,7 +223,7 @@ Host Plugin、Agent 工具、MCP server 和遥测处理的是不同权限主体�
 
 普通第三方 Plugin 在 `dsh` Host 进程中运行，拥有启动该进程的用户权限。它可以注册工具或监听器，也可以直接执行自身代码；tool approval 只约束 Agent 通过工具管线发起的调用。
 
-`cordis` preset 的动态 Plugin 在 VM 中执行，但该 VM 只用于约束诚实代码，不是安全边界。Host-realm helper 仍可能让代码到达 Node 能力，因此应把它视作临时 Host Plugin，而不是沙箱中的低权限脚本。
+创造模式通过 `cordis_define` 记录、再由 `cordis_run` 激活的动态 Plugin，其 Host 代码在 VM 中执行，但该 VM 只用于约束诚实代码，不是安全边界。Host-realm helper 仍可能让代码到达 Node 能力，因此应把它视作临时 Host Plugin，而不是沙箱中的低权限脚本。
 
 #### Git 依赖的构建授权
 
