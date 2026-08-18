@@ -9,7 +9,7 @@ description: 配置或排查 OpenWrt 路由器、外部 Wi-Fi 接入本地网络
 
 ## OpenWrt 设备管理
 
-OpenWrt 的设备支持、首次安装、镜像类型、升级恢复、BusyBox/procd/apk、LuCI/UCI/ubus、Dropbear SSH、链路日志与监控面板，以及小米 AX3000T 保留原厂启动程序的刷写案例见 [references/openwrt.md](references/openwrt.md)。面板的单文件页面模板位于 [assets/openwrt-link-dashboard.html](assets/openwrt-link-dashboard.html)。
+OpenWrt 的设备支持、首次安装、镜像类型、升级恢复、BusyBox/procd/apk、LuCI/UCI/ubus、Dropbear SSH、局域网 VPN/代理出口、链路日志与监控面板，以及小米 AX3000T 保留原厂启动程序的刷写案例见 [references/openwrt.md](references/openwrt.md)。面板的单文件页面模板位于 [assets/openwrt-link-dashboard.html](assets/openwrt-link-dashboard.html)。
 
 ## 外部 Wi-Fi 接入本地网络
 
