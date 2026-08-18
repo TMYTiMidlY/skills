@@ -114,12 +114,12 @@ Session 创建时加入所选 preset 的组合；空白 Session 可以原子切�
 
 | 用途 | 能做什么 | 持久性 |
 |---|---|---|
-| 运行时检查与排障 | 查询当前 Host 和浏览器提供的 Service、Event、Tool、UI Slot 与主题接口，检查动态 Plugin 的源码、版本指针和失败诊断 | 只读，不修改配置 |
-| 临时调整 | 在运行中的进程里增加工具、prompt 或事件监听，或调整主题和局部 Web UI，用于验证一个小改动 | stop 撤销运行效果并保留版本；undefine 或进程重启后删除内存定义 |
-| Agent 定制 | 复制已有 preset，再调整工具组合、persona、prompt、压缩策略或 Subagent 入口，并验证新组合能否挂载 | 写入用户 preset，供之后创建的 Session 使用 |
-| Plugin 开发 | 先读取真实接口，再定义、运行、更新和回滚动态 Plugin | 适用边界和完整流程见开发篇的[创造模式中的动态 Plugin 开发](dsh-plugin.md#creation-mode-plugin-development) |
+| 运行时检查与排障 | 查看当前加载的 Plugin、可用能力、工具、界面扩展位置和失败状态 | 只读取运行状态，不修改配置 |
+| 临时调整 | 在运行中的 DSH 里增加小工具、提示内容、事件处理或局部界面，用于验证想法 | 可以先临时停用并在之后重新启用；删除实验或重启 DSH 后不再保留 |
+| Agent 定制 | 复制已有 Agent preset，再调整工具、角色说明、提示内容、压缩策略或子智能体入口，并验证组合能否挂载 | 写入用户 preset，供之后创建的 Session 使用 |
+| Plugin 开发 | 先观察 DSH 的实际扩展位置，再快速制作临时原型 | 何时使用、何时不用及如何落成正式 Plugin，见开发篇的[创造模式中的 Plugin 开发](dsh-plugin.md#creation-mode-plugin-development) |
 
-创造模式仍受 Host 与 Agent 两层的边界约束：Session 持久化、sandbox、审批、模型路由和跨 Session 的注册表属于 Host，不能仅靠 Agent preset 改成每个 Session 私有的实现。动态 Plugin 代码会接触真实运行时，安全上应按 shell 权限看待；需要类型、依赖、持久存储、测试和发布的功能应落成源码 Plugin。
+创造模式主要调整当前 Agent 和临时扩展，不负责重写跨 Session 共用的持久化、权限或模型路由。动态 Plugin 会接触真实运行时，安全上应按 shell 权限看待；需要长期维护、测试和发布的功能应落成源码 Plugin。
 
 > 来源：[Plugin 组合、Profile、Bundle 与 Agent 执行](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L104)；[Agent preset 的组成、挂载、切换与创作](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/preset/agent-presets/README.md#L1-L58)；[用户 preset 目录与信任边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/preset/agent-presets/README.md#L94-L145)；[创造模式的定位](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/preset.yml#L1-L3)与 [Host / Agent 分层](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L20-L27)；[当前动态 Plugin 工具与版本操作](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/src/index.ts#L41-L370)；[停止保留版本](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L455-L490)、[移除整个 Plugin](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L202-L235)与[进程重启后的缺失状态](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L1240-L1250)。
 

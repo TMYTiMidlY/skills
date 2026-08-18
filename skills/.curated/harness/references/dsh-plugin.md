@@ -87,105 +87,77 @@ ModLens 在 DSH 中既可以注册 `modlens_read_image` Tool，也可以为已�
 
 Plugin 卸载、热替换和失败状态的完整语义见后文的[模块、配置与生命周期](#plugin-runtime)。
 
-## <a id="plugin-basics"></a>开发路径与产物边界
+## <a id="plugin-basics"></a>创造模式与源码开发
 
-dsh Plugin 有两条互补的开发路径。创造模式直接面对当前运行时，适合检查接口和快速验证想法；源码开发把实现写入磁盘，适合需要类型、依赖、测试、构建、持久配置和分发的功能。创造模式不是源码开发之前必须经过的步骤。
+创造模式是一套运行时开发能力，源码开发则是完整的软件工程。两者可以衔接，但没有固定先后关系：需求还不清楚时，可以先在创造模式中试验；目标已经明确，或一开始就需要长期维护、测试和发布时，可以直接编写源码 Plugin。
 
-### 创造模式与源码开发
-
-| 路径 | 产物 | 适合 | 主要边界 |
-|---|---|---|---|
-| 创造模式 | DSH 进程内的动态 Plugin | 实时接口探查、小型 Tool / Event / UI / RPC 原型、故障复现 | plain JavaScript；不生成源码 package，不自动持久化或发布 |
-| 独立仓库源码 Plugin | TypeScript / JavaScript package 与可选 Bundle | 社区 Plugin、完整依赖、测试、CI 和发布 | 需要自行维护构建产物、manifest 与兼容范围 |
-| dsh monorepo workspace package | 官方仓库内统一管理的 package | 修改官方能力、上游贡献、与整仓类型和测试集成 | 受 dsh 仓库的 project reference、约束、文档和发布规则管理 |
-
-需要 TypeScript、JSX、静态 `import`、bundler、多文件结构、第三方依赖、持久存储、数据迁移或安全敏感逻辑时，直接从源码 Plugin 开始。只需要确认当前 Host / Client 接口或快速试出一个交互时，可以先用创造模式，再决定是否落成源码。
-
-### Plugin、版本与 package
-
-本文中的 `package` 通常指 npm package 或 monorepo workspace package，也就是磁盘上的工程与分发单元。创造模式还使用一组运行时术语：
-
-| 对象 | 含义 |
+| 目标 | 合适的做法 |
 |---|---|
-| Plugin | 一个稳定的动态实验对象，由 `pluginId` 标识 |
-| 版本 | Plugin 的一份不可变 Host / Client 代码，由 `packageId` 标识；上游工具把这个版本对象称为 Package |
-| Run | 启动某个版本的一次尝试，由 `pluginRunId` 标识 |
+| 安装、启用或配置现成 Plugin | 使用 `dsh plugin`、Profile 配置或设置页面，不需要切换创造模式 |
+| 了解 DSH 当前有哪些扩展点，或排查某个 Plugin 为什么没有工作 | 切换创造模式，让 Agent 检查正在运行的 DSH |
+| 快速试做一个小工具、界面入口或行为调整 | 在创造模式中创建临时 Plugin |
+| 开发需要依赖、持久数据、完整测试、构建或发布的功能 | 直接编写源码 Plugin |
+| 修改 DSH 官方能力并准备向上游贡献 | 在 dsh monorepo 中开发 workspace package |
 
-为避免把代码版本与 npm package 混为一谈，下面正文主要称它为“版本”，只在工具字段和上游原名中保留 `Package` / `packageId`。
+创造模式中运行的是**临时 Plugin**：它和正式 Plugin 都遵循 Cordis 的加载与生命周期规则，但没有对应的源码工程、构建产物和发布包。它适合回答“这个想法能否工作”，源码开发负责把答案变成长期可用的软件。
 
-> 来源：[动态 Plugin 的对象与版本模型](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L146-L201)；[创造模式与源码开发的执行环境差异](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L10-L80)。
+> 来源：[创造模式的定位与能力](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L1-L27)；[创造模式与源码开发的环境差异](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L10-L80)。
 
-## <a id="creation-mode-plugin-development"></a>创造模式中的动态 Plugin 开发
+## <a id="creation-mode-plugin-development"></a>创造模式中的 Plugin 开发
 
-创造模式是 [`cordis` Agent preset](dsh.md#creation-mode) 提供的运行时开发环境。它先查询当前部署真正暴露的接口，再定义和运行内存中的动态 Plugin，因此适合在无需先创建源码 package、安装 npm 依赖或修改 Profile 的情况下验证运行时行为。
+切换到 [`cordis` preset（创造模式）](dsh.md#creation-mode)后，Agent 会保留标准模式的编码能力，并额外获得 DSH 运行时检查、临时 Plugin 实验和 Agent preset 创作能力。此时已经具备的是**开发手段**，不是某个现成 Plugin；Agent 会根据用户的目标检查当前 DSH，再现场创建相应的临时扩展。
 
-### 适用场景与开发边界
+### 切换后提供的能力
 
-创造模式适合：
+创造模式大致封装了以下能力：
 
-- 查看当前 Host 或浏览器实际提供的 Service、Event、Tool、Slot 和主题 token；
-- 原型化小型 Tool、事件监听、prompt、局部 UI 或 Client → Host 调用；
-- 重现依赖缺失、Slot 注册、浏览器渲染或版本切换问题；
-- 在写正式源码前确认接口名称、参数和生命周期。
+- **检查正在运行的 DSH**：查看当前加载的 Plugin、可用能力、工具、事件、界面扩展位置和失败状态；
+- **创建临时 Plugin**：在当前 DSH 中增加后台行为、模型可用的工具、提示内容或网页界面；
+- **边运行边调整**：保留多次修改产生的临时版本，在新版本失败时继续修正或回到先前可用的版本；
+- **诊断运行问题**：读取临时 Plugin 的状态和错误，确认问题来自缺失依赖、加载失败还是界面渲染；
+- **创作 Agent preset**：复制已有 preset，调整某类 Agent 使用的工具、提示和策略，并验证组合能否启动。
 
-动态 Plugin 的状态只随当前进程存在。设置页可以用于临时交互状态；需要跨重启保存时，Agent 组合进入用户 preset，部署配置进入 Profile，Plugin 自有数据则由源码 Plugin 接入正式的设置或存储接口。
+网页界面的临时扩展需要用户批准后才会加载。创造模式可以接触真实的 DSH 主进程，应视为与直接执行终端命令相近的高权限能力，只在受信任的开发场景中使用。
 
-### Host 与 Client 能力
+### 什么时候切换到创造模式
 
-| 部分 | 可以提供的能力 | 开发时先查什么 |
-|---|---|---|
-| Host | Service、Event listener、模型 Tool、prompt、Session 与进程侧逻辑 | Service、Event、Builtin 和 Tool 的当前签名 |
-| Client | 设置页、侧边栏入口、overlay、Tool card、主题与其他 Slot UI | Slot 树、props、注册协议和主题 token |
-| Host + Client | Host 读取或处理数据，Client 展示和交互 | 两侧接口，以及 Plugin 私有的 `harness.handle` / `host.call` JSON RPC |
+以下情况适合切换：
 
-`code.host` 和 `code.client` 都是返回 Cordis Plugin 的普通 JavaScript 函数体，不经过 TypeScript、JSX 或 bundler。不能使用静态 `import`、`require`、TypeScript 语法或未经 `Builtin` / Service 查询确认的全局对象；Client React 代码使用 `React.createElement()` 并注册到经过查询的 Slot。
+- 你想修改或扩展 **DSH 自身**，但还不知道应该接入哪个 Plugin、服务或界面位置；
+- 你想先看到一个能够运行的原型，再决定是否值得建立正式项目；
+- 你正在排查运行中的 Plugin、工具、界面或 Agent preset；
+- 你希望 DSH 帮你设计另一种 Agent 工作方式；
+- 需求很小、生命周期很短，只需要本次运行期间生效。
 
-> 来源：[Host / Client 选型与接口查询](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L34-L98)；[动态 UI、主题、Tool 与私有 RPC](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L230-L366)。
+创造模式的价值在于让 Agent 先观察真实运行时，再决定怎样扩展，而不是根据文档或名称猜测接口。
 
-### Plugin 版本与运行
+### 什么时候不用创造模式
 
-每次 `cordis_define` 都新增一份只读版本，不覆盖旧代码。一个 Plugin 因而可以保留多个版本，供检查、更新或回滚：
+以下情况通常直接使用普通模式或源码开发：
 
-| 字段 | 表示什么 |
-|---|---|
-| `pluginId` | 动态 Plugin 的稳定身份 |
-| `packageId` | 一份不可变代码版本 |
-| `pluginRunId` | 某次启动或更新尝试 |
-| `currentPackageId` | 最近一次完整成功的版本；不表示它此刻一定仍在运行 |
-| `nextPackageId` | 正在批准、启动、等待 Client，或最近失败的目标版本 |
+- 只是安装、启用或调整现成 Plugin；
+- 处理与 DSH 扩展无关的普通代码任务；
+- Plugin 的需求和接口已经明确，准备进入长期维护；
+- 功能需要第三方依赖、多个源码文件、持久数据、数据迁移、完整测试、持续集成或发布；
+- 功能涉及较高安全风险，需要在源码审查和测试后才能运行。
 
-### 开发流程
+### 临时 Plugin 与正式 Plugin
 
-| 阶段 | 工具 | 作用 |
-|---|---|---|
-| 发现接口 | `cordis_inspect_list`、`cordis_inspect_query` | 列出当前 Host / Client 的检查入口，再查询准确的 Service、Event、Builtin、Tool、Slot 或主题接口 |
-| 定义版本 | `cordis_define` | 语法检查并记录一个新版本，返回 `pluginId` 与 `packageId`，但不执行 `apply()` |
-| 首次运行或重启 | `cordis_run`，`mode: "run"` | 启动第一个版本、重新启动当前版本，或显式回滚到当前成功版本 |
-| 切换版本 | `cordis_run`，`mode: "update"` | 从当前成功版本切换到另一版本 |
-| 检查与修复 | `cordis_inspect_self` | 查看版本指针，或读取指定版本的源码和运行诊断，再定义修复版本 |
-| 暂停或移除 | `cordis_stop`、`cordis_undefine` | stop 撤销当前运行效果并保留版本；undefine 删除整个动态 Plugin |
+创造模式创建的临时 Plugin 可以作为正式 Plugin 的原型。两者使用同一套 Cordis Plugin 思路，所以已经确认的行为、扩展位置和部分代码可以继续利用；区别在于临时 Plugin 只存在于当前 DSH 进程，正式 Plugin 则有磁盘上的源码、配置、依赖、测试和发布方式。
 
-### 浏览器批准、异步结果与故障恢复
+创造模式不会一键生成正式 Plugin。确认原型后，需要让 Agent 把实现整理成源码工程，补齐配置、依赖、测试、构建和安装说明，再按正式启动方式验收。最终可以发布为独立社区 Plugin；只有要修改 DSH 官方实现时，才放进 monorepo 成为 workspace package。
 
-Host-only 版本可以在 Host 进程内完成启动。包含 Client 代码的版本需要浏览器加载；模型请求加载尚未授权的 Client 版本时，Web 界面会要求用户批准。`cordis_run` 返回 `awaiting-approval` 或 `starting` 只表示流程仍在继续，最终加载或渲染结果会通过状态更新、steering 或 `cordis_inspect_self` 返回。
+### 临时版本的保留与清理
 
-技术失败后，先读取失败版本的准确源码和诊断，再在同一 Plugin 下定义新版本。更新失败不会改写 `currentPackageId`，但也不会自动恢复旧版本的实际 Run；需要恢复时，对 `currentPackageId` 显式执行 `mode: "run"`。用户拒绝批准后，不自动重复请求。
+每次修改临时 Plugin 时，创造模式都会保留一份新的代码版本，旧版本仍可用于比较或恢复。上游界面和工具把这种临时代码版本称为 **Package**；这里的 Package 只是“一个版本”，与 npm package 或 workspace package 不是同一概念。
 
-### 控制权限与进程生命周期
+- **临时停用**：撤销 Plugin 当前提供的工具、监听和界面，但保留它及其代码版本，之后可以重新启用；
+- **删除实验**：移除这个临时 Plugin 和它的全部版本；
+- **重启 DSH**：清空创造模式保存在进程内存中的临时 Plugin。
 
-模型侧 `cordis_*` 工具只列出和操作当前 Session 拥有的动态 Plugin。受信任的 Web Cordis 面板读取整个进程的 inventory，并可按所属 Session 停止或移除其中的 Plugin；Session ownership 是模型工具的作用域，不是进程隔离。
+需要跨重启保留的功能，应在重启前落成源码 Plugin；需要长期保留的 Agent 组合，则写入用户自己的 Agent preset。
 
-`cordis_stop` 会停止当前 Run、撤销 Host / Client 效果并取消未完成的批准请求，但保留 Plugin、全部版本、授权和版本指针，之后可以重新运行。`cordis_undefine` 才会移除整个 Plugin。可运行定义、版本指针和 Run 状态只存在于 DSH 进程内存，进程重启后不会自动恢复。
-
-动态 Host 代码通过 VM 执行，但它访问的是真实 Host runtime；VM 用于约束诚实代码，不是安全边界。应把创造模式视为接近 shell 权限的受信任开发能力。
-
-> 来源：[当前工具的定义、运行、停止与移除语义](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/src/index.ts#L41-L370)；[版本切换、批准和失败恢复规则](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L368-L420)；[进程级 inventory 与 Session 侧 snapshot](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L519-L560)；[Web 面板的跨 Session 分组](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/ui-cordis/src/client/CordisPanel.tsx#L136-L153)与[停止、移除操作](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/ui-cordis/src/client/CordisPanel.tsx#L342-L360)；[停止保留版本](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L455-L490)、[移除整个 Plugin](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L202-L235)与[进程重启后的缺失状态](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L1240-L1250)。
-
-### 转为源码 Plugin
-
-创造模式不会自动生成 Plugin 文件、安装 package、修改 `cordis.yml` 或创建发布产物。原型确认后，把已经验证的接口和行为整理为磁盘上的 TypeScript / JavaScript module，再补 Config、依赖、测试、Bundle / Client manifest、构建与发布文件，并通过 `--patch` 和实际 Profile 验收。
-
-需要长期保存的用户设置也在这个阶段接入正式配置或持久化接口。创造模式保留的是运行时证据和原型，不代替源码工程。
+> 来源：[创造模式随 preset 提供的运行时工具和开发指导](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L241-L258)；[动态 Plugin 的开发范围与版本处理](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L10-L47)；[版本切换、恢复和清理](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L368-L420)；[临时停用并保留版本](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L455-L490)、[删除整个实验](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L202-L235)与[进程重启后的缺失状态](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L1240-L1250)。
 
 ## <a id="source-plugin-development"></a>源码 Plugin 的开发与发布
 
