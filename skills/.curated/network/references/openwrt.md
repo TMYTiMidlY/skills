@@ -146,6 +146,16 @@ OpenWrt 25.12.5 的 [root 登录 shell](https://github.com/openwrt/openwrt/blob/
 
 25.12 使用 `apk` 管理软件包；旧教程中的 `opkg` 命令不能直接照搬。[apk 迁移说明](https://openwrt.org/docs/guide-user/additional-software/opkg-to-apk-cheatsheet?rev=1774185420)明确警告不要用 `apk upgrade` 批量升级整机，安全的整机升级路径是 LuCI Attended Sysupgrade、`owut` 或 [Firmware Selector](https://firmware-selector.openwrt.org/)。
 
+`apk update` 只刷新仓库索引，需要路由器已经有一条能访问软件源的出站路径；它不会升级已安装软件。无线认证尚未配置好时，可以先使用有线 WAN、个人热点或另一条已知可用上游完成索引和软件包准备，再切换目标网络。
+
+完全没有公网时，管理电脑仍可经 LAN 向路由器提供软件包。离线准备必须同时匹配 OpenWrt 版本、target/架构、仓库快照和依赖闭包；只复制一个来自较新仓库的 `.apk`，可能遇到 ABI、revision、provider 或签名信任不一致。比逐包强装更可靠的方式是：
+
+- 在联网机器准备带索引和签名的临时本地 APK 仓库，再经 LAN HTTP 提供给路由器；
+- 或用 ImageBuilder/Firmware Selector 把依赖直接放进目标镜像；
+- 临时传输使用 SCP 时，老 Dropbear 或没有 SFTP server 的系统可能需要 `scp -O`。
+
+不要用允许未受信包的选项绕过签名。一次 AX3000T 实测中，复制到 `/tmp` 的本地包因 apk v3 信任上下文不足被拒绝，最终改从已恢复网络的签名官方仓库安装；这属于现场结果，不代表所有本地仓库都会失败。
+
 ### LuCI、UCI 与 ubus
 
 LuCI 是网页管理界面，通常通过 UCI 写入持久配置；UCI 管理 `/etc/config/*`；ubus 则让服务注册对象、查询运行状态并调用方法。三者相互配合，但不是同一层接口：
