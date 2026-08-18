@@ -1,10 +1,10 @@
 # OpenWrt 无线接入网关
 
-OpenWrt 无线接入网关把外部 Wi-Fi 当作上游网络，在路由器上完成关联、认证、地址获取、防火墙和 NAT，再从有线 LAN 输出网络；下游可以直接接电脑，也可以接一台 AP 扩展本地 Wi-Fi。这个结构不同于消费级“无线放大器”：它把无线接入、路由、认证和链路观测拆成可独立配置和验证的层。
+OpenWrt 无线接入网关把外部 Wi-Fi 当作上游网络，在路由器上完成连接、认证、地址获取和流量转发，再从有线 LAN 输出网络。下游可以直接接电脑，也可以接一台 AP（access point，无线接入点）提供本地 Wi-Fi。这个结构不同于消费级“无线放大器”：它把上游连接、本地网络、认证和链路观测拆成可独立配置和验证的部分。
 
-本文先说明系统角色和配置流程，再解释认证、无线指标、链路测量、定向 CPE 和监控面板。OpenWrt 的安装、升级、SSH 和设备支持边界见 [OpenWrt 设备管理](openwrt.md)。
+本文按实际搭建顺序展开：理解系统、接线配置、通过认证、理解无线链路、测量排障、评估定向 CPE，最后部署监控面板并回看现场案例。OpenWrt 的安装、升级、SSH 和专属配置对象见 [OpenWrt 设备管理](openwrt.md)。
 
-## <a id="architecture"></a>系统角色与数据路径
+## <a id="architecture"></a>无线接入网关的组成
 
 无线接入网关由上游 Wi-Fi、OpenWrt 网关、有线 LAN 和下游终端组成。下游 AP 只负责本地无线覆盖时，应工作在 AP 模式，不再承担第二层 DHCP 和 NAT。
 
@@ -15,27 +15,31 @@ flowchart LR
     downstream[下游 AP / 交换机]
     clients[本地终端]
 
-    upstream -->|station| gateway
-    gateway -->|WWAN + 路由/NAT| downstream
+    upstream -->|Wi-Fi 客户端连接| gateway
+    gateway -->|路由/NAT| downstream
     downstream --> clients
 ```
 
-### 上游 Wi-Fi、OpenWrt 网关与下游 AP
+### 系统职责与数据路径
 
 四类对象的职责如下：
 
 | 对象 | 主要职责 | 不应承担的职责 |
 |---|---|---|
-| 外部 AP | 提供 802.11 接入和上游地址 | 不需要为本地网部署配套设备 |
-| OpenWrt 网关 | station、认证、WWAN、DHCP、NAT、防火墙、链路观测 | 默认不需要广播本地 Wi-Fi |
+| 外部 AP | 提供上游 Wi-Fi 和网络地址 | 不需要为本地网部署配套设备 |
+| OpenWrt 网关 | 作为 Wi-Fi 客户端连接上游，完成认证、路由、NAT 和链路观测 | 默认不需要广播本地 Wi-Fi |
 | 下游 AP | 把网关的有线 LAN 转成室内 Wi-Fi，并扩展网口 | AP 模式下不再运行独立 DHCP/NAT |
 | 本地终端 | 从 OpenWrt LAN 获取地址并访问上游 | 不直接保存每个上游网络的配置 |
 
-上游与本地覆盖使用不同无线电或不同设备时，不会因同一无线电轮流收发而直接争用信道时间。下游 AP 可以放在适合室内覆盖的位置，OpenWrt 网关或 CPE 则可以放在上游信号最好的位置，两者用网线连接。
+OpenWrt 中把“作为 Wi-Fi 客户端连接上游”称为 station，把这条 Wi-Fi 承载的 WAN 接口称为 WWAN；详细对象关系见 [网络配置接口](openwrt.md#network-surfaces)。上游与本地覆盖使用不同无线电或不同设备时，不会因同一无线电轮流收发而直接争用信道时间。
+
+下游 AP 可以放在适合室内覆盖的位置，OpenWrt 网关或定向 CPE（Customer Premises Equipment，带定向天线、用于连接远端 AP 的用户侧无线终端）则可以放在上游信号最好的位置，两者用网线连接。
 
 ### 路由、WDS 与 relayd
 
-普通 Wi-Fi station 使用三地址帧，不能自动把网线后方多个终端的 MAC 透明送给上游 AP。OpenWrt 官方的[无线客户端配置](https://openwrt.org/docs/guide-user/network/wifi/connect_client_wifi?rev=1705097879)因此默认建立独立子网并路由转发。需要保留同一二层广播域时，才考虑 WDS/四地址桥接或 `relayd`。
+普通 Wi-Fi 客户端帧只能稳定表达客户端、AP 和流量目的地，不能自动把网线后方多个终端的 MAC 透明送给上游。OpenWrt 官方的[无线客户端配置](https://openwrt.org/docs/guide-user/network/wifi/connect_client_wifi?rev=1705097879)因此默认建立独立子网并路由转发。
+
+WDS/四地址桥接是在无线帧中保留下游终端身份的透明桥接方式，需要两端兼容；`relayd` 则用代理 ARP 等三层机制模拟同一网段。只有确实需要上游 DHCP、广播发现或原始客户端 MAC 时，才考虑这两类方案。
 
 | 模式 | 上游看到的身份 | 下游地址 | 上游要求 | 适用边界 |
 |---|---|---|---|---|
@@ -59,50 +63,40 @@ flowchart LR
 
 切换后应分别检查终端地址、默认网关、DNS、OpenWrt 管理页和公网访问。只看到下游 SSID 不代表 AP 模式已经正确完成。
 
-## <a id="configuration"></a>网关配置流程
+## <a id="configuration"></a>搭建无线接入网关
 
-配置无线接入网关时，始终保留一条不会随上游无线切换而消失的管理路径。最稳妥的是电脑直接连接 OpenWrt LAN，先备份，再修改 station、WWAN 和防火墙。
+### 准备管理路径与配置备份
 
-### station、WWAN、DHCP 与防火墙 NAT
+配置无线接入网关时，始终保留一条不会随上游无线切换而消失的管理路径。最稳妥的是电脑直接连接 OpenWrt LAN，确认管理地址和 SSH 可用，再保存配置备份。
 
-完整数据路径需要三组配置同时成立：
+开始前还要确认：
+
+- LAN 与上游网络不使用同一子网；
+- 当前配置可以恢复；
+- 电脑不会因默认路由切换而失去远程管理；
+- 无线切换期间，下游短暂断网是预期现象。
+
+### 配置上游 Wi-Fi 与网络出口
+
+OpenWrt 需要同时完成三件事：让无线电作为 Wi-Fi 客户端连接上游；让 WWAN 从上游取得地址；让 LAN 流量通过防火墙转发并做 NAT（把多个下游设备的地址转换成一个上游身份）。
 
 | 配置层 | 必要关系 |
 |---|---|
 | 无线 | `wifi-iface` 使用 `mode='sta'`，绑定 `network='wwan'` |
 | 网络 | `network.wwan` 使用 DHCP 或上游要求的协议 |
-| 防火墙 | `wwan` 属于启用 masquerading 的 WAN 区，允许 LAN 转发到 WAN |
+| 防火墙 | `wwan` 属于启用地址伪装（masquerading，即 NAT）的 WAN 区，允许 LAN 转发到 WAN |
 
-下面只展示关系，不假设 WAN 区的 UCI section 名称。修改前先用 `uci show firewall` 找到实际 section：
-
-```sh
-uci set network.wwan='interface'
-uci set network.wwan.proto='dhcp'
-
-uci set wireless.upstream='wifi-iface'
-uci set wireless.upstream.device='<radio>'
-uci set wireless.upstream.mode='sta'
-uci set wireless.upstream.network='wwan'
-uci set wireless.upstream.ssid='<upstream-ssid>'
-uci set wireless.upstream.encryption='<encryption>'
-
-uci add_list firewall.<wan-zone-section>.network='wwan'
-```
-
-先用 `uci changes` 审核待提交内容，再按 package 分别 `uci commit`，最后重载对应服务。不要在未知配置上照抄 `firewall.@zone[1]` 之类的匿名下标。
-
-应用后至少验证：
+这些 OpenWrt 专属对象和最小 UCI 关系见 [LAN、WAN、WWAN 与防火墙区域](openwrt.md#network-surfaces)。完成配置后，用下面一段命令确认无线、WWAN 和路由同时存在：
 
 ```sh
 ubus call network.wireless status
 ubus call network.interface.wwan status
-iw dev
 ip route
 ```
 
-WWAN 取得地址只证明关联和 DHCP 成功；Captive Portal 或企业认证还需要按[上游认证与漫游](#authentication)继续验证。
+WWAN 取得地址只证明无线连接和 DHCP（自动分配网络地址）成功；Captive Portal 或企业认证还需要按[通过上游认证](#authentication)继续验证。
 
-### 网线输出与下游 AP
+### 连接下游 AP
 
 OpenWrt LAN 应使用与上游不同的子网，并运行 DHCP。网线连接下游 AP 后，终端应直接从 OpenWrt 获取地址。若终端仍拿到下游设备自己的网段，说明下游仍在路由模式。
 
@@ -114,11 +108,9 @@ OpenWrt LAN 应使用与上游不同的子网，并运行 DHCP。网线连接下
 4. 从下游 Wi-Fi 检查地址、网关、DNS、OpenWrt 管理页和公网。
 5. 重启两台设备，确认上游自动关联和下游 AP 自动恢复。
 
-### 上游配置切换、回退与重启验收
+### 切换、回退与重启验收
 
-测试新的 SSID、频段、企业认证或 BSSID 时，不要立刻覆盖已知可用配置。可以先保留原 profile，临时启用新 profile，验证成功后再提交；失败时 `uci revert wireless` 或恢复备份。
-
-一个禁用的备用 profile 只表示配置已保存，**不是自动故障切换**。自动切换还需要定义优先级、健康检查、认证状态和回切条件；没有这些规则时，保持手动切换更容易解释和恢复。
+测试新的 SSID、频段、企业认证或 BSSID 时，不要立刻覆盖已知可用配置。可以先保留原无线配置条目（profile），临时启用新条目，验证成功后再提交；失败时 `uci revert wireless` 或恢复备份。
 
 每次最终配置都应经过：
 
@@ -128,13 +120,13 @@ OpenWrt LAN 应使用与上游不同的子网，并运行 DHCP。网线连接下
 - 认证状态、DNS 和公网访问；
 - 至少一段与业务时长相称的连续丢包和延迟测试。
 
-## <a id="authentication"></a>上游认证与漫游
+## <a id="authentication"></a>通过上游认证
 
 外部 Wi-Fi 的链路层关联、网络层地址和上层认证是三个阶段。排障时应先判断失败发生在哪一层，不能把“拿不到 DHCP”误判成 Portal 问题。
 
-### Captive Portal 与共享网络身份
+### Captive Portal
 
-开放热点通常先完成关联和 DHCP，再通过 HTTP 重定向进入 Portal。路由 + NAT 后，上游通常只看到 OpenWrt 的 WWAN 地址和无线 MAC，因此一次认证可能供多个下游终端共享。
+Captive Portal 是“连上 Wi-Fi 后，再由网页完成的强制认证门户”。开放热点通常先完成无线连接和 DHCP，再通过 HTTP 重定向进入 Portal。路由 + NAT 后，上游通常只看到 OpenWrt 的 WWAN 地址和无线 MAC，因此一次认证可能供多个下游终端共享。
 
 这个行为取决于 Portal 是否绑定 MAC、IP、Cookie、账号、设备数或其他特征，必须现场验证。稳妥流程是：
 
@@ -145,29 +137,11 @@ OpenWrt LAN 应使用与上游不同的子网，并运行 DHCP。网线连接下
 
 直接打开某个已知 Portal IP 可能进入错误的认证系统，或因系统无法反查当前 MAC 而失败。应优先让目标网络自己的 HTTP 重定向给出入口。
 
-### WPA2-Enterprise、PEAP 与证书校验
+### WPA2-Enterprise 与服务器证书
 
-OpenWrt 25.12.5 的 [`wpa_supplicant-full.config`](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/hostapd/files/wpa_supplicant-full.config)启用 PEAP、TTLS、TLS 和 MSCHAPv2；basic/mini 变体没有完整 EAP 方法。各 wpad 变体在[包定义](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/hostapd/Makefile)中互相提供和冲突，因此替换前必须检查版本和事务。
+WPA2-Enterprise 是基于 802.1X（端口接入控制框架）的企业 Wi-Fi 认证，由账号、证书和 EAP（Extensible Authentication Protocol，可扩展认证协议）共同完成。PEAP 是把账号认证放进 TLS（Transport Layer Security，加密通道）的 EAP 方法，MSCHAPv2 则常作为隧道内的用户名/密码认证。
 
-安全替换流程是：
-
-1. 保留有线管理和配置备份。
-2. `apk update` 后检查已安装 `hostapd-common` 与 wpad 版本。
-3. 用 `apk add --simulate <full-wpad-variant>` 审核替换和依赖。
-4. 若模拟牵涉无关核心包、版本不一致或不能形成可信事务，停止并改用匹配仓库或定制镜像。
-5. 安装后确认常驻 wpa_supplicant 进程已加载新二进制，再配置企业网络。
-
-PEAP/MSCHAPv2 的 UCI 字段在 25.12.5 中会映射到 wpa_supplicant network block：
-
-```sh
-uci set wireless.enterprise.encryption='wpa2'
-uci set wireless.enterprise.eap_type='peap'
-uci set wireless.enterprise.auth='MSCHAPV2'
-uci set wireless.enterprise.identity='<identity>'
-uci set wireless.enterprise.password='<password>'
-```
-
-凭据最终会存在 root 可读的配置中。注入时避免把值写进命令参数、shell 历史或日志；使用受控标准输入或短期权限文件，并在完成后清理。
+OpenWrt 需要包含这些方法的完整 wpad 变体；包能力和 UCI 字段见 [无线配置与 wpad](openwrt.md#network-surfaces)。Gateway 侧重点是确认三个结果：EAP 成功、WWAN 取得地址、服务器证书被正确验证。
 
 服务器证书校验不能省略。OpenWrt 25.12.5 的 station 脚本会传递 `ca_cert`、`domain_match` 和 `domain_suffix_match`；上游 [wpa_supplicant 配置](https://w1.fi/cgit/hostap/plain/wpa_supplicant/wpa_supplicant.conf?id=ca266cc24d8705eb1a2a0857ad326e48b1408b20)明确指出，不设置 CA 时服务器证书不会被验证。优先使用受信 CA 加服务器域名限制；无法部署私有 CA 时，可以按该版本支持的格式固定服务器证书：
 
@@ -177,41 +151,22 @@ ca_cert="hash://server/sha256/<certificate-sha256>"
 
 证书 pin 会在服务器换证后失效，因此恢复资料中要记录 pin 的来源和更新方法。不要用关闭验证来换取短期连通。
 
-### PMKSA 缓存、OKC 与 802.11r
+### 凭据保存与备用上游
 
-这些机制都能减少企业网络漫游时的认证工作，但含义和前提不同：
+企业账号、热点密码和证书配置最终会存在 root 可读的 OpenWrt 配置中。写入时避免让凭据进入 shell 历史、命令参数或调试日志；使用受控输入，并确认备份文件的访问权限。
 
-| 机制 | 作用 | 依赖 |
-|---|---|---|
-| PMKSA caching | 复用曾经与某 AP 建立的 PMKSA | 客户端与 AP 保留缓存 |
-| RSN preauthentication | 关联新 AP 前提前完成 802.1X/EAP | 同一 ESS、AP/网络/RADIUS 支持 |
-| OKC / proactive key caching | 把同一 ESS 的 AP 作为可复用密钥候选 | 客户端和 AP/controller 兼容 |
-| 802.11r FT | 使用 Fast Transition key management 缩短切换 | AP/controller 广播并配置 FT |
+可以保存一条禁用的备用上游配置，主上游失败时手动切换。禁用配置条目只表示内容已保存，**不是自动故障切换**；自动切换还需要优先级、健康检查、认证状态和回切条件。
 
-PMKSA caching 默认可用时不要主动禁用。OpenWrt 25.12.5 的 station 配置接受 `ieee80211r` 并生成 FT key management，但启用前应确认目标网络确实广播 FT；否则只增加无效变量。
+## <a id="radio-metrics"></a>理解无线链路
 
-上游 wpa_supplicant 支持 `proactive_key_caching=1`，但在 OpenWrt 25.12.5 的标准 station UCI 映射中没有找到同名字段。不要假设写一个未知 UCI option 就会生效；需要 OKC 时，应检查实际生成的 wpa_supplicant 配置和目标网络能力，再决定是否使用平台支持的透传或定制配置。
-
-认证缓存只能缩短可兼容的重认证流程，不能阻止 AP/controller 发送 WNM 漫游或断开通知。
-
-### WNM 漫游通知、BSSID 锁定与 HT20
-
-完整 wpa_supplicant 构建包含 WNM/BSS Transition Management。上游 [WNM 实现](https://w1.fi/cgit/hostap/plain/wpa_supplicant/wnm_sta.c?id=ca266cc24d8705eb1a2a0857ad326e48b1408b20)会处理 `Disassociation Imminent`；这是 AP/controller 的网络引导，和 PMKSA、OKC、FT 是不同层面。
-
-固定 BSSID 可以让 station 只关联一个 AP，OpenWrt 25.12.5 会把 `bssid` 写进 wpa_supplicant network block。代价是正常漫游被关闭，目标 AP 真正故障或退服时无法自动换台；wpa_supplicant 对固定 BSSID 的 BTM 请求也可能直接拒绝。
-
-把 5 GHz radio 限制为 HT20 可以作为排查“VHT/HT 能力变化”或宽信道干扰的 A/B 变量，但它会降低 PHY 上限。本次案例没有完成 HT20 长测，因此不能把它写成通用修复。正确做法是记录基线，只改 `htmode`，再比较断线、重传、延迟和吞吐。
-
-## <a id="radio-metrics"></a>无线链路指标
-
-无线信号不能只看一个 RSSI 数字。OpenWrt 25.12.5 锁定的 [iwinfo `f5dd57a`](https://github.com/openwrt/iwinfo/blob/f5dd57a84cc31a403a1383dd14944fa2e2b5824a/iwinfo_cli.c)分别报告 signal、noise、MCS、NSS 和信道宽度，并按 `signal - noise` 显示 SNR。
+无线信号不能只看一个 RSSI（Received Signal Strength Indicator，接收信号强度指标）数字。OpenWrt 25.12.5 锁定的 [iwinfo `f5dd57a`](https://github.com/openwrt/iwinfo/blob/f5dd57a84cc31a403a1383dd14944fa2e2b5824a/iwinfo_cli.c)分别报告 signal、noise、MCS、NSS 和信道宽度，并按 `signal - noise` 显示 SNR（Signal-to-Noise Ratio，信噪比）。
 
 ### RSSI、噪声与信噪比
 
 | 指标 | 含义 | 使用方式 |
 |---|---|---|
-| signal / RSSI | 接收信号强度，单位 dBm | 越接近 0 通常越强，但不能单独判断双向质量 |
-| noise | 接收机看到的噪声底，单位 dBm | 越低代表背景噪声越弱 |
+| signal / RSSI | 接收信号强度，单位 dBm（相对 1 mW 的对数功率单位） | 越接近 0 通常越强，但不能单独判断双向质量 |
+| noise | 接收机看到的噪声底，同样使用 dBm | 越低代表背景噪声越弱 |
 | SNR | `signal - noise`，单位 dB | 决定可用调制余量，需和重传、MCS 一起看 |
 
 例如某次现场状态为 `signal=-79 dBm`、`noise=-91 dBm`，按 iwinfo 口径 SNR 约为 12 dB；同时上行降到较低 MCS 并出现大量重传。这个例子说明弱信噪比与降速同时发生，不构成所有设备通用的阈值表。
@@ -222,11 +177,11 @@ PMKSA caching 默认可用时不要主动禁用。OpenWrt 25.12.5 的 station �
 - **NSS（空间流数）**表示并行发送的独立数据流数量。NSS 1 与 NSS 2 的可用容量不同，但能否使用多流取决于双方天线、信道和链路条件。
 - **MCS（调制编码方案索引）**表示每个符号承载的数据量和纠错强度。较低 MCS 更稳健、速率更低；较高 MCS 需要更好的信噪比。
 
-现场曾观察到 `40 MHz / NSS 1 / VHT-MCS 0–2`，驱动报告的 PHY 上行在十几到数十 Mbps 间变化。这个组合描述的是当时协商档位，不是可直接套用到其他标准、GI 或设备的固定换算表。
+现场曾观察到 `40 MHz / NSS 1 / VHT-MCS 0–2`，驱动报告的 PHY 上行在十几到数十 Mbps 间变化。这个组合描述的是当时协商档位，不是可直接套用到其他标准、GI（guard interval，保护间隔）或设备的固定换算表。
 
 ### PHY 速率、实际吞吐与重传
 
-`iw` 显示的 `tx bitrate` / `rx bitrate` 是无线 PHY 速率。Linux `iwconfig` 文档指出，应用可用速度会因介质共享和协议开销而更低。驱动的 `expected throughput` 也是估计值，不是测速结果。
+PHY（physical layer，物理层）速率是无线设备当前使用的底层传输档位，`iw` 会把它显示为 `tx bitrate` / `rx bitrate`。Linux `iwconfig` 文档指出，应用可用速度会因介质共享和协议开销而更低。驱动的 `expected throughput` 也是估计值，不是测速结果。
 
 重传指标解释链路为什么“协商速率不低，实际网速却很差”：
 
@@ -252,7 +207,36 @@ legacy 不是 HT/VHT/HE 同一命名体系里的新一代标准，而是驱动�
 
 模式名称本身不是质量分。若同一 BSSID 的能力广播在 VHT、HT 或 legacy 间异常变化，客户端驱动可能重建关联；是否断开取决于 AP、驱动和实现。
 
-## <a id="measurement"></a>链路测量与瓶颈定位
+### WNM 漫游通知
+
+WNM（Wireless Network Management，无线网络管理）允许 AP 或网络控制器（controller，集中管理多台 AP 的系统）向客户端发送管理建议。BSS Transition Management 是其中用于引导客户端选择其他 AP 的机制；`Disassociation Imminent` 则表示当前 AP预告即将断开。
+
+完整 wpa_supplicant 构建会处理这类通知。上游 [WNM 实现](https://w1.fi/cgit/hostap/plain/wpa_supplicant/wnm_sta.c?id=ca266cc24d8705eb1a2a0857ad326e48b1408b20)记录了相应事件。客户端可以选择候选 AP或拒绝部分请求，但不能阻止上游发送通知。
+
+### PMKSA、OKC 与 802.11r
+
+企业网络每次漫游都重新完成完整 EAP 会增加中断时间。下面几种机制尝试复用或提前准备认证结果：
+
+| 机制 | 人话解释 | 依赖 |
+|---|---|---|
+| PMKSA caching | 记住已经和某个 AP协商出的主密钥 | 客户端与 AP都保留缓存 |
+| RSN preauthentication | 还没切换 AP前，先完成下一台 AP的 802.1X/EAP | 同一 ESS、网络和 RADIUS 认证服务器支持 |
+| OKC | 把同一组网络里的其他 AP也视为可复用密钥的候选 | 客户端与 AP/网络控制器兼容 |
+| 802.11r FT | 使用专门的 Fast Transition 流程快速换 AP | AP/网络控制器广播并配置 FT |
+
+PMKSA 是 Pairwise Master Key Security Association（成对主密钥安全关联）；RSN 是 Robust Security Network（WPA2 使用的安全网络框架）；OKC 是 Opportunistic Key Caching（机会式密钥缓存）；FT 是 Fast Transition（快速切换）。这些机制只可能缩短兼容网络中的重认证，不能阻止 WNM 通知或 AP主动断开。
+
+OpenWrt 25.12.5 的 station 配置接受 `ieee80211r` 并生成 FT key management，但启用前应确认目标网络广播 FT。上游 wpa_supplicant 还支持 `proactive_key_caching=1`，但标准 station UCI 映射中没有同名字段；不要假设未知 UCI option 会自动生效。
+
+### BSSID 锁定与 HT20
+
+BSSID 是一台具体 AP无线接口的 MAC 地址。同一 SSID（网络名称）可能由多台 BSSID共同提供。固定 BSSID 可以阻止客户端自动换到同名 AP，但目标 AP故障时也失去自动回退；wpa_supplicant 对固定 BSSID 的漫游请求可能直接拒绝。
+
+HT20 表示把 802.11n 高吞吐模式限制在 20 MHz 信道。它可以作为排查宽信道干扰或 VHT/HT 能力变化的 A/B 变量，但会降低 PHY 上限。本次案例没有完成 HT20 长测，因此不能把它写成通用修复。
+
+## <a id="measurement"></a>测量与排查链路
+
+### 建立可比较的测试条件
 
 测量目标是沿实际数据路径逐层缩小瓶颈范围，而不是先假定网络属于校园、企业或公共热点。先区分无线第一跳、同一管理域内的服务、公共互联网和测速服务器，再根据现场拓扑选择具体目标。一次只改变一个变量，并保留相同设备、认证、目标和样本大小。
 
@@ -271,7 +255,30 @@ iwinfo <station-iface> info
 
 这些命令分别给出地址、路由、SSID/BSSID、频率、信号、MCS/NSS、重传和噪声。连续采样时，从 `/sys/class/net/<station-iface>/statistics/{rx,tx}_bytes` 读取相邻差值，换算当前接口流量。
 
-主动扫描会占用无线电资源并增加延迟，具体影响依驱动而异。业务运行时默认不扫描当前关联的 radio；若有独立闲置 radio，只扫描闲置 radio，并设置硬超时。扫描结果只用于发现 SSID/BSSID/信道，不能证明双向关联、DHCP 或吞吐可用。
+主动扫描会占用无线电资源并增加延迟，具体影响依驱动而异。业务运行时默认不扫描当前关联的 radio；若有独立闲置 radio，只扫描闲置 radio，并设置硬超时。扫描结果只表示是否听到 beacon（AP 周期广播帧）以及其中的 SSID/BSSID/信道，不能证明双向关联、DHCP 或吞吐可用。
+
+### <a id="logs"></a>OpenWrt 日志与历史数据
+
+OpenWrt 会记录近期系统事件，但不会默认保存完整的信号和流量时间序列。官方[系统日志说明](https://openwrt.org/docs/guide-user/base-system/log.essentials)指出，默认 `logd` 把固定大小的记录保存在 RAM 环形缓冲中，`logread` 可以读取、写文件或转发到远端。排障前先分清“事件日志”“当前状态”和“额外采样”：
+
+| 数据 | 默认历史 | 查看位置 | 主要边界 |
+|---|---|---|---|
+| 系统、网络管理服务（netifd）、无线认证程序（wpa_supplicant）、EAP、DHCP、WNM | 近期事件 | `logread` | 内存环形缓冲，覆盖或重启后消失 |
+| 内核和无线驱动 | 近期事件 | `dmesg`、`logread` | 可见 beacon loss、能力变化和断开 |
+| 接口、SSID、BSSID、地址 | 无 | `ubus`、`iw` | 只表示查询时的当前状态 |
+| signal、MCS/NSS、PHY、重传 | 无时序历史 | `iw station dump`、Linux 网卡计数文件 | 必须周期采样才能画曲线 |
+| DHCP lease | 当前租约 | `/tmp/dhcp.leases` | 不是完整连接历史 |
+| Dashboard 曲线 | 页面打开期间 | 浏览器内存 | 页面关闭后默认丢失 |
+| 最近测速结果 | 取决于面板实现 | 面板缓存 | 不是 OpenWrt 内建日志 |
+
+实时跟踪和筛选无线相关日志只需要一段命令：
+
+```sh
+logread -f
+logread | grep -E 'wpa_supplicant|netifd|EAP|DHCP|WNM'
+```
+
+需要保存数小时或数天时，可以把系统事件发往远程 syslog，并把 signal、MCS、重传、字节计数和延迟写入独立时序存储。持续写入路由器内置闪存会增加磨损，存储位置和采样周期应单独设计。
 
 ### 分层延迟、抖动与丢包
 
@@ -295,7 +302,7 @@ ping 能观察时延和丢包，却不能回答持续传输容量在哪一层下
 | 同一管理域 | 运营方、学校或企业内部镜像 | 无线接入、认证后网络和内部路由 |
 | 公共互联网 | 外部镜像或对象存储 | 公共出口与外部路径 |
 
-不是每个现场都有内部镜像；缺少某一层时就跳过，但要明确剩余测试无法区分哪些路径。选择目标时尽量使用大小相同或同源的静态文件，固定样本长度，并在相近时段连续测试：
+不是每个现场都有内部镜像；缺少某一层时就跳过，但要明确剩余测试无法区分哪些路径。选择目标时尽量使用大小相同或同源的静态文件，用 HTTP Range（只下载指定字节段）固定样本长度，并在相近时段连续测试：
 
 ```sh
 curl --interface <lan-address> \
@@ -309,13 +316,13 @@ curl --interface <lan-address> \
 
 校园网只是这套方法的一个特例：校内镜像充当“同一管理域”目标，校外镜像充当“公共互联网”目标。企业网可以换成内网制品库与公共镜像，酒店或公共热点若没有内部服务，就只能比较第一跳、公共目标和 NDT7。
 
-运行 mihomo fake-IP/TUN 的环境不能用普通 53 端口查询判断真实地址。先用 DoH 获取真实地址，或使用已核验 IP 配合 `curl --resolve`；完整 DNS 流向见 [Mihomo / Clash](mihomo.md)。
+运行 mihomo fake-IP（DNS 返回占位地址）或 TUN（虚拟网卡隧道）的环境，不能用普通 53 端口查询判断真实地址。先用 DoH（DNS over HTTPS，通过 HTTPS 查询 DNS）获取真实地址，或使用已核验 IP 配合 `curl --resolve`；完整 DNS 流向见 [Mihomo / Clash](mihomo.md)。
 
 总平均速度会掩盖掉线和令牌桶形状。下载期间每秒读取 station 的 `rx_bytes`，把差值画成时间序列：无线不稳通常伴随波动、重传和 RSSI/MCS 变化；平坦贴近固定值才值得继续验证策略限速。
 
-### M-Lab NDT7 下载、上传与负载延迟
+### M-Lab NDT7 基准测试
 
-[M-Lab NDT](https://www.measurementlab.net/tests/ndt/)是主动 bulk-transport 容量测试。NDT7 使用单条 TCP/WebSocket TLS 连接测量应用层 goodput，并报告下载、上传、延迟和 TCP 重传相关指标。
+[M-Lab NDT](https://www.measurementlab.net/tests/ndt/)是主动的大流量容量测试。NDT7 使用一条加密测试连接测量应用层有效吞吐，并报告下载、上传、负载延迟和 TCP 重传相关指标。
 
 NDT7 会主动占满链路，不能当作“实时流量”持续运行。适合的流程是：
 
@@ -330,7 +337,7 @@ NDT7 会主动占满链路，不能当作“实时流量”持续运行。适合
 <ndt7-client> -format=json -timeout=60s
 ```
 
-NDT7 的 loaded latency 是测速负载下的延迟，不能替代空闲公网 RTT。高带宽链路一次 NDT7 会传输大量数据，因此默认只按需运行。
+NDT7 的 loaded latency（负载延迟）是测速占满链路时的延迟，不能替代空闲公网 RTT（Round-Trip Time，往返时延）。高带宽链路一次 NDT7 会传输大量数据，因此默认只按需运行。
 
 ### 频段、位置、SSID 与 BSSID 的 A/B 测试
 
@@ -345,35 +352,21 @@ A/B 测试每轮只改变一个变量：
 
 每轮至少记录 signal、noise、SNR、信道宽度、NSS、MCS、重传增量、第一跳丢包、内部下载、外部下载和 NDT7。先检查是否取得 DHCP 和通过认证，再运行吞吐测试。
 
-### 断连日志与历史记录
+## <a id="cpe"></a>使用定向 CPE
 
-`logread` 可以看到关联、WNM、EAP 和 DHCP 事件，但默认日志位于内存，重启或覆盖后无法追溯。接口累计字节也不能重建过去的时间序列。
-
-需要长期判断漫游或掉线时，应把下列信息写入持久存储或远程日志：
-
-- 时间戳、SSID、BSSID、频率和信号；
-- MCS/NSS/宽度和重传增量；
-- WWAN 地址与关联 uptime；
-- WNM、能力变化、EAP 和 DHCP 事件；
-- 延迟、丢包和业务侧断流时间。
-
-记录频率要低于业务可接受开销；不要为了诊断而在活动 radio 上持续扫描。
-
-## <a id="cpe"></a>定向 CPE
-
-定向 CPE 把天线能量集中到目标方向，并通常支持 PoE 和室外部署。它适合改善长距离、遮挡或干扰造成的链路预算，但不能改变上游认证策略或 AP/controller 行为。
+定向 CPE 是带定向天线、用于连接远端 AP的无线客户端设备。它把接收和发射集中到目标方向，并通常支持 PoE（Power over Ethernet，通过网线供电）和室外部署。它适合改善长距离、遮挡或干扰造成的链路预算，但不能改变上游认证策略或 AP/网络控制器行为。
 
 ### 天线增益、EIRP 与安装位置
 
-定向天线可以提高目标方向的接收增益，并抑制其他方向的干扰。发射侧则受设备和监管 profile 约束；OpenWrt 的无线配置也会按天线增益与监管上限限制发射功率，不能把标称天线增益简单等同于上行增加同样 dB。
+EIRP（Equivalent Isotropically Radiated Power，等效全向辐射功率）把发射功率和天线增益合并表示。定向天线可以提高目标方向的接收增益，并抑制其他方向的干扰；发射侧则受设备和监管配置约束。OpenWrt 也会按天线增益与监管上限限制发射功率，不能把标称天线增益简单等同于上行增加同样 dB。
 
 PoE 允许把设备放到视线、朝向和遮挡更合适的位置，再用网线把数据送回室内。室外安装还涉及设备自身的防护等级、接地、防雷和供电规范，应按产品和建筑条件单独设计。
 
 ### 频段、信道与企业认证能力
 
-“5 GHz CPE”不保证覆盖所有 5 GHz 信道。不同地区和 SKU 可能只开放部分 5.2/5.8 GHz 范围；购买前先扫描现场 AP 的信道，再核对设备的精确频率范围和监管区域。
+“5 GHz CPE”不保证覆盖所有 5 GHz 信道。不同地区和 SKU（具体销售型号/地区版本）可能只开放部分 5.2/5.8 GHz 范围；购买前先扫描现场 AP 的信道，再核对设备的精确频率范围和监管区域。
 
-企业网络还要求 CPE固件具备 station supplicant、目标 EAP 方法、证书校验和必要的漫游能力。只写“支持 WPA2”不足以证明支持 WPA2-Enterprise PEAP/MSCHAPv2。
+企业网络还要求 CPE固件具备 station 模式的无线客户端认证程序、目标 EAP 方法、证书校验和必要的漫游能力。只写“支持 WPA2”不足以证明支持 WPA2-Enterprise PEAP/MSCHAPv2。
 
 ### 单台 station 与成对桥接
 
@@ -389,20 +382,32 @@ PoE 允许把设备放到视线、朝向和遮挡更合适的位置，再用网�
 购买前核对：
 
 - 现场信道是否在设备频率范围内；
-- station/WISP 模式是否可用；
+- station/WISP（以 Wi-Fi 作为 WAN）模式是否可用；
 - WPA2-Enterprise/EAP 与证书验证是否满足上游；
 - 网口速率、PoE电压和供电方式；
 - 天线增益、波束宽度和安装方向；
 - 是否能固定 BSSID、导出日志和恢复配置；
 - 是否保留可退换或现场试用条件。
 
-CPE更可能改善弱信号、低 SNR、高重传和方向性干扰。它不能保证消除 AP发出的 WNM通知、AP能力广播异常、账号限速或公共出口拥塞。应使用[链路测量](#measurement)中的同目标 A/B 测试判断收益。
+CPE 更可能改善弱信号、低 SNR、高重传和方向性干扰。它不能保证消除 AP发出的 WNM通知、AP能力广播异常、账号限速或公共出口拥塞。应使用[测量与排查链路](#measurement)中的同目标 A/B 测试判断收益。
 
-## <a id="dashboard"></a>链路监控面板
+## <a id="dashboard"></a>部署与使用监控面板
 
-链路面板的任务是把“当前状态”“主动基准”和“历史结果”分开，避免断线后仍展示旧信号，或把接口当前流量误称为网速。
+链路面板运行在 OpenWrt 设备本机：HTML 页面由路由器的轻量 Web 服务（例如 uhttpd）提供，状态接口在路由器上读取 `ubus`、`iw` 和网卡计数器。浏览器只是显示这些数据，管理电脑关机不会让路由器端面板消失。
 
 通用单文件模板见 [openwrt-link-dashboard.html](../assets/openwrt-link-dashboard.html)。模板不包含真实 SSID、设备名、Portal 地址或采集后端；页面顶部配置对象定义 API 路径、网络标签、延迟目标和过期时间。
+
+### 面板运行位置与访问地址
+
+终端要先接入 OpenWrt 的 LAN，或接入已经桥到该 LAN 的下游 AP。随后在浏览器打开：
+
+```text
+http://<openwrt-lan-ip>:<dashboard-port>/
+```
+
+`<openwrt-lan-ip>` 通常是终端网络详情中的默认网关，也是 LuCI 管理地址；`<dashboard-port>` 是部署面板时为 uhttpd 或其他 Web 服务设置的端口。
+
+下游设备仍处于路由模式时，双重 NAT 和防火墙可能阻止访问上一级 OpenWrt；切为 AP 模式后，终端与 OpenWrt 位于同一 LAN，访问最直接。需要从 LAN 之外访问时，可以另建受控代理或隧道，但那属于部署环境，不是模板默认组成。
 
 ### 信号、当前流量、延迟与基准测速
 
@@ -413,49 +418,26 @@ CPE更可能改善弱信号、低 SNR、高重传和方向性干扰。它不能�
 | signal/noise/SNR | `iw` / `iwinfo` | 当前接收与噪声 |
 | TX/RX PHY | `iw link` | 当前协商档位 |
 | 当前流量 | 相邻 `rx_bytes` / `tx_bytes` 差值 | 接口当前占用，不是可用带宽 |
-| 实时 RTT/loss | 小样本 ping | 当前公网路径状态 |
-| NDT7 | 主动 benchmark | 按需测下载、上传、负载延迟和重传 |
+| 实时 RTT（往返时延）/loss（丢包率） | 小样本 ping | 当前公网路径状态 |
+| NDT7 | 主动基准测试 | 按需测下载、上传、负载延迟和重传 |
 | 最近扫描 | 非活动 radio 的缓存 | 候选网络可见性，不代表可用性 |
 
-0–100 信号分数只能作为可配置的展示映射。模板默认使用线性映射帮助快速观察，但会明确标记为 heuristic，不把它当成行业标准。
+0–100 信号分数只能作为可配置的展示映射。模板默认使用线性映射帮助快速观察，但会明确标记为启发式评分（便于展示的经验映射），不把它当成行业标准。
 
-### 路由器采集与局域网访问
+### 路由器实时数据来源
 
-推荐把被动采集放在 OpenWrt 本机，通过 uhttpd 或其他轻量 HTTP 服务提供 JSON；下游设备直接经 LAN 访问。若管理电脑不在同一 LAN，可以另建代理或隧道，但代理属于部署环境，不写进通用模板。
+状态接口在 OpenWrt 本机按需读取：
 
-最小状态接口应提供：
+| 数据 | OpenWrt 来源 |
+|---|---|
+| WWAN 地址和连接状态 | `ubus call network.interface.wwan status` |
+| SSID、BSSID、信号和 PHY | `iw link` / `iw station dump` |
+| 当前流量 | `/sys/class/net/<iface>/statistics/` |
+| 候选网络 | 非活动 radio 的扫描缓存 |
+| 实时延迟 | 路由器主动发出的小样本 ping |
+| NDT7 | 用户手动触发的主动基准 |
 
-```json
-{
-  "timestamp": 1710000000,
-  "wwan": {
-    "up": true,
-    "active_ssid": "upstream-a",
-    "active_band": "5",
-    "address": "192.0.2.10"
-  },
-  "link": {
-    "signal_dbm": -68,
-    "noise_dbm": -92,
-    "rx_rate": "240 MBit/s",
-    "tx_rate": "180 MBit/s",
-    "rx_bytes": 1200000,
-    "tx_bytes": 340000,
-    "tx_retries": 20,
-    "tx_failed": 1
-  },
-  "latency": {
-    "ok": true,
-    "avg_ms": 24.1,
-    "jitter_ms": 2.8,
-    "loss_percent": 0,
-    "timestamp": 1710000000
-  },
-  "benchmark": null
-}
-```
-
-字段缺失时前端应显示不可用，不用 `0` 伪装测量结果。
+这些是实时查询，不是从 `logread` 回放出来的历史。字段缺失或状态接口超时时，前端应显示不可用，不用 `0` 伪装测量结果。
 
 ### 活动频段扫描与任务互斥
 
@@ -473,7 +455,7 @@ CPE更可能改善弱信号、低 SNR、高重传和方向性干扰。它不能�
 
 ### STALE 状态与扫描滞回
 
-超过可配置时间没有新状态时，面板必须：
+STALE 表示实时数据已经过期；扫描滞回则表示一次漏扫不会立刻把网络判定为消失。超过可配置时间没有新状态时，面板必须：
 
 - 显示 OFFLINE/STALE；
 - 清空信号、流量、实时延迟和连接详情；
@@ -481,19 +463,25 @@ CPE更可能改善弱信号、低 SNR、高重传和方向性干扰。它不能�
 - 保留明确标记为历史的 NDT7 结果；
 - 数据恢复后自动重新填充。
 
-扫描偶尔漏掉 beacon 时，不应立刻把网络显示为消失。对每个 SSID/频段保留可配置的 last-seen TTL，并显示“最近看到”；连续过期后才清空。
+扫描偶尔漏掉 beacon 时，不应立刻把网络显示为消失。对每个 SSID/频段保留可配置的最近可见时间（last-seen TTL，TTL 表示保留时长），并显示“最近看到”；连续过期后才清空。
 
-### 历史记录与访问控制
+### 实时数据、设备日志与长期历史
 
-浏览器内存曲线只适合当前页面，不是持久记录。需要分析数小时掉线时，把状态和日志发送到持久后端，并控制保留周期。
+面板的实时曲线通常只存在于当前浏览器内存；页面关闭后，过去的 signal、MCS 和流量曲线默认丢失。OpenWrt 的 `logread` 仍可能保留同一时段的断开、WNM、EAP 和 DHCP 事件，但不能重建每秒曲线。
 
-Dashboard 可能暴露 SSID、BSSID、内网地址和链路状态。默认绑定管理 LAN 或指定接口，并用防火墙限制访问；需要跨不可信网络访问时增加认证和 TLS。不要把无认证的 `0.0.0.0` 监听作为通用默认值。
+三类历史应分别处理：
+
+- **事件历史**：由 OpenWrt 日志提供，适合解释“为什么断开”；
+- **实时曲线**：由 Dashboard 周期采样，适合观察“断开前数值怎样变化”；
+- **长期历史**：需要额外时序存储或远程采集，OpenWrt 默认不提供。
+
+完整日志边界见 [OpenWrt 日志与历史数据](#logs)。Dashboard 可能暴露 SSID、BSSID、内网地址和链路状态，默认应绑定管理 LAN 或指定接口，并用防火墙限制访问；需要跨不可信网络访问时增加认证和 TLS。不要把无认证的 `0.0.0.0` 监听作为通用默认值。
 
 ### HTML 模板与数据接口
 
-模板内置演示数据，可以直接打开检查布局；配置真实 API 后才进入实时模式。适配时只需要实现状态、延迟和 benchmark 三类 JSON，不必复制现场的 CGI 或 SSH 代理。
+模板内置演示数据，可以直接打开检查布局；配置真实 API（Application Programming Interface，供页面读取数据的接口）后才进入实时模式。适配时只需要实现状态、延迟和基准测试三类 JSON（结构化数据格式），不必复制现场专用的后端脚本或 SSH 代理。
 
-页面采用低噪声深色布局，以当前信号、链路档位、实时流量和 benchmark 为主，不使用与操作无关的装饰卡片。数值变化有平滑过渡，STALE 与测试暂停使用明确状态，不让动画掩盖数据含义。
+页面采用低噪声深色布局，以当前信号、链路档位、实时流量和基准测试为主，不使用与操作无关的装饰卡片。数值变化有平滑过渡，STALE 与测试暂停使用明确状态，不让动画掩盖数据含义。
 
 ## <a id="campus-case"></a>校园无线接入案例
 
@@ -541,7 +529,7 @@ eduroam 运行期间，日志出现 AP发出的 WNM `Disassociation Imminent`。
 因此故障不是单一“认证慢”：
 
 - 弱信号和重传造成持续抖动；
-- AP/controller 漫游引导造成候选扫描；
+- AP/网络控制器的漫游引导造成候选扫描；
 - AP能力广播变化触发客户端重建关联；
 - EAP 与 DHCP 决定完整断线后的恢复时长。
 

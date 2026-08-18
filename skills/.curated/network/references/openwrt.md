@@ -146,15 +146,7 @@ OpenWrt 25.12.5 的 [root 登录 shell](https://github.com/openwrt/openwrt/blob/
 
 25.12 使用 `apk` 管理软件包；旧教程中的 `opkg` 命令不能直接照搬。[apk 迁移说明](https://openwrt.org/docs/guide-user/additional-software/opkg-to-apk-cheatsheet?rev=1774185420)明确警告不要用 `apk upgrade` 批量升级整机，安全的整机升级路径是 LuCI Attended Sysupgrade、`owut` 或 [Firmware Selector](https://firmware-selector.openwrt.org/)。
 
-`apk update` 只刷新仓库索引，需要路由器已经有一条能访问软件源的出站路径；它不会升级已安装软件。无线认证尚未配置好时，可以先使用有线 WAN、个人热点或另一条已知可用上游完成索引和软件包准备，再切换目标网络。
-
-完全没有公网时，管理电脑仍可经 LAN 向路由器提供软件包。离线准备必须同时匹配 OpenWrt 版本、target/架构、仓库快照和依赖闭包；只复制一个来自较新仓库的 `.apk`，可能遇到 ABI、revision、provider 或签名信任不一致。比逐包强装更可靠的方式是：
-
-- 在联网机器准备带索引和签名的临时本地 APK 仓库，再经 LAN HTTP 提供给路由器；
-- 或用 ImageBuilder/Firmware Selector 把依赖直接放进目标镜像；
-- 临时传输使用 SCP 时，老 Dropbear 或没有 SFTP server 的系统可能需要 `scp -O`。
-
-不要用允许未受信包的选项绕过签名。一次 AX3000T 实测中，复制到 `/tmp` 的本地包因 apk v3 信任上下文不足被拒绝，最终改从已恢复网络的签名官方仓库安装；这属于现场结果，不代表所有本地仓库都会失败。
+安装附加包时，应使用与当前 OpenWrt 版本和架构匹配的签名仓库或定制镜像；软件包 revision、依赖和签名不一致时应停止，而不是强制安装。
 
 ### LuCI、UCI 与 ubus
 
@@ -228,11 +220,39 @@ OpenWrt 把物理接口、逻辑网络、防火墙区域和无线配置分开管
 
 ### LAN、WAN、WWAN 与防火墙区域
 
-`/etc/config/network` 定义接口和地址获取方式，`/etc/config/firewall` 决定区域、转发和 NAT。WAN 与 LAN 是逻辑角色；WWAN 则是由无线 station 承载的 WAN。把外部 Wi-Fi 变成网线输出时，完整配置和拓扑见 [OpenWrt 无线接入网关](openwrt-wireless-gateway.md#configuration)。
+OpenWrt 把网络对象拆成几个层次：
+
+- **LAN**（local area network，本地网络）是终端接入的一侧，通常由 OpenWrt 提供 DHCP 和默认网关。
+- **WAN**（wide area network，上游网络）是通往外部网络的一侧；它是逻辑角色，不等于固定的物理网口。
+- **WWAN**（wireless WAN，无线 WAN）是由 Wi-Fi 客户端连接承载的 WAN 接口。
+- **防火墙区域**把一个或多个接口归为同一安全边界，并决定入站、转发和 NAT。
+
+`/etc/config/network` 定义接口和地址获取方式，`/etc/config/firewall` 决定区域、转发和 NAT。把外部 Wi-Fi 变成网线输出时，完整拓扑见 [搭建无线接入网关](openwrt-wireless-gateway.md#configuration)。
 
 ### 无线配置与 wpad
 
-`/etc/config/wireless` 定义 radio 与 `wifi-iface`。AP 和 station 可以运行在不同 radio，也可能共享同一 radio；可用组合取决于驱动和硬件。认证由 wpad 中的 hostapd/wpa_supplicant 能力承担，企业认证、证书校验和漫游缓存见 [上游认证与漫游](openwrt-wireless-gateway.md#authentication)。
+`/etc/config/wireless` 中常见的对象是：
+
+- **radio**：一张物理无线电，例如 2.4 GHz 或 5 GHz；
+- **`wifi-iface`**：运行在 radio 上的一条无线配置；
+- **AP 模式**：广播 SSID，供其他终端接入；
+- **station 模式**：让 OpenWrt 作为 Wi-Fi 客户端连接外部 AP。
+
+AP 和 station 可以运行在不同 radio，也可能共享同一 radio；可用组合取决于驱动和硬件。
+
+**wpad** 是 OpenWrt 打包的无线认证组件，同时包含 hostapd（主要服务 AP 模式）和 wpa_supplicant（主要服务 station 模式）的能力。25.12.5 的 [wpad 包定义](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/hostapd/Makefile)区分 basic 和 full 变体；PEAP、TTLS、TLS、MSCHAPv2 等企业认证方法需要完整变体。
+
+PEAP/MSCHAPv2 的最小 UCI 关系如下，账号和密码应通过受控输入写入，避免进入命令历史：
+
+```sh
+uci set wireless.enterprise.encryption='wpa2'
+uci set wireless.enterprise.eap_type='peap'
+uci set wireless.enterprise.auth='MSCHAPV2'
+uci set wireless.enterprise.identity='<identity>'
+uci set wireless.enterprise.password='<password>'
+```
+
+服务器证书还需要 `ca_cert` 及域名限制，或经过验证的服务器证书 pin。完整认证流程、缓存和漫游边界见 [通过上游认证](openwrt-wireless-gateway.md#authentication)和[理解无线链路](openwrt-wireless-gateway.md#radio-metrics)。
 
 ## <a id="ax3000t"></a>小米 AX3000T 案例
 
@@ -321,4 +341,4 @@ ubiformat <未使用的-mtd-分区> -y -f /tmp/<临时-openwrt-镜像.ubi>
 
 AX3000T 的公共设备树定义了蓝色和黄色状态灯：启动、failsafe 和升级使用黄色，正常运行使用蓝色，见[状态灯别名](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-common.dtsi#L9-L16)和[GPIO LED 定义](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-common.dtsi#L44-L57)。这些是标准 Linux 状态灯，不保证复刻小米原厂的全部动画。
 
-这次安装阶段短测只证明了无线客户端、NAT 和持久重连可用；链路质量与定向 CPE 的判断方法见 [链路测量与瓶颈定位](openwrt-wireless-gateway.md#measurement)和[定向 CPE](openwrt-wireless-gateway.md#cpe)。
+这次安装阶段短测只证明了无线客户端、NAT 和持久重连可用；链路质量与定向 CPE 的判断方法见 [测量与排查链路](openwrt-wireless-gateway.md#measurement)和[使用定向 CPE](openwrt-wireless-gateway.md#cpe)。
