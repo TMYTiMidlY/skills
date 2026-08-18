@@ -1,6 +1,6 @@
 # OpenWrt 设备管理
 
-OpenWrt 是面向路由器和嵌入式网络设备的 Linux 发行版。本文说明设备支持、安装与恢复、系统维护、网络配置和链路监控，最后以小米 AX3000T 记录设备专属的刷写与恢复边界。把外部 Wi-Fi 作为上游、经网线连接下游 AP、理解通用无线链路或选择定向 CPE 时，见 [外部 Wi-Fi 接入本地网络](external-wifi-access.md)。
+OpenWrt 是面向路由器和嵌入式网络设备的 Linux 发行版。本文说明设备支持、安装与恢复、系统维护、网络配置、无线链路测量和监控，最后以小米 AX3000T 记录设备专属的刷写与恢复边界。把外部 Wi-Fi 作为上游、经网线连接下游 AP、理解通用无线链路或选择定向 CPE 时，见 [外部 Wi-Fi 接入本地网络](external-wifi-access.md)。
 
 ## <a id="system"></a>系统组成与设备支持
 
@@ -281,9 +281,119 @@ uci set wireless.enterprise.password='<password>'
 
 服务器证书还需要 `ca_cert` 及域名限制，或经过验证的服务器证书 pin。完整认证流程、缓存和漫游边界见 [通过上游认证](external-wifi-access.md#authentication)和[理解无线链路](external-wifi-access.md#radio-metrics)。
 
+## <a id="link-measurement"></a>无线链路测量与排查
+
+无线指标的含义和漫游机制见 [理解无线链路](external-wifi-access.md#radio-metrics)。本节使用 OpenWrt 的状态接口和命令，沿实际数据路径定位无线、内部网络和公共出口的瓶颈。
+
+### 建立可比较的测试条件
+
+测量目标是沿实际数据路径逐层缩小瓶颈范围，而不是先假定网络属于校园、企业或公共热点。先区分无线第一跳、同一管理域内的服务、公共互联网和测速服务器，再根据现场拓扑选择具体目标。一次只改变一个变量，并保留相同设备、认证、目标和样本大小。
+
+### 被动状态与主动扫描
+
+先读取不改变关联的状态：
+
+```sh
+ubus call network.interface.wwan status
+iw dev
+iw dev <station-iface> link
+iw dev <station-iface> station dump
+iw dev <station-iface> survey dump
+iwinfo <station-iface> info
+```
+
+这些命令分别给出地址、路由、SSID/BSSID、频率、信号、MCS/NSS、重传和噪声。连续采样时，从 `/sys/class/net/<station-iface>/statistics/{rx,tx}_bytes` 读取相邻差值，换算当前接口流量。
+
+主动扫描会占用无线电资源并增加延迟，具体影响依驱动而异。业务运行时默认不扫描当前关联的 radio；若有独立闲置 radio，只扫描闲置 radio，并设置硬超时。扫描结果只表示是否听到 beacon（AP 周期广播帧）以及其中的 SSID/BSSID/信道，不能证明双向关联、DHCP 或吞吐可用。
+
+### 事件、当前状态与时间序列
+
+排障时要区分几类不会自动互相替代的数据：
+
+| 数据类型 | 回答的问题 | 常见边界 |
+|---|---|---|
+| 事件日志 | 为什么发生关联、认证、DHCP 或断开事件 | 通常只保留近期记录，重启或缓冲覆盖后消失 |
+| 当前状态 | 现在连接哪个 AP、使用什么速率和信号 | 只表示查询时刻，不能还原之前的变化 |
+| 周期采样 | 断开前 signal、MCS、重传、流量和延迟怎样变化 | 必须主动保存，采样频率和存储位置需要单独设计 |
+| 基准测试历史 | 某次测试的下载、上传和负载延迟 | 只代表测试时段，不等于持续可用带宽 |
+
+OpenWrt 的具体日志命令、历史边界和远程保存方法见 [链路日志与监控面板](#link-dashboard)。
+
+### 分层延迟、抖动与丢包
+
+按路径逐层选择目标：
+
+| 层次 | 目标 | 回答的问题 |
+|---|---|---|
+| 无线第一跳 | WWAN 默认网关 | 无线一跳是否丢包或抖动 |
+| 内部网络 | 组织内部稳定服务 | 接入层和内部路由是否正常 |
+| 公共互联网 | 稳定公共 IP | 完整上网路径是否正常 |
+
+第一跳地址应从当前路由读取，不能硬编码旧 DHCP 网关。分别测试小包和接近 MTU 的大包，并记录丢包、最小/平均/最大延迟和样本时段。BusyBox `ping` 的参数能力随构建变化，先看本机帮助，不假设支持小数间隔。
+
+### 分层内容下载
+
+ping 能观察时延和丢包，却不能回答持续传输容量在哪一层下降；NDT7 又会直接测完整公网路径，无法单独定位内部接入。为此可以在路径上选择由近到远的内容源：
+
+| 内容源 | 例子 | 主要排查范围 |
+|---|---|---|
+| 本地 LAN | 同一局域网内的 HTTP server | 终端、网线、下游 AP 与 LAN |
+| 同一管理域 | 运营方、学校或企业内部镜像 | 无线接入、认证后网络和内部路由 |
+| 公共互联网 | 外部镜像或对象存储 | 公共出口与外部路径 |
+
+不是每个现场都有内部镜像；缺少某一层时就跳过，但要明确剩余测试无法区分哪些路径。选择目标时尽量使用大小相同或同源的静态文件，用 HTTP Range（只下载指定字节段）固定样本长度，并在相近时段连续测试：
+
+```sh
+curl --interface <lan-address> \
+  --resolve <internal-host>:80:<verified-ip> \
+  --range 0-4999999 \
+  -o /dev/null \
+  http://<internal-host>/<large-file>
+```
+
+其余层次使用相同 Range、文件大小和协议。若 LAN 内容已经慢，先处理本地链路；LAN 快而内部服务慢时，瓶颈进入无线或接入层；内部快、公共目标慢时，再检查公共出口和外部路径。
+
+校园网只是这套方法的一个特例：校内镜像充当“同一管理域”目标，校外镜像充当“公共互联网”目标。企业网可以换成内网制品库与公共镜像，酒店或公共热点若没有内部服务，就只能比较第一跳、公共目标和 NDT7。
+
+运行 mihomo fake-IP（DNS 返回占位地址）或 TUN（虚拟网卡隧道）的环境，不能用普通 53 端口查询判断真实地址。先用 DoH（DNS over HTTPS，通过 HTTPS 查询 DNS）获取真实地址，或使用已核验 IP 配合 `curl --resolve`；完整 DNS 流向见 [Mihomo / Clash](mihomo.md)。
+
+总平均速度会掩盖掉线和令牌桶形状。下载期间每秒读取 station 的 `rx_bytes`，把差值画成时间序列：无线不稳通常伴随波动、重传和 RSSI/MCS 变化；平坦贴近固定值才值得继续验证策略限速。
+
+### M-Lab NDT7 基准测试
+
+[M-Lab NDT](https://www.measurementlab.net/tests/ndt/)是主动的大流量容量测试。NDT7 使用一条加密测试连接测量应用层有效吞吐，并报告下载、上传、负载延迟和 TCP 重传相关指标。
+
+NDT7 会主动占满链路，不能当作“实时流量”持续运行。适合的流程是：
+
+1. 由用户手动触发；
+2. 暂停其他主动延迟和扫描任务；
+3. 使用官方 reference client，通过 M-Lab Locate 选择服务器；
+4. 设置总超时；
+5. 只有同时得到服务器、下载和上传结果时才写入历史；
+6. Locate 超时或全零摘要应显示失败，不得塑造成成功。
+
+```sh
+<ndt7-client> -format=json -timeout=60s
+```
+
+NDT7 的 loaded latency（负载延迟）是测速占满链路时的延迟，不能替代空闲公网 RTT（Round-Trip Time，往返时延）。高带宽链路一次 NDT7 会传输大量数据，因此默认只按需运行。
+
+### 频段、位置、SSID 与 BSSID 的 A/B 测试
+
+A/B 测试每轮只改变一个变量：
+
+- 2.4 GHz 与 5 GHz；
+- 室内与窗边/室外；
+- 不同上游 SSID；
+- 自动 BSSID 与固定 BSSID；
+- VHT/HE 与 HT20；
+- 普通路由器与定向 CPE。
+
+每轮至少记录 signal、noise、SNR、信道宽度、NSS、MCS、重传增量、第一跳丢包、内部下载、外部下载和 NDT7。先检查是否取得 DHCP 和通过认证，再运行吞吐测试。
+
 ## <a id="link-dashboard"></a>链路日志与监控面板
 
-本节说明把链路面板直接运行在 OpenWrt 路由器上的实现。它依赖 OpenWrt 的 Web 服务、`ubus`、`iw/iwinfo`、Linux 网卡计数器和后台脚本；原厂固件、RouterOS 或其他系统需要使用各自的 API、脚本或外部采集机，不能直接照搬这套实现。需要展示的通用指标及其语义见 [链路监控需求](external-wifi-access.md#dashboard)。
+本节说明把上一节的测量对象接入 OpenWrt 路由器上的持续采集和 HTML 面板。它依赖 OpenWrt 的 Web 服务、`ubus`、`iw/iwinfo`、Linux 网卡计数器和后台脚本；原厂固件、RouterOS 或其他系统需要使用各自的 API、脚本或外部采集机，不能直接照搬这套实现。
 
 ### <a id="openwrt-logs"></a>OpenWrt 日志与历史数据
 
@@ -312,7 +422,7 @@ logread | grep -E 'wpa_supplicant|netifd|EAP|DHCP|WNM'
 
 链路面板运行在 OpenWrt 设备本机：HTML 页面由路由器的轻量 Web 服务（例如 uhttpd）提供，状态接口在路由器上读取 `ubus`、`iw` 和网卡计数器。浏览器只是显示这些数据，管理电脑关机不会让路由器端面板消失。
 
-通用单文件模板见 [openwrt-link-dashboard.html](../assets/openwrt-link-dashboard.html)。模板不包含真实 SSID、设备名、Portal 地址或采集后端；页面顶部配置对象定义 API 路径、网络标签、延迟目标和过期时间。
+OpenWrt 链路面板模板见 [openwrt-link-dashboard.html](../assets/openwrt-link-dashboard.html)。模板不包含真实 SSID、设备名、Portal 地址或采集后端；页面顶部配置对象定义 API 路径、网络标签、延迟目标和过期时间。
 
 终端要先接入 OpenWrt 的 LAN，或接入已经桥到该 LAN 的下游 AP。随后在浏览器打开：
 
@@ -379,9 +489,9 @@ STALE 表示实时数据已经过期；扫描滞回则表示一次漏扫不会�
 
 ### HTML 模板与数据接口
 
-模板内置演示数据，可以直接打开检查布局；配置真实 API（Application Programming Interface，供页面读取数据的接口）后才进入实时模式。适配时只需要实现状态、延迟和基准测试三类 JSON（结构化数据格式），不必复制现场专用的后端脚本或 SSH 代理。
+[openwrt-link-dashboard.html](../assets/openwrt-link-dashboard.html) 内置演示数据，可以直接打开检查布局；配置真实 API（Application Programming Interface，供页面读取数据的接口）后才进入实时模式。适配时只需要实现状态、延迟和基准测试三类 JSON（结构化数据格式），不必复制现场专用的后端脚本或 SSH 代理。
 
-页面采用低噪声深色布局，以当前信号、链路档位、实时流量和基准测试为主，不使用与操作无关的装饰卡片。数值变化有平滑过渡，STALE 与测试暂停使用明确状态，不让动画掩盖数据含义。
+页面采用低噪声深色布局，以当前信号、链路档位、实时流量和基准测试为主，不使用与操作无关的装饰卡片。模板中的 0–100 信号分数只是可配置的展示映射，不是行业标准；数值变化有平滑过渡，STALE 与测试暂停使用明确状态，不让动画掩盖数据含义。
 
 ## <a id="ax3000t"></a>小米 AX3000T 案例
 
@@ -470,4 +580,4 @@ ubiformat <未使用的-mtd-分区> -y -f /tmp/<临时-openwrt-镜像.ubi>
 
 AX3000T 的公共设备树定义了蓝色和黄色状态灯：启动、failsafe 和升级使用黄色，正常运行使用蓝色，见[状态灯别名](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-common.dtsi#L9-L16)和[GPIO LED 定义](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-common.dtsi#L44-L57)。这些是标准 Linux 状态灯，不保证复刻小米原厂的全部动画。
 
-这次安装阶段短测只证明了无线客户端、NAT 和持久重连可用；链路质量与定向 CPE 的判断方法见 [测量与排查链路](external-wifi-access.md#measurement)和[使用定向 CPE](external-wifi-access.md#cpe)。
+这次安装阶段短测只证明了无线客户端、NAT 和持久重连可用；链路质量与定向 CPE 的判断方法见 [无线链路测量与排查](#link-measurement)和[使用定向 CPE](external-wifi-access.md#cpe)。
