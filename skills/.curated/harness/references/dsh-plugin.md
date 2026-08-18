@@ -105,41 +105,23 @@ Plugin 卸载、热替换和失败状态的完整语义见后文的[模块、配
 
 ## <a id="creation-mode-plugin-development"></a>创造模式中的 Plugin 开发
 
-切换到 [`cordis` preset（创造模式）](dsh.md#creation-mode)后，Agent 会保留标准模式的编码能力，并额外获得 DSH 运行时检查、临时 Plugin 实验和 Agent preset 创作能力。此时已经具备的是**开发手段**，不是某个现成 Plugin；Agent 会根据用户的目标检查当前 DSH，再现场创建相应的临时扩展。
+切换到 [`cordis` preset（创造模式）](dsh.md#creation-mode)后，Agent 会保留标准模式的编码能力，并获得一组专门面向 DSH 自身的开发上下文。此时加入的是**开发手段**，不是某个现成 Plugin；具体扩展仍由 Agent 根据用户目标现场创建。
 
-### 切换后提供的能力
+### 切换时 Agent 实际获得什么
 
-创造模式大致封装了以下能力：
+创造模式通过三层内容指导 Agent：
 
-- **检查正在运行的 DSH**：查看当前加载的 Plugin、可用能力、工具、事件、界面扩展位置和失败状态；
-- **创建临时 Plugin**：在当前 DSH 中增加后台行为、模型可用的工具、提示内容或网页界面；
-- **边运行边调整**：保留多次修改产生的临时版本，在新版本失败时继续修正或回到先前可用的版本；
-- **诊断运行问题**：读取临时 Plugin 的状态和错误，确认问题来自缺失依赖、加载失败还是界面渲染；
-- **创作 Agent preset**：复制已有 preset，调整某类 Agent 使用的工具、提示和策略，并验证组合能否启动。
+| 层 | 切换时的状态 | 提供的内容 |
+|---|---|---|
+| 专用角色提示 | 自动加入 | 告诉 Agent 可以检查和修改当前 DSH，区分 Host 与 Agent preset 的职责，并要求复制后再修改官方 preset |
+| 运行时开发提示与工具说明 | 自动加入 | 说明临时 Plugin 的用途、版本和批准规则、检查与修改流程、后台与网页界面的分工，以及常见错误和恢复方式 |
+| 两份模式专用 Skill | 先加入名称与摘要，正文按需加载 | `cordis-plugin-development` 负责临时 Plugin 开发；`editing-cordis-compositions` 负责 Agent preset 与 Cordis 组合 |
 
-网页界面的临时扩展需要用户批准后才会加载。创造模式可以接触真实的 DSH 主进程，应视为与直接执行终端命令相近的高权限能力，只在受信任的开发场景中使用。
+因此，具体的工具调用顺序、版本处理、浏览器批准、生命周期和故障恢复规则，确实会由创造模式直接提供给 Agent；更长的示例和组合规范则保存在 Skill 正文中，在任务需要时才加载，并不是切换模式时一次性塞入全部提示词。
 
-### 什么时候切换到创造模式
+从用户视角看，这些上下文让 Agent 能够检查正在运行的 DSH、创建和调整临时 Plugin、诊断加载或界面问题，以及创作新的 Agent preset。网页界面的临时扩展需要用户批准后才会加载。创造模式可以接触真实的 DSH 主进程，应视为与直接执行终端命令相近的高权限能力，只在受信任的开发场景中使用。
 
-以下情况适合切换：
-
-- 你想修改或扩展 **DSH 自身**，但还不知道应该接入哪个 Plugin、服务或界面位置；
-- 你想先看到一个能够运行的原型，再决定是否值得建立正式项目；
-- 你正在排查运行中的 Plugin、工具、界面或 Agent preset；
-- 你希望 DSH 帮你设计另一种 Agent 工作方式；
-- 需求很小、生命周期很短，只需要本次运行期间生效。
-
-创造模式的价值在于让 Agent 先观察真实运行时，再决定怎样扩展，而不是根据文档或名称猜测接口。
-
-### 什么时候不用创造模式
-
-以下情况通常直接使用普通模式或源码开发：
-
-- 只是安装、启用或调整现成 Plugin；
-- 处理与 DSH 扩展无关的普通代码任务；
-- Plugin 的需求和接口已经明确，准备进入长期维护；
-- 功能需要第三方依赖、多个源码文件、持久数据、数据迁移、完整测试、持续集成或发布；
-- 功能涉及较高安全风险，需要在源码审查和测试后才能运行。
+> 来源：[创造模式自动加入的 persona 与 preset 创作规则](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L1-L30)；[动态 Plugin 系统提示词的注册](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/src/index.ts#L35-L43)与[提示内容](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/src/prompt.ts#L3-L110)；[模式专用 Skill 的挂载](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L241-L262)、[动态 Plugin 开发 Skill](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L1-L10)与[组合创作 Skill](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/editing-cordis-compositions/SKILL.md#L1-L10)；[Skill 目录消息只包含摘要、正文按需加载](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/skill/tool-skill/README.md#L5-L31)。
 
 ### 临时 Plugin 与正式 Plugin
 
