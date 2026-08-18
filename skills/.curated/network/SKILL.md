@@ -1,19 +1,19 @@
 ---
 name: network
-description: 配置或排查 OpenWrt 路由器、Wi-Fi 上游链路、客户端代理、泄漏防护、远程接入及 WSL/远端网络管道时使用。核心是先还原设备角色、认证、DNS、路由和隧道的实际数据路径，再分层处理无线链路或代理与组网配置。
+description: 配置或排查 OpenWrt 路由器、外部 Wi-Fi 接入本地网络、客户端代理、泄漏防护、远程接入及 WSL/远端网络管道时使用。核心是先还原设备角色、认证、DNS、路由和隧道的实际数据路径，再分层处理无线链路或代理与组网配置。
 ---
 
 # Network
 
-本 skill 索引 OpenWrt 设备管理、Wi-Fi 上游链路、客户端代理、远程接入、组网管道与服务端节点入口。受限网络下的 Git clone / submodule 获取由 `git` skill 覆盖，Caddy 反代和公网节点质量检测由 `vps-maintenance` skill 覆盖。
+本 skill 索引 OpenWrt 设备管理、外部 Wi-Fi 接入本地网络、客户端代理、远程接入、组网管道与服务端节点入口。受限网络下的 Git clone / submodule 获取由 `git` skill 覆盖，Caddy 反代和公网节点质量检测由 `vps-maintenance` skill 覆盖。
 
 ## OpenWrt 设备管理
 
-OpenWrt 的设备支持、首次安装、镜像类型、升级恢复、BusyBox/procd/apk、LuCI/UCI/ubus、Dropbear SSH，以及小米 AX3000T 保留原厂启动程序的刷写案例见 [references/openwrt.md](references/openwrt.md)。
+OpenWrt 的设备支持、首次安装、镜像类型、升级恢复、BusyBox/procd/apk、LuCI/UCI/ubus、Dropbear SSH、链路日志与监控面板，以及小米 AX3000T 保留原厂启动程序的刷写案例见 [references/openwrt.md](references/openwrt.md)。面板的单文件页面模板位于 [assets/openwrt-link-dashboard.html](assets/openwrt-link-dashboard.html)。
 
-## Wi-Fi 上游链路
+## 外部 Wi-Fi 接入本地网络
 
-把外部 Wi-Fi 转为受控 LAN，再经下游 AP 覆盖本地网络时，拓扑、WWAN/NAT、Captive Portal、企业认证、漫游缓存、RSSI/SNR/MCS/NSS、分层测速、NDT7、定向 CPE 和链路 Dashboard 见 [references/wifi-uplink.md](references/wifi-uplink.md)。通用单文件页面模板位于 [assets/openwrt-link-dashboard.html](assets/openwrt-link-dashboard.html)。
+把外部 Wi-Fi 转为受控 LAN，再经下游 AP 覆盖本地网络时，拓扑、WWAN/NAT、Captive Portal、企业认证、漫游缓存、RSSI/SNR/MCS/NSS、分层测速、NDT7、定向 CPE 和监控需求见 [references/external-wifi-access.md](references/external-wifi-access.md)。
 
 ## Mihomo / Clash 客户端与泄漏控制
 

@@ -1,6 +1,6 @@
 # OpenWrt 设备管理
 
-OpenWrt 是面向路由器和嵌入式网络设备的 Linux 发行版。本文说明设备支持、安装与恢复、系统维护和网络配置接口，最后以小米 AX3000T 记录设备专属的刷写与恢复边界。把外部 Wi-Fi 作为上游、经网线连接下游 AP、测量无线链路或选择定向 CPE 时，见 [Wi-Fi 上游链路](wifi-uplink.md)。
+OpenWrt 是面向路由器和嵌入式网络设备的 Linux 发行版。本文说明设备支持、安装与恢复、系统维护、网络配置和链路监控，最后以小米 AX3000T 记录设备专属的刷写与恢复边界。把外部 Wi-Fi 作为上游、经网线连接下游 AP、理解通用无线链路或选择定向 CPE 时，见 [外部 Wi-Fi 接入本地网络](external-wifi-access.md)。
 
 ## <a id="system"></a>系统组成与设备支持
 
@@ -61,7 +61,7 @@ OpenWrt 镜像必须匹配精确型号和硬件版本。相同商品名可能使
 
 厂商系统和官方 OpenWrt 即使共享代码基础，也可能使用不同内核、驱动和功能界面，不能把一方的功能状态直接套到另一方。
 
-**旅行路由器。**旅行路由器把外部 Wi-Fi 作为上游，再建立自己控制的 LAN。这个角色要求设备支持 station、WWAN、防火墙和上游认证；若还要向本地广播 Wi-Fi，需要核对无线电数量和并发模式。完整的数据路径、认证和链路测量见 [Wi-Fi 上游链路](wifi-uplink.md)。
+**旅行路由器。**旅行路由器把外部 Wi-Fi 作为上游，再建立自己控制的 LAN。这个角色要求设备支持 station、WWAN、防火墙和上游认证；若还要向本地广播 Wi-Fi，需要核对无线电数量和并发模式。完整的数据路径、认证和链路测量见 [外部 Wi-Fi 接入本地网络](external-wifi-access.md)。
 
 ## <a id="installation"></a>安装、升级与恢复
 
@@ -227,7 +227,7 @@ OpenWrt 把网络对象拆成几个层次：
 - **WWAN**（wireless WAN，无线 WAN）是由 Wi-Fi 客户端连接承载的 WAN 接口。
 - **防火墙区域**把一个或多个接口归为同一安全边界，并决定入站、转发和 NAT。
 
-`/etc/config/network` 定义接口和地址获取方式，`/etc/config/firewall` 决定区域、转发和 NAT。把外部 Wi-Fi 变成网线输出时，通用数据路径见 [Wi-Fi 上游链路的组成](wifi-uplink.md#architecture)，OpenWrt 配置流程见 [OpenWrt 上的链路配置](wifi-uplink.md#configuration)。
+`/etc/config/network` 定义接口和地址获取方式，`/etc/config/firewall` 决定区域、转发和 NAT。把外部 Wi-Fi 变成网线输出时，通用数据路径见 [设备角色与数据路径](external-wifi-access.md#architecture)，OpenWrt 配置流程见 [OpenWrt 上的链路配置](external-wifi-access.md#configuration)。
 
 ### <a id="wireless-wpad"></a>无线配置与 wpad
 
@@ -238,7 +238,7 @@ OpenWrt 把网络对象拆成几个层次：
 - **`mode='ap'`**：把这条 `wifi-iface` 映射为 AP 角色；
 - **`mode='sta'`**：把这条 `wifi-iface` 映射为 station 角色。
 
-AP、station、路由和桥接的通用关系，以及共享同一无线电时的影响，见 [Wi-Fi 上游链路的组成](wifi-uplink.md#architecture)。OpenWrt 能否在同一 radio 上并发这些模式，取决于驱动和硬件。
+AP、station、路由和桥接的通用关系，以及共享同一无线电时的影响，见 [设备角色与数据路径](external-wifi-access.md#architecture)。OpenWrt 能否在同一 radio 上并发这些模式，取决于驱动和硬件。
 
 **wpad** 是 OpenWrt 打包的无线认证组件，同时包含 hostapd（主要服务 AP 模式）和 wpa_supplicant（主要服务 station 模式）的能力。25.12.5 的 [wpad 包定义](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/hostapd/Makefile#L269-L320)区分 basic 和 full 变体：`wpad-basic-mbedtls` 等精简变体覆盖普通 Personal 网络；PEAP、TTLS、TLS、MSCHAPv2 等企业认证方法需要 `wpad-openssl`、`wpad-mbedtls` 或 `wpad-wolfssl` 等完整变体。
 
@@ -261,11 +261,113 @@ uci set wireless.enterprise.identity='<identity>'
 uci set wireless.enterprise.password='<password>'
 ```
 
-服务器证书还需要 `ca_cert` 及域名限制，或经过验证的服务器证书 pin。完整认证流程、缓存和漫游边界见 [通过上游认证](wifi-uplink.md#authentication)和[理解无线链路](wifi-uplink.md#radio-metrics)。
+服务器证书还需要 `ca_cert` 及域名限制，或经过验证的服务器证书 pin。完整认证流程、缓存和漫游边界见 [通过上游认证](external-wifi-access.md#authentication)和[理解无线链路](external-wifi-access.md#radio-metrics)。
+
+## <a id="link-dashboard"></a>链路日志与监控面板
+
+本节说明把链路面板直接运行在 OpenWrt 路由器上的实现。它依赖 OpenWrt 的 Web 服务、`ubus`、`iw/iwinfo`、Linux 网卡计数器和后台脚本；原厂固件、RouterOS 或其他系统需要使用各自的 API、脚本或外部采集机，不能直接照搬这套实现。需要展示的通用指标及其语义见 [链路监控需求](external-wifi-access.md#dashboard)。
+
+### <a id="openwrt-logs"></a>OpenWrt 日志与历史数据
+
+OpenWrt 会记录近期系统事件，但不会默认保存完整的信号和流量时间序列。官方[系统日志说明](https://openwrt.org/docs/guide-user/base-system/log.essentials)指出，默认 `logd` 把固定大小的记录保存在 RAM 环形缓冲中，`logread` 可以读取、写文件或转发到远端。排障前先分清“事件日志”“当前状态”和“额外采样”：
+
+| 数据 | 默认历史 | 查看位置 | 主要边界 |
+|---|---|---|---|
+| 系统、网络管理服务（netifd）、无线认证程序（wpa_supplicant）、EAP、DHCP、WNM | 近期事件 | `logread` | 内存环形缓冲，覆盖或重启后消失 |
+| 内核和无线驱动 | 近期事件 | `dmesg`、`logread` | 可见 beacon loss、能力变化和断开 |
+| 接口、SSID、BSSID、地址 | 无 | `ubus`、`iw` | 只表示查询时的当前状态 |
+| signal、MCS/NSS、PHY、重传 | 无时序历史 | `iw station dump`、Linux 网卡计数文件 | 必须周期采样才能画曲线 |
+| DHCP lease | 当前租约 | `/tmp/dhcp.leases` | 不是完整连接历史 |
+| Dashboard 曲线 | 页面打开期间 | 浏览器内存 | 页面关闭后默认丢失 |
+| 最近测速结果 | 取决于面板实现 | 面板缓存 | 不是 OpenWrt 内建日志 |
+
+实时跟踪和筛选无线相关日志只需要一段命令：
+
+```sh
+logread -f
+logread | grep -E 'wpa_supplicant|netifd|EAP|DHCP|WNM'
+```
+
+需要保存数小时或数天时，可以把系统事件发往远程 syslog，并把 signal、MCS、重传、字节计数和延迟写入独立时序存储。持续写入路由器内置闪存会增加磨损，存储位置和采样周期应单独设计。
+
+### 面板运行位置与访问地址
+
+链路面板运行在 OpenWrt 设备本机：HTML 页面由路由器的轻量 Web 服务（例如 uhttpd）提供，状态接口在路由器上读取 `ubus`、`iw` 和网卡计数器。浏览器只是显示这些数据，管理电脑关机不会让路由器端面板消失。
+
+通用单文件模板见 [openwrt-link-dashboard.html](../assets/openwrt-link-dashboard.html)。模板不包含真实 SSID、设备名、Portal 地址或采集后端；页面顶部配置对象定义 API 路径、网络标签、延迟目标和过期时间。
+
+终端要先接入 OpenWrt 的 LAN，或接入已经桥到该 LAN 的下游 AP。随后在浏览器打开：
+
+```text
+http://<openwrt-lan-ip>:<dashboard-port>/
+```
+
+`<openwrt-lan-ip>` 通常是终端网络详情中的默认网关，也是 LuCI 管理地址；`<dashboard-port>` 是部署面板时为 uhttpd 或其他 Web 服务设置的端口。
+
+下游设备仍处于路由模式时，双重 NAT 和防火墙可能阻止访问上一级 OpenWrt；切为 AP 模式后，终端与 OpenWrt 位于同一 LAN，访问最直接。需要从 LAN 之外访问时，可以另建受控代理或隧道，但那属于部署环境，不是模板默认组成。
+
+### 路由器实时数据来源
+
+状态接口在 OpenWrt 本机按需读取：
+
+| 数据 | OpenWrt 来源 |
+|---|---|
+| WWAN 地址和连接状态 | `ubus call network.interface.wwan status` |
+| SSID、BSSID、信号和 PHY | `iw link` / `iw station dump` |
+| 当前流量 | `/sys/class/net/<iface>/statistics/` |
+| 候选网络 | 非活动 radio 的扫描缓存 |
+| 实时延迟 | 路由器主动发出的小样本 ping |
+| NDT7 | 用户手动触发的主动基准 |
+
+这些是实时查询，不是从 `logread` 回放出来的历史。字段缺失或状态接口超时时，前端应显示不可用，不用 `0` 伪装测量结果。
+
+### 活动频段扫描与任务互斥
+
+默认调度原则：
+
+- 被动状态可以每秒读取；
+- 活动 radio 不做周期扫描；
+- 闲置 radio 扫描使用较长间隔、硬超时和缓存；
+- 延迟精测与 NDT7 互斥；
+- NDT7 运行时暂停实时轮询和其他主动任务；
+- 任务结束或失败后自动恢复被动采集；
+- 所有后台任务有进程锁和总时限。
+
+扫描接口卡住时，应终止具体进程并重新检查无线运行态；不要用不带范围的进程名杀法，也不要直接重载配置掩盖原因。
+
+### STALE 状态与扫描滞回
+
+STALE 表示实时数据已经过期；扫描滞回则表示一次漏扫不会立刻把网络判定为消失。超过可配置时间没有新状态时，面板必须：
+
+- 显示 OFFLINE/STALE；
+- 清空信号、流量、实时延迟和连接详情；
+- 标出最后更新时间；
+- 保留明确标记为历史的 NDT7 结果；
+- 数据恢复后自动重新填充。
+
+扫描偶尔漏掉 beacon 时，不应立刻把网络显示为消失。对每个 SSID/频段保留可配置的最近可见时间（last-seen TTL，TTL 表示保留时长），并显示“最近看到”；连续过期后才清空。
+
+### 实时数据、设备日志与长期历史
+
+面板的实时曲线通常只存在于当前浏览器内存；页面关闭后，过去的 signal、MCS 和流量曲线默认丢失。OpenWrt 的 `logread` 仍可能保留同一时段的断开、WNM、EAP 和 DHCP 事件，但不能重建每秒曲线。
+
+三类历史应分别处理：
+
+- **事件历史**：由 OpenWrt 日志提供，适合解释“为什么断开”；
+- **实时曲线**：由 Dashboard 周期采样，适合观察“断开前数值怎样变化”；
+- **长期历史**：需要额外时序存储或远程采集，OpenWrt 默认不提供。
+
+完整日志边界见 [OpenWrt 日志与历史数据](#openwrt-logs)。Dashboard 可能暴露 SSID、BSSID、内网地址和链路状态，默认应绑定管理 LAN 或指定接口，并用防火墙限制访问；需要跨不可信网络访问时增加认证和 TLS。不要把无认证的 `0.0.0.0` 监听作为通用默认值。
+
+### HTML 模板与数据接口
+
+模板内置演示数据，可以直接打开检查布局；配置真实 API（Application Programming Interface，供页面读取数据的接口）后才进入实时模式。适配时只需要实现状态、延迟和基准测试三类 JSON（结构化数据格式），不必复制现场专用的后端脚本或 SSH 代理。
+
+页面采用低噪声深色布局，以当前信号、链路档位、实时流量和基准测试为主，不使用与操作无关的装饰卡片。数值变化有平滑过渡，STALE 与测试暂停使用明确状态，不让动画掩盖数据含义。
 
 ## <a id="ax3000t"></a>小米 AX3000T 案例
 
-本节只记录 AX3000T 独有的硬件差异和一次实际安装结果。通用安装、升级和 SSH 认证分别见[安装、升级与恢复](#installation)和[公钥认证与密码认证](#ssh-security)；无线接入网络见 [Wi-Fi 上游链路](wifi-uplink.md)。
+本节只记录 AX3000T 独有的硬件差异和一次实际安装结果。通用安装、升级和 SSH 认证分别见[安装、升级与恢复](#installation)和[公钥认证与密码认证](#ssh-security)；无线接入网络见 [外部 Wi-Fi 接入本地网络](external-wifi-access.md)。
 
 ### 硬件版本与原厂固件
 
@@ -346,8 +448,8 @@ ubiformat <未使用的-mtd-分区> -y -f /tmp/<临时-openwrt-镜像.ubi>
 - 两张无线电、LuCI、SSH 和端口均正常；
 - 已用个人热点完成 5 GHz station → WWAN/NAT → 有线 LAN 的安装阶段验收，并确认重启后自动恢复；
 - 已设置 root 密码并拒绝空密码 SSH；关闭密码认证并只保留公钥登录尚需按[公钥认证与密码认证](#ssh-security)完成；
-- 后续外部 Wi-Fi、企业认证、下游 AP、链路测量和 Dashboard 的实测已移入 [校园无线接入案例](wifi-uplink.md#campus-case)，避免把安装验收与长期网络方案混在一起。
+- 后续外部 Wi-Fi、企业认证、下游 AP、链路测量和 Dashboard 的实测已移入 [校园无线接入案例](external-wifi-access.md#campus-case)，避免把安装验收与长期网络方案混在一起。
 
 AX3000T 的公共设备树定义了蓝色和黄色状态灯：启动、failsafe 和升级使用黄色，正常运行使用蓝色，见[状态灯别名](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-common.dtsi#L9-L16)和[GPIO LED 定义](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-common.dtsi#L44-L57)。这些是标准 Linux 状态灯，不保证复刻小米原厂的全部动画。
 
-这次安装阶段短测只证明了无线客户端、NAT 和持久重连可用；链路质量与定向 CPE 的判断方法见 [测量与排查链路](wifi-uplink.md#measurement)和[使用定向 CPE](wifi-uplink.md#cpe)。
+这次安装阶段短测只证明了无线客户端、NAT 和持久重连可用；链路质量与定向 CPE 的判断方法见 [测量与排查链路](external-wifi-access.md#measurement)和[使用定向 CPE](external-wifi-access.md#cpe)。

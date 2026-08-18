@@ -13,7 +13,7 @@
 | `git` | Git/jj 提交与历史、隔离工作区、受限网络获取、发版 CI 与 forge/静态站 |
 | `software` | 本地软件、CLI 与自托管服务：终端和包管理工具、数据库、对象存储、Docker/PaaS、Overleaf、文档处理与桌面系统排障 |
 | `io` | 沿内存、文件系统、挂载、介质和网络块存储定位 I/O 与换页瓶颈 |
-| `network` | OpenWrt 设备与 Wi-Fi 上游链路、客户端代理、泄漏防护、远程接入及 WSL/远端网络管道 |
+| `network` | OpenWrt 设备、外部 Wi-Fi 接入本地网络、客户端代理、泄漏防护、远程接入及 WSL/远端网络管道 |
 | `vps-maintenance` | VPS 初始化、安全加固、网络质量检查、反向代理与基础服务部署 |
 | `docker-maintenance` | 受限 Docker 容器的环境探测、只读挂载处理、工具安装与无浏览器认证 |
 | `docs-writer` | 中文论文、docx 汇报和演示文稿的写作修订、引用核查与配图管理 |
