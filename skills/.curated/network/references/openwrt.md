@@ -1,6 +1,6 @@
 # OpenWrt 设备管理
 
-OpenWrt 是面向路由器和嵌入式网络设备的 Linux 发行版。本文说明设备支持、安装与恢复、系统维护和网络配置接口，最后以小米 AX3000T 记录设备专属的刷写与恢复边界。把外部 Wi-Fi 作为上游、经网线连接下游 AP、测量无线链路或选择定向 CPE 时，见 [OpenWrt 无线接入网关](openwrt-wireless-gateway.md)。
+OpenWrt 是面向路由器和嵌入式网络设备的 Linux 发行版。本文说明设备支持、安装与恢复、系统维护和网络配置接口，最后以小米 AX3000T 记录设备专属的刷写与恢复边界。把外部 Wi-Fi 作为上游、经网线连接下游 AP、测量无线链路或选择定向 CPE 时，见 [Wi-Fi 上游链路](wifi-uplink.md)。
 
 ## <a id="system"></a>系统组成与设备支持
 
@@ -61,7 +61,7 @@ OpenWrt 镜像必须匹配精确型号和硬件版本。相同商品名可能使
 
 厂商系统和官方 OpenWrt 即使共享代码基础，也可能使用不同内核、驱动和功能界面，不能把一方的功能状态直接套到另一方。
 
-**旅行路由器。**旅行路由器把外部 Wi-Fi 作为上游，再建立自己控制的 LAN。这个角色要求设备支持 station、WWAN、防火墙和上游认证；若还要向本地广播 Wi-Fi，需要核对无线电数量和并发模式。完整的数据路径、认证和链路测量见 [OpenWrt 无线接入网关](openwrt-wireless-gateway.md)。
+**旅行路由器。**旅行路由器把外部 Wi-Fi 作为上游，再建立自己控制的 LAN。这个角色要求设备支持 station、WWAN、防火墙和上游认证；若还要向本地广播 Wi-Fi，需要核对无线电数量和并发模式。完整的数据路径、认证和链路测量见 [Wi-Fi 上游链路](wifi-uplink.md)。
 
 ## <a id="installation"></a>安装、升级与恢复
 
@@ -227,7 +227,7 @@ OpenWrt 把网络对象拆成几个层次：
 - **WWAN**（wireless WAN，无线 WAN）是由 Wi-Fi 客户端连接承载的 WAN 接口。
 - **防火墙区域**把一个或多个接口归为同一安全边界，并决定入站、转发和 NAT。
 
-`/etc/config/network` 定义接口和地址获取方式，`/etc/config/firewall` 决定区域、转发和 NAT。把外部 Wi-Fi 变成网线输出时，完整拓扑见 [搭建无线接入网关](openwrt-wireless-gateway.md#configuration)。
+`/etc/config/network` 定义接口和地址获取方式，`/etc/config/firewall` 决定区域、转发和 NAT。把外部 Wi-Fi 变成网线输出时，完整拓扑见 [搭建无线接入网关](wifi-uplink.md#configuration)。
 
 ### 无线配置与 wpad
 
@@ -252,11 +252,11 @@ uci set wireless.enterprise.identity='<identity>'
 uci set wireless.enterprise.password='<password>'
 ```
 
-服务器证书还需要 `ca_cert` 及域名限制，或经过验证的服务器证书 pin。完整认证流程、缓存和漫游边界见 [通过上游认证](openwrt-wireless-gateway.md#authentication)和[理解无线链路](openwrt-wireless-gateway.md#radio-metrics)。
+服务器证书还需要 `ca_cert` 及域名限制，或经过验证的服务器证书 pin。完整认证流程、缓存和漫游边界见 [通过上游认证](wifi-uplink.md#authentication)和[理解无线链路](wifi-uplink.md#radio-metrics)。
 
 ## <a id="ax3000t"></a>小米 AX3000T 案例
 
-本节只记录 AX3000T 独有的硬件差异和一次实际安装结果。通用安装、升级和 SSH 认证分别见[安装、升级与恢复](#installation)和[公钥认证与密码认证](#ssh-security)；无线接入网络见 [OpenWrt 无线接入网关](openwrt-wireless-gateway.md)。
+本节只记录 AX3000T 独有的硬件差异和一次实际安装结果。通用安装、升级和 SSH 认证分别见[安装、升级与恢复](#installation)和[公钥认证与密码认证](#ssh-security)；无线接入网络见 [Wi-Fi 上游链路](wifi-uplink.md)。
 
 ### 硬件版本与原厂固件
 
@@ -337,8 +337,8 @@ ubiformat <未使用的-mtd-分区> -y -f /tmp/<临时-openwrt-镜像.ubi>
 - 两张无线电、LuCI、SSH 和端口均正常；
 - 已用个人热点完成 5 GHz station → WWAN/NAT → 有线 LAN 的安装阶段验收，并确认重启后自动恢复；
 - 已设置 root 密码并拒绝空密码 SSH；关闭密码认证并只保留公钥登录尚需按[公钥认证与密码认证](#ssh-security)完成；
-- 后续外部 Wi-Fi、企业认证、下游 AP、链路测量和 Dashboard 的实测已移入 [校园无线接入案例](openwrt-wireless-gateway.md#campus-case)，避免把安装验收与长期网络方案混在一起。
+- 后续外部 Wi-Fi、企业认证、下游 AP、链路测量和 Dashboard 的实测已移入 [校园无线接入案例](wifi-uplink.md#campus-case)，避免把安装验收与长期网络方案混在一起。
 
 AX3000T 的公共设备树定义了蓝色和黄色状态灯：启动、failsafe 和升级使用黄色，正常运行使用蓝色，见[状态灯别名](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-common.dtsi#L9-L16)和[GPIO LED 定义](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-common.dtsi#L44-L57)。这些是标准 Linux 状态灯，不保证复刻小米原厂的全部动画。
 
-这次安装阶段短测只证明了无线客户端、NAT 和持久重连可用；链路质量与定向 CPE 的判断方法见 [测量与排查链路](openwrt-wireless-gateway.md#measurement)和[使用定向 CPE](openwrt-wireless-gateway.md#cpe)。
+这次安装阶段短测只证明了无线客户端、NAT 和持久重连可用；链路质量与定向 CPE 的判断方法见 [测量与排查链路](wifi-uplink.md#measurement)和[使用定向 CPE](wifi-uplink.md#cpe)。
