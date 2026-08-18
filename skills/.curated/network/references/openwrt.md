@@ -214,9 +214,9 @@ uci commit dropbear
 
 OpenWrt 可以提供标准状态灯，但不保证复刻厂商固件的全部颜色、动画或专有联动。
 
-## <a id="network-surfaces"></a>网络配置接口
+## <a id="network-surfaces"></a>网络配置与状态接口
 
-OpenWrt 把物理接口、逻辑网络、防火墙区域和无线配置分开管理。理解这几层可以避免把“无线客户端”“WAN 角色”和“某个物理网口”当成同一个对象。
+OpenWrt 把物理接口、逻辑网络、防火墙区域、无线配置和运行状态分开管理。理解这些层次可以避免把“无线客户端”“WAN 角色”“某个物理网口”和“设备清单”当成同一个对象。
 
 ### LAN、WAN、WWAN 与防火墙区域
 
@@ -281,6 +281,31 @@ uci set wireless.enterprise.password='<password>'
 
 服务器证书还需要 `ca_cert` 及域名限制，或经过验证的服务器证书 pin。完整认证流程、缓存和漫游边界见 [通过上游认证](external-wifi-access.md#authentication)和[理解无线链路](external-wifi-access.md#radio-metrics)。
 
+### <a id="network-state"></a>设备、接口与客户端状态
+
+OpenWrt 没有一个天然完整的“所有设备”列表。接口状态、地址租约、二层邻居、无线关联和经网关流量来自不同子系统，应按用途组合：
+
+| 来源 | 可以回答的问题 | 主要边界 |
+|---|---|---|
+| `ubus call network.device status`、`network.interface.<name> status` | 设备、接口、地址、路由、协议状态和 uptime | 只表示查询时刻，不提供历史 |
+| `/proc/net/dev`、`/sys/class/net/<iface>/statistics/` | 每个接口的字节、包、错误和丢弃计数 | 不能把接口总量自动分摊到终端 |
+| `/tmp/dhcp.leases` | DHCP 分配的 IP、MAC、主机名和租期 | 不覆盖静态地址，也不是长期连接历史 |
+| `ip neigh show` | 同一链路上近期解析出的 IPv4/IPv6 地址与 MAC | 动态条目会进入 reachable、stale、failed 等状态并被回收，见 [`ip-neighbour(8)`](https://man7.org/linux/man-pages/man8/ip-neighbour.8.html) |
+| bridge FDB（forwarding database，转发表；安装相应 bridge 工具后可用 `bridge fdb show` 查看） | Linux bridge 学到的 MAC 与端口 | 不能直接给出主机名、IP 或无线质量，动态项同样会老化 |
+| `iwinfo`、`iw dev <iface> station dump` | OpenWrt 自己 radio 上的关联客户端、信号、速率和重传 | 看不到独立 AP 上的无线关联 |
+| conntrack | 正在经网关路由的连接与计数 | 不覆盖同一 bridge 内直接转发的流量，也不是长期记账数据库 |
+
+快速盘点时可以先并列读取这些来源，再用 MAC、IP、接口和时间关联，而不是把某一个输出当作完整真相：
+
+```sh
+ubus call network.device status
+ubus call network.interface.lan status
+cat /tmp/dhcp.leases
+ip neigh show
+```
+
+网关和独立 AP 各自能看到哪些字段，见 [整网设备可见性与统计](external-wifi-access.md#dashboard)；持续采集和历史保存见 [网络日志与监控](#link-dashboard)。
+
 ## <a id="link-measurement"></a>无线链路测量与排查
 
 无线指标的含义和漫游机制见 [理解无线链路](external-wifi-access.md#radio-metrics)。本节使用 OpenWrt 的状态接口和命令，沿实际数据路径定位无线、内部网络和公共出口的瓶颈。
@@ -317,7 +342,7 @@ iwinfo <station-iface> info
 | 周期采样 | 断开前 signal、MCS、重传、流量和延迟怎样变化 | 必须主动保存，采样频率和存储位置需要单独设计 |
 | 基准测试历史 | 某次测试的下载、上传和负载延迟 | 只代表测试时段，不等于持续可用带宽 |
 
-OpenWrt 的具体日志命令、历史边界和远程保存方法见 [链路日志与监控面板](#link-dashboard)。
+OpenWrt 的具体日志命令、历史边界和远程保存方法见 [网络日志与监控](#link-dashboard)。
 
 ### 分层延迟、抖动与丢包
 
@@ -391,36 +416,104 @@ A/B 测试每轮只改变一个变量：
 
 每轮至少记录 signal、noise、SNR、信道宽度、NSS、MCS、重传增量、第一跳丢包、内部下载、外部下载和 NDT7。先检查是否取得 DHCP 和通过认证，再运行吞吐测试。
 
-## <a id="link-dashboard"></a>链路日志与监控面板
+## <a id="link-dashboard"></a>网络日志与监控
 
-本节说明把上一节的测量对象接入 OpenWrt 路由器上的持续采集和 HTML 面板。它依赖 OpenWrt 的 Web 服务、`ubus`、`iw/iwinfo`、Linux 网卡计数器和后台脚本；原厂固件、RouterOS 或其他系统需要使用各自的 API、脚本或外部采集机，不能直接照搬这套实现。
+整台路由器的监控不是把所有字段写进一张表，而是把不同数据按生成方式分别采集，再在时间线上关联：
 
-### <a id="openwrt-logs"></a>OpenWrt 日志与历史数据
+| 数据类别 | 典型内容 | 合适的保存方式 |
+|---|---|---|
+| 设备指标 | CPU、内存、温度、接口、radio、关联客户端 | 周期采样的时序数据库 |
+| 客户端流量 | 按 IP/MAC/协议统计的经网关用量 | 专用流量记账，再导出累计值 |
+| 日志事件 | netifd、hostapd/wpa_supplicant、DHCP、内核和防火墙事件 | remote syslog 与日志存储 |
+| 主动探测 | 网关、公网、DNS、HTTP 的延迟和可用性 | 有明确观察点和频率的探测任务 |
 
-OpenWrt 会记录近期系统事件，但不会默认保存完整的信号和流量时间序列。官方[系统日志说明](https://openwrt.org/docs/guide-user/base-system/log.essentials)指出，默认 `logd` 把固定大小的记录保存在 RAM 环形缓冲中，`logread` 可以读取、写文件或转发到远端。排障前先分清“事件日志”“当前状态”和“额外采样”：
+现有 HTML 链路面板仍用于观察一条上游无线链路；整网设备历史和多设备筛选由标准采集器与外部存储承担。
+
+### <a id="openwrt-logs"></a>OpenWrt 日志与远程保存
+
+OpenWrt 会记录近期系统事件，但不会默认保存完整的信号和流量时间序列。官方[系统日志说明](https://openwrt.org/docs/guide-user/base-system/log.essentials)指出，默认 `logd` 把固定大小的记录保存在 RAM 环形缓冲中，`logread` 可以读取、写文件或转发到远端。
 
 | 数据 | 默认历史 | 查看位置 | 主要边界 |
 |---|---|---|---|
-| 系统、网络管理服务（netifd）、无线认证程序（wpa_supplicant）、EAP、DHCP、WNM | 近期事件 | `logread` | 内存环形缓冲，覆盖或重启后消失 |
+| netifd、wpa_supplicant/hostapd、EAP、DHCP、WNM | 近期事件 | `logread` | 环形缓冲覆盖或重启后消失 |
 | 内核和无线驱动 | 近期事件 | `dmesg`、`logread` | 可见 beacon loss、能力变化和断开 |
-| 接口、SSID、BSSID、地址 | 无 | `ubus`、`iw` | 只表示查询时的当前状态 |
-| signal、MCS/NSS、PHY、重传 | 无时序历史 | `iw station dump`、Linux 网卡计数文件 | 必须周期采样才能画曲线 |
-| DHCP lease | 当前租约 | `/tmp/dhcp.leases` | 不是完整连接历史 |
-| Dashboard 曲线 | 页面打开期间 | 浏览器内存 | 页面关闭后默认丢失 |
-| 最近测速结果 | 取决于面板实现 | 面板缓存 | 不是 OpenWrt 内建日志 |
+| 接口、SSID、BSSID、地址 | 无 | `ubus`、`iw` | 只表示查询时刻 |
+| signal、MCS/NSS、PHY、重传 | 无时序历史 | `iw station dump` 等 | 必须周期采样才能还原变化 |
+| DHCP lease | 当前租约 | `/tmp/dhcp.leases` | 不是完整设备历史 |
 
-实时跟踪和筛选无线相关日志只需要一段命令：
+实时跟踪和筛选无线相关日志只需要：
 
 ```sh
 logread -f
-logread | grep -E 'wpa_supplicant|netifd|EAP|DHCP|WNM'
+logread | grep -E 'hostapd|wpa_supplicant|netifd|EAP|DHCP|WNM'
 ```
 
-需要保存数小时或数天时，可以把系统事件发往远程 syslog，并把 signal、MCS、重传、字节计数和延迟写入独立时序存储。持续写入路由器内置闪存会增加磨损，存储位置和采样周期应单独设计。
+需要长期保存时，把系统事件通过 `/etc/config/system` 中的 remote syslog（把日志发送到外部日志服务器）配置发送到常开 LAN 主机。TCP 更强调送达，UDP 对路由器和接收端的耦合更小；高日志量本身也会增加负担，应按事件价值控制级别。持续把日志或高频样本写进路由器内置闪存会增加磨损，长期数据应优先写到外部存储。
 
-### 面板运行位置与访问地址
+### <a id="monitoring-collectors"></a>OpenWrt 采集组件
 
-链路面板运行在 OpenWrt 设备本机：HTML 页面由路由器的轻量 Web 服务（例如 uhttpd）提供，状态接口在路由器上读取 `ubus`、`iw` 和网卡计数器。浏览器只是显示这些数据，管理电脑关机不会让路由器端面板消失。
+采集器应按缺口组合，不需要让两套工具重复采集相同的 CPU 和接口指标。Exporter 是把本机状态暴露为标准监控指标的轻量服务。
+
+| 组件 | 主要用途 | 不覆盖的内容 |
+|---|---|---|
+| `prometheus-node-exporter-lua` 及其可选 collector | 轻量导出系统、接口、conntrack、radio 和关联客户端指标 | 不直接提供完整设备清单、长期历史或每客户端经网关用量 |
+| `nlbwmon` | 按 IP、MAC 和协议累计经 conntrack 的客户端流量 | 不是实时无线质量、完整抓包或同一网桥内流量 |
+| collectd + `luci-app-statistics` | 路由器本机 RRD（固定大小的环形时序数据库）图表，以及接口、温度、ping、conntrack、SQM/qdisc 等插件 | 本地 RRD 不等于外部长期历史；与 exporter 重叠的插件不必重复启用 |
+| 直接状态采样 / textfile collector（读取文本指标文件的采集模块） | 补充 MCS、NSS、重传增量、WWAN uptime 和现场专用字段 | 需要自己定义采样、失败语义和字段稳定性 |
+
+OpenWrt packages 中的 `prometheus-node-exporter-lua` 版本和基础依赖见[包定义](https://github.com/openwrt/packages/blob/4238239218d4fe7cdffb6b53fa29c52c2d3cc0a7/utils/prometheus-node-exporter-lua/Makefile#L7-L38)，radio 和关联客户端由 [`wifi` / `wifi_stations` 可选包](https://github.com/openwrt/packages/blob/4238239218d4fe7cdffb6b53fa29c52c2d3cc0a7/utils/prometheus-node-exporter-lua/Makefile#L216-L236)提供。其中 [`wifi_stations.lua`](https://github.com/openwrt/packages/blob/4238239218d4fe7cdffb6b53fa29c52c2d3cc0a7/utils/prometheus-node-exporter-lua/files/usr/lib/lua/prometheus-collectors/wifi_stations.lua?plain=1#L5-L69)导出关联数量、signal、inactive time、expected throughput、收发速率、包和字节，但不导出 MCS、NSS 或重传；名称相近的 [`hostapd_ubus_stations.lua`](https://github.com/openwrt/packages/blob/4238239218d4fe7cdffb6b53fa29c52c2d3cc0a7/utils/prometheus-node-exporter-lua/files/usr/lib/lua/prometheus-collectors/hostapd_ubus_stations.lua?plain=1#L5-L68)当前导出的是 RRM capability（无线资源测量能力标志），不能把它当作速率或重传采集器。
+
+`nlbwmon` 是依赖 conntrack netlink 的 [OpenWrt Traffic Usage Monitor](https://github.com/openwrt/packages/blob/633cd89a22df5bff0d585c565c0f96587de89644/net/nlbwmon/Makefile#L3-L42)；其上游说明记录了按 IP、MAC、协议和周期保存数据的[统计模型](https://github.com/jow-/nlbwmon/blob/29236be687927b0c81ee6e2642e7caa8787c4ad3/README.md#L3-L15)，以及 JSON/CSV [查询命令](https://github.com/jow-/nlbwmon/blob/29236be687927b0c81ee6e2642e7caa8787c4ad3/README.md#L78-L123)。collectd 的 OpenWrt 构建包含 interface、iwinfo、netlink、ping、rrdtool 和 write_prometheus 等[可选插件](https://github.com/openwrt/packages/blob/45c9d0b9c86aeb54735459a04e411b6560ed4c51/utils/collectd/Makefile#L137-L213)。
+
+单台或少量路由器可以先用 `prometheus-node-exporter-lua` 加 `nlbwmon`；只有需要本机 RRD、路由器观察点的 ping 或 SQM/qdisc 指标时，再启用相应 collectd 插件。Exporter 的[默认配置](https://github.com/openwrt/packages/blob/4238239218d4fe7cdffb6b53fa29c52c2d3cc0a7/utils/prometheus-node-exporter-lua/files/etc/config/prometheus-node-exporter-lua#L1-L5)只监听 loopback（回环接口）的 9100 端口；需要外部抓取时才改为管理 LAN 或受控代理，并用防火墙只允许监控主机访问，不能直接暴露到 WAN。
+
+### <a id="monitoring-storage"></a>外部存储、可视化与主动探测
+
+一台常开的 NAS、迷你主机或树莓派可以把指标、日志和主动探测集中起来：
+
+```mermaid
+flowchart LR
+    openwrt[OpenWrt 指标] --> vm[VictoriaMetrics]
+    openwrt -->|remote syslog| alloy[Grafana Alloy]
+    alloy --> loki[Loki]
+    probe[blackbox exporter] --> vm
+    vm --> grafana[Grafana]
+    loki --> grafana
+```
+
+[VictoriaMetrics v1.150.0](https://github.com/VictoriaMetrics/VictoriaMetrics/blob/v1.150.0/docs/victoriametrics/README.md#L428-L432)可以直接抓取 Prometheus 格式指标，Grafana 负责按路由器、接口、radio 和客户端筛选；Grafana Alloy 的 [`loki.source.syslog`](https://github.com/grafana/alloy/blob/2eeaa3e33b85f065833d47ec2beeac2ed2b764a7/docs/sources/reference/components/loki/loki.source.syslog.md#L13-L17)接收 RFC 3164/5424 日志并转给 Loki（日志存储）。[blackbox exporter 0.27.0](https://github.com/prometheus/blackbox_exporter/blob/v0.27.0/README.md#L7-L8)从监控主机执行 HTTP、DNS、TCP 或 ICMP 探测；它测量的是“监控主机到目标”的路径，不能替代路由器自身发出的第一跳或公网 ping。
+
+下面的频率是本仓用于单台或少量路由器的起始口径，不是行业标准：
+
+| 数据 | 起始频率 | 调整方向 |
+|---|---:|---|
+| 系统、接口、radio、关联客户端 | 约 15 秒 | 故障复现时可临时缩短；长期不要无差别使用 5 秒 |
+| DHCP、neighbour、bridge FDB | 30–60 秒 | 设备变化慢时进一步放宽 |
+| `nlbwmon` 累计量 | 1–5 分钟 | 用于用量趋势，不冒充瞬时速率 |
+| 日志 | 事件驱动 | 按子系统和级别过滤 |
+| 活动扫描 | 活动 radio 默认不周期执行 | 闲置 radio 才使用低频扫描 |
+| NDT7 | 仅手动触发 | 与其他主动任务互斥 |
+
+保留策略应按序列数量、采样频率和外部磁盘容量设置。常见做法是短期保留细粒度原始值，再用 recording rule（预先计算并保存聚合结果的规则）或聚合任务保存较长周期；“原始 7 天、分钟聚合 90 天”可以作为估算起点，不应写成所有部署的固定要求。采集端停机时保留明确的数据空洞，不用最后一次旧值补齐。
+
+> 多台 OpenWrt 还需要统一注册、配置、地图和告警时，可以评估 [OpenWISP Monitoring 1.2.1](https://github.com/openwisp/openwisp-monitoring/blob/1.2.1/docs/user/intro.rst#L7-L28)。该版本包括接口、Wi-Fi 客户端、neighbour、DHCP、ping 和历史图表，并说明时序存储只支持 InfluxDB；它是完整管理平台，不是单台路由器的轻量 exporter 替代品。
+
+> GitHub stars 快照截止 **2026-08-18**，数据来自各仓库的 GitHub 元数据。Stars 会持续变化，只表示公开关注度，不代表质量、安全性或对当前拓扑的适用排名。
+
+| 仓库 | 本节中的角色 | GitHub stars |
+|---|---|---:|
+| [`grafana/grafana`](https://github.com/grafana/grafana) | 指标与日志仪表盘 | 76,259 |
+| [`grafana/loki`](https://github.com/grafana/loki) | 日志存储与查询 | 28,753 |
+| [`VictoriaMetrics/VictoriaMetrics`](https://github.com/VictoriaMetrics/VictoriaMetrics) | Prometheus 兼容时序存储 | 17,553 |
+| [`prometheus/blackbox_exporter`](https://github.com/prometheus/blackbox_exporter) | HTTP、DNS、TCP、ICMP 主动探测 | 5,824 |
+| [`openwrt/packages`](https://github.com/openwrt/packages) | OpenWrt exporter、collectd、`nlbwmon` 等包定义 | 4,581 |
+| [`grafana/alloy`](https://github.com/grafana/alloy) | syslog 接收与日志管道 | 3,444 |
+| [`openwisp/openwisp-monitoring`](https://github.com/openwisp/openwisp-monitoring) | 多台 OpenWrt 的集中监控平台 | 235 |
+| [`jow-/nlbwmon`](https://github.com/jow-/nlbwmon) | 按客户端累计经网关流量 | 220 |
+
+### 链路面板运行位置与访问地址
+
+现有链路面板运行在 OpenWrt 设备本机，专门观察当前上游无线链路，而不是充当整网设备中心。HTML 页面由路由器的轻量 Web 服务（例如 uhttpd）提供，状态接口在路由器上读取 `ubus`、`iw` 和网卡计数器；浏览器只是显示这些数据，管理电脑关机不会让路由器端页面消失。
 
 OpenWrt 链路面板模板见 [openwrt-link-dashboard.html](../assets/openwrt-link-dashboard.html)。模板不包含真实 SSID、设备名、Portal 地址或采集后端；页面顶部配置对象定义 API 路径、网络标签、延迟目标和过期时间。
 
@@ -432,60 +525,48 @@ http://<openwrt-lan-ip>:<dashboard-port>/
 
 `<openwrt-lan-ip>` 通常是终端网络详情中的默认网关，也是 LuCI 管理地址；`<dashboard-port>` 是部署面板时为 uhttpd 或其他 Web 服务设置的端口。
 
-下游设备仍处于路由模式时，双重 NAT 和防火墙可能阻止访问上一级 OpenWrt；切为 AP 模式后，终端与 OpenWrt 位于同一 LAN，访问最直接。需要从 LAN 之外访问时，可以另建受控代理或隧道，但那属于部署环境，不是模板默认组成。
+下游设备仍处于路由模式时，双重 NAT 和防火墙可能阻止访问上一级 OpenWrt；切为 AP 模式后，终端与 OpenWrt 位于同一 LAN，访问最直接。需要从 LAN 之外访问时，可以另建受控代理或隧道。Dashboard 可能暴露 SSID、BSSID、内网地址和链路状态，默认应绑定管理 LAN 或指定接口，并用防火墙限制访问；不能把无认证的 `0.0.0.0` 监听作为通用默认值。
 
-### 路由器实时数据来源
+### 链路面板实时数据来源
 
 状态接口在 OpenWrt 本机按需读取：
 
 | 数据 | OpenWrt 来源 |
 |---|---|
 | WWAN 地址和连接状态 | `ubus call network.interface.wwan status` |
-| SSID、BSSID、信号和 PHY | `iw link` / `iw station dump` |
+| SSID、BSSID、信号、MCS/NSS、PHY 和重传 | `iw dev <iface> link` / `iw dev <iface> station dump` |
 | 当前流量 | `/sys/class/net/<iface>/statistics/` |
 | 候选网络 | 非活动 radio 的扫描缓存 |
 | 实时延迟 | 路由器主动发出的小样本 ping |
 | NDT7 | 用户手动触发的主动基准 |
 
-这些是实时查询，不是从 `logread` 回放出来的历史。字段缺失或状态接口超时时，前端应显示不可用，不用 `0` 伪装测量结果。
+这些是实时查询，不是从 `logread` 回放出来的历史。MCS、NSS 和重传等现成 exporter 未覆盖的字段应由面板状态接口直接读取，或转换为 textfile 指标。字段缺失或状态接口超时时，前端应显示不可用，不用 `0` 伪装测量结果。
 
-### 活动频段扫描与任务互斥
+### 主动扫描与测试互斥
 
-默认调度原则：
+链路面板和长期采集使用不同频率：浏览器打开期间可以较快刷新被动状态，外部时序库没有必要同步写入每一帧。主动任务遵循：
 
-- 被动状态可以每秒读取；
 - 活动 radio 不做周期扫描；
 - 闲置 radio 扫描使用较长间隔、硬超时和缓存；
 - 延迟精测与 NDT7 互斥；
-- NDT7 运行时暂停实时轮询和其他主动任务；
+- NDT7 运行时暂停其他主动任务，必要时降低面板轮询；
 - 任务结束或失败后自动恢复被动采集；
 - 所有后台任务有进程锁和总时限。
 
 扫描接口卡住时，应终止具体进程并重新检查无线运行态；不要用不带范围的进程名杀法，也不要直接重载配置掩盖原因。
 
-### STALE 状态与扫描滞回
+### 陈旧状态与数据缺口
 
-STALE 表示实时数据已经过期；扫描滞回则表示一次漏扫不会立刻把网络判定为消失。超过可配置时间没有新状态时，面板必须：
+STALE 表示实时数据已超过更新期限；采集缺口则表示某段时间根本没有样本。超过可配置时间没有新状态时，面板必须：
 
-- 显示 OFFLINE/STALE；
-- 清空信号、流量、实时延迟和连接详情；
-- 标出最后更新时间；
+- 显示 OFFLINE/STALE，并标出最后更新时间；
+- 清空信号、流量、实时延迟和连接详情，不沿用旧值；
 - 保留明确标记为历史的 NDT7 结果；
 - 数据恢复后自动重新填充。
 
-扫描偶尔漏掉 beacon 时，不应立刻把网络显示为消失。对每个 SSID/频段保留可配置的最近可见时间（last-seen TTL，TTL 表示保留时长），并显示“最近看到”；连续过期后才清空。
+扫描偶尔漏掉 beacon 时，不应立刻把网络显示为消失。对每个 SSID/频段保留可配置的 last-seen TTL，并显示“最近看到”；连续过期后才清空。
 
-### 实时数据、设备日志与长期历史
-
-面板的实时曲线通常只存在于当前浏览器内存；页面关闭后，过去的 signal、MCS 和流量曲线默认丢失。OpenWrt 的 `logread` 仍可能保留同一时段的断开、WNM、EAP 和 DHCP 事件，但不能重建每秒曲线。
-
-三类历史应分别处理：
-
-- **事件历史**：由 OpenWrt 日志提供，适合解释“为什么断开”；
-- **实时曲线**：由 Dashboard 周期采样，适合观察“断开前数值怎样变化”；
-- **长期历史**：需要额外时序存储或远程采集，OpenWrt 默认不提供。
-
-完整日志边界见 [OpenWrt 日志与历史数据](#openwrt-logs)。Dashboard 可能暴露 SSID、BSSID、内网地址和链路状态，默认应绑定管理 LAN 或指定接口，并用防火墙限制访问；需要跨不可信网络访问时增加认证和 TLS。不要把无认证的 `0.0.0.0` 监听作为通用默认值。
+面板的实时曲线通常只存在于当前浏览器内存，页面关闭后默认丢失。`logread` 可能仍保留同一时段的断开、WNM、EAP 和 DHCP 事件，却不能重建每秒曲线；外部时序库停机形成的数据空洞也不能用最后值补成“持续正常”。事件历史、实时曲线和长期时序应分别展示，再按时间关联。
 
 ### HTML 模板与数据接口
 

@@ -2,11 +2,11 @@
 
 把外部 Wi-Fi 接入本地网络时，由 station（无线客户端）连接上游 AP，再把网络交给本地有线 LAN、下游 AP 或终端。中间的上游接入设备可以做路由与 NAT，也可以在两端支持时做桥接；它可以运行厂商系统、RouterOS、OpenWrt 或其他具备相应无线客户端能力的系统。
 
-这个结构不同于只强调扩大覆盖范围的消费级“无线放大器”：它把上游连接、本地网络、认证、无线电位置和链路观测拆成可独立配置和验证的部分。本文先讲通用的数据路径、认证、无线指标、链路测量和 CPE 选型，再以 OpenWrt 配置和校园部署作为具体实现。OpenWrt 的安装、升级、SSH、专属配置对象和路由器端监控面板见 [OpenWrt 设备管理](openwrt.md)。
+这个结构不同于只强调扩大覆盖范围的消费级“无线放大器”：它把上游连接、本地网络、认证、无线电位置和链路观测拆成可独立配置和验证的部分。本文先讲通用数据路径和 OpenWrt 链路配置，再解释认证、无线指标、设备可见性和 CPE 选型，最后记录校园部署。OpenWrt 的安装、升级、SSH、状态接口、链路测量和长期监控见 [OpenWrt 设备管理](openwrt.md)。
 
 ## <a id="architecture"></a>设备角色与数据路径
 
-链路由上游 Wi-Fi AP、上游接入设备、本地有线网络和下游终端组成。下游 AP 只负责本地无线覆盖时，应工作在 AP 模式，不再承担第二层 DHCP 和 NAT。
+链路由上游 Wi-Fi AP、上游接入设备、本地有线网络和下游终端组成。下游 AP 只负责本地无线覆盖时，应工作在 AP 模式，不再运行第二套 DHCP 和 NAT。
 
 ```mermaid
 flowchart LR
@@ -20,26 +20,31 @@ flowchart LR
     downstream --> clients
 ```
 
-### 系统职责与数据路径
+### <a id="roles"></a>网关、AP 与 station
 
-四类对象的职责如下：
+AP 是 Access Point（无线接入点），负责广播 SSID 并让无线终端接入已有局域网。station 是无线客户端，负责连接 AP。网关则负责把一个 IP 网络的流量转发到另一个网络；在家庭和小型网络中，它通常还同时提供 DHCP、防火墙和 NAT。
+
+这三者是网络角色，不是互斥的设备类别。一个设备可以只做 AP，也可以同时做网关和 AP；接入外部 Wi-Fi 时，还可能同时承担 station。当前拓扑中的对象分工如下：
 
 | 对象 | 主要职责 | 不应承担的职责 |
 |---|---|---|
-| 外部 AP | 提供上游 Wi-Fi 和网络地址 | 不需要为本地网部署配套设备 |
-| 上游接入设备 | 作为 station 连接上游，完成认证、地址获取、转发和链路观测 | 不必同时承担本地无线覆盖 |
+| 外部 AP | 提供上游 Wi-Fi 接入；地址由其所在网络的 DHCP 或其他机制分配 | 不需要为本地网部署配套设备 |
+| 上游接入设备 | 作为 station 连接上游；采用路由方案时还作为本地网关，完成认证、地址获取、转发和链路观测 | 不必同时承担本地无线覆盖 |
 | 下游 AP | 把本地有线 LAN 转成室内 Wi-Fi，并扩展网口 | AP 模式下不再运行独立 DHCP/NAT |
 | 本地终端 | 从本地网络取得地址并访问上游 | 不直接保存每个上游网络的配置 |
 
-AP 与 station 描述无线接口两端的角色：
-
-- AP 广播无线网络并接受 station 接入；
-- station 连接已有 AP，并可把这条上游连接交给本地路由、网线或另一个 AP；
-- AP 也可以只桥接已有有线 LAN，不承担路由。
-
 AP 与 station 说明无线连接的方向；路由、NAT 或桥接则说明上下游怎样交换数据。同一设备可以同时承担上游 station 和下游 AP，但若两者共用同一无线电，就会共享信道时间，扫描和重连也会影响本地覆盖。使用不同无线电或独立设备可以避免这种直接争用；实际能否并发仍取决于硬件、驱动和固件。
 
-在 OpenWrt 中，station 对应 `wifi-iface` 的 `mode='sta'`，承载无线 WAN 的逻辑接口通常称为 WWAN；具体对象见 [网络配置接口](openwrt.md#network-surfaces)。
+在 OpenWrt 中，AP 和 station 分别对应 `wifi-iface` 的 `mode='ap'` 与 `mode='sta'`；承载无线 WAN 的逻辑接口通常称为 WWAN，具体对象见 [无线配置与 wpad](openwrt.md#wireless-wpad)。
+
+### <a id="deployment-models"></a>单机与分体部署
+
+角色可以集中在一台设备上，也可以按无线电位置和覆盖需求拆开：
+
+| 部署形态 | 角色组合 | 主要边界 |
+|---|---|---|
+| 单机 | 同一设备承担 station、网关和本地 AP | 配置和状态集中；共用同一 radio 时，上下游共享信道时间，扫描或重连会影响本地终端 |
+| 分体 | 一台设备承担 station/网关，另一台设备只做下游 AP | 上游接入和室内覆盖可分别选位置与无线电；无线关联质量需要从下游 AP 单独采集 |
 
 下游 AP 可以放在适合室内覆盖的位置，上游接入设备或定向 CPE（Customer Premises Equipment，带定向天线、用于连接远端 AP 的用户侧无线终端）则可以放在上游信号最好的位置，两者用网线连接。玻璃、金属窗框和墙体会改变衰减与反射，几十厘米的位置变化也可能明显改变实际链路；扫描信号强度只能作为选点线索，最终仍要通过关联、DHCP、重传、上下行吞吐和连续延迟验证。
 
@@ -57,9 +62,11 @@ WDS/四地址桥接是在无线帧中保留下游终端身份的透明桥接方�
 
 > Linux wireless 文档要求 AP 和客户端双方都启用四地址帧才能透明桥接；厂商的 proprietary bridge 模式也可能无法跨品牌工作。OpenWrt 的 [WDS](https://openwrt.org/docs/guide-user/network/wifi/wifiextenders/wds?rev=1746783203)和 [`relayd`](https://openwrt.org/docs/guide-user/network/wifi/relay_configuration?rev=1752850857)文档分别说明了这两条路径。
 
-### 双重 NAT 与 AP 模式
+### <a id="downstream-ap"></a>下游 AP、双重 NAT 与设备可见性
 
 若上游接入设备已经在无线 WAN 与本地 LAN 之间做 NAT，下游路由器继续以 WAN 路由模式接入，就会形成双重 NAT。普通网页访问通常仍能工作，但端口映射、P2P、部分游戏和跨网段设备发现会变复杂。
+
+设备可见性也会随模式改变。下游设备工作在 AP 模式时，会透明桥接 Ethernet 与 Wi-Fi；无线终端直接从上游网关取得地址，并把出网流量交给这个网关。下游设备若保持路由/NAT 模式，上游网关通常只能看到下游路由器的 WAN 身份，无法逐台区分其后方终端。OpenWrt 的 [Bridged AP 文档](https://openwrt.org/docs/guide-user/network/wifi/wifiextenders/bridgedap)明确把 AP 定义为只桥接有线 LAN 与 SSID，不承担路由、DHCP、DNS 或防火墙。
 
 下游设备进入 AP 模式后的目标状态是：
 
@@ -256,13 +263,40 @@ BSSID 是一台具体 AP无线接口的 MAC 地址。同一 SSID（网络名称�
 
 HT20 表示把 802.11n 高吞吐模式限制在 20 MHz 信道。它可以作为排查宽信道干扰或 VHT/HT 能力变化的 A/B 变量，但会降低 PHY 上限。本次案例没有完成 HT20 长测，因此不能把它写成通用修复。
 
-## <a id="measurement"></a>测量与排查链路
+把这些指标落实到 OpenWrt 状态命令、分层延迟与下载、NDT7 和 A/B 测试时，见 [无线链路测量与排查](openwrt.md#link-measurement)；事件日志与长期历史见 [网络日志与监控](openwrt.md#link-dashboard)。
 
-本文件保留 RSSI、SNR、MCS、漫游和 CPE 等通用无线原理。OpenWrt 上的状态命令、主动扫描、分层延迟与下载、NDT7、时间序列和 A/B 测试见 [无线链路测量与排查](openwrt.md#link-measurement)。
+## <a id="dashboard"></a>整网设备可见性与统计
 
-### <a id="logs"></a>OpenWrt 日志入口
+统计“连接这个网络的所有设备”时，要先区分设备清单、经网关流量、无线关联质量和事件历史。它们来自不同位置，没有一个接口能单独给出完整答案：
 
-OpenWrt 的事件日志、当前状态和长期历史边界见 [链路日志与监控面板](openwrt.md#link-dashboard)。
+| 信息 | 网关侧 | AP 侧 | 主要边界 |
+|---|---|---|---|
+| IP、MAC、主机名、DHCP lease | 主要来源 | 可能只有管理页中的局部信息 | 静态地址和长期离线设备不一定出现在 DHCP lease 中 |
+| 经网关的上传、下载和连接 | 可以按终端记账 | AP 模式通常不负责 | 同一 LAN 内直接转发的流量可能不经过网关 |
+| SSID、radio、RSSI、关联速率 | 独立 AP 场景下无法推导 | 当前关联 AP 的主要来源 | 只能描述连接到该 AP 的无线终端 |
+| 认证、断开、DHCP 和驱动事件 | 网关记录自己处理的事件 | AP 记录自己的关联事件 | 分体部署需要汇总两台设备的日志 |
+
+### <a id="gateway-observation"></a>网关侧的设备与流量
+
+下游设备处于 AP 模式、所有终端使用同一 LAN，并把外部流量交给同一网关时，网关可以逐台观察终端，而不是只看到 AP。设备清单通常要合并 DHCP lease、邻居表和近期流量：
+
+- DHCP lease 提供已分配地址、MAC、主机名和租期，但不覆盖静态地址；
+- IPv4 ARP / IPv6 neighbour 表提供同一链路上近期出现的 IP 与 MAC 绑定，动态条目会随可达性状态和缓存回收而变化；
+- 经 conntrack 路由的流量可以按 IP/MAC 做累计记账，但没有产生这类流量的设备不会自动出现。
+
+OpenWrt 的具体状态来源见 [设备、接口与客户端状态](openwrt.md#network-state)，现成采集器见 [OpenWrt 采集组件](openwrt.md#monitoring-collectors)。
+
+### <a id="ap-observation"></a>AP 侧的无线关联
+
+RSSI、当前收发速率、连接时长和重传等信息来自终端实际关联的 AP。若同一台 OpenWrt 同时承担网关和 AP，这些数据可以在一台设备上读取；若使用独立 AP，则必须从该 AP 的 API、SNMP、日志或 exporter（把设备状态转换为监控指标的采集端）采集。
+
+网关只能看到从 AP 桥接过来的以太网帧，不能据此反推出每台终端的无线信号和 MCS。独立 AP 的原厂固件若没有可用的状态接口，网关侧仍能统计终端地址和经网关流量，但无法补齐无线关联质量。
+
+### <a id="observation-boundaries"></a>数据合并与可见边界
+
+分体部署可以用观测到的 MAC、IP 和主机名关联网关与 AP 记录，但这些标识都需要时间范围和来源。MAC 是网络接口身份，不保证永久对应同一物理设备；例如 Apple 的 [Private Wi-Fi Address](https://support.apple.com/en-us/102509)可以为不同网络使用不同地址，并支持固定或周期轮换。
+
+同一 AP 或交换机桥内的终端互访可能不经过网关，因此网关流量记账不等于完整局域网抓包。“在线”也应带最后更新时间：采集端停机、邻居缓存过期、设备睡眠和真正离线是不同状态，不能用旧值补齐。
 
 ## <a id="cpe"></a>使用定向 CPE
 
@@ -305,10 +339,6 @@ CPE 可以运行厂商系统、RouterOS、OpenWrt 或其他专用固件；无线
 
 CPE 更可能改善弱信号、低 SNR、高重传和方向性干扰。它不能保证消除 AP发出的 WNM通知、AP能力广播异常、账号限速或公共出口拥塞。应使用 [OpenWrt 无线链路测量与排查](openwrt.md#link-measurement)中的同目标 A/B 测试判断收益。
 
-## <a id="dashboard"></a>OpenWrt 监控面板
-
-OpenWrt 路由器端的信号、PHY、当前流量、延迟、NDT7、扫描缓存、过期状态和 HTML 面板实现见 [链路日志与监控面板](openwrt.md#link-dashboard)。
-
 ## <a id="campus-case"></a>校园无线接入案例
 
 本案例记录一次实际部署，用于展示测量方法怎样改变配置选择。设备、位置、AP负载和测试服务器都只代表当时条件。
@@ -318,6 +348,8 @@ OpenWrt 路由器端的信号、PHY、当前流量、延迟、NDT7、扫描缓�
 部署使用一台刷入 OpenWrt 25.12.5 的小米 AX3000T 作为无线接入网关：5 GHz station 连接校园上游，WWAN 加入 WAN 防火墙并做 NAT，三个 LAN 输出独立子网。小米 BE3600 后来成功切为 AP 模式，把网线转换成室内 Wi-Fi并扩展网口，终端直接从 AX3000T 获取地址。
 
 AX3000T 自身不广播本地 SSID。这样无线接入和室内覆盖由两台设备分别承担，不需要同一 radio 同时做上游 station 和下游 AP。
+
+BE3600 处于 AP 模式后，AX3000T 可以逐台看到终端的 DHCP、邻居和经网关流量；若不另外读取 BE3600 的管理数据，AX3000T 仍不知道每台终端在 BE3600 上的 RSSI、关联速率和重传。
 
 ### 2.4 GHz 与 5 GHz 的双向链路
 
