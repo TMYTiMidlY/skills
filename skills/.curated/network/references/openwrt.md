@@ -227,20 +227,29 @@ OpenWrt 把网络对象拆成几个层次：
 - **WWAN**（wireless WAN，无线 WAN）是由 Wi-Fi 客户端连接承载的 WAN 接口。
 - **防火墙区域**把一个或多个接口归为同一安全边界，并决定入站、转发和 NAT。
 
-`/etc/config/network` 定义接口和地址获取方式，`/etc/config/firewall` 决定区域、转发和 NAT。把外部 Wi-Fi 变成网线输出时，完整拓扑见 [搭建无线接入网关](wifi-uplink.md#configuration)。
+`/etc/config/network` 定义接口和地址获取方式，`/etc/config/firewall` 决定区域、转发和 NAT。把外部 Wi-Fi 变成网线输出时，通用数据路径见 [Wi-Fi 上游链路的组成](wifi-uplink.md#architecture)，OpenWrt 配置流程见 [OpenWrt 上的链路配置](wifi-uplink.md#configuration)。
 
-### 无线配置与 wpad
+### <a id="wireless-wpad"></a>无线配置与 wpad
 
 `/etc/config/wireless` 中常见的对象是：
 
 - **radio**：一张物理无线电，例如 2.4 GHz 或 5 GHz；
 - **`wifi-iface`**：运行在 radio 上的一条无线配置；
-- **AP 模式**：广播 SSID，供其他终端接入；
-- **station 模式**：让 OpenWrt 作为 Wi-Fi 客户端连接外部 AP。
+- **`mode='ap'`**：把这条 `wifi-iface` 映射为 AP 角色；
+- **`mode='sta'`**：把这条 `wifi-iface` 映射为 station 角色。
 
-AP 和 station 可以运行在不同 radio，也可能共享同一 radio；可用组合取决于驱动和硬件。
+AP、station、路由和桥接的通用关系，以及共享同一无线电时的影响，见 [Wi-Fi 上游链路的组成](wifi-uplink.md#architecture)。OpenWrt 能否在同一 radio 上并发这些模式，取决于驱动和硬件。
 
-**wpad** 是 OpenWrt 打包的无线认证组件，同时包含 hostapd（主要服务 AP 模式）和 wpa_supplicant（主要服务 station 模式）的能力。25.12.5 的 [wpad 包定义](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/hostapd/Makefile)区分 basic 和 full 变体；PEAP、TTLS、TLS、MSCHAPv2 等企业认证方法需要完整变体。
+**wpad** 是 OpenWrt 打包的无线认证组件，同时包含 hostapd（主要服务 AP 模式）和 wpa_supplicant（主要服务 station 模式）的能力。25.12.5 的 [wpad 包定义](https://github.com/openwrt/openwrt/blob/v25.12.5/package/network/services/hostapd/Makefile#L269-L320)区分 basic 和 full 变体：`wpad-basic-mbedtls` 等精简变体覆盖普通 Personal 网络；PEAP、TTLS、TLS、MSCHAPv2 等企业认证方法需要 `wpad-openssl`、`wpad-mbedtls` 或 `wpad-wolfssl` 等完整变体。
+
+替换 wpad 前先模拟软件包事务。下面以 `wpad-openssl` 为例：
+
+```sh
+apk add --simulate wpad-openssl
+apk add wpad-openssl
+```
+
+只有模拟结果显示当前 wpad 变体、依赖和 `hostapd-common` 能在同一事务中形成匹配版本时，才执行第二条命令；不要先手工删除当前 wpad。若事务牵涉无关核心包或版本不一致，应停止并改用匹配当前 OpenWrt 版本的签名仓库或定制镜像。
 
 PEAP/MSCHAPv2 的最小 UCI 关系如下，账号和密码应通过受控输入写入，避免进入命令历史：
 
