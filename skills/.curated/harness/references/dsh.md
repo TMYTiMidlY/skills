@@ -115,13 +115,13 @@ Session 创建时加入所选 preset 的组合；空白 Session 可以原子切�
 | 用途 | 能做什么 | 持久性 |
 |---|---|---|
 | 运行时检查与排障 | 查询当前 Host 和浏览器提供的 Service、Event、Tool、UI Slot 与主题接口，检查动态 Plugin 的源码、版本指针和失败诊断 | 只读，不修改配置 |
-| 临时调整 | 在运行中的进程里增加工具、prompt 或事件监听，或调整主题和局部 Web UI，用于验证一个小改动 | 动态 Plugin 只存在于进程内存，停止、移除或重启后消失 |
+| 临时调整 | 在运行中的进程里增加工具、prompt 或事件监听，或调整主题和局部 Web UI，用于验证一个小改动 | stop 撤销运行效果并保留版本；undefine 或进程重启后删除内存定义 |
 | Agent 定制 | 复制已有 preset，再调整工具组合、persona、prompt、压缩策略或 Subagent 入口，并验证新组合能否挂载 | 写入用户 preset，供之后创建的 Session 使用 |
-| Plugin 开发 | 先读取真实接口，再定义、运行、更新和回滚动态 Plugin | 详细流程见开发篇的[创造模式中的 Plugin 开发](dsh-plugin.md#creation-mode-plugin-development) |
+| Plugin 开发 | 先读取真实接口，再定义、运行、更新和回滚动态 Plugin | 适用边界和完整流程见开发篇的[创造模式中的动态 Plugin 开发](dsh-plugin.md#creation-mode-plugin-development) |
 
-创造模式仍受 Host 与 Agent 两层的边界约束：Session 持久化、sandbox、审批、模型路由和跨 Session 的注册表属于 Host，不能仅靠 Agent preset 改成每个 Session 私有的实现。动态 Plugin 代码会接触真实运行时，安全上应按 shell 权限看待。
+创造模式仍受 Host 与 Agent 两层的边界约束：Session 持久化、sandbox、审批、模型路由和跨 Session 的注册表属于 Host，不能仅靠 Agent preset 改成每个 Session 私有的实现。动态 Plugin 代码会接触真实运行时，安全上应按 shell 权限看待；需要类型、依赖、持久存储、测试和发布的功能应落成源码 Plugin。
 
-> 来源：[Plugin 组合、Profile、Bundle 与 Agent 执行](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L104)；[Agent preset 的组成、挂载、切换与创作](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/preset/agent-presets/README.md#L1-L58)；[用户 preset 目录与信任边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/preset/agent-presets/README.md#L94-L145)；[创造模式的定位](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/preset.yml#L1-L3)与 [Host / Agent 分层](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L20-L27)；[当前动态 Plugin 工具与版本操作](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/src/index.ts#L41-L370)；[进程内存与信任边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/README.md#L26-L32)。
+> 来源：[Plugin 组合、Profile、Bundle 与 Agent 执行](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L104)；[Agent preset 的组成、挂载、切换与创作](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/preset/agent-presets/README.md#L1-L58)；[用户 preset 目录与信任边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/preset/agent-presets/README.md#L94-L145)；[创造模式的定位](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/preset.yml#L1-L3)与 [Host / Agent 分层](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L20-L27)；[当前动态 Plugin 工具与版本操作](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/src/index.ts#L41-L370)；[停止保留版本](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L455-L490)、[移除整个 Plugin](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L202-L235)与[进程重启后的缺失状态](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L1240-L1250)。
 
 ### Agent 执行与会话
 
@@ -223,7 +223,7 @@ Host Plugin、Agent 工具、MCP server 和遥测处理的是不同权限主体�
 
 普通第三方 Plugin 在 `dsh` Host 进程中运行，拥有启动该进程的用户权限。它可以注册工具或监听器，也可以直接执行自身代码；tool approval 只约束 Agent 通过工具管线发起的调用。
 
-创造模式通过 `cordis_define` 记录、再由 `cordis_run` 激活的动态 Plugin，其 Host 代码在 VM 中执行，但该 VM 只用于约束诚实代码，不是安全边界。Host-realm helper 仍可能让代码到达 Node 能力，因此应把它视作临时 Host Plugin，而不是沙箱中的低权限脚本。
+创造模式通过 `cordis_define` 记录、再由 `cordis_run` 激活的动态 Plugin，其 Host 代码在 VM 中执行。VM 会限制直接使用部分 Node 全局并引导代码调用 Cordis service，但 Host-realm helper 仍可能成为逃逸路径，因此它不是安全边界；应把动态 Plugin 视作临时 Host Plugin，而不是低权限脚本。
 
 #### Git 依赖的构建授权
 
@@ -231,7 +231,7 @@ Host Plugin、Agent 工具、MCP server 和遥测处理的是不同权限主体�
 
 不希望用户授权构建脚本时，应发布已经包含产物的 npm package 或 tarball。具体流程见开发篇的 [打包与安装](dsh-plugin.md#packaging-and-installation)。
 
-> 来源：[Git 安装的构建脚本与授权边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/publish.md#L153-L178)；[动态 Cordis VM 的信任说明](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/README.md#L19-L27)。
+> 来源：[Git 安装的构建脚本与授权边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/publish.md#L153-L178)；[动态 Cordis VM 的全局限制与信任边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/sandbox.ts#L1-L15)。
 
 ### Agent 工具执行
 
