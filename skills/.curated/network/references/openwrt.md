@@ -229,6 +229,22 @@ OpenWrt 把网络对象拆成几个层次：
 
 `/etc/config/network` 定义接口和地址获取方式，`/etc/config/firewall` 决定区域、转发和 NAT。把外部 Wi-Fi 变成网线输出时，通用数据路径见 [设备角色与数据路径](external-wifi-access.md#architecture)，OpenWrt 配置流程见 [OpenWrt 上的链路配置](external-wifi-access.md#configuration)。
 
+### <a id="lan-egress"></a>局域网流量的统一出口
+
+OpenWrt 可以让整个局域网共用 VPN 出口，因为终端通常已经把它当作默认网关；路由器通过隧道接口、防火墙和策略路由选择出口。
+
+需要先区分三种做法：
+
+| 做法 | 终端是否配置代理 | 路由器承担的工作 | 主要边界 |
+|---|---|---|---|
+| VPN 隧道出口 | 不需要 | 把全部或选定终端的 IP 流量路由到 WireGuard、OpenVPN 等隧道 | 上游必须提供 VPN；是否覆盖 IPv6、DNS 和故障回退取决于完整配置 |
+
+[OpenWrt 的 WireGuard 客户端文档](https://openwrt.org/docs/guide-user/services/vpn/wireguard/client?rev=1780858975)使用 `0.0.0.0/0` 和 `::/0` 建立全流量路由；[PBR 文档](https://openwrt.org/docs/guide-user/network/routing/pbr_app?rev=1765197438)则示范把整个 LAN 子网送到指定 VPN。官方 packages 仓库中的 [`pbr`](https://github.com/openwrt/packages/blob/af41897f31a4b5405acb0ca9d7ecdd357d193a9d/net/pbr/README.md#L7-L15)还可以按 IP、MAC、端口、协议或域名选择 WAN、VPN 或隧道。
+
+OpenWrt 的 [`fw4`/nftables](https://openwrt.org/docs/guide-user/firewall/firewall_configuration)负责包分类、NAT 和转发规则；安装软件包本身不等于已经配置转发策略。
+
+其他路由器能否提供同样能力，主要取决于固件，不只取决于硬件。厂商固件若没有可安装软件包、TUN 设备、自定义防火墙规则、策略路由和服务管理入口，通常只能使用厂商预置的 VPN 功能；支持 VPN client 或策略路由的型号则可能覆盖其中一部分。OpenWrt 的[软件包管理](https://openwrt.org/docs/guide-user/additional-software/managing_packages?rev=1769013285)和可配置网络栈，正是它与这类封闭固件的主要差别。
+
 ### <a id="wireless-wpad"></a>无线配置与 wpad
 
 `/etc/config/wireless` 中常见的对象是：
