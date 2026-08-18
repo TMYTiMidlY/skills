@@ -1,22 +1,22 @@
 # Wi-Fi 上游链路
 
-OpenWrt 无线接入网关把外部 Wi-Fi 当作上游网络，在路由器上完成连接、认证、地址获取和流量转发，再从有线 LAN 输出网络。下游可以直接接电脑，也可以接一台 AP（access point，无线接入点）提供本地 Wi-Fi。这个结构不同于消费级“无线放大器”：它把上游连接、本地网络、认证和链路观测拆成可独立配置和验证的部分。
+Wi-Fi 上游链路把外部 Wi-Fi 当作上游网络，由 station（无线客户端）连接上游 AP，再把网络交给本地有线 LAN、下游 AP 或终端。中间的上游接入设备可以做路由与 NAT，也可以在两端支持时做桥接；它可以运行厂商系统、RouterOS、OpenWrt 或其他具备相应无线客户端能力的系统。
 
-本文按实际搭建顺序展开：理解系统、接线配置、通过认证、理解无线链路、测量排障、评估定向 CPE，最后部署监控面板并回看现场案例。OpenWrt 的安装、升级、SSH 和专属配置对象见 [OpenWrt 设备管理](openwrt.md)。
+这个结构不同于只强调扩大覆盖范围的消费级“无线放大器”：它把上游连接、本地网络、认证、无线电位置和链路观测拆成可独立配置和验证的部分。本文先讲通用的数据路径、认证、无线指标、链路测量和 CPE 选型，再以 OpenWrt 配置、监控面板和校园部署作为具体实现。OpenWrt 的安装、升级、SSH 和专属配置对象见 [OpenWrt 设备管理](openwrt.md)。
 
-## <a id="architecture"></a>无线接入网关的组成
+## <a id="architecture"></a>Wi-Fi 上游链路的组成
 
-无线接入网关由上游 Wi-Fi、OpenWrt 网关、有线 LAN 和下游终端组成。下游 AP 只负责本地无线覆盖时，应工作在 AP 模式，不再承担第二层 DHCP 和 NAT。
+链路由上游 Wi-Fi AP、上游接入设备、本地有线网络和下游终端组成。下游 AP 只负责本地无线覆盖时，应工作在 AP 模式，不再承担第二层 DHCP 和 NAT。
 
 ```mermaid
 flowchart LR
     upstream[外部 Wi-Fi AP]
-    gateway[OpenWrt 无线接入网关]
+    gateway[上游接入设备 / CPE]
     downstream[下游 AP / 交换机]
     clients[本地终端]
 
     upstream -->|Wi-Fi 客户端连接| gateway
-    gateway -->|路由/NAT| downstream
+    gateway -->|路由/NAT 或桥接| downstream
     downstream --> clients
 ```
 
@@ -27,23 +27,31 @@ flowchart LR
 | 对象 | 主要职责 | 不应承担的职责 |
 |---|---|---|
 | 外部 AP | 提供上游 Wi-Fi 和网络地址 | 不需要为本地网部署配套设备 |
-| OpenWrt 网关 | 作为 Wi-Fi 客户端连接上游，完成认证、路由、NAT 和链路观测 | 默认不需要广播本地 Wi-Fi |
-| 下游 AP | 把网关的有线 LAN 转成室内 Wi-Fi，并扩展网口 | AP 模式下不再运行独立 DHCP/NAT |
-| 本地终端 | 从 OpenWrt LAN 获取地址并访问上游 | 不直接保存每个上游网络的配置 |
+| 上游接入设备 | 作为 station 连接上游，完成认证、地址获取、转发和链路观测 | 不必同时承担本地无线覆盖 |
+| 下游 AP | 把本地有线 LAN 转成室内 Wi-Fi，并扩展网口 | AP 模式下不再运行独立 DHCP/NAT |
+| 本地终端 | 从本地网络取得地址并访问上游 | 不直接保存每个上游网络的配置 |
 
-OpenWrt 中把“作为 Wi-Fi 客户端连接上游”称为 station，把这条 Wi-Fi 承载的 WAN 接口称为 WWAN；详细对象关系见 [网络配置接口](openwrt.md#network-surfaces)。上游与本地覆盖使用不同无线电或不同设备时，不会因同一无线电轮流收发而直接争用信道时间。
+AP 与 station 描述无线接口两端的角色：
 
-下游 AP 可以放在适合室内覆盖的位置，OpenWrt 网关或定向 CPE（Customer Premises Equipment，带定向天线、用于连接远端 AP 的用户侧无线终端）则可以放在上游信号最好的位置，两者用网线连接。
+- AP 广播无线网络并接受 station 接入；
+- station 连接已有 AP，并可把这条上游连接交给本地路由、网线或另一个 AP；
+- AP 也可以只桥接已有有线 LAN，不承担路由。
+
+AP 与 station 说明无线连接的方向；路由、NAT 或桥接则说明上下游怎样交换数据。同一设备可以同时承担上游 station 和下游 AP，但若两者共用同一无线电，就会共享信道时间，扫描和重连也会影响本地覆盖。使用不同无线电或独立设备可以避免这种直接争用；实际能否并发仍取决于硬件、驱动和固件。
+
+在 OpenWrt 中，station 对应 `wifi-iface` 的 `mode='sta'`，承载无线 WAN 的逻辑接口通常称为 WWAN；具体对象见 [网络配置接口](openwrt.md#network-surfaces)。
+
+下游 AP 可以放在适合室内覆盖的位置，上游接入设备或定向 CPE（Customer Premises Equipment，带定向天线、用于连接远端 AP 的用户侧无线终端）则可以放在上游信号最好的位置，两者用网线连接。玻璃、金属窗框和墙体会改变衰减与反射，几十厘米的位置变化也可能明显改变实际链路；扫描信号强度只能作为选点线索，最终仍要通过关联、DHCP、重传、上下行吞吐和连续延迟验证。
 
 ### 路由、WDS 与 relayd
 
-普通 Wi-Fi 客户端帧只能稳定表达客户端、AP 和流量目的地，不能自动把网线后方多个终端的 MAC 透明送给上游。OpenWrt 官方的[无线客户端配置](https://openwrt.org/docs/guide-user/network/wifi/connect_client_wifi?rev=1705097879)因此默认建立独立子网并路由转发。
+普通 Wi-Fi station 的客户端帧不能自动把网线后方多个终端的 MAC 透明送给上游，因此最通用的实现是建立独立子网并路由转发。OpenWrt 的[无线客户端配置](https://openwrt.org/docs/guide-user/network/wifi/connect_client_wifi?rev=1705097879)是这一路径的一个具体实现。
 
 WDS/四地址桥接是在无线帧中保留下游终端身份的透明桥接方式，需要两端兼容；`relayd` 则用代理 ARP 等三层机制模拟同一网段。只有确实需要上游 DHCP、广播发现或原始客户端 MAC 时，才考虑这两类方案。
 
 | 模式 | 上游看到的身份 | 下游地址 | 上游要求 | 适用边界 |
 |---|---|---|---|---|
-| 路由 + NAT | OpenWrt 的 WWAN 地址和无线 MAC | OpenWrt LAN 子网 | 标准 AP | 公共网络、企业网络、Wi-Fi 转网线 |
+| 路由 + NAT | 上游接入设备的无线地址和 MAC | 本地独立子网 | 标准 AP | 公共网络、企业网络、Wi-Fi 转网线 |
 | WDS / 四地址桥接 | 下游终端原始 MAC | 上游网段 | AP 与 station 双方兼容四地址 | 自己管理两端设备的桥接链路 |
 | `relayd` | 由代理 ARP 等机制模拟 | 通常为上游网段 | 不要求 WDS | 必须保留上游地址、且能接受复杂排障 |
 
@@ -51,23 +59,25 @@ WDS/四地址桥接是在无线帧中保留下游终端身份的透明桥接方�
 
 ### 双重 NAT 与 AP 模式
 
-若 OpenWrt 已在 WWAN 与 LAN 之间做 NAT，下游路由器继续以 WAN 路由模式接入，就会形成双重 NAT。普通网页访问通常仍能工作，但端口映射、P2P、部分游戏和跨网段设备发现会变复杂。
+若上游接入设备已经在无线 WAN 与本地 LAN 之间做 NAT，下游路由器继续以 WAN 路由模式接入，就会形成双重 NAT。普通网页访问通常仍能工作，但端口映射、P2P、部分游戏和跨网段设备发现会变复杂。
 
 下游设备进入 AP 模式后的目标状态是：
 
-- DHCP 由 OpenWrt 提供；
-- 所有终端位于 OpenWrt LAN 子网；
+- DHCP 由上游接入设备提供；
+- 所有终端位于同一本地 LAN 子网；
 - 下游设备只做 Wi-Fi AP 和交换机；
-- OpenWrt 管理地址可从下游 Wi-Fi 直接访问；
+- 上游接入设备的管理地址可从下游 Wi-Fi 直接访问；
 - 网线接法按下游设备的 AP 模式说明决定，不能假设一定使用 WAN 或 LAN 口。
 
-切换后应分别检查终端地址、默认网关、DNS、OpenWrt 管理页和公网访问。只看到下游 SSID 不代表 AP 模式已经正确完成。
+切换后应分别检查终端地址、默认网关、DNS、上游接入设备的管理页和公网访问。只看到下游 SSID 不代表 AP 模式已经正确完成。
 
-## <a id="configuration"></a>搭建无线接入网关
+## <a id="configuration"></a>OpenWrt 上的链路配置
+
+本节以 OpenWrt 实现上述数据路径。其他系统只要能提供 station、地址获取、路由或桥接、下游 DHCP 和防火墙，也可以实现同一链路。
 
 ### 准备管理路径与配置备份
 
-配置无线接入网关时，始终保留一条不会随上游无线切换而消失的管理路径。最稳妥的是电脑直接连接 OpenWrt LAN，确认管理地址和 SSH 可用，再保存配置备份。
+在 OpenWrt 上配置这条链路时，始终保留一条不会随上游无线切换而消失的管理路径。最稳妥的是电脑直接连接 OpenWrt LAN，确认管理地址和 SSH 可用，再保存配置备份。
 
 开始前还要确认：
 
@@ -124,9 +134,19 @@ OpenWrt LAN 应使用与上游不同的子网，并运行 DHCP。网线连接下
 
 外部 Wi-Fi 的链路层关联、网络层地址和上层认证是三个阶段。排障时应先判断失败发生在哪一层，不能把“拿不到 DHCP”误判成 Portal 问题。
 
+上游网络可能组合多种认证方式，它们不是互斥的产品类型：
+
+| 认证位置 | 常见方案 | 链路设备需要的能力 | 成功标志 |
+|---|---|---|---|
+| 无线关联与加密 | 开放网络、WPA2/WPA3 Personal | station 与相应密码套件 | 已关联到目标 AP |
+| 无线接入控制 | WPA2-Enterprise、PEAP、TTLS、TLS | EAP supplicant（无线客户端认证程序）、账号或客户端证书、服务器证书校验 | EAP 成功并进入可获取地址的状态 |
+| 取得地址之后 | Captive Portal | DHCP、HTTP 跳转以及浏览器或登录脚本 | Portal 会话放行实际流量 |
+
+例如开放网络可以在关联后再要求 Portal，Personal 网络也可能叠加网页认证。仅看到 Wi-Fi 已连接，不能证明 DHCP、Portal 或公网访问已经成功。
+
 ### Captive Portal
 
-Captive Portal 是“连上 Wi-Fi 后，再由网页完成的强制认证门户”。开放热点通常先完成无线连接和 DHCP，再通过 HTTP 重定向进入 Portal。路由 + NAT 后，上游通常只看到 OpenWrt 的 WWAN 地址和无线 MAC，因此一次认证可能供多个下游终端共享。
+Captive Portal 是“连上 Wi-Fi 后，再由网页完成的强制认证门户”。开放热点通常先完成无线连接和 DHCP，再通过 HTTP 重定向进入 Portal。路由 + NAT 后，上游通常只看到上游接入设备的无线地址和 MAC，因此一次认证可能供多个下游终端共享。
 
 这个行为取决于 Portal 是否绑定 MAC、IP、Cookie、账号、设备数或其他特征，必须现场验证。稳妥流程是：
 
@@ -137,11 +157,13 @@ Captive Portal 是“连上 Wi-Fi 后，再由网页完成的强制认证门户�
 
 直接打开某个已知 Portal IP 可能进入错误的认证系统，或因系统无法反查当前 MAC 而失败。应优先让目标网络自己的 HTTP 重定向给出入口。
 
+若 Portal 把无线 MAC 当作设备身份，随机 MAC、MAC clone 或更换无线接口都会影响会话。需要稳定复用会话时应保持上游 MAC 稳定；只有网络策略允许且原设备已经离线时才考虑克隆，避免两个在线设备使用同一 MAC。
+
 ### WPA2-Enterprise 与服务器证书
 
 WPA2-Enterprise 是基于 802.1X（端口接入控制框架）的企业 Wi-Fi 认证，由账号、证书和 EAP（Extensible Authentication Protocol，可扩展认证协议）共同完成。PEAP 是把账号认证放进 TLS（Transport Layer Security，加密通道）的 EAP 方法，MSCHAPv2 则常作为隧道内的用户名/密码认证。
 
-OpenWrt 需要包含这些方法的完整 wpad 变体；包能力和 UCI 字段见 [无线配置与 wpad](openwrt.md#network-surfaces)。Gateway 侧重点是确认三个结果：EAP 成功、WWAN 取得地址、服务器证书被正确验证。
+链路设备需要具备目标 EAP 方法和服务器证书校验能力。OpenWrt 的完整 wpad 变体、具体包名和 UCI 字段见 [无线配置与 wpad](openwrt.md#wireless-wpad)。本节只确认三个结果：EAP 成功、上游接口取得地址、服务器证书被正确验证。
 
 服务器证书校验不能省略。OpenWrt 25.12.5 的 station 脚本会传递 `ca_cert`、`domain_match` 和 `domain_suffix_match`；上游 [wpa_supplicant 配置](https://w1.fi/cgit/hostap/plain/wpa_supplicant/wpa_supplicant.conf?id=ca266cc24d8705eb1a2a0857ad326e48b1408b20)明确指出，不设置 CA 时服务器证书不会被验证。优先使用受信 CA 加服务器域名限制；无法部署私有 CA 时，可以按该版本支持的格式固定服务器证书：
 
@@ -153,13 +175,13 @@ ca_cert="hash://server/sha256/<certificate-sha256>"
 
 ### 凭据保存与备用上游
 
-企业账号、热点密码和证书配置最终会存在 root 可读的 OpenWrt 配置中。写入时避免让凭据进入 shell 历史、命令参数或调试日志；使用受控输入，并确认备份文件的访问权限。
+企业账号、热点密码和证书通常会保存在上游接入设备中；OpenWrt 会把相应配置保存为 root 可读。写入时避免让凭据进入 shell 历史、命令参数或调试日志；使用受控输入，并确认备份文件的访问权限。
 
 可以保存一条禁用的备用上游配置，主上游失败时手动切换。禁用配置条目只表示内容已保存，**不是自动故障切换**；自动切换还需要优先级、健康检查、认证状态和回切条件。
 
 ## <a id="radio-metrics"></a>理解无线链路
 
-无线信号不能只看一个 RSSI（Received Signal Strength Indicator，接收信号强度指标）数字。OpenWrt 25.12.5 锁定的 [iwinfo `f5dd57a`](https://github.com/openwrt/iwinfo/blob/f5dd57a84cc31a403a1383dd14944fa2e2b5824a/iwinfo_cli.c)分别报告 signal、noise、MCS、NSS 和信道宽度，并按 `signal - noise` 显示 SNR（Signal-to-Noise Ratio，信噪比）。
+无线信号不能只看一个 RSSI（Received Signal Strength Indicator，接收信号强度指标）数字。不同系统可以提供相同类别的链路指标；OpenWrt 25.12.5 锁定的 [iwinfo `f5dd57a`](https://github.com/openwrt/iwinfo/blob/f5dd57a84cc31a403a1383dd14944fa2e2b5824a/iwinfo_cli.c)分别报告 signal、noise、MCS、NSS 和信道宽度，并按 `signal - noise` 显示 SNR（Signal-to-Noise Ratio，信噪比）。
 
 ### RSSI、噪声与信噪比
 
@@ -358,7 +380,7 @@ A/B 测试每轮只改变一个变量：
 
 ### 天线增益、EIRP 与安装位置
 
-EIRP（Equivalent Isotropically Radiated Power，等效全向辐射功率）把发射功率和天线增益合并表示。定向天线可以提高目标方向的接收增益，并抑制其他方向的干扰；发射侧则受设备和监管配置约束。OpenWrt 也会按天线增益与监管上限限制发射功率，不能把标称天线增益简单等同于上行增加同样 dB。
+EIRP（Equivalent Isotropically Radiated Power，等效全向辐射功率）把发射功率和天线增益合并表示。定向天线可以提高目标方向的接收增益，并抑制其他方向的干扰；发射侧则受设备、固件和监管配置约束，不能把标称天线增益简单等同于上行增加同样 dB。
 
 PoE 允许把设备放到视线、朝向和遮挡更合适的位置，再用网线把数据送回室内。室外安装还涉及设备自身的防护等级、接地、防雷和供电规范，应按产品和建筑条件单独设计。
 
@@ -368,6 +390,8 @@ PoE 允许把设备放到视线、朝向和遮挡更合适的位置，再用网�
 
 企业网络还要求 CPE固件具备 station 模式的无线客户端认证程序、目标 EAP 方法、证书校验和必要的漫游能力。只写“支持 WPA2”不足以证明支持 WPA2-Enterprise PEAP/MSCHAPv2。
 
+CPE 可以运行厂商系统、RouterOS、OpenWrt 或其他专用固件；无线链路需求本身不决定必须使用哪一种系统。选型应落实到 station、频段、EAP、证书校验、日志、配置备份和故障恢复能力，而不是只看操作系统名称。
+
 ### 单台 station 与成对桥接
 
 | 目标 | 本地设备数量 | 对端要求 |
@@ -375,7 +399,7 @@ PoE 允许把设备放到视线、朝向和遮挡更合适的位置，再用网�
 | 连接现有标准 AP，再本地路由/NAT | 一台 CPE | 对端提供标准 Wi-Fi |
 | 建立自己管理的透明点对点桥 | 通常两台配套设备 | 双方兼容桥接/四地址或厂商协议 |
 
-单台 CPE 的 station 模式适合本文网关结构；“必须买一对”只适用于自己建设两端链路的场景。
+单台 CPE 的 station 模式适合本文链路结构；“必须买一对”只适用于自己建设两端链路的场景。
 
 ### 购买前验证与预期边界
 
@@ -386,7 +410,7 @@ PoE 允许把设备放到视线、朝向和遮挡更合适的位置，再用网�
 - WPA2-Enterprise/EAP 与证书验证是否满足上游；
 - 网口速率、PoE电压和供电方式；
 - 天线增益、波束宽度和安装方向；
-- 是否能固定 BSSID、导出日志和恢复配置；
+- 是否能固定 BSSID、导出日志、备份配置，并通过恢复网页、备用分区或其他明确入口从错误配置和升级失败中恢复；
 - 是否保留可退换或现场试用条件。
 
 CPE 更可能改善弱信号、低 SNR、高重传和方向性干扰。它不能保证消除 AP发出的 WNM通知、AP能力广播异常、账号限速或公共出口拥塞。应使用[测量与排查链路](#measurement)中的同目标 A/B 测试判断收益。
