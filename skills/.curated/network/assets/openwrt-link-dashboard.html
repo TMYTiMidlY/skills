@@ -1,0 +1,1240 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#090b0a">
+  <title>Wireless Gateway Monitor</title>
+  <style>
+    :root {
+      --bg: #090b0a;
+      --surface: #101311;
+      --surface-2: #151916;
+      --line: rgba(239, 246, 238, .12);
+      --line-strong: rgba(239, 246, 238, .2);
+      --text: #f1f5f0;
+      --muted: #929b94;
+      --faint: #59625b;
+      --accent: #b8ff4f;
+      --accent-soft: rgba(184, 255, 79, .1);
+      --warn: #ffc867;
+      --danger: #ff846d;
+      --radius: 18px;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      background: var(--bg);
+    }
+
+    body {
+      min-width: 320px;
+      min-height: 100svh;
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 78% -12%, rgba(184, 255, 79, .075), transparent 32rem),
+        var(--bg);
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 26px 0 52px;
+      opacity: 0;
+      transform: translateY(10px);
+      animation: arrive .65s cubic-bezier(.2, .8, .2, 1) forwards;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 46px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      font-size: 19px;
+      font-weight: 760;
+      letter-spacing: -.045em;
+    }
+
+    .brand span {
+      color: var(--accent);
+    }
+
+    .live {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--faint);
+    }
+
+    .live-dot.online {
+      background: var(--accent);
+      animation: pulse 2s ease-out infinite;
+    }
+
+    .data-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      margin-top: 18px;
+      padding: 12px 15px;
+      border: 1px solid rgba(255, 132, 109, .28);
+      border-radius: 10px;
+      color: var(--danger);
+      background: rgba(255, 132, 109, .07);
+      font-size: 13px;
+    }
+
+    .data-banner.show {
+      display: flex;
+    }
+
+    .data-banner.paused {
+      border-color: rgba(255, 200, 103, .28);
+      color: var(--warn);
+      background: rgba(255, 200, 103, .07);
+    }
+
+    .data-age {
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .overview {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(360px, .78fr);
+      gap: 64px;
+      align-items: end;
+      min-height: 420px;
+      padding: 72px 0 58px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow,
+    .section-kicker {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 760;
+      letter-spacing: .17em;
+      text-transform: uppercase;
+    }
+
+    .signal {
+      display: flex;
+      align-items: flex-end;
+      gap: 14px;
+      margin: 16px 0 12px;
+      font-size: clamp(84px, 13vw, 162px);
+      font-weight: 770;
+      letter-spacing: -.085em;
+      line-height: .83;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .signal small {
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 18px;
+      font-weight: 520;
+      letter-spacing: 0;
+    }
+
+    .summary {
+      max-width: 620px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+
+    .summary strong {
+      color: var(--text);
+      font-weight: 620;
+    }
+
+    .score-panel {
+      --score-color: var(--warn);
+      display: grid;
+      grid-template-columns: 138px 1fr;
+      gap: 28px;
+      align-items: center;
+    }
+
+    .score-ring {
+      position: relative;
+      width: 138px;
+      height: 138px;
+    }
+
+    .score-ring svg {
+      width: 100%;
+      height: 100%;
+      transform: rotate(-90deg);
+    }
+
+    .score-track,
+    .score-progress {
+      fill: none;
+      stroke-width: 8;
+    }
+
+    .score-track {
+      stroke: var(--line);
+    }
+
+    .score-progress {
+      stroke: var(--score-color);
+      stroke-linecap: round;
+      stroke-dasharray: 339.292;
+      stroke-dashoffset: 339.292;
+      transition: stroke .35s ease, stroke-dashoffset .6s cubic-bezier(.2, .8, .2, 1);
+    }
+
+    .score-center {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-content: center;
+      text-align: center;
+    }
+
+    .score-number {
+      font-size: 31px;
+      font-weight: 750;
+      letter-spacing: -.06em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .score-number small {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 550;
+      letter-spacing: 0;
+    }
+
+    .score-label {
+      margin-top: 3px;
+      color: var(--score-color);
+      font-size: 11px;
+      font-weight: 760;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+
+    .score-copy h2 {
+      margin: 6px 0 4px;
+      font-size: 24px;
+      letter-spacing: -.045em;
+    }
+
+    .score-copy p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .signal-scale {
+      position: relative;
+      height: 5px;
+      margin: 22px 0 10px;
+      border-radius: 99px;
+      background: linear-gradient(90deg, var(--danger), var(--warn), var(--accent));
+    }
+
+    .scale-marker {
+      position: absolute;
+      top: 50%;
+      left: 0;
+      width: 13px;
+      height: 13px;
+      border: 3px solid var(--bg);
+      border-radius: 50%;
+      background: var(--text);
+      transform: translate(-50%, -50%);
+      transition: left .55s cubic-bezier(.2, .8, .2, 1);
+    }
+
+    .scale-labels {
+      display: flex;
+      justify-content: space-between;
+      color: var(--faint);
+      font-size: 10px;
+    }
+
+    .signal-chart {
+      width: 100%;
+      height: 76px;
+      margin-top: 26px;
+      overflow: visible;
+    }
+
+    .chart-line,
+    .traffic-down,
+    .traffic-up {
+      fill: none;
+      stroke-width: 2.2;
+      vector-effect: non-scaling-stroke;
+      transition: d .5s cubic-bezier(.2, .8, .2, 1);
+    }
+
+    .chart-line,
+    .traffic-down {
+      stroke: var(--accent);
+    }
+
+    .chart-fill {
+      fill: url(#signalGradient);
+    }
+
+    .traffic-up {
+      stroke: var(--muted);
+    }
+
+    .section {
+      padding: 46px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 28px;
+      margin-bottom: 28px;
+    }
+
+    .section-head h2 {
+      margin: 5px 0 0;
+      font-size: 29px;
+      letter-spacing: -.05em;
+    }
+
+    .section-note {
+      max-width: 620px;
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .scan-note {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .network-grid {
+      border-top: 1px solid var(--line);
+    }
+
+    .network-row {
+      display: grid;
+      grid-template-columns: minmax(180px, .8fr) 1fr 1fr;
+      gap: 24px;
+      align-items: center;
+      min-height: 96px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .network-columns {
+      min-height: 38px;
+      color: var(--faint);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    .network-name {
+      font-size: 18px;
+      font-weight: 680;
+      letter-spacing: -.025em;
+    }
+
+    .network-auth {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .network-reading {
+      min-width: 0;
+    }
+
+    .network-signal {
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+      font-size: 27px;
+      font-weight: 710;
+      letter-spacing: -.045em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .network-signal small,
+    .mini-score {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 550;
+      letter-spacing: 0;
+    }
+
+    .network-signal.absent {
+      color: var(--faint);
+      font-size: 15px;
+      font-weight: 560;
+      letter-spacing: 0;
+    }
+
+    .network-meta {
+      margin-top: 5px;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .connected {
+      color: var(--accent);
+    }
+
+    .recent {
+      opacity: .64;
+    }
+
+    .rates {
+      display: flex;
+      gap: 30px;
+      text-align: right;
+    }
+
+    .rate-label,
+    .metric-label,
+    .detail-label {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .rate-value {
+      margin-top: 5px;
+      font-size: 25px;
+      font-weight: 710;
+      letter-spacing: -.045em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .rate-value small,
+    .metric-value small {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 530;
+      letter-spacing: 0;
+    }
+
+    .traffic-chart {
+      width: 100%;
+      height: 180px;
+      overflow: visible;
+    }
+
+    .benchmark {
+      display: grid;
+      grid-template-columns: minmax(210px, .7fr) 1.6fr;
+      gap: 44px;
+      margin-top: 36px;
+      padding-top: 34px;
+      border-top: 1px solid var(--line);
+    }
+
+    .benchmark h3 {
+      margin: 6px 0 8px;
+      font-size: 23px;
+      letter-spacing: -.045em;
+    }
+
+    .benchmark p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .benchmark-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 20px;
+    }
+
+    .metric-value {
+      margin-top: 8px;
+      font-size: 23px;
+      font-weight: 700;
+      letter-spacing: -.045em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .actions {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 28px;
+      margin-top: 32px;
+    }
+
+    .action-copy {
+      max-width: 700px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .action-copy strong {
+      color: var(--text);
+    }
+
+    .button-row {
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      min-height: 42px;
+      padding: 0 16px;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      color: var(--text);
+      background: transparent;
+      cursor: pointer;
+      transition: border-color .2s ease, background .2s ease, transform .2s ease;
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      color: #11150f;
+      background: var(--accent);
+      font-weight: 720;
+    }
+
+    button:hover:not(:disabled) {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: .48;
+    }
+
+    .details {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 24px;
+      padding: 34px 0 0;
+    }
+
+    .detail-value {
+      margin-top: 7px;
+      overflow: hidden;
+      color: var(--text);
+      font-size: 13px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .error {
+      display: none;
+      margin-top: 16px;
+      color: var(--danger);
+      font-size: 12px;
+    }
+
+    .error.show {
+      display: block;
+    }
+
+    @keyframes arrive {
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(184, 255, 79, .42); }
+      70% { box-shadow: 0 0 0 8px rgba(184, 255, 79, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(184, 255, 79, 0); }
+    }
+
+    @media (max-width: 900px) {
+      .overview {
+        grid-template-columns: 1fr;
+        gap: 36px;
+      }
+
+      .benchmark {
+        grid-template-columns: 1fr;
+      }
+
+      .benchmark-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .details {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 680px) {
+      .shell {
+        width: min(100% - 28px, 1180px);
+        padding-top: 16px;
+      }
+
+      .overview {
+        min-height: 0;
+        padding: 52px 0 38px;
+      }
+
+      .signal {
+        font-size: 92px;
+      }
+
+      .score-panel {
+        grid-template-columns: 110px 1fr;
+        gap: 20px;
+      }
+
+      .score-ring {
+        width: 110px;
+        height: 110px;
+      }
+
+      .section {
+        padding: 36px 0;
+      }
+
+      .section-head,
+      .actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .scan-note,
+      .rates {
+        text-align: left;
+      }
+
+      .rates {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .network-row {
+        grid-template-columns: 1fr;
+        gap: 16px;
+        padding: 22px 0;
+      }
+
+      .network-columns {
+        display: none;
+      }
+
+      .benchmark-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .button-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .details {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .data-banner {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 4px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+
+      .shell {
+        opacity: 1;
+        transform: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand">WIRELESS <span>GATEWAY</span></div>
+      <div class="live"><span id="liveDot" class="live-dot"></span><span id="liveText">Connecting</span></div>
+    </header>
+
+    <div id="dataBanner" class="data-banner">
+      <strong id="dataBannerText">Realtime data unavailable</strong>
+      <span id="dataBannerAge" class="data-age"></span>
+    </div>
+
+    <main>
+      <section class="overview">
+        <div>
+          <div id="activeLabel" class="eyebrow">ACTIVE UPSTREAM</div>
+          <div class="signal"><span id="activeSignal">—</span><small>dBm</small></div>
+          <p id="summary" class="summary">Waiting for wireless gateway telemetry.</p>
+          <svg class="signal-chart" viewBox="0 0 600 90" preserveAspectRatio="none" aria-label="Signal history">
+            <defs>
+              <linearGradient id="signalGradient" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stop-color="#b8ff4f" stop-opacity=".18"/>
+                <stop offset="100%" stop-color="#b8ff4f" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <path id="signalFill" class="chart-fill"></path>
+            <path id="signalLine" class="chart-line"></path>
+          </svg>
+        </div>
+
+        <div id="scorePanel" class="score-panel">
+          <div class="score-ring">
+            <svg viewBox="0 0 120 120" aria-label="Heuristic signal score">
+              <circle class="score-track" cx="60" cy="60" r="54"></circle>
+              <circle id="scoreProgress" class="score-progress" cx="60" cy="60" r="54"></circle>
+            </svg>
+            <div class="score-center">
+              <div class="score-number"><span id="scoreValue">—</span><small>/100</small></div>
+              <div id="scoreState" class="score-label">No data</div>
+            </div>
+          </div>
+          <div class="score-copy">
+            <div class="section-kicker">Display heuristic</div>
+            <h2>Signal score</h2>
+            <p id="scoreAdvice">This score is a configurable UI mapping, not an industry standard.</p>
+            <div class="signal-scale"><span id="scaleMarker" class="scale-marker"></span></div>
+            <div class="scale-labels"><span>−100</span><span>−90</span><span>−80</span><span>−70</span><span>−60</span><span>−50 dBm</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Discovery</div>
+            <h2>Candidate networks</h2>
+            <p class="section-note">The active radio should not be scanned periodically. Missing observations remain visible only for the configured last-seen interval.</p>
+          </div>
+          <div id="scanNote" class="scan-note">Waiting for scan data</div>
+        </div>
+        <div id="networkGrid" class="network-grid">
+          <div class="network-row network-columns" aria-hidden="true">
+            <div>Network</div>
+            <div>2.4 GHz</div>
+            <div>5 GHz</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Passive telemetry</div>
+            <h2>Current traffic</h2>
+            <p class="section-note">Interface byte deltas show current utilization, not available bandwidth. Use NDT7 only when an active benchmark is acceptable.</p>
+          </div>
+          <div class="rates">
+            <div><div class="rate-label">Down</div><div class="rate-value"><span id="downRate">—</span> <small>Mbps</small></div></div>
+            <div><div class="rate-label">Up</div><div class="rate-value"><span id="upRate">—</span> <small>Mbps</small></div></div>
+            <div><div class="rate-label">Live RTT</div><div class="rate-value"><span id="rttRate">—</span> <small>ms</small></div></div>
+            <div><div class="rate-label">Loss</div><div class="rate-value"><span id="lossRate">—</span> <small>%</small></div></div>
+          </div>
+        </div>
+
+        <svg class="traffic-chart" viewBox="0 0 1000 190" preserveAspectRatio="none" aria-label="Current traffic history">
+          <path id="downLine" class="traffic-down"></path>
+          <path id="upLine" class="traffic-up"></path>
+        </svg>
+
+        <div class="benchmark">
+          <div>
+            <div class="section-kicker">Active benchmark</div>
+            <h3>M-Lab NDT7</h3>
+            <p id="benchmarkServer">No benchmark result. Running NDT7 generates sustained download and upload traffic.</p>
+          </div>
+          <div class="benchmark-grid">
+            <div><div class="metric-label">Download</div><div class="metric-value"><span id="benchDown">—</span> <small>Mbps</small></div></div>
+            <div><div class="metric-label">Upload</div><div class="metric-value"><span id="benchUp">—</span> <small>Mbps</small></div></div>
+            <div><div class="metric-label">DL RTT</div><div class="metric-value"><span id="benchDownRtt">—</span> <small>ms</small></div></div>
+            <div><div class="metric-label">UL RTT</div><div class="metric-value"><span id="benchUpRtt">—</span> <small>ms</small></div></div>
+            <div><div class="metric-label">Retransmit</div><div class="metric-value"><span id="benchRetransmit">—</span> <small>%</small></div></div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <div id="actionCopy" class="action-copy">Live latency uses a small sample. Manual latency and NDT7 tests are mutually exclusive.</div>
+          <div class="button-row">
+            <button id="latencyButton" type="button">Measure latency</button>
+            <button id="benchmarkButton" class="primary" type="button">Run NDT7</button>
+          </div>
+        </div>
+        <div id="errorBanner" class="error"></div>
+      </section>
+
+      <section class="details" aria-label="Link details">
+        <div><div class="detail-label">SNR</div><div id="snrValue" class="detail-value">—</div></div>
+        <div><div class="detail-label">RX PHY</div><div id="rxPhy" class="detail-value">—</div></div>
+        <div><div class="detail-label">TX PHY</div><div id="txPhy" class="detail-value">—</div></div>
+        <div><div class="detail-label">Retries</div><div id="retryValue" class="detail-value">—</div></div>
+        <div><div class="detail-label">BSSID / channel</div><div id="radioDetail" class="detail-value">—</div></div>
+        <div><div class="detail-label">Updated</div><div id="updatedValue" class="detail-value">—</div></div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const CONFIG = Object.freeze({
+      statusEndpoint: "/api/status",
+      latencyEndpoint: "/api/latency",
+      benchmarkEndpoint: "/api/benchmark",
+      pollIntervalMs: 1000,
+      staleAfterMs: 5000,
+      scanHistoryTtlMs: 180000,
+      historyPoints: 90,
+      demoMode: location.protocol === "file:" || new URLSearchParams(location.search).has("demo"),
+      networks: [
+        { key: "upstream-a", label: "Primary upstream", auth: "Configured authentication" },
+        { key: "upstream-b", label: "Fallback upstream", auth: "Open or personal network" },
+        { key: "upstream-c", label: "Enterprise upstream", auth: "802.1X / EAP" }
+      ]
+    });
+
+    const $ = (id) => document.getElementById(id);
+    const signalHistory = [];
+    const downHistory = [];
+    const upHistory = [];
+    const lastSeen = {};
+    let previousCounters = null;
+    let lastSuccessfulUpdateAt = 0;
+    let telemetryState = "connecting";
+    let pollTimer = null;
+    let activeTask = null;
+    let demoTick = 0;
+
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+    const scoreOf = (dbm) => dbm == null ? null : Math.round(clamp(2 * (dbm + 100), 0, 100));
+
+    const scoreState = (score) => {
+      if (score == null) return ["No data", "#59625b"];
+      if (score >= 80) return ["Excellent", "#b8ff4f"];
+      if (score >= 60) return ["Good", "#a9ee63"];
+      if (score >= 40) return ["Marginal", "#ffc867"];
+      if (score >= 20) return ["Weak", "#ff9b62"];
+      return ["Critical", "#ff846d"];
+    };
+
+    const pushLimited = (array, value) => {
+      array.push(value);
+      if (array.length > CONFIG.historyPoints) array.shift();
+    };
+
+    const pathFor = (values, width, height, min, max) => {
+      if (!values.length) return "";
+      const span = Math.max(1, max - min);
+      return values.map((value, index) => {
+        const x = values.length === 1 ? width : index * width / (values.length - 1);
+        const y = height - ((clamp(value, min, max) - min) / span) * height;
+        return `${index ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(" ");
+    };
+
+    const fetchJson = async (url, timeoutMs) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(`${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`, {
+          cache: "no-store",
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.json();
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    const renderCharts = () => {
+      const signalPath = pathFor(signalHistory, 600, 72, -100, -35);
+      $("signalLine").setAttribute("d", signalPath);
+      $("signalFill").setAttribute("d", signalPath ? `${signalPath} L600,90 L0,90 Z` : "");
+      const trafficMax = Math.max(1, ...downHistory, ...upHistory) * 1.08;
+      $("downLine").setAttribute("d", pathFor(downHistory, 1000, 176, 0, trafficMax));
+      $("upLine").setAttribute("d", pathFor(upHistory, 1000, 176, 0, trafficMax));
+    };
+
+    const ensureNetworkRows = () => {
+      const grid = $("networkGrid");
+      for (const network of CONFIG.networks) {
+        const row = document.createElement("div");
+        row.className = "network-row";
+        row.innerHTML = `
+          <div>
+            <div class="network-name">${network.label}</div>
+            <div class="network-auth">${network.auth}</div>
+          </div>
+          <div id="network-${network.key}-24" class="network-reading"></div>
+          <div id="network-${network.key}-5" class="network-reading"></div>
+        `;
+        grid.appendChild(row);
+      }
+    };
+
+    const renderNetworkCell = (networkKey, bandKey, observation, observedAt) => {
+      const suffix = bandKey === "2.4" ? "24" : "5";
+      const id = `network-${networkKey}-${suffix}`;
+      const cell = $(id);
+      if (!cell) return;
+
+      if (observation?.available) {
+        lastSeen[id] = { observation, observedAt };
+      }
+
+      let value = observation;
+      let recent = false;
+      if (!value?.available && lastSeen[id]) {
+        const age = Date.now() - lastSeen[id].observedAt;
+        if (age <= CONFIG.scanHistoryTtlMs) {
+          value = lastSeen[id].observation;
+          recent = true;
+        } else {
+          delete lastSeen[id];
+        }
+      }
+
+      cell.classList.toggle("recent", recent);
+      if (!value?.available) {
+        cell.innerHTML = '<div class="network-signal absent">Not seen</div><div class="network-meta">0 AP</div>';
+        return;
+      }
+
+      const score = scoreOf(value.signal_dbm);
+      const [, color] = scoreState(score);
+      const state = value.connected ? '<span class="connected">Connected · </span>' : "";
+      const age = recent ? ` · seen ${Math.ceil((Date.now() - lastSeen[id].observedAt) / 1000)}s ago` : "";
+      cell.innerHTML = `
+        <div class="network-signal" style="color:${color}">
+          ${value.signal_dbm}<small>dBm</small><span class="mini-score">${score}/100</span>
+        </div>
+        <div class="network-meta">${state}${value.seen_count || 1} AP · channel ${value.channel ?? "—"}${age}</div>
+      `;
+    };
+
+    const clearLiveTelemetry = (message, paused = false) => {
+      telemetryState = paused ? "paused" : "stale";
+      previousCounters = null;
+      if (!paused) {
+        signalHistory.length = 0;
+        downHistory.length = 0;
+        upHistory.length = 0;
+      }
+      $("liveDot").classList.remove("online");
+      $("liveText").textContent = paused ? "Paused" : "Offline";
+      $("activeSignal").textContent = "—";
+      $("scoreValue").textContent = "—";
+      $("scoreState").textContent = paused ? "Paused" : "Stale";
+      $("scoreProgress").style.strokeDashoffset = "339.292";
+      $("scaleMarker").style.opacity = ".25";
+      $("summary").innerHTML = `<strong>${message}</strong> Previous realtime values are hidden.`;
+      for (const id of ["downRate", "upRate", "rttRate", "lossRate", "snrValue", "rxPhy", "txPhy", "retryValue", "radioDetail"]) {
+        $(id).textContent = "—";
+      }
+      $("updatedValue").textContent = paused ? "PAUSED" : "STALE";
+      $("signalLine").setAttribute("d", "");
+      $("signalFill").setAttribute("d", "");
+      $("downLine").setAttribute("d", "");
+      $("upLine").setAttribute("d", "");
+      $("dataBannerText").textContent = message;
+      $("dataBannerAge").textContent = paused ? "Active test in progress" : "Waiting for recovery";
+      $("dataBanner").classList.add("show");
+      $("dataBanner").classList.toggle("paused", paused);
+      if (!paused) {
+        for (const network of CONFIG.networks) {
+          for (const suffix of ["24", "5"]) {
+            const cell = $(`network-${network.key}-${suffix}`);
+            if (cell) {
+              cell.className = "network-reading";
+              cell.innerHTML = '<div class="network-signal absent">Telemetry stale</div><div class="network-meta">Waiting for recovery</div>';
+            }
+          }
+        }
+        $("scanNote").textContent = "Realtime scan data unavailable";
+      }
+    };
+
+    const renderBenchmark = (result) => {
+      if (!result?.ok || !result.server || !(result.download_mbps > 0) || !(result.upload_mbps > 0)) return;
+      $("benchDown").textContent = result.download_mbps.toFixed(2);
+      $("benchUp").textContent = result.upload_mbps.toFixed(2);
+      $("benchDownRtt").textContent = Number(result.download_latency_ms).toFixed(0);
+      $("benchUpRtt").textContent = Number(result.upload_latency_ms).toFixed(0);
+      $("benchRetransmit").textContent = Number(result.download_retransmission_percent).toFixed(2);
+      $("benchmarkServer").textContent = `M-Lab NDT7 · ${result.server}`;
+    };
+
+    const render = (data) => {
+      lastSuccessfulUpdateAt = Date.now();
+      telemetryState = "live";
+      $("dataBanner").classList.remove("show", "paused");
+      $("liveDot").classList.toggle("online", Boolean(data.wwan?.up));
+      $("liveText").textContent = data.wwan?.up ? (CONFIG.demoMode ? "Demo" : "Live") : "Disconnected";
+
+      const signal = data.link?.signal_dbm;
+      const noise = data.link?.noise_dbm;
+      const score = scoreOf(signal);
+      const [state, color] = scoreState(score);
+      $("activeLabel").textContent = `${data.wwan?.active_ssid || "UPSTREAM"} · ACTIVE`;
+      $("activeSignal").textContent = signal ?? "—";
+      $("scoreValue").textContent = score ?? "—";
+      $("scoreState").textContent = state;
+      $("scorePanel").style.setProperty("--score-color", color);
+      $("scoreProgress").style.strokeDashoffset = score == null ? "339.292" : String(339.292 * (1 - score / 100));
+      $("scaleMarker").style.left = `${score ?? 0}%`;
+      $("scaleMarker").style.opacity = score == null ? ".25" : "1";
+      $("scoreAdvice").textContent = score == null
+        ? "No current signal sample."
+        : `Heuristic score ${score}/100. Confirm with SNR, retries, latency and throughput.`;
+
+      const band = data.wwan?.active_band ? `${data.wwan.active_band} GHz` : "unknown band";
+      $("summary").innerHTML = data.wwan?.up
+        ? `<strong>${band} · ${state}</strong> · SNR ${signal != null && noise != null ? signal - noise : "—"} dB · TX ${data.link?.tx_rate || "—"}`
+        : "<strong>WWAN is not connected.</strong>";
+
+      const observed24 = (data.scan?.band24_updated || data.timestamp) * 1000;
+      const observed5 = (data.scan?.band5_updated || data.timestamp) * 1000;
+      for (const network of CONFIG.networks) {
+        renderNetworkCell(network.key, "2.4", data.networks?.[network.key]?.["2.4"], observed24);
+        renderNetworkCell(network.key, "5", data.networks?.[network.key]?.["5"], observed5);
+      }
+      $("scanNote").textContent = data.scan?.active_band_skipped
+        ? `Active band skipped · other radio every ${data.scan.interval_seconds || "—"}s`
+        : "Scan policy not reported";
+
+      const timestampMs = data.timestamp * 1000;
+      let down = 0;
+      let up = 0;
+      if (
+        previousCounters &&
+        previousCounters.device === data.wwan?.active_device &&
+        Number.isFinite(data.link?.rx_bytes) &&
+        Number.isFinite(data.link?.tx_bytes)
+      ) {
+        const seconds = Math.max(.1, (timestampMs - previousCounters.time) / 1000);
+        down = Math.max(0, (data.link.rx_bytes - previousCounters.rx) * 8 / seconds / 1e6);
+        up = Math.max(0, (data.link.tx_bytes - previousCounters.tx) * 8 / seconds / 1e6);
+      }
+      if (Number.isFinite(data.link?.rx_bytes) && Number.isFinite(data.link?.tx_bytes)) {
+        previousCounters = {
+          device: data.wwan?.active_device,
+          rx: data.link.rx_bytes,
+          tx: data.link.tx_bytes,
+          time: timestampMs
+        };
+      }
+
+      $("downRate").textContent = down.toFixed(2);
+      $("upRate").textContent = up.toFixed(2);
+      $("rttRate").textContent = data.latency?.ok ? Number(data.latency.avg_ms).toFixed(1) : "—";
+      $("lossRate").textContent = data.latency?.ok ? Number(data.latency.loss_percent).toFixed(0) : "—";
+      $("snrValue").textContent = signal != null && noise != null ? `${signal - noise} dB` : "—";
+      $("rxPhy").textContent = data.link?.rx_rate || "—";
+      $("txPhy").textContent = data.link?.tx_rate || "—";
+      $("retryValue").textContent = Number.isFinite(data.link?.tx_retries) ? String(data.link.tx_retries) : "—";
+      $("radioDetail").textContent = `${data.link?.bssid || "—"} · ch ${data.link?.channel ?? "—"}`;
+      $("updatedValue").textContent = new Date(timestampMs).toLocaleTimeString();
+
+      if (signal != null) pushLimited(signalHistory, signal);
+      pushLimited(downHistory, down);
+      pushLimited(upHistory, up);
+      renderCharts();
+      renderBenchmark(data.benchmark);
+    };
+
+    const demoPayload = () => {
+      demoTick += 1;
+      const wave = Math.sin(demoTick / 5);
+      const signal = Math.round(-68 + wave * 3);
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        timestamp: now,
+        wwan: {
+          up: true,
+          active_ssid: "upstream-a",
+          active_band: "5",
+          active_device: "wlan-sta"
+        },
+        link: {
+          signal_dbm: signal,
+          noise_dbm: -92,
+          rx_rate: "240 MBit/s · 40 MHz · NSS 2",
+          tx_rate: "180 MBit/s · 40 MHz · NSS 2",
+          bssid: "02:00:00:00:00:01",
+          channel: 44,
+          rx_bytes: 1200000 + demoTick * 82000 + Math.round(wave * 18000),
+          tx_bytes: 340000 + demoTick * 18000,
+          tx_retries: 20 + demoTick
+        },
+        latency: {
+          ok: true,
+          avg_ms: 23 + Math.abs(wave * 4),
+          jitter_ms: 2.8,
+          loss_percent: demoTick % 17 === 0 ? 2 : 0,
+          timestamp: now
+        },
+        scan: {
+          interval_seconds: 60,
+          active_band_skipped: true,
+          band24_updated: now - 8,
+          band5_updated: now - 14
+        },
+        networks: {
+          "upstream-a": {
+            "2.4": { available: true, connected: false, signal_dbm: -73, seen_count: 2, channel: 6 },
+            "5": { available: true, connected: true, signal_dbm: signal, seen_count: 3, channel: 44 }
+          },
+          "upstream-b": {
+            "2.4": { available: demoTick % 12 < 9, connected: false, signal_dbm: -81, seen_count: 1, channel: 11 },
+            "5": { available: false, connected: false }
+          },
+          "upstream-c": {
+            "2.4": { available: false, connected: false },
+            "5": { available: true, connected: false, signal_dbm: -76, seen_count: 2, channel: 36 }
+          }
+        },
+        benchmark: {
+          ok: true,
+          server: "ndt.example.net",
+          download_mbps: 84.21,
+          upload_mbps: 31.08,
+          download_latency_ms: 61,
+          upload_latency_ms: 74,
+          download_retransmission_percent: 0.42
+        }
+      };
+    };
+
+    const poll = async () => {
+      clearTimeout(pollTimer);
+      if (activeTask) return;
+      try {
+        const data = CONFIG.demoMode
+          ? demoPayload()
+          : await fetchJson(CONFIG.statusEndpoint, Math.max(3000, CONFIG.staleAfterMs));
+        render(data);
+        $("errorBanner").classList.remove("show");
+      } catch (error) {
+        clearLiveTelemetry("Realtime telemetry unavailable");
+        $("errorBanner").textContent = `Status request failed: ${error.message}`;
+        $("errorBanner").classList.add("show");
+      } finally {
+        if (!activeTask) pollTimer = setTimeout(poll, CONFIG.pollIntervalMs);
+      }
+    };
+
+    const runTask = async (kind) => {
+      if (activeTask) return;
+      activeTask = kind;
+      clearTimeout(pollTimer);
+      const latencyButton = $("latencyButton");
+      const benchmarkButton = $("benchmarkButton");
+      latencyButton.disabled = true;
+      benchmarkButton.disabled = true;
+      clearLiveTelemetry(kind === "benchmark" ? "NDT7 benchmark in progress" : "Latency measurement in progress", true);
+      $("actionCopy").textContent = kind === "benchmark"
+        ? "NDT7 is generating sustained download and upload traffic."
+        : "Manual latency sampling is running.";
+
+      try {
+        let result;
+        if (CONFIG.demoMode) {
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          result = kind === "benchmark"
+            ? demoPayload().benchmark
+            : { ok: true, avg_ms: 22.6, jitter_ms: 2.2, loss_percent: 0 };
+        } else {
+          result = await fetchJson(
+            kind === "benchmark" ? CONFIG.benchmarkEndpoint : CONFIG.latencyEndpoint,
+            kind === "benchmark" ? 70000 : 18000
+          );
+        }
+
+        if (!result?.ok) throw new Error(result?.error || "Test failed");
+        if (kind === "benchmark") {
+          renderBenchmark(result);
+          $("actionCopy").innerHTML = `<strong>NDT7 complete:</strong> ${result.download_mbps.toFixed(2)} Mbps down · ${result.upload_mbps.toFixed(2)} Mbps up`;
+        } else {
+          $("actionCopy").innerHTML = `<strong>Latency complete:</strong> ${Number(result.avg_ms).toFixed(1)} ms · jitter ${Number(result.jitter_ms).toFixed(1)} ms · loss ${Number(result.loss_percent).toFixed(0)}%`;
+        }
+      } catch (error) {
+        $("actionCopy").textContent = error.message;
+      } finally {
+        activeTask = null;
+        latencyButton.disabled = false;
+        benchmarkButton.disabled = false;
+        poll();
+      }
+    };
+
+    $("latencyButton").addEventListener("click", () => runTask("latency"));
+    $("benchmarkButton").addEventListener("click", () => runTask("benchmark"));
+
+    setInterval(() => {
+      if (activeTask || !lastSuccessfulUpdateAt) return;
+      const age = Date.now() - lastSuccessfulUpdateAt;
+      if (age > CONFIG.staleAfterMs && telemetryState !== "stale") {
+        clearLiveTelemetry("No new telemetry within the stale threshold");
+      } else if (telemetryState === "stale") {
+        $("dataBannerAge").textContent = `Last update ${Math.floor(age / 1000)}s ago`;
+      }
+    }, 1000);
+
+    ensureNetworkRows();
+    poll();
+  </script>
+</body>
+</html>
