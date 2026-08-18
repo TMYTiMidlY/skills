@@ -9,11 +9,11 @@ description: 配置或排查 OpenWrt 路由器、外部 Wi-Fi 接入本地网络
 
 ## OpenWrt 设备管理
 
-OpenWrt 的设备支持、首次安装、镜像类型、升级恢复、BusyBox/procd/apk、LuCI/UCI/ubus、Dropbear SSH、网络配置与状态接口、局域网 VPN/代理出口、设备与客户端统计、无线链路分层测量、远程日志、外部历史监控和链路面板，以及小米 AX3000T 保留原厂启动程序的刷写案例见 [references/openwrt.md](references/openwrt.md)。面板的单文件页面模板位于 [assets/openwrt-link-dashboard.html](assets/openwrt-link-dashboard.html)。
+OpenWrt 的设备支持、首次安装、镜像类型、升级恢复、BusyBox/procd/apk、LuCI/UCI/ubus、Dropbear SSH、station/WWAN上联、wpad企业认证、局域网VPN/代理出口、设备状态、链路诊断、远程日志、外部历史监控和链路面板，以及小米AX3000T保留原厂启动程序的刷写与恢复案例见 [references/openwrt.md](references/openwrt.md)。面板的单文件页面模板位于 [assets/openwrt-link-dashboard.html](assets/openwrt-link-dashboard.html)。
 
 ## 外部 Wi-Fi 接入本地网络
 
-把外部 Wi-Fi 转为受控 LAN，再经下游 AP 覆盖本地网络时，网关/AP/station 的角色组合、AP 模式下的设备可见性、WWAN/NAT、Captive Portal、企业认证、漫游缓存、RSSI/SNR/MCS/NSS、整网设备统计、定向 CPE 和校园接入案例见 [references/external-wifi-access.md](references/external-wifi-access.md)。
+把外部Wi-Fi接入本地网络时，AP/station/网关/CPE的角色组合、路由/桥接/伪桥接、NAT与代理位置、Captive Portal、Eduroam、无线传播与漫游、分层测量、整网设备可见性、定向CPE选型、主动/被动PoE、户外安装、穿窗布线、无线Mesh及校园接入案例见 [references/external-wifi-access.md](references/external-wifi-access.md)。滴水弯示意图位于 [assets/cpe-drip-loop.png](assets/cpe-drip-loop.png)。
 
 ## Mihomo / Clash 客户端与泄漏控制
 

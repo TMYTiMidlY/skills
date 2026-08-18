@@ -1,6 +1,6 @@
 # OpenWrt 设备管理
 
-OpenWrt 是面向路由器和嵌入式网络设备的 Linux 发行版。本文说明设备支持、安装与恢复、系统维护、网络配置、无线链路测量和监控，最后以小米 AX3000T 记录设备专属的刷写与恢复边界。把外部 Wi-Fi 作为上游、经网线连接下游 AP、理解通用无线链路或选择定向 CPE 时，见 [外部 Wi-Fi 接入本地网络](external-wifi-access.md)。
+OpenWrt 是面向路由器和嵌入式网络设备的 Linux 发行版。本文说明设备支持、安装与恢复、系统维护、网络配置、外部 Wi-Fi 上联、链路诊断和监控，最后以小米 AX3000T 记录设备专属的刷写与恢复边界。AP/station角色、认证阶段、无线传播、CPE、PoE、户外安装和Mesh拓扑见[外部 Wi-Fi 接入本地网络](external-wifi-access.md)。
 
 ## <a id="system"></a>系统组成与设备支持
 
@@ -35,6 +35,8 @@ OpenWrt 镜像必须匹配精确型号和硬件版本。相同商品名可能使
 - 无线、网口交换芯片、指示灯、按键和硬件加速等设备功能已有相应驱动。
 
 确认支持状态后，还要阅读设备页的安装与恢复说明。若安装依赖原厂固件漏洞，升级原厂固件可能会关闭该入口，因此操作方法必须同时匹配设备型号和原厂固件版本。具体入口统一见[安装、升级与恢复](#installation)。
+
+设备出现在Firmware Selector只证明官方构建支持该硬件，不代表它适合安装所有附加软件。完整wpad、Mihomo、sing-box、GeoIP/规则数据库和长期日志都需要额外闪存与内存；小闪存CPE即使能启动OpenWrt，也可能只能使用定制精简镜像。
 
 ### <a id="hardware"></a>设备角色与硬件条件
 
@@ -227,7 +229,7 @@ OpenWrt 把网络对象拆成几个层次：
 - **WWAN**（wireless WAN，无线 WAN）是由 Wi-Fi 客户端连接承载的 WAN 接口。
 - **防火墙区域**把一个或多个接口归为同一安全边界，并决定入站、转发和 NAT。
 
-`/etc/config/network` 定义接口和地址获取方式，`/etc/config/firewall` 决定区域、转发和 NAT。把外部 Wi-Fi 变成网线输出时，通用数据路径见 [设备角色与数据路径](external-wifi-access.md#architecture)，OpenWrt 配置流程见 [OpenWrt 上的链路配置](external-wifi-access.md#configuration)。
+`/etc/config/network` 定义接口和地址获取方式，`/etc/config/firewall` 决定区域、转发和 NAT。把外部 Wi-Fi 变成网线输出时，通用数据路径见 [设备角色与数据路径](external-wifi-access.md#architecture)，OpenWrt 配置流程见 [外部 Wi-Fi 上联配置](#wifi-uplink)。
 
 ### <a id="lan-egress"></a>局域网流量的统一出口
 
@@ -281,6 +283,8 @@ uci set wireless.enterprise.password='<password>'
 
 服务器证书还需要 `ca_cert` 及域名限制，或经过验证的服务器证书 pin。完整认证流程、缓存和漫游边界见 [通过上游认证](external-wifi-access.md#authentication)和[理解无线链路](external-wifi-access.md#radio-metrics)。
 
+EAP发生在station与上游AP建立无线连接时，因此必须由运行这条`wifi-iface`的设备完成。下游路由器不能通过以太网替一个不支持PEAP的CPE完成Eduroam认证；通用链路顺序见[无线关联、地址获取与上层认证](external-wifi-access.md#auth-stages)。
+
 ### <a id="network-state"></a>设备、接口与客户端状态
 
 OpenWrt 没有一个天然完整的“所有设备”列表。接口状态、地址租约、二层邻居、无线关联和经网关流量来自不同子系统，应按用途组合：
@@ -306,15 +310,77 @@ ip neigh show
 
 网关和独立 AP 各自能看到哪些字段，见 [整网设备可见性与统计](external-wifi-access.md#dashboard)；持续采集和历史保存见 [网络日志与监控](#link-dashboard)。
 
-## <a id="link-measurement"></a>无线链路测量与排查
+## <a id="wifi-uplink"></a>外部 Wi-Fi 上联配置
 
-无线指标的含义和漫游机制见 [理解无线链路](external-wifi-access.md#radio-metrics)。本节使用 OpenWrt 的状态接口和命令，沿实际数据路径定位无线、内部网络和公共出口的瓶颈。
+本节把[外部 Wi-Fi 接入本地网络](external-wifi-access.md)的数据路径落实为OpenWrt配置。上游关联、NAT、桥接、Portal和Eduroam的通用原理以external文档为准；这里仅记录管理路径、UCI对象、状态确认和回退流程。
 
-### 建立可比较的测试条件
+### 管理路径与配置备份
 
-测量目标是沿实际数据路径逐层缩小瓶颈范围，而不是先假定网络属于校园、企业或公共热点。先区分无线第一跳、同一管理域内的服务、公共互联网和测速服务器，再根据现场拓扑选择具体目标。一次只改变一个变量，并保留相同设备、认证、目标和样本大小。
+配置前始终保留一条不会随上游无线切换而消失的管理路径。最稳妥的是电脑直接连接OpenWrt LAN，确认管理地址和SSH可用，再保存配置备份。
 
-### 被动状态与主动扫描
+开始前确认：
+
+- LAN与上游网络不使用同一子网；
+- 当前配置和已知可用上游可以恢复；
+- 电脑不会因默认路由切换而失去管理路径；
+- 无线切换期间，下游短暂断网是预期现象。
+
+测试新的SSID、频段、企业认证或BSSID时，不要直接覆盖唯一可用配置。可以保留旧`wifi-iface`并暂时禁用，验证新条目后再提交；失败时使用`uci revert wireless`或恢复备份。
+
+### station、WWAN 与防火墙
+
+OpenWrt需要同时完成无线、网络和防火墙三层配置：
+
+| 配置层 | 必要关系 |
+|---|---|
+| 无线 | `wifi-iface`使用`mode='sta'`，绑定`network='wwan'` |
+| 网络 | `network.wwan`使用DHCP或上游要求的协议 |
+| 防火墙 | `wwan`属于启用masquerading的WAN区，允许LAN转发到WAN |
+
+在LuCI中，对应路径是 **Network → Wireless → Scan → Join Network**，为station创建或选择`wwan`，再确认它位于WAN防火墙区域。保存前检查LAN与上游子网不冲突。
+
+完成后并列确认无线、地址和路由：
+
+```sh
+ubus call network.wireless status
+ubus call network.interface.wwan status
+ip route
+```
+
+WWAN取得地址只证明关联和DHCP成功；Portal或企业认证仍要分别验证。
+
+### Portal 与企业认证的 OpenWrt 配置
+
+开放Portal网络通常不需要在`wifi-iface`保存账号。station完成开放关联和DHCP后，由下游浏览器通过目标网络自己的HTTP重定向进入Portal；一次认证能否供NAT后终端共享必须现场测试。
+
+WPA2-Enterprise需要完整wpad、EAP字段和服务器证书约束。替换包前按[无线配置与wpad](#wireless-wpad)模拟事务；配置成功后同时检查：
+
+```sh
+logread | grep -E 'wpa_supplicant|EAP|CTRL-EVENT'
+ubus call network.interface.wwan status
+```
+
+日志中的`CTRL-EVENT-CONNECTED`或EAP success不能替代地址和公网测试；同样，拿到DHCP地址也不能证明服务器身份已经正确验证。
+
+### 下游 AP 与重启验收
+
+OpenWrt LAN应使用与上游不同的子网并运行DHCP。下游设备切到AP模式后，终端应直接取得OpenWrt LAN地址；若仍获得下游设备自己的网段，说明第二层路由或DHCP尚未关闭。
+
+最终配置应经过：
+
+1. `wifi reload`后自动重连；
+2. 完整重启后自动完成关联、EAP/Portal和DHCP；
+3. 下游终端重新取得地址、DNS和默认网关；
+4. 从下游Wi-Fi访问OpenWrt管理地址和公网；
+5. 使用与业务时长相称的连续延迟、丢包和下载测试。
+
+厂商Mesh、无线回程和无预埋网线时的拓扑见[本地无线覆盖与Mesh](external-wifi-access.md#local-coverage)。
+
+## <a id="link-measurement"></a>OpenWrt 链路诊断
+
+无线指标、A/B条件和分层测试方法见[无线链路与漫游](external-wifi-access.md#radio-metrics)和[链路测量与验证](external-wifi-access.md#measurement)。本节只说明如何使用OpenWrt状态接口和命令执行这些测试。
+
+### 无线状态与被动采样
 
 先读取不改变关联的状态：
 
@@ -329,11 +395,23 @@ iwinfo <station-iface> info
 
 这些命令分别给出地址、路由、SSID/BSSID、频率、信号、MCS/NSS、重传和噪声。连续采样时，从 `/sys/class/net/<station-iface>/statistics/{rx,tx}_bytes` 读取相邻差值，换算当前接口流量。
 
-主动扫描会占用无线电资源并增加延迟，具体影响依驱动而异。业务运行时默认不扫描当前关联的 radio；若有独立闲置 radio，只扫描闲置 radio，并设置硬超时。扫描结果只表示是否听到 beacon（AP 周期广播帧）以及其中的 SSID/BSSID/信道，不能证明双向关联、DHCP 或吞吐可用。
+### 主动扫描与任务互斥
 
-### 事件、当前状态与时间序列
+主动扫描会占用无线电资源并增加延迟，具体影响依驱动而异。业务运行时默认不扫描当前关联的radio；若有独立闲置radio，只扫描闲置radio，并设置硬超时和缓存。
 
-排障时要区分几类不会自动互相替代的数据：
+链路面板、延迟精测和NDT7也应互斥：
+
+- 活动radio不做周期扫描；
+- 闲置radio使用较长扫描间隔；
+- NDT7运行时暂停其他主动任务，必要时降低面板轮询；
+- 任务结束或失败后恢复被动采集；
+- 所有后台任务使用进程锁和总时限。
+
+扫描卡住时只终止对应的具体进程并重新检查无线状态；不要用无范围的进程名杀法，也不要直接重载配置掩盖原因。扫描结果的通用语义见[扫描、关联与双向链路](external-wifi-access.md#association-testing)。
+
+### 事件日志与周期采样
+
+OpenWrt的事件日志、当前状态和周期采样不会自动互相替代：
 
 | 数据类型 | 回答的问题 | 常见边界 |
 |---|---|---|
@@ -344,29 +422,25 @@ iwinfo <station-iface> info
 
 OpenWrt 的具体日志命令、历史边界和远程保存方法见 [网络日志与监控](#link-dashboard)。
 
-### 分层延迟、抖动与丢包
+### 分层延迟与内容下载
 
-按路径逐层选择目标：
+目标层级及各自回答的问题见[分层延迟、下载与基准测试](external-wifi-access.md#layered-testing)。OpenWrt上先从当前路由读取WWAN网关，不能硬编码旧DHCP结果：
 
-| 层次 | 目标 | 回答的问题 |
-|---|---|---|
-| 无线第一跳 | WWAN 默认网关 | 无线一跳是否丢包或抖动 |
-| 内部网络 | 组织内部稳定服务 | 接入层和内部路由是否正常 |
-| 公共互联网 | 稳定公共 IP | 完整上网路径是否正常 |
+```sh
+ip -4 route show default
+ip -6 route show default
+```
 
-第一跳地址应从当前路由读取，不能硬编码旧 DHCP 网关。分别测试小包和接近 MTU 的大包，并记录丢包、最小/平均/最大延迟和样本时段。BusyBox `ping` 的参数能力随构建变化，先看本机帮助，不假设支持小数间隔。
+分别对第一跳、内部目标和公共目标测试小包及接近MTU的大包。BusyBox `ping` 的参数能力随构建变化，先查看本机帮助，不假设支持小数间隔：
 
-### 分层内容下载
+```sh
+ping -c 30 <wwan-gateway>
+ping -c 30 -s 1400 <wwan-gateway>
+ping -c 30 <internal-target>
+ping -c 30 <public-target>
+```
 
-ping 能观察时延和丢包，却不能回答持续传输容量在哪一层下降；NDT7 又会直接测完整公网路径，无法单独定位内部接入。为此可以在路径上选择由近到远的内容源：
-
-| 内容源 | 例子 | 主要排查范围 |
-|---|---|---|
-| 本地 LAN | 同一局域网内的 HTTP server | 终端、网线、下游 AP 与 LAN |
-| 同一管理域 | 运营方、学校或企业内部镜像 | 无线接入、认证后网络和内部路由 |
-| 公共互联网 | 外部镜像或对象存储 | 公共出口与外部路径 |
-
-不是每个现场都有内部镜像；缺少某一层时就跳过，但要明确剩余测试无法区分哪些路径。选择目标时尽量使用大小相同或同源的静态文件，用 HTTP Range（只下载指定字节段）固定样本长度，并在相近时段连续测试：
+持续下载使用大小相同或同源的静态文件和HTTP Range固定样本长度：
 
 ```sh
 curl --interface <lan-address> \
@@ -376,15 +450,11 @@ curl --interface <lan-address> \
   http://<internal-host>/<large-file>
 ```
 
-其余层次使用相同 Range、文件大小和协议。若 LAN 内容已经慢，先处理本地链路；LAN 快而内部服务慢时，瓶颈进入无线或接入层；内部快、公共目标慢时，再检查公共出口和外部路径。
-
-校园网只是这套方法的一个特例：校内镜像充当“同一管理域”目标，校外镜像充当“公共互联网”目标。企业网可以换成内网制品库与公共镜像，酒店或公共热点若没有内部服务，就只能比较第一跳、公共目标和 NDT7。
+其余层次保持相同Range、文件大小和协议。下载期间每秒读取station的`rx_bytes`并同步保存RSSI、MCS和重传增量，避免总平均速度掩盖掉线。
 
 运行 mihomo fake-IP（DNS 返回占位地址）或 TUN（虚拟网卡隧道）的环境，不能用普通 53 端口查询判断真实地址。先用 DoH（DNS over HTTPS，通过 HTTPS 查询 DNS）获取真实地址，或使用已核验 IP 配合 `curl --resolve`；完整 DNS 流向见 [Mihomo / Clash](mihomo.md)。
 
-总平均速度会掩盖掉线和令牌桶形状。下载期间每秒读取 station 的 `rx_bytes`，把差值画成时间序列：无线不稳通常伴随波动、重传和 RSSI/MCS 变化；平坦贴近固定值才值得继续验证策略限速。
-
-### M-Lab NDT7 基准测试
+### NDT7 与 A/B 执行
 
 [M-Lab NDT](https://www.measurementlab.net/tests/ndt/)是主动的大流量容量测试。NDT7 使用一条加密测试连接测量应用层有效吞吐，并报告下载、上传、负载延迟和 TCP 重传相关指标。
 
@@ -403,18 +473,7 @@ NDT7 会主动占满链路，不能当作“实时流量”持续运行。适合
 
 NDT7 的 loaded latency（负载延迟）是测速占满链路时的延迟，不能替代空闲公网 RTT（Round-Trip Time，往返时延）。高带宽链路一次 NDT7 会传输大量数据，因此默认只按需运行。
 
-### 频段、位置、SSID 与 BSSID 的 A/B 测试
-
-A/B 测试每轮只改变一个变量：
-
-- 2.4 GHz 与 5 GHz；
-- 室内与窗边/室外；
-- 不同上游 SSID；
-- 自动 BSSID 与固定 BSSID；
-- VHT/HE 与 HT20；
-- 普通路由器与定向 CPE。
-
-每轮至少记录 signal、noise、SNR、信道宽度、NSS、MCS、重传增量、第一跳丢包、内部下载、外部下载和 NDT7。先检查是否取得 DHCP 和通过认证，再运行吞吐测试。
+在OpenWrt上执行[可比较的A/B条件](external-wifi-access.md#ab-conditions)时，每轮至少保存signal、noise、SNR、信道宽度、NSS、MCS、重传增量、第一跳丢包、内部下载、外部下载和NDT7。先检查关联、EAP/Portal和DHCP，再运行吞吐测试。
 
 ## <a id="link-dashboard"></a>网络日志与监控
 
@@ -527,6 +586,8 @@ http://<openwrt-lan-ip>:<dashboard-port>/
 
 下游设备仍处于路由模式时，双重 NAT 和防火墙可能阻止访问上一级 OpenWrt；切为 AP 模式后，终端与 OpenWrt 位于同一 LAN，访问最直接。需要从 LAN 之外访问时，可以另建受控代理或隧道。Dashboard 可能暴露 SSID、BSSID、内网地址和链路状态，默认应绑定管理 LAN 或指定接口，并用防火墙限制访问；不能把无认证的 `0.0.0.0` 监听作为通用默认值。
 
+本次校园案例曾为调试启动一个无认证、监听`0.0.0.0:3080`的临时Node服务。它只适合受控短测，结束后应停止；持久面板应迁到OpenWrt本机或受控监控主机，并限制到管理LAN。
+
 ### 链路面板实时数据来源
 
 状态接口在 OpenWrt 本机按需读取：
@@ -541,19 +602,6 @@ http://<openwrt-lan-ip>:<dashboard-port>/
 | NDT7 | 用户手动触发的主动基准 |
 
 这些是实时查询，不是从 `logread` 回放出来的历史。MCS、NSS 和重传等现成 exporter 未覆盖的字段应由面板状态接口直接读取，或转换为 textfile 指标。字段缺失或状态接口超时时，前端应显示不可用，不用 `0` 伪装测量结果。
-
-### 主动扫描与测试互斥
-
-链路面板和长期采集使用不同频率：浏览器打开期间可以较快刷新被动状态，外部时序库没有必要同步写入每一帧。主动任务遵循：
-
-- 活动 radio 不做周期扫描；
-- 闲置 radio 扫描使用较长间隔、硬超时和缓存；
-- 延迟精测与 NDT7 互斥；
-- NDT7 运行时暂停其他主动任务，必要时降低面板轮询；
-- 任务结束或失败后自动恢复被动采集；
-- 所有后台任务有进程锁和总时限。
-
-扫描接口卡住时，应终止具体进程并重新检查无线运行态；不要用不带范围的进程名杀法，也不要直接重载配置掩盖原因。
 
 ### 陈旧状态与数据缺口
 
@@ -647,6 +695,14 @@ ubiformat <未使用的-mtd-分区> -y -f /tmp/<临时-openwrt-镜像.ubi>
 
 因此正式安装后，不能只改一个启动槽变量就完整回到原厂系统。恢复依赖这台机器自己的备份，以及 AX3000T 设备页记录的 TFTP 或 UART 路径；恢复地址、文件名和分区参数不能从其他小米型号推断。
 
+### 原厂固件的 Mesh 能力
+
+小米原厂Mesh属于厂商固件能力，刷入OpenWrt的AX3000T不能直接加入这套专有Mesh。需要把AX3000T作为BE3600等小米路由器的Mesh节点时，必须先按本机备份和设备专属流程恢复原厂系统，再恢复出厂设置并在主节点附近完成配对。
+
+恢复原厂会失去OpenWrt上的完整wpad、PBR、sing-box/Mihomo、状态接口和自定义监控能力。Mesh与路由器级透明代理并非只能二选一：可以让AX3000T恢复原厂参与Mesh，同时在CPE和Mesh主节点之间增加一台双网口OpenWrt网关；也可以让支持WireGuard的上游CPE承担路由型VPN。通用角色组合见[网关、代理与Mesh的角色组合](external-wifi-access.md#gateway-mesh-proxy)。
+
+同一厂商的不同代际路由器是否支持混合Mesh仍取决于具体地区版和固件。BE3600与AX3000T的组合应以实际配对为准，不能仅由两台设备各自写有“支持Mesh”推导兼容。
+
 ### 安装后的功能验收
 
 本次设备为 RD03、原厂固件 1.0.64、MT7981 主芯片、MT7531AE 网口交换芯片和 128 MiB NAND 闪存。官方 25.12.5 按保留原厂启动程序的两阶段方式安装后：
@@ -657,8 +713,8 @@ ubiformat <未使用的-mtd-分区> -y -f /tmp/<临时-openwrt-镜像.ubi>
 - 两张无线电、LuCI、SSH 和端口均正常；
 - 已用个人热点完成 5 GHz station → WWAN/NAT → 有线 LAN 的安装阶段验收，并确认重启后自动恢复；
 - 已设置 root 密码并拒绝空密码 SSH；关闭密码认证并只保留公钥登录尚需按[公钥认证与密码认证](#ssh-security)完成；
-- 后续外部 Wi-Fi、企业认证、下游 AP、链路测量和 Dashboard 的实测已移入 [校园无线接入案例](external-wifi-access.md#campus-case)，避免把安装验收与长期网络方案混在一起。
+- 后续外部Wi-Fi、企业认证、下游AP、链路测量、CPE选型和Mesh计划已移入[校园无线接入案例](external-wifi-access.md#campus-case)，避免把安装验收与长期网络方案混在一起。
 
 AX3000T 的公共设备树定义了蓝色和黄色状态灯：启动、failsafe 和升级使用黄色，正常运行使用蓝色，见[状态灯别名](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-common.dtsi#L9-L16)和[GPIO LED 定义](https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/mediatek/dts/mt7981b-xiaomi-mi-router-common.dtsi#L44-L57)。这些是标准 Linux 状态灯，不保证复刻小米原厂的全部动画。
 
-这次安装阶段短测只证明了无线客户端、NAT 和持久重连可用；链路质量与定向 CPE 的判断方法见 [无线链路测量与排查](#link-measurement)和[使用定向 CPE](external-wifi-access.md#cpe)。
+这次安装阶段短测只证明了无线客户端、NAT 和持久重连可用；链路质量与定向 CPE 的判断方法见 [OpenWrt 链路诊断](#link-measurement)和[定向 CPE 的能力与选型](external-wifi-access.md#cpe)。
