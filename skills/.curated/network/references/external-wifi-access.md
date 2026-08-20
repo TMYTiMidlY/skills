@@ -78,7 +78,7 @@ WDS/四地址桥接是在无线帧中保留下游终端身份的透明桥接方�
 | CPE加独立网关 | CPE完成关联和EAP，可桥接或路由 | 独立OpenWrt/x86网关 | 厂商AP/Mesh | 可以同时保留完整透明代理和厂商Mesh，代价是增加设备 |
 | CPE路由加下游路由 | CPE | CPE和下游路由器各一层 | 下游路由器Mesh | 双重NAT；普通网页通常可用，端口映射和P2P更复杂 |
 
-RouterOS 可以把整个 LAN 路由进 WireGuard、OpenVPN 或 IPsec，因此“路由器级代理”如果实际是路由型 VPN，不一定需要 OpenWrt。Mihomo、sing-box、Clash订阅、VLESS/Hysteria2 节点和基于域名的透明分流则需要相应代理核心；Lite5 这类小型 RouterOS CPE不能直接提供这套软件生态。OpenWrt 的 VPN、PBR和透明代理实现见[局域网流量的统一出口](openwrt.md#lan-egress)，Mihomo 的 TUN、DNS和规则边界见[Mihomo / Clash](mihomo.md)。
+RouterOS v7可以把整个LAN路由进WireGuard，RouterOS v6/v7也可使用各版本支持的OpenVPN或IPsec，因此“路由器级代理”如果实际是路由型VPN，不一定需要OpenWrt。Mihomo、sing-box、Clash订阅、VLESS/Hysteria2节点和基于域名的透明分流则需要相应代理核心；Lite5这类小型RouterOS CPE不能直接提供这套软件生态。OpenWrt的VPN、PBR和透明代理实现见[局域网流量的统一出口](openwrt.md#lan-egress)，Mihomo的TUN、DNS和规则边界见[Mihomo / Clash](mihomo.md)。
 
 ### <a id="downstream-ap"></a>下游 AP、双重 NAT 与设备可见性
 
@@ -392,10 +392,12 @@ CPE不是“把无线信号原样变成网线”的无状态转换器。它必�
 |---|---|---|
 | 监控网桥固件 | AP、Client、WDS、信号状态 | 可能没有NAT、DHCP、企业EAP或VPN |
 | WISP/旅行路由固件 | station、NAT、DHCP、防火墙、Portal辅助 | EAP、证书、脚本和恢复能力随型号变化 |
-| RouterOS | station、路由/NAT、DHCP、防火墙、WireGuard、脚本 | 不能直接等同于Mihomo/OpenClash软件生态；许可和无线包影响功能 |
+| RouterOS | station、路由/NAT、DHCP、防火墙、RouterOS v7的WireGuard、脚本 | 不能直接等同于Mihomo/OpenClash软件生态；版本、许可和无线包影响功能 |
 | OpenWrt | station、完整wpad、路由、代理包、状态接口 | 必须有精确设备支持，闪存/RAM还要容纳目标软件 |
 
 RouterOS旧`wireless`包的[安全配置](https://help.mikrotik.com/docs/spaces/ROS/pages/8978446/Wireless+Interface)列出`wpa2-eap`、PEAP、EAP-TTLS/MSCHAPv2以及station使用的用户名和密码字段；新`wifi`包另有自己的EAP与证书选项。购买前应按设备实际无线包核对，而不是只看RouterOS版本号。
+
+WireGuard是[RouterOS v7新增功能](https://help.mikrotik.com/docs/spaces/ROS/pages/115736772/Upgrading+to+v7)。仍运行v6的设备需要先备份并评估升级，再按[WireGuard文档](https://help.mikrotik.com/docs/spaces/ROS/pages/69664792/WireGuard)配置；不能把“硬件可升级到v7”和“当前系统已经具备WireGuard”写成同一状态。
 
 ### <a id="single-pair"></a>单台 station 与成对网桥
 
@@ -458,9 +460,13 @@ CPE更可能改善弱信号、低SNR、高重传和方向性干扰。它不能�
 
 ### <a id="weatherproofing"></a>防护等级、外壳与凝露
 
-原生IP54/IP55/IP65 CPE应按厂商方向安装、关闭接口盖并让接口朝下，通常不需要再放进密封箱。额外密封箱会增加日晒升温和凝露风险，也可能影响天线方向图。
+不少定向CPE本身就是带一体化天线的室外设备。例如[SXTsq Lite5](https://mikrotik.com/product/RBSXTsq5nD)官方称其为weatherproof outdoor device；其他型号可能标为IP54、IP55或IP65。防护能力必须按精确型号核对，不能由“CPE”这个类别推断统一等级。原生室外CPE应按厂商方向安装、关闭接口盖并让接口朝下，通常不需要再放进密封箱；IP54/IP55/IP65也不表示设备可以浸水。[IEC 60529](https://webstore.iec.ch/en/publication/2452)定义的是外壳在规定试验条件下的防护等级。
 
 把普通室内路由器临时放到室外时，才需要单独的非金属户外箱。PC或ASA常用于耐候外壳；金属箱会屏蔽无线。箱体还要处理遮阳、透气或排水、线缆格兰头和内部散热，不能只靠“完全密封”解决问题。长期方案仍应优先使用原生室外CPE。
+
+外壳对无线的影响取决于材料、厚度、频率、含水状态，以及它与天线的相对位置。金属会强烈反射和屏蔽无线；薄而干燥的非金属外壳通常影响较小，但“塑料”或“黑色”本身不能保证射频透明，紧贴一体化天线的箱体还可能改变方向图。开口PE护管只包住CPE下方的网线、没有遮住天线正面时，信号影响通常不是首要变量；把整台定向CPE装进额外防水箱则需要在同一位置比较安装前后的RSSI、SNR、重传和吞吐。
+
+> [ITU-R P.2040-4](https://www.itu.int/rec/R-REC-P.2040-4-202509-I/en)汇总建筑材料的电磁参数和传输损耗，[NISTIR 6055](https://doi.org/10.6028/NIST.IR.6055)还在0.5–2GHz和3–8GHz测量了不同厚度及含水状态的材料。两者共同说明外壳损耗必须结合材料、结构、频率和受潮状态判断，不能给所有塑料箱套用一个固定值。
 
 ### <a id="poe"></a>主动 PoE、被动 PoE 与供电附件
 
@@ -473,13 +479,24 @@ PoE只是“数据和直流电共用网线”的总称，不同制式不能混�
 
 PoE injector（注入器/合路器）把电源加入网线，通常有LAN/DATA、PoE和DC/AC输入；splitter（分离器）在设备端把PoE拆成独立数据和DC插头。商家可能把两者都称作“PoE分离器”，应根据端口和数据方向判断。
 
-电压必须落在设备输入范围内；电源标称电流是可提供的上限，设备只按负载取用。24V设备使用0.5A电源替代0.38A电源通常没有问题，前提是电压、极性、插头和PoE引脚一致。
+优先使用设备随附或厂商认可的电源和PoE注入器。替代电源不能只比较电压和额定电流，还要同时核对稳压输出、极性、Passive PoE引脚、连接器、隔离与安全认证以及持续功率；更高的电流额定值只表示电源可提供的上限，不单独证明兼容。
 
 Omada [POE170S规格](https://www.omadanetworks.com/us/business-networking/omada-accessory-poe-adapter/poe170s/#specifications)明确说明它是最高60W的802.3af/at/bt主动PoE，并且不兼容Passive PoE及其他非标准设备。因此它不能直接替代Lite5或TP-Link监控网桥附带的24V被动PoE注入器。
 
-### <a id="outdoor-cable"></a>室内 PVC、室外 PE 与扁平网线
+### <a id="outdoor-cable"></a>网线外皮、开口护管与穿窗段
 
-Cat5e/Cat6描述传输性能，不代表外皮耐候。白色PVC跳线适合室内；黑色PE或明确标注Outdoor/UV Resistant的护套更适合长期日晒。室外只有约0.5–1米、设备功率较低时，抗UV、8芯导通、接头完整和不被窗框剪伤比“必须纯铜”更重要；长距离PoE才需要重点核对AWG、导体电阻和铜包铝压降。
+Cat5e/Cat6描述传输性能，不代表外皮耐候。白色PVC跳线适合室内；完好外皮不会因为普通雨淋立即失效，但长期日晒、冷热循环和机械摩擦仍会使不具备户外等级的材料老化。黑色PE或明确标注Outdoor/UV Resistant的护套更适合长期日晒；颜色本身不能替代抗UV规格。室外只有约0.5–1米、设备功率较低时，抗UV、8芯导通、接头完整和不被窗框剪伤比“必须纯铜”更重要；长距离PoE才需要重点核对AWG、导体电阻和铜包铝压降。
+
+已经铺好的完整网线不必为了短距离室外暴露段重新压接。可以购买不含网线的黑色PE抗UV开口波纹管，从侧面掰开后把现有网线塞入，主要增加防晒和轻度机械保护；开口护管本身不防水、不提高网线的户外等级，也不能修复已经破损的外皮。内径和长度应按实际线径、弯曲路径和设备接口空间选择，不把某个案例尺寸写成通用规格。
+
+安装顺序是：
+
+1. 穿过窗缝的位置仍使用能安全关窗的扁平线、已有孔洞或规范开孔；更粗的波纹管从窗外受夹点之后才开始。
+2. 掰开护管，把现有网线从侧面压入；让开口朝下或朝侧面，避免形成向上积水的槽。
+3. 让网线和护管一起在CPE接口前形成一个小滴水弯。护管默认在原厂Ethernet门外终止，只有网线按设备原设计穿过开口；任何做法都必须保证门能完整关闭、排水方向正确且不违反线缆弯曲半径。
+4. 用黑色且明确标注抗UV的扎带承托户外段，在护管两端用少量自融防水胶带或自粘橡胶带固定开口；胶带只固定兼容的过渡处，不把开口护管伪装成密封管。扎带只固定线缆，不承担CPE重量，也不要勒紧网线。
+
+普通透明胶带没有长期户外固定所需的耐候性，日晒后容易失去黏性或脆裂。不要用胶带或护管包裹整台CPE：原生室外CPE应依靠自身外壳和接口盖防护，包裹会妨碍散热、排水、检查和维护。护管也不能解决关窗夹线问题；加装后反而更粗，因此只套窗外那一段。
 
 所谓“过窗网线”没有统一标准，常见商品只是更薄的8芯扁平跳线。使用现有扁平线前应：
 
@@ -489,21 +506,25 @@ Cat5e/Cat6描述传输性能，不代表外皮耐候。白色PVC跳线适合室�
 4. 关窗状态再次测试导通和网络；
 5. 接入被动PoE后观察接头和受压处是否异常发热。
 
-Lite5自身只有百兆网口，因此千兆测试应在其他两台千兆设备之间完成。扁平PVC线穿出窗外后可以在室外段套抗UV开口护套，但不要把更粗的护套夹在窗缝中。
+Lite5自身只有百兆网口，因此千兆测试应在其他两台千兆设备之间完成。扁平PVC线穿出窗外后可以按上面的方式在室外段套抗UV开口护管，但不要把更粗的护管夹在窗缝中。
 
 ### <a id="drip-loop"></a>滴水弯、接口朝向与接头防水
 
 滴水弯不是额外管件，而是让网线在进入设备前先向下留出一个U形最低点。雨水沿线缆流到最低点后滴落，不再顺势进入接口。
 
-![窗外CPE网线滴水弯示意图：网线从接口向下形成U形最低点，雨水在最低点滴落；错误示例为网线直接向上进入接口](../assets/cpe-drip-loop.png)
+![窗外CPE网线滴水弯示意图：开口护管停在窗外和设备Ethernet门外，网线从接口向下形成最低点，雨水在最低点滴落；错误示例为网线直接向上进入接口](../assets/cpe-drip-loop.svg)
 
-设备接口应朝下，滴水弯保留足够松弛但不形成受风摆动的大环。完整网线优于室外中间接头；必须转接时使用与接口匹配的户外防水直通件，并把接头放在不积水的位置。普通透明胶带不适合作为长期户外密封；需要包覆时使用自融防水胶带并保留可检查性。
+> 该图为本仓绘制的SVG结构示意，不按比例，只表示护管边界和排水路径，不代表完整安装。滴水弯没有统一尺寸；实际只需形成明确低点，同时满足线缆弯曲半径、不拉扯接口且不形成受风摆动的大环。
+
+设备接口应朝下；使用开口护管时，网线与护管一起形成滴水弯，但进入设备密封结构的部分仍按厂商说明处理。完整网线优于室外中间接头；必须转接时使用与接口匹配的户外防水直通件，并把接头放在不积水的位置。普通透明胶带不适合作为长期户外密封；需要包覆时使用自融防水胶带并保留可检查性。
 
 ### <a id="mounting"></a>支架、抱箍与安全绳
 
-CPE通常通过抱箍固定到短立杆。窗外安装可以使用可靠的窗台夹式支架或固定到实心结构的壁装短杆；不能夹玻璃、纱窗或排水孔，也不应依赖吸盘、双面胶和普通白色扎带长期承重。
+CPE通常通过抱箍固定到短立杆。窗边方案只能使用有明确额定载荷、抗风条件和防脱设计，并获建筑管理方及当地规范允许的支架；不能夹玻璃、纱窗或排水孔，也不应依赖吸盘、双面胶和普通白色扎带长期承重。
 
 正面朝向目标AP，接口朝下，并与大面积金属窗框、栏杆和空调外机保持适当距离。高空安装应使用独立安全绳连接到建筑结构，即使主支架失效也不会坠落。外墙存在保温层、瓷砖或未知结构时，应由熟悉外墙锚固的人员施工。
+
+> [SXTsq系列安装说明](https://help.mikrotik.com/docs/spaces/UM/pages/14221556/SXTsq-series)要求专业安装、遵守当地及国家电气规范、使用正确安装件，并让设备与人体保持至少20cm距离；设备接地点应连接到塔体或建筑的正规接地系统，以降低ESD和雷击损坏风险。不要把栏杆、暖气管或水管当作临时接地。
 
 ## <a id="local-coverage"></a>本地无线覆盖与 Mesh
 
@@ -525,13 +546,13 @@ Mesh卫星应放在仍能稳定接收主节点的位置，而不是直接放进�
 
 | 组合 | Eduroam认证 | NAT/默认网关 | 代理能力 | Mesh |
 |---|---|---|---|---|
-| Lite5路由 | Lite5 | Lite5 | RouterOS可做WireGuard等路由型VPN；不能直接运行Mihomo订阅生态 | BE3600可作为AP/Mesh主节点，需实测AP模式组网 |
+| Lite5路由 | Lite5 | Lite5 | RouterOS v7可做WireGuard等路由型VPN；不能直接运行Mihomo订阅生态 | BE3600可作为AP/Mesh主节点，需实测AP模式组网 |
 | Lite5伪桥接 | Lite5 | BE3600 | 取决于BE3600原厂固件 | BE3600路由模式做Mesh主节点 |
 | Lite5伪桥接加OpenWrt网关 | Lite5 | 独立OpenWrt设备 | 可运行PBR、sing-box或Mihomo透明代理 | BE3600和原厂AX3000T继续做厂商Mesh |
 | Lite5路由加BE3600路由 | Lite5 | 两台设备各一层NAT | 全局VPN可在Lite5；BE3600后方在Lite5看来通常只有一个WAN身份 | Mesh容易保留，但形成双重NAT |
 | AX3000T OpenWrt网关 | Lite5或AX3000T，取决于上游方式 | AX3000T | 完整OpenWrt代理生态 | AX3000T不能同时作为小米原厂Mesh节点 |
 
-因此Mesh与路由器级代理不是天然二选一。若代理服务端提供WireGuard，Lite5本身可作为全LAN VPN网关；若必须使用Mihomo、VLESS、Hysteria2或复杂域名分流，可以在CPE和Mesh之间增加一台双网口OpenWrt网关。设备可以都放在窗边，房间之间仍使用无线回程。
+因此Mesh与路由器级代理不是天然二选一。若Lite5运行RouterOS v7且代理服务端提供WireGuard，它可以作为全LAN VPN网关；若必须使用Mihomo、VLESS、Hysteria2或复杂域名分流，可以在CPE和Mesh之间增加一台双网口OpenWrt网关。设备可以都放在窗边，房间之间仍使用无线回程。
 
 ## <a id="campus-case"></a>校园无线接入案例
 
@@ -605,18 +626,22 @@ eduroam 运行期间，日志出现 AP发出的 WNM `Disassociation Imminent`。
 | [TP-Link TL-S5G-5KM](https://www.tp-linkshop.com.cn/Products/Details/1820) | 802.11ac、14dBi、双千兆 | 监控网桥固件，未提供PEAP或官方OpenWrt | 12–24V被动PoE、IP55 | 官方商城双机套装曾为¥679；增益高于CPE501，仍不满足Eduroam |
 | [TP-Link CPE510](https://www.tp-link.com/us/business-networking/pharos-cpe/cpe510/) | 802.11n、13dBi、百兆 | 原厂未见PEAP；v1/v2/v3有官方OpenWrt，但8MiB Flash限制完整代理软件 | 24V被动PoE、IPX5 | 新货公开页面约¥600以上；只有低价二手才有成本优势 |
 | [TP-Link CPE710](https://www.tp-link.com/us/business-networking/pharos-cpe/cpe710/) | 802.11ac、23dBi、千兆、窄波束 | 原厂未见PEAP；v1/v2有官方OpenWrt | 24V被动PoE、IP65 | 国内精确SKU和实时价格未可靠核实；射频余量高，成本也高 |
-| [MikroTik SXTsq Lite5](https://mikrotik.com/product/RBSXTsq5nD) `RBSXTsq5nD` | 802.11n、16dBi、百兆 | RouterOS旧`wireless`支持PEAP/MSCHAPv2、NAT、DHCP和WireGuard；无官方OpenWrt | 10–30V被动PoE、IP54 | 用户以¥400下单国际版；本案例的成本型选择 |
+| [MikroTik SXTsq Lite5](https://mikrotik.com/product/RBSXTsq5nD) `RBSXTsq5nD` | 802.11n、16dBi、百兆 | RouterOS旧`wireless`支持PEAP/MSCHAPv2、NAT和DHCP；RouterOS v7支持WireGuard；无官方OpenWrt | 10–30V被动PoE、IP54 | 用户以¥400下单国际版；本案例的成本型选择 |
 | [MikroTik SXTsq 5 ac](https://mikrotik.com/product/sxtsq_5_ac) `RBSXTsqG-5acD` | 802.11ac、16dBi、千兆 | RouterOS；有官方OpenWrt，256MiB RAM与16MiB Flash | 10–28V被动PoE、IP55 | 官方标为停产型号；OpenWrt可用，但完整代理软件仍受Flash限制 |
 | [MikroTik SXTsq 5 ax](https://mikrotik.com/product/sxtsq_5ax) `SXTsq-5axD` | 802.11ax、16dBi、千兆 | RouterOS新`wifi`包、Level 4；当前Firmware Selector无官方OpenWrt | 12–28V被动PoE、IP55 | 官方建议价$65；新无线栈与存储更充裕，国内价格高于Lite5 |
 | [MikroTik LHG 5](https://mikrotik.com/product/RBLHG-5nD) `RBLHG-5nD` | 802.11n、24.5dBi、百兆、窄波束 | RouterOS旧`wireless`支持PEAP/MSCHAPv2 | 11–30V被动PoE、IP54 | 射频增益高，但体积、对准和安装成本更高 |
 
 > MikroTik型号的频率还要区分US锁频版和International版。Lite5国际版官方频率范围为5150–5875MHz，具体可用信道仍受国家配置和法规限制。OpenWrt支持状态是2026-08-18的[Firmware Selector](https://firmware-selector.openwrt.org/)快照，应在购买或刷机前重新核对。
 
+> 来源口径：型号列链接的实时产品页用于进入当前规格；OpenWrt 25.12.5支持状态按固定版本的[ath79 profiles](https://downloads.openwrt.org/releases/25.12.5/targets/ath79/generic/profiles.json)和[ipq40xx MikroTik profiles](https://downloads.openwrt.org/releases/25.12.5/targets/ipq40xx/mikrotik/profiles.json)核对；RouterOS EAP与WireGuard分别以上文链接的官方手册为准。公开价格页面没有全部归档，用户成交价也只能标为用户提供，因此价格只表示本次选购上下文，不是可复核的长期规格。
+
 ### SXTsq Lite5 的供电与计划拓扑
 
-已下单设备为`RBSXTsq5nD`，用户提供的成交价为¥400。商家清单写“百兆PoE分离器、24V 0.5A 3C电源、软管卡箍、原装主机”；从数据方向看，这个所谓“分离器”应是把24V加入网线的被动PoE注入器。MikroTik官方包装使用24V 0.38A适配器、PoE injector和金属抱箍；0.5A只表示电源可提供更高电流上限。
+已下单设备为`RBSXTsq5nD`，用户提供的成交价为¥400。商家清单写“百兆PoE分离器、24V 0.5A 3C电源、软管卡箍、原装主机”；从数据方向看，这个所谓“分离器”应是把24V加入网线的被动PoE注入器。MikroTik官方包装使用24V 0.38A适配器、PoE injector和金属抱箍；商家电源标为0.5A只说明电流上限更高，不能单独证明其稳压、极性、PoE引脚、连接器和安全认证与原装附件等价。到货后优先使用原装或厂商认可附件，并逐项核对实物标签。
 
 商家和官方清单都没有列出以太网线，因此PoE注入器到Lite5、以及注入器到下游设备的网线需要另备。Lite5的百兆网口把公网路径上限限制在约100Mbps量级；相对于本案例现有十几Mbps以内的上游，它不是当前首要瓶颈。
+
+> 本案例只保护现有白色网线的窗外约半米：可搜索`PE抗UV开口波纹管 10mm 网线保护套`，选择黑色PE、明确抗UV、开口式或剖开式，按实测线径在10mm或12mm内径中选择，购买1米即可覆盖暴露段和小滴水弯。护管从窗外受夹点之后开始，在Lite5的Ethernet门外终止；两端用少量自融防水胶带或自粘橡胶带固定，并用黑色抗UV扎带承托。它不含网线、不防水，也不能解决关窗夹线。
 
 Lite5只有Ethernet/PoE-IN口，没有独立DC输入。室内部署为：
 
@@ -630,25 +655,25 @@ Lite5只有Ethernet/PoE-IN口，没有独立DC输入。室内部署为：
 
 | 拓扑 | 一层NAT位置 | 代理能力 | 当前未验证项 |
 |---|---|---|---|
-| Lite5路由 → BE3600 AP/Mesh → AX3000T原厂节点 | Lite5 | RouterOS WireGuard等路由型VPN | BE3600在AP模式下能否与AX3000T组成无线Mesh |
+| Lite5路由 → BE3600 AP/Mesh → AX3000T原厂节点 | Lite5 | RouterOS v7的WireGuard等路由型VPN | BE3600在AP模式下能否与AX3000T组成无线Mesh |
 | Lite5 `station-pseudobridge-clone` → BE3600路由/Mesh | BE3600 | 受BE3600原厂固件限制 | Eduroam后的伪桥接、DHCP、IPv6与Lite5管理路径 |
 | Lite5伪桥接 → 双网口OpenWrt代理网关 → BE3600 AP/Mesh | OpenWrt网关 | Mihomo、sing-box、PBR和完整透明代理 | 增加设备；BE3600 AP模式Mesh仍需验证 |
 
-Lite5本身不能直接运行Mihomo、OpenClash或Clash订阅生态。若代理服务端提供WireGuard，Lite5可作为全LAN VPN网关；若必须使用VLESS、Hysteria2、复杂域名规则或fake-IP，应把OpenWrt代理网关放在CPE和Mesh之间。
+Lite5本身不能直接运行Mihomo、OpenClash或Clash订阅生态。升级并验证RouterOS v7后，若代理服务端提供WireGuard，Lite5可作为全LAN VPN网关；若必须使用VLESS、Hysteria2、复杂域名规则或fake-IP，应把OpenWrt代理网关放在CPE和Mesh之间。
 
 ### CPE 到货后的验收项目
 
 到货后先在室内完成以下检查，再安装到窗外：
 
 1. 核对产品码`RBSXTsq5nD`、International频率范围、RouterOS许可和附件；
-2. 升级到适合该硬件的稳定RouterOS，备份原始配置并确认Netinstall恢复入口；
+2. 记录当前RouterOS版本，先创建备份并导出配置；若从v6升级到v7，再按官方迁移说明执行，并确认Netinstall恢复入口；
 3. 配置WPA2-EAP、PEAP、MSCHAPv2和USTC身份，确认EAP、DHCP、DNS和公网；
 4. 记录是否支持预期的服务器证书处理；不把关闭校验写成安全完成；
-5. 测试普通`station`路由模式的NAT、DHCP、管理地址和WireGuard能力；
+5. 测试普通`station`路由模式的NAT、DHCP和管理地址；需要WireGuard时确认系统已运行RouterOS v7并单独验收；
 6. 若需要BE3600做主路由，再单独测试`station-pseudobridge-clone`；
 7. 在相同安装点比较AX3000T与Lite5的RSSI、SNR、PHY、重传增量、第一跳和持续下载；
 8. 运行至少半小时稳定性测试，记录WNM、能力变化、EAP重连和业务恢复时间；
 9. 确认窗缝扁平线在关窗状态下8芯导通、网络稳定且PoE接头不发热；
-10. 最终安装后检查接口朝下、滴水弯、支架、抱箍和独立安全绳。
+10. 最终安装由合格人员检查接口朝下、Ethernet门闭合、滴水弯、正规接地、20cm人体距离、支架、抱箍和独立安全绳，并确认符合建筑管理要求及当地规范。
 
 定向CPE预计能改善弱SNR、上行档位、重传和方向性干扰，但不能保证消除学校AP的WNM通知或能力广播变化。完成上述A/B之前，不给出成功概率或承诺网速。

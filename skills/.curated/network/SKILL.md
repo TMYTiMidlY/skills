@@ -13,7 +13,7 @@ OpenWrt 的设备支持、首次安装、镜像类型、升级恢复、BusyBox/p
 
 ## 外部 Wi-Fi 接入本地网络
 
-把外部Wi-Fi接入本地网络时，AP/station/网关/CPE的角色组合、路由/桥接/伪桥接、NAT与代理位置、Captive Portal、Eduroam、无线传播与漫游、分层测量、整网设备可见性、定向CPE选型、主动/被动PoE、户外安装、穿窗布线、无线Mesh及校园接入案例见 [references/external-wifi-access.md](references/external-wifi-access.md)。滴水弯示意图位于 [assets/cpe-drip-loop.png](assets/cpe-drip-loop.png)。
+把外部Wi-Fi接入本地网络时，AP/station/网关/CPE的角色组合、路由/桥接/伪桥接、NAT与代理位置、Captive Portal、Eduroam、无线传播与漫游、分层测量、整网设备可见性、定向CPE选型、主动/被动PoE、户外安装、穿窗布线、无线Mesh及校园接入案例见 [references/external-wifi-access.md](references/external-wifi-access.md)。
 
 ## Mihomo / Clash 客户端与泄漏控制
 

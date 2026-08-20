@@ -369,10 +369,11 @@ OpenWrt LAN应使用与上游不同的子网并运行DHCP。下游设备切到AP
 最终配置应经过：
 
 1. `wifi reload`后自动重连；
-2. 完整重启后自动完成关联、EAP/Portal和DHCP；
-3. 下游终端重新取得地址、DNS和默认网关；
-4. 从下游Wi-Fi访问OpenWrt管理地址和公网；
-5. 使用与业务时长相称的连续延迟、丢包和下载测试。
+2. 完整重启后自动恢复关联、需要的EAP和地址获取；
+3. 检查Captive Portal会话是否仍有效；失效时按网络要求由用户重新登录，不把网页认证假定为自动完成；
+4. 下游终端重新取得地址、DNS和默认网关；
+5. 从下游Wi-Fi访问OpenWrt管理地址和公网；
+6. 使用与业务时长相称的连续延迟、丢包和下载测试。
 
 厂商Mesh、无线回程和无预埋网线时的拓扑见[本地无线覆盖与Mesh](external-wifi-access.md#local-coverage)。
 
@@ -424,14 +425,15 @@ OpenWrt 的具体日志命令、历史边界和远程保存方法见 [网络日�
 
 ### 分层延迟与内容下载
 
-目标层级及各自回答的问题见[分层延迟、下载与基准测试](external-wifi-access.md#layered-testing)。OpenWrt上先从当前路由读取WWAN网关，不能硬编码旧DHCP结果：
+目标层级及各自回答的问题见[分层延迟、下载与基准测试](external-wifi-access.md#layered-testing)。先读取WWAN自己的状态，使用其中的`l3_device`和默认路由`nexthop`；不能用全局默认路由代替，因为VPN、PBR或多WAN可能使用其他路由表：
 
 ```sh
-ip -4 route show default
-ip -6 route show default
+ubus call network.interface.wwan status
+ip -4 route show table all dev <wwan-l3-device>
+ip -6 route show table all dev <wwan-l3-device>
 ```
 
-分别对第一跳、内部目标和公共目标测试小包及接近MTU的大包。BusyBox `ping` 的参数能力随构建变化，先查看本机帮助，不假设支持小数间隔：
+从`ubus`结果的`route`数组选择目标为`0.0.0.0/0`或`::/0`的WWAN下一跳；IPv6链路本地网关还要保留对应接口作用域。分别对第一跳、内部目标和公共目标测试小包及接近MTU的大包。BusyBox `ping` 的参数能力随构建变化，先查看本机帮助，不假设支持小数间隔：
 
 ```sh
 ping -c 30 <wwan-gateway>
@@ -699,7 +701,7 @@ ubiformat <未使用的-mtd-分区> -y -f /tmp/<临时-openwrt-镜像.ubi>
 
 小米原厂Mesh属于厂商固件能力，刷入OpenWrt的AX3000T不能直接加入这套专有Mesh。需要把AX3000T作为BE3600等小米路由器的Mesh节点时，必须先按本机备份和设备专属流程恢复原厂系统，再恢复出厂设置并在主节点附近完成配对。
 
-恢复原厂会失去OpenWrt上的完整wpad、PBR、sing-box/Mihomo、状态接口和自定义监控能力。Mesh与路由器级透明代理并非只能二选一：可以让AX3000T恢复原厂参与Mesh，同时在CPE和Mesh主节点之间增加一台双网口OpenWrt网关；也可以让支持WireGuard的上游CPE承担路由型VPN。通用角色组合见[网关、代理与Mesh的角色组合](external-wifi-access.md#gateway-mesh-proxy)。
+恢复原厂会失去OpenWrt上的完整wpad、PBR、sing-box/Mihomo、状态接口和自定义监控能力。Mesh与路由器级透明代理并非只能二选一：可以让AX3000T恢复原厂参与Mesh，同时在CPE和Mesh主节点之间增加一台双网口OpenWrt网关；也可以让运行RouterOS v7并已验证WireGuard的上游CPE承担路由型VPN。通用角色组合见[网关、代理与Mesh的角色组合](external-wifi-access.md#gateway-mesh-proxy)。
 
 同一厂商的不同代际路由器是否支持混合Mesh仍取决于具体地区版和固件。BE3600与AX3000T的组合应以实际配对为准，不能仅由两台设备各自写有“支持Mesh”推导兼容。
 
