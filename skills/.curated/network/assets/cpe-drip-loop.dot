@@ -1,0 +1,264 @@
+graph CPE_DRIP_LOOP {
+    layout=neato;
+    outputorder=edgesfirst;
+    overlap=true;
+    splines=curved;
+    bgcolor="#F8FAFC";
+    pad=0.35;
+    margin=0;
+
+    node [
+        fontname="Noto Sans CJK SC",
+        fontsize=18,
+        fontcolor="#17324D",
+        color="#CBD5E1",
+        penwidth=1.8
+    ];
+    edge [
+        fontname="Noto Sans CJK SC",
+        fontsize=15,
+        fontcolor="#475569",
+        color="#64748B"
+    ];
+
+    badge [
+        pos="145,650!",
+        shape=rect,
+        style="rounded,filled",
+        width=2.3,
+        height=0.62,
+        color="#16A34A",
+        fillcolor="#ECFDF3",
+        fontcolor="#15803D",
+        penwidth=2.0,
+        label="正确安装路径"
+    ];
+
+    indoor [
+        pos="150,410!",
+        shape=rect,
+        style="rounded,filled",
+        width=3.0,
+        height=2.0,
+        color="#94A3B8",
+        fillcolor="#FFFFFF",
+        penwidth=2.0,
+        label="室内设备\n\nPoE 注入器 / 路由器"
+    ];
+
+    room_label [
+        pos="150,555!",
+        shape=plaintext,
+        fontsize=22,
+        fontcolor="#334155",
+        label="室内"
+    ];
+
+    window [
+        pos="350,395!",
+        shape=rect,
+        style=filled,
+        fixedsize=true,
+        width=0.13,
+        height=4.6,
+        color="#475569",
+        fillcolor="#475569",
+        label=""
+    ];
+
+    outside_label [
+        pos="445,650!",
+        shape=plaintext,
+        fontsize=22,
+        fontcolor="#334155",
+        label="室外"
+    ];
+
+    sleeve_start [
+        pos="405,355!",
+        shape=circle,
+        style=filled,
+        fixedsize=true,
+        width=0.18,
+        height=0.18,
+        color="#F59E0B",
+        fillcolor="#F59E0B",
+        label=""
+    ];
+
+    drip [
+        pos="635,125!",
+        shape=circle,
+        style=filled,
+        fixedsize=true,
+        width=0.24,
+        height=0.24,
+        color="#0284C7",
+        fillcolor="#0284C7",
+        label=""
+    ];
+
+    sleeve_end [
+        pos="840,345!",
+        shape=circle,
+        style=filled,
+        fixedsize=true,
+        width=0.18,
+        height=0.18,
+        color="#F59E0B",
+        fillcolor="#F59E0B",
+        label=""
+    ];
+
+    cpe [
+        pos="980,470!",
+        shape=rect,
+        style="rounded,filled",
+        width=3.2,
+        height=2.5,
+        color="#475569",
+        fillcolor="#FFFFFF",
+        penwidth=2.4,
+        fontsize=21,
+        label="定向 CPE\n\n正面朝向目标 AP\n\nEthernet / PoE-in"
+    ];
+
+    ap [
+        pos="1190,470!",
+        shape=ellipse,
+        style=filled,
+        width=1.7,
+        height=0.9,
+        color="#16A34A",
+        fillcolor="#ECFDF3",
+        fontcolor="#15803D",
+        penwidth=2.0,
+        label="目标 AP"
+    ];
+
+    start_note [
+        pos="430,545!",
+        shape=rect,
+        style="rounded,filled",
+        width=2.75,
+        height=1.05,
+        color="#F59E0B",
+        fillcolor="#FFFBEB",
+        fontcolor="#92400E",
+        fontsize=16,
+        label="护管从窗外开始\n不要夹进窗缝"
+    ];
+
+    sleeve_label [
+        pos="610,390!",
+        shape=plaintext,
+        fontsize=17,
+        fontcolor="#1E3A5F",
+        label="黑色 PE 抗 UV 开口护管 + 网线"
+    ];
+
+    drip_note [
+        pos="635,45!",
+        shape=rect,
+        style="rounded,filled",
+        width=2.9,
+        height=0.95,
+        color="#38BDF8",
+        fillcolor="#EFF8FF",
+        fontcolor="#075985",
+        fontsize=16,
+        label="滴水弯最低点\n雨水在这里滴落"
+    ];
+
+    end_note [
+        pos="810,565!",
+        shape=rect,
+        style="rounded,filled",
+        width=3.25,
+        height=1.05,
+        color="#F59E0B",
+        fillcolor="#FFFBEB",
+        fontcolor="#92400E",
+        fontsize=16,
+        label="护管停在设备门外\n只有网线进入原厂开口"
+    ];
+
+    warning [
+        pos="1010,115!",
+        shape=octagon,
+        style=filled,
+        width=3.25,
+        height=1.05,
+        color="#DC2626",
+        fillcolor="#FFF1F2",
+        fontcolor="#B91C1C",
+        penwidth=2.2,
+        fontsize=16,
+        label="错误：线缆向上进入接口\n或把护管夹进窗缝"
+    ];
+
+    rain_left [
+        pos="600,90!",
+        shape=circle,
+        style=filled,
+        fixedsize=true,
+        width=0.10,
+        height=0.10,
+        color="#38BDF8",
+        fillcolor="#38BDF8",
+        label=""
+    ];
+
+    rain_right [
+        pos="670,78!",
+        shape=circle,
+        style=filled,
+        fixedsize=true,
+        width=0.10,
+        height=0.10,
+        color="#38BDF8",
+        fillcolor="#38BDF8",
+        label=""
+    ];
+
+    indoor -- sleeve_start [
+        color="#64748B",
+        penwidth=5.5
+    ];
+
+    sleeve_start -- drip -- sleeve_end [
+        color="#1E3A5F",
+        penwidth=15
+    ];
+
+    sleeve_end -- cpe [
+        color="#64748B",
+        penwidth=5.5
+    ];
+
+    cpe -- ap [
+        color="#16A34A",
+        penwidth=4.0,
+        dir=forward,
+        arrowhead=normal,
+        arrowsize=1.0
+    ];
+
+    start_note -- sleeve_start [
+        color="#D97706",
+        style=dashed,
+        penwidth=1.8
+    ];
+
+    end_note -- sleeve_end [
+        color="#D97706",
+        style=dashed,
+        penwidth=1.8
+    ];
+
+    drip_note -- drip [
+        color="#0284C7",
+        style=dashed,
+        penwidth=1.8
+    ];
+}
