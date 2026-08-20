@@ -397,7 +397,7 @@ CPE不是“把无线信号原样变成网线”的无状态转换器。它必�
 
 RouterOS旧`wireless`包的[安全配置](https://help.mikrotik.com/docs/spaces/ROS/pages/8978446/Wireless+Interface)列出`wpa2-eap`、PEAP、EAP-TTLS/MSCHAPv2以及station使用的用户名和密码字段；新`wifi`包另有自己的EAP与证书选项。购买前应按设备实际无线包核对，而不是只看RouterOS版本号。
 
-WireGuard是[RouterOS v7新增功能](https://help.mikrotik.com/docs/spaces/ROS/pages/115736772/Upgrading+to+v7)。仍运行v6的设备需要先备份并评估升级，再按[WireGuard文档](https://help.mikrotik.com/docs/spaces/ROS/pages/69664792/WireGuard)配置；不能把“硬件可升级到v7”和“当前系统已经具备WireGuard”写成同一状态。
+RouterOS v7提供WireGuard。仍运行v6的设备如需使用WireGuard，应先备份配置并按[官方迁移说明](https://help.mikrotik.com/docs/spaces/ROS/pages/115736772/Upgrading+to+v7)升级到v7，再按[WireGuard文档](https://help.mikrotik.com/docs/spaces/ROS/pages/69664792/WireGuard)完成配置。
 
 ### <a id="single-pair"></a>单台 station 与成对网桥
 
@@ -514,7 +514,7 @@ Lite5自身只有百兆网口，因此千兆测试应在其他两台千兆设备
 
 ![窗外CPE网线滴水弯示意图：开口护管停在窗外和设备Ethernet门外，网线从接口向下形成最低点，雨水在最低点滴落；错误示例为网线直接向上进入接口](../assets/cpe-drip-loop.svg)
 
-> 该图为本仓绘制的SVG结构示意，不按比例，只表示护管边界和排水路径，不代表完整安装。滴水弯没有统一尺寸；实际只需形成明确低点，同时满足线缆弯曲半径、不拉扯接口且不形成受风摆动的大环。
+> 该图由Graphviz 2.43.0根据[DOT源文件](../assets/cpe-drip-loop.dot)生成，不按比例，只表示护管边界和排水路径，不代表完整安装。滴水弯没有统一尺寸；实际只需形成明确低点，同时满足线缆弯曲半径、不拉扯接口且不形成受风摆动的大环。
 
 设备接口应朝下；使用开口护管时，网线与护管一起形成滴水弯，但进入设备密封结构的部分仍按厂商说明处理。完整网线优于室外中间接头；必须转接时使用与接口匹配的户外防水直通件，并把接头放在不积水的位置。普通透明胶带不适合作为长期户外密封；需要包覆时使用自融防水胶带并保留可检查性。
 
