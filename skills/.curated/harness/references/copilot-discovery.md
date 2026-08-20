@@ -507,7 +507,7 @@ issue 报的是 **1.0.18**：从 marketplace / git 装的 plugin 里 `hooks/*.js
     "preToolUse": [
       {
         "type": "command",
-        "bash": "npx -y cc-safety-net --copilot-cli",
+        "bash": "jq -c 'if (.toolArgs | type) == \"object\" then .toolArgs |= tojson else . end' | npx -y cc-safety-net --copilot-cli",
         "cwd": ".",
         "timeoutSec": 15
       }
@@ -515,6 +515,8 @@ issue 报的是 **1.0.18**：从 marketplace / git 装的 plugin 里 `hooks/*.js
   }
 }
 ```
+
+这里的 `jq` 兼容层处理 `toolArgs` 的双形态：Copilot 把它定义成 `unknown`，[copilot-cli#3349](https://github.com/github/copilot-cli/issues/3349) 记录过 JSON 字符串形态，而 Copilot CLI 1.0.81-6 实测会传对象。`cc-safety-net` 2.0.8 的 [Copilot adapter](https://github.com/kenryu42/cc-safety-net/blob/v2.0.8/src/integrations/copilot-cli/hook.ts#L45-L54) 只接受字符串，收到对象时连安全命令也会 fail-closed 成 `Failed to parse toolArgs JSON`；这个过滤器只把对象 `tojson`，已有字符串原样透传，无法解析的输入仍由 Safety Net 拒绝。hook 命令因此依赖 `jq` 在 `PATH` 中可用。
 
 然后 `copilot plugin uninstall copilot-safety-net`（避免误以为 plugin 在保护）。重启 Copilot 后即生效。
 
@@ -531,14 +533,14 @@ issue 报的是 **1.0.18**：从 marketplace / git 装的 plugin 里 `hooks/*.js
   echo '{"toolName":"bash","toolArgs":"{\"command\":\"git reset --hard\"}"}' \
     | npx -y cc-safety-net --copilot-cli
   ```
-  正常会输出 `{"permissionDecision":"deny",...}`。注意输入字段是 `toolName` / `toolArgs`（驼峰），且 `toolArgs` 是**字符串化**的 JSON 不是对象。
+  正常会输出 `{"permissionDecision":"deny",...}`。输入字段是 `toolName` / `toolArgs`（驼峰）；这条命令绕过了上面的 `jq` 兼容层、直接测试 Safety Net 本体，所以有意把 `toolArgs` 写成 JSON 字符串，不能据此假定 Copilot 运行时总会传字符串。
 
 #### 相关 issue / 文档
 
 - 参考官方文档[use-hooks](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-hooks)：Copilot CLI 的 hooks（仓库级 `.github/hooks/`、用户级 `~/.copilot/hooks/`、`settings.json` 的 `hooks` 键）
 - 参考官方文档[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)：用户级 `~/.copilot/hooks/` 与内联 `hooks` 键
 - [coding agent hooks 规范](https://docs.github.com/en/copilot/concepts/agents/coding-agent/about-hooks)：hook 配置 schema（cloud agent 侧）
-- safety-net 主仓库 issue：[#24](https://github.com/kenryu42/claude-code-safety-net/issues/24)
+- safety-net 主仓库 issue：[#24](https://github.com/kenryu42/cc-safety-net/issues/24)
 - Copilot CLI plugin hook 不加载：[#2540](https://github.com/github/copilot-cli/issues/2540)
 
 ---
