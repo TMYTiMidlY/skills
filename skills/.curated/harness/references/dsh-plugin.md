@@ -1,14 +1,32 @@
 # DeepSeek Harness（dsh）Plugin 开发
 
-本文先说明如何安装现成 Plugin、判断社区扩展的形态与权限；开发部分区分创造模式中的运行时原型、独立仓库中的源码 Plugin，以及 dsh monorepo 内的 workspace package，再分别讲验证、打包和发布。模块、生命周期和各类扩展接口放在后半篇按需查阅。运行方式、内置扩展的用户行为和完整权限模型见 [DeepSeek Harness 运行时](dsh.md)。
+本文先说明 Plugin、运行配置与可安装 package 的关系，再介绍现成 Plugin 的安装方式、社区扩展形态和权限；开发部分区分创造模式中的运行时原型、独立仓库中的源码 Plugin，以及 dsh 官方仓库中的 package。模块、生命周期和各类扩展接口放在后半篇按需查阅。运行方式、内置扩展的用户行为和完整权限模型见 [DeepSeek Harness 运行时](dsh.md)。
 
 > **来源口径：** 官方实现按 2026-08-16 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)核对；本次新增和改写的社区项目按 2026-08-17 完整克隆到本地后核对，未改结论的旧条目保留原固定来源。源码和文档链接固定到对应 commit，正文不反复书写 commit hash。
 
 ## <a id="packaging-and-community"></a>安装现成 Plugin 与社区生态
 
-dsh 把模型、工具、界面和工作流都做成 Plugin。多个 Plugin 及其默认配置可以打成一个 Bundle（可安装的组合包）；Profile 则是一套可启动的配置，决定启用哪些 Bundle。使用现成扩展时，先确认它会加入哪个 Profile、是否包含与 dsh 主进程同权限运行的代码，以及安装后需要刷新页面还是重启进程。
+dsh 把模型、工具、界面和工作流都组合成 Plugin。使用现成扩展时，先确认它会加入哪个 Profile、是否包含与 dsh 主进程同权限运行的代码，以及安装后需要刷新页面还是重启进程。
 
-### 安装现成 Plugin
+### <a id="plugin-entry-package"></a>Plugin、Loader entry 与 package
+
+这几个对象分别描述运行、配置和分发：
+
+| 对象 | 含义 | 关系 |
+|---|---|---|
+| Plugin | Cordis 加载的 TypeScript / JavaScript module | 一个 module 可以由多个 Loader entry 以不同配置加载 |
+| Loader entry | 配置树中的一个 Plugin 实例，包含 `id`、`name`、`config` 和可选的 `disabled` | `name` 指向 Plugin module，Fiber 管理它的运行状态 |
+| 可安装 package | 通过 npm、Git、本地目录或 tarball 分发的 package | 可以包含 Plugin、浏览器代码、依赖或普通库 |
+| Bundle | 声明 `dsh.bundle` 并携带 patch 的可安装 package | patch 向配置树插入或覆盖 Loader entry |
+| Profile | 一套可启动的配置组合 | 按顺序应用 Bundle patch 和用户 patch |
+
+官方 Web Settings 的“插件配置”标签页编辑已运行 Host Plugin 主动开放的用户设置；“插件列表”标签页只读展示 Loader entry、有效启停状态和 Fiber 状态，点击卡片用于展开详情。package 的安装、删除和更新由 `dsh plugin` 负责，Loader entry 的启停由配置 patch 表达；社区 Settings 扩展可以增加操作入口，见后文的[插件市场与主题](#plugin-market)。
+
+因此，设置页清单中的一项表示一个 Plugin 配置实例；可安装 package 是承载代码和 Bundle 配置的分发单元。一个 package 可以贡献多个 Loader entry，同一个 Plugin module 也可以出现多个实例，普通库 package 则只提供依赖。
+
+> 来源：[Plugin、Bundle 与 Profile 的关系](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L29)；[官方 Plugin 配置页的范围](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/ui-settings-plugins/README.md#L5-L25)；[官方 Plugin inventory 的只读边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/ui-settings-plugin-inventory/README.md#L5-L20)。
+
+### <a id="plugin-loading-paths"></a>安装和加载方式
 
 最常见的安装入口是：
 
@@ -16,21 +34,33 @@ dsh 把模型、工具、界面和工作流都做成 Plugin。多个 Plugin 及�
 dsh plugin --profile <name> add <package-or-git-spec>
 ```
 
-`dsh plugin` 会为目标 Profile 安装依赖，并维护它启用的 Bundle 列表。package 在 `package.json` 中声明 `dsh.bundle` 后，安装命令才会把对应配置加入这个 Profile；没有这项声明时，package 虽然下载成功，却不会自动启用。
+这条命令先把 package 安装为目标 Profile 的依赖，再检查它是否声明 `dsh.bundle`。带 Bundle 声明的 package 会加入 Profile 的 Bundle 列表，其 patch 在 Profile 下次启动时创建或调整 Loader entry；普通 package 只成为可解析的依赖，可以再由用户 patch 挂载。
+
+| 入口 | 代码从哪里来 | 配置保存位置 | 生效范围 |
+|---|---|---|---|
+| `dsh plugin --profile <name> add <spec>` | npm、Git、本地目录或 tarball package | Profile 依赖与 Bundle 列表 | 持久安装；Bundle 列表随下次启动生效 |
+| Profile 的 `cordis.patch.yml` | 已可解析的 package 或本地 module | 当前 Profile | 持久配置，并在运行时监视有效改动 |
+| `$DSH_HOME/cordis.patch.yml` | 已可解析的 package 或本地 module | Harness home | 对所有 Profile 生效，并在运行时监视有效改动 |
+| `--patch <path>` | 已可解析的 package 或本地 module | 只来自本次命令行 | 当前启动；适合本地开发和临时覆盖 |
+| 创造模式 | 进程内的临时代码 | 当前 DSH 进程内存 | 原型停用、删除或重启前有效 |
+
+安装 package 与应用 patch 是相邻的两层。正式发布的 Plugin package 通常同时携带 module 和 Bundle patch：`dsh plugin` 安装 package 并把 Bundle 加入 Profile，启动时再由 patch 创建 Plugin entry。直接传 `--patch` 使用同一种配置格式，同时保持 Profile 的依赖和 Bundle 列表不变；patch 通过绝对路径可以直接加载本地 module，通过 package 名称加载时则要求该 package 已经可解析。
+
+Agent preset 还会为每个 Agent 组合 prompt、tools 和策略类 Plugin。它选择部署中已有的 Agent 侧 module，作用范围和 Host Profile 的 Bundle、patch 分开。
 
 npm package 通常已经包含编译后的文件。从 Git 仓库地址安装时拿到的是源码，TypeScript package 可能通过 `prepare` 现场构建，并要求使用者显式授权 pnpm `allowBuilds`。这项授权会在安装期执行 package 代码，不受 Agent 工具沙箱保护。
 
-安装后的生效方式取决于扩展位置：主题和部分浏览器端 Plugin 可以即时切换或刷新页面生效；运行在 dsh 主进程里的 Plugin、原生依赖或无法热加载的组合仍可能要求重启。HMR（热模块替换）不等于所有 Plugin 都能无重启安装。
+Bundle 列表在 Profile 启动时确定；通过 `dsh plugin` 添加、删除或更新 Bundle 后需要重启该 Profile。Profile 与 Harness home 的 patch 支持运行时重载；主题和部分浏览器端 Plugin 还可以即时切换或通过 HMR 刷新。
 
-> 来源：[Bundle 安装、Profile manifest 与 Git 构建授权](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/publish.md#L9-L178)。
+> 来源：[Bundle 安装、Profile manifest、配置层顺序与 Git 构建授权](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/publish.md#L9-L178)；[Profile、`--patch` 与运行时重载](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md#L7-L84)。
 
 ### 官方发现约定
 
-官方建议 Plugin 仓库添加 [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic（GitHub 仓库话题标签），作用是让项目更容易被社区发现。它不是官方目录、精选名单、签名或安全审核；Web Settings 的 Plugin 列表展示当前部署的 Loader entries，包括 disabled 项，enabled 项另显示 Cordis 运行状态，但不负责联网发现和安装。
+官方建议 Plugin 仓库添加 [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic（GitHub 仓库话题标签），让社区更容易发现项目。topic 表示项目自报的分类；官方目录、精选、签名和安全审核分别需要自己的机制。
 
-因此“能被 topic 或社区目录找到”“能被 `dsh plugin add` 安装”“已经通过安全审计”是三件不同的事。
+因此“能被 topic 或社区目录找到”“能被 `dsh plugin --profile <name> add` 安装”“已经通过安全审计”是三件不同的事。
 
-> 来源：[官方 README 的 `dsh-plugin` 发现约定](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/README.md#L37-L45)；[Web Plugin inventory 的本地边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/ui-settings-plugin-inventory/README.md#L5-L20)。
+> 来源：[官方 README 的 `dsh-plugin` 发现约定](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/README.md#L37-L45)。
 
 ### 桌面应用与终端界面
 
@@ -45,7 +75,7 @@ Desktop 把官方 Web UI、后台服务和 Plugin 系统封进原生安装包；
 
 > 来源：[Desktop 的安装入口](https://github.com/anywhere-labs/deepseek-harness-desktop/blob/8734c2cd21db2b31e670c24d9361acdaf14b7e3c/README.md#L1-L38)；[Electron `runAsNode` 与固定 pnpm 依赖](https://github.com/anywhere-labs/deepseek-harness-desktop/blob/8734c2cd21db2b31e670c24d9361acdaf14b7e3c/dsh-plugin-desktop/package.json#L200-L250)；[应用可执行文件与打包 pnpm 的运行入口](https://github.com/anywhere-labs/deepseek-harness-desktop/blob/8734c2cd21db2b31e670c24d9361acdaf14b7e3c/dsh-plugin-desktop/src/main.ts#L190-L202)；[dsh-TUI 的纯 Plugin 形态与前置条件](https://github.com/ccch1mneyyy/dsh-TUI/blob/c9d89664a1fc1b3faee6899add0c040b40fdfc2b/README.md#L17-L73)。
 
-### 插件市场与主题
+### <a id="plugin-market"></a>插件市场与主题
 
 [`awesome-dsh-plugin`](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/tree/c5f287967a26213ffdc77450db542e46899573e1) 维护社区目录数据；[`dsh-market`](https://github.com/dsh-market/dsh-market/tree/1696a52ed291b97048112c802d547599de9a5547) 读取这份目录，在 Web Settings 提供浏览、搜索、安装、更新和诊断界面：
 
@@ -93,11 +123,13 @@ Plugin 卸载、热替换和失败状态的完整语义见后文的[模块、配
 
 | 目标 | 合适的做法 |
 |---|---|
-| 安装、启用或配置现成 Plugin | 使用 `dsh plugin`、Profile 配置或设置页面，不需要切换创造模式 |
+| 安装或移除可安装 package 与 Bundle | 使用 `dsh plugin --profile <name> add ...` 或 `remove ...` |
+| 启停一个 Loader entry | 修改 Profile 或 Harness home 的 patch；社区市场也可以提供对应界面 |
+| 调整已开放的 Plugin 用户设置 | 使用官方 Settings 的“插件配置”页 |
 | 了解 DSH 当前有哪些扩展点，或排查某个 Plugin 为什么没有工作 | 切换创造模式，让 Agent 检查正在运行的 DSH |
 | 快速试做一个小工具、界面入口或行为调整 | 在创造模式中创建临时 Plugin |
 | 开发需要依赖、持久数据、完整测试、构建或发布的功能 | 直接编写源码 Plugin |
-| 修改 DSH 官方能力并准备向上游贡献 | 在 dsh monorepo 中开发 workspace package |
+| 修改 DSH 官方能力并准备向上游贡献 | 在 dsh 官方仓库中新增或修改 package |
 
 创造模式中运行的是**临时 Plugin**：它和正式 Plugin 都遵循 Cordis 的加载与生命周期规则，但没有对应的源码工程、构建产物和发布包。它适合回答“这个想法能否工作”，源码开发负责把答案变成长期可用的软件。
 
@@ -127,11 +159,11 @@ Plugin 卸载、热替换和失败状态的完整语义见后文的[模块、配
 
 创造模式创建的临时 Plugin 可以作为正式 Plugin 的原型。两者使用同一套 Cordis Plugin 思路，所以已经确认的行为、扩展位置和部分代码可以继续利用；区别在于临时 Plugin 只存在于当前 DSH 进程，正式 Plugin 则有磁盘上的源码、配置、依赖、测试和发布方式。
 
-创造模式不会一键生成正式 Plugin。确认原型后，需要让 Agent 把实现整理成源码工程，补齐配置、依赖、测试、构建和安装说明，再按正式启动方式验收。最终可以发布为独立社区 Plugin；只有要修改 DSH 官方实现时，才放进 monorepo 成为 workspace package。
+创造模式不会一键生成正式 Plugin。确认原型后，需要让 Agent 把实现整理成源码工程，补齐配置、依赖、测试、构建和安装说明，再按正式启动方式验收。最终可以发布为独立社区 Plugin；需要修改 DSH 官方实现的代码则放进官方仓库中的相应 package。
 
 ### 临时版本的保留与清理
 
-每次修改临时 Plugin 时，创造模式都会保留一份新的代码版本，旧版本仍可用于比较或恢复。上游界面和工具把这种临时代码版本称为 **Package**；这里的 Package 只是“一个版本”，与 npm package 或 workspace package 不是同一概念。
+每次修改临时 Plugin 时，创造模式都会保留一份新的代码版本，旧版本仍可用于比较或恢复。上游界面和工具把这种临时代码版本称为 **Package**；这里的 Package 表示“一个临时代码版本”，而 `package.json` 声明的软件 package 表示构建和分发单元。
 
 - **临时停用**：撤销 Plugin 当前提供的工具、监听和界面，但保留它及其代码版本，之后可以重新启用；
 - **删除实验**：移除这个临时 Plugin 和它的全部版本；
@@ -143,75 +175,27 @@ Plugin 卸载、热替换和失败状态的完整语义见后文的[模块、配
 
 ## <a id="source-plugin-development"></a>源码 Plugin 的开发与发布
 
-### <a id="monorepo-workspace-terms"></a>Monorepo、workspace 与 package 名称
-
-Monorepo 是一种 Git 仓库组织方式：一个仓库容纳多个分别声明名称、依赖、构建和测试的 package，并统一保存跨 package 的变更历史。DSH 仓库把这些 package 放在 `packages/<group>/<pkg>/`，再用 pnpm workspace 统一管理。
-
-| 层 | DSH 中的对象 | 作用 |
-|---|---|---|
-| Git 仓库组织 | `deepseek-harness` monorepo | 保存所有 package 的源码与提交历史 |
-| Workspace 管理 | 根目录的 `pnpm-workspace.yaml` | 选择成员、统一安装与锁定依赖、连接本地 package |
-| Package 身份 | 每个成员的 `package.json` 中的 `name` | 提供依赖声明和 `import` 使用的名称 |
-| JavaScript 运行时 | Node.js | 运行构建后的 DSH 与 Plugin 代码 |
-
-DSH 根目录的 `pnpm-workspace.yaml` 用 `packages/*/*` 选择成员，因此 `packages/core/session` 和 `packages/core/agent` 都属于同一个 workspace：
-
-```text
-deepseek-harness/
-├── pnpm-workspace.yaml
-└── packages/
-    └── core/
-        ├── agent/package.json
-        └── session/package.json
-```
-
-`packages/core/session/package.json` 声明这个目录中 package 的正式名称：
-
-```json
-{
-  "name": "@deepseek-ai/dsh-session"
-}
-```
-
-`packages/core/agent/package.json` 再通过这个正式名称声明依赖：
-
-```json
-{
-  "peerDependencies": {
-    "@deepseek-ai/dsh-session": "workspace:^"
-  }
-}
-```
-
-pnpm 先按成员路径找到各个 `package.json`，再按 `name` 匹配依赖。`packages/core/session` 提供仓库内的物理位置和 `core` 分类，`@deepseek-ai/dsh-session` 提供依赖与导入使用的 package 身份。`workspace:^` 在本地选择同一 workspace 中名称匹配的 package，发布时转成对应的 caret 版本范围；`workspace:*` 使用同样的本地匹配方式，发布时转成该 package 的确切版本。根目录执行 `pnpm install` 会安装整个 workspace，并把依赖解析记录在根目录的 `pnpm-lock.yaml`。
-
-> 来源：[DSH 的 workspace 成员声明](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/pnpm-workspace.yaml#L1-L4)、[`dsh-session` 的 package 名称](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/session/package.json#L1-L12)、[`dsh-agent` 对 `dsh-session` 的 workspace 依赖](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent/package.json#L39-L56)与 [pnpm workspace protocol](https://pnpm.io/workspaces#workspace-protocol-workspace)。
-
-Workspace 由各生态的 package manager 或构建工具提供。JavaScript 生态中的 npm、pnpm、Yarn 和 Bun 都能管理 workspace；pnpm、Yarn 和 Bun 支持 `workspace:` 依赖范围，npm workspace 通常使用 package 的 semver 范围连接本地成员。Rust 的 Cargo workspace、Go 的 `go.work`、Java 的 Maven/Gradle 多项目构建以及 Python 的 uv workspace 承担同类职责。Monorepo 可以容纳这些语言中的任意一种或多种，具体工具决定成员声明和本地依赖语法。
-
-> 参考：[npm workspaces](https://docs.npmjs.com/cli/v11/using-npm/workspaces)、[Yarn workspaces](https://yarnpkg.com/features/workspaces)、[Bun workspaces](https://bun.sh/docs/pm/workspaces)、[Cargo workspaces](https://doc.rust-lang.org/cargo/reference/workspaces.html)、[Go workspaces](https://go.dev/doc/tutorial/workspaces)、[Maven 多模块项目](https://maven.apache.org/guides/mini/guide-multiple-modules.html)、[Gradle 多项目构建](https://docs.gradle.org/current/userguide/multi_project_builds.html)与 [uv workspaces](https://docs.astral.sh/uv/concepts/projects/workspaces/)。
-
 ### <a id="code-location"></a>选择代码位置
 
-源码 Plugin 可以作为 workspace package 放进 dsh monorepo，通常位于 `packages/<group>/<pkg>/`；也可以放进独立仓库，作为社区 Plugin 单独构建和分发。这里的 workspace 表示同一多包仓库中的成员关系；Agent 当前操作的项目目录通常称为 working directory（工作目录）。
+源码 Plugin 可以放在独立仓库中，作为 package 通过 npm、Git、本地目录或 tarball 分发；也可以放在 dsh 官方仓库中，随 dsh 一起构建、测试和发布。两种位置使用相同的 Cordis Plugin 模块与生命周期。
 
-Workspace package 表示工程归属。其中一部分 package 实现可直接加载的 Plugin，另一部分提供类型、公共接口或基础库。实现 Plugin 的 workspace package 加载后遵循与社区 Plugin 相同的 Cordis 生命周期和权限边界；区别在工程和分发：前者随 dsh 统一编译、类型检查、测试和发布，后者通常独立成仓库，打包后通过 `dsh plugin --profile <name> add` 安装。是否随某个 Profile 默认启用，由 Bundle 配置决定。
+#### 独立仓库中的可安装 package
 
-#### 独立仓库中的 Plugin 与 Bundle
+独立开发的 Plugin 从普通 TypeScript / JavaScript module 开始。本地检查完成后，再把代码与 `cordis.patch.yml` 打成声明 `dsh.bundle` 的 package，使用者通过 `dsh plugin --profile <name> add` 安装。一个 package 也可以同时服务多个宿主，只把 dsh 适配 module 和 Bundle 配置放在对应入口中。
 
-独立开发的 Plugin 从普通 TypeScript / JavaScript module 开始。本地检查完成后，再把代码与 `cordis.patch.yml` 打成声明 `dsh.bundle` 的 package；使用者不需要把 Plugin 合入官方 monorepo。
+#### dsh 官方仓库中的 package
 
-#### dsh monorepo 中的 workspace package
+官方仓库 package 通常位于 `packages/<group>/<pkg>/`，需要 `package.json`、TypeScript project reference、README、约束声明（invariant）和测试。主进程代码与浏览器代码分别编译，普通 package 只能注册到其中一侧。
 
-这类 package 需要 `package.json`、TypeScript project reference、README、约束声明（invariant）和测试。主进程代码与浏览器代码分别编译，普通 package 只能注册到其中一侧。
+目录路径负责源码分类，`package.json` 的 `name` 提供依赖和导入名称。例如 `packages/core/session` 的 package 名称是 `@deepseek-ai/dsh-session`；其他 package 通过这个名称声明依赖。官方仓库中的 package 可以实现可直接加载的 Plugin，也可以只提供类型、公共接口或基础库；Bundle 配置决定其中的 Plugin 是否随某个 Profile 加载。
 
 新增 package 时应先找相同角色的现有实现作为模板。工具可看 `packages/shell/tool-bash`，能力的具体实现可看 `packages/shell/bash-local`，模型适配器可看 `packages/llm/llm-deepseek`，Web 界面 Plugin 可看 `packages/client/ui-workflow-run`。
 
-> 来源：[workspace package 的文件、角色与注册清单](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-package.md#L7-L43)；[纯类型 workspace package 示例](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/util/brand/README.md#L1-L5)；[Bundle、Profile 与配置层的关系](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L17-L29)。
+> 来源：[官方仓库 package 的文件、角色与注册清单](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-package.md#L7-L43)；[`dsh-session` 的目录与 package 名称](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/session/package.json#L1-L12)；[纯类型 package 示例](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/util/brand/README.md#L1-L5)；[Bundle、Profile 与配置层的关系](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L17-L29)。
 
 ### 通过 `--patch` 加载最小 Plugin
 
-仓库外 Plugin 可以通过 `--patch` 把一份临时配置叠加到现有 Profile。官方开发指南把这层配置称为 overlay（覆盖层）：它只在本次启动中追加或覆盖 Plugin 配置，不会改写 Profile 目录中的配置；下次不传 `--patch` 就不再生效。
+本地源码开发时，可以用 `--patch` 直接加载绝对路径指向的 Plugin module。它的持久性和其他配置入口见前文的[安装和加载方式](#plugin-loading-paths)；这里给出最小开发示例。
 
 ```yaml
 - insert:
@@ -255,7 +239,7 @@ Tool、Provider 和 event policy 的单元测试覆盖错误路径、顺序、�
 
 用户能够看到的 Plugin 要通过 Loader 启动实际使用的 `cordis.yml`，确认整套配置按发布后的方式工作。模型、协议或 UI 输出发生变化时，增加不需要真实 API key 的 snapshot；真实 provider 行为再用带 key 的 smoke test 检查。
 
-仓库内新增 package 先注册 workspace、同步文档，再运行基础检查：
+官方仓库新增 package 先按新增 package 清单注册构建、类型检查和文档入口，再运行基础检查：
 
 ```sh
 pnpm install
@@ -298,16 +282,9 @@ pnpm run hygiene
 
 Profile 清单保存按顺序应用的 Bundle 列表，由 `dsh plugin` 创建和维护。一个 package 没有 `dsh.bundle` 时仍可作为普通依赖安装，但不会自动启用 Plugin。
 
-#### 配置层与覆盖顺序
+#### Bundle 默认值与用户覆盖
 
-有效配置依次应用：
-
-1. Profile 列出的 Bundle patches；
-2. Profile 的 `cordis.patch.yml`；
-3. Harness home 的 `cordis.patch.yml`；
-4. 命令行通过 `--patch` 临时加载的 overlay。
-
-后层按 row id 替换完整 `config`。Bundle author 应提供可直接使用的默认值，并允许部署者在后层覆盖；不要依赖深合并补齐遗漏字段。
+完整配置入口见前文的[安装和加载方式](#plugin-loading-paths)。对 Bundle author 而言，关键规则是 Profile、Harness home 和命令行 patch 都可以按 row id 覆盖 Bundle entry，而且覆盖会替换完整 `config`。Bundle 应提供可直接使用的完整默认值；用户覆盖同样要重述目标 entry 需要的全部配置。
 
 #### npm、Git 与发布文件
 
