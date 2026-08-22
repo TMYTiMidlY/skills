@@ -143,11 +143,59 @@ Plugin 卸载、热替换和失败状态的完整语义见后文的[模块、配
 
 ## <a id="source-plugin-development"></a>源码 Plugin 的开发与发布
 
+### <a id="monorepo-workspace-terms"></a>Monorepo、workspace 与 package 名称
+
+Monorepo 是一种 Git 仓库组织方式：一个仓库容纳多个分别声明名称、依赖、构建和测试的 package，并统一保存跨 package 的变更历史。DSH 仓库把这些 package 放在 `packages/<group>/<pkg>/`，再用 pnpm workspace 统一管理。
+
+| 层 | DSH 中的对象 | 作用 |
+|---|---|---|
+| Git 仓库组织 | `deepseek-harness` monorepo | 保存所有 package 的源码与提交历史 |
+| Workspace 管理 | 根目录的 `pnpm-workspace.yaml` | 选择成员、统一安装与锁定依赖、连接本地 package |
+| Package 身份 | 每个成员的 `package.json` 中的 `name` | 提供依赖声明和 `import` 使用的名称 |
+| JavaScript 运行时 | Node.js | 运行构建后的 DSH 与 Plugin 代码 |
+
+DSH 根目录的 `pnpm-workspace.yaml` 用 `packages/*/*` 选择成员，因此 `packages/core/session` 和 `packages/core/agent` 都属于同一个 workspace：
+
+```text
+deepseek-harness/
+├── pnpm-workspace.yaml
+└── packages/
+    └── core/
+        ├── agent/package.json
+        └── session/package.json
+```
+
+`packages/core/session/package.json` 声明这个目录中 package 的正式名称：
+
+```json
+{
+  "name": "@deepseek-ai/dsh-session"
+}
+```
+
+`packages/core/agent/package.json` 再通过这个正式名称声明依赖：
+
+```json
+{
+  "peerDependencies": {
+    "@deepseek-ai/dsh-session": "workspace:^"
+  }
+}
+```
+
+pnpm 先按成员路径找到各个 `package.json`，再按 `name` 匹配依赖。`packages/core/session` 提供仓库内的物理位置和 `core` 分类，`@deepseek-ai/dsh-session` 提供依赖与导入使用的 package 身份。`workspace:^` 在本地选择同一 workspace 中名称匹配的 package，发布时转成对应的 caret 版本范围；`workspace:*` 使用同样的本地匹配方式，发布时转成该 package 的确切版本。根目录执行 `pnpm install` 会安装整个 workspace，并把依赖解析记录在根目录的 `pnpm-lock.yaml`。
+
+> 来源：[DSH 的 workspace 成员声明](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/pnpm-workspace.yaml#L1-L4)、[`dsh-session` 的 package 名称](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/session/package.json#L1-L12)、[`dsh-agent` 对 `dsh-session` 的 workspace 依赖](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/agent/package.json#L39-L56)与 [pnpm workspace protocol](https://pnpm.io/workspaces#workspace-protocol-workspace)。
+
+Workspace 由各生态的 package manager 或构建工具提供。JavaScript 生态中的 npm、pnpm、Yarn 和 Bun 都能管理 workspace；pnpm、Yarn 和 Bun 支持 `workspace:` 依赖范围，npm workspace 通常使用 package 的 semver 范围连接本地成员。Rust 的 Cargo workspace、Go 的 `go.work`、Java 的 Maven/Gradle 多项目构建以及 Python 的 uv workspace 承担同类职责。Monorepo 可以容纳这些语言中的任意一种或多种，具体工具决定成员声明和本地依赖语法。
+
+> 参考：[npm workspaces](https://docs.npmjs.com/cli/v11/using-npm/workspaces)、[Yarn workspaces](https://yarnpkg.com/features/workspaces)、[Bun workspaces](https://bun.sh/docs/pm/workspaces)、[Cargo workspaces](https://doc.rust-lang.org/cargo/reference/workspaces.html)、[Go workspaces](https://go.dev/doc/tutorial/workspaces)、[Maven 多模块项目](https://maven.apache.org/guides/mini/guide-multiple-modules.html)、[Gradle 多项目构建](https://docs.gradle.org/current/userguide/multi_project_builds.html)与 [uv workspaces](https://docs.astral.sh/uv/concepts/projects/workspaces/)。
+
 ### <a id="code-location"></a>选择代码位置
 
-先分清代码最终放在哪里。workspace package 是 dsh monorepo 中被 pnpm workspace 统一管理的子包，通常位于 `packages/<group>/<pkg>/`；这里的 workspace 指多包仓库关系，不是 Agent 当前操作的项目目录。
+源码 Plugin 可以作为 workspace package 放进 dsh monorepo，通常位于 `packages/<group>/<pkg>/`；也可以放进独立仓库，作为社区 Plugin 单独构建和分发。这里的 workspace 表示同一多包仓库中的成员关系；Agent 当前操作的项目目录通常称为 working directory（工作目录）。
 
-workspace package 只说明工程归属，不等于“内置 Plugin”。其中有些 package 实现可直接加载的 Plugin，有些只提供类型、公共接口或基础库。某个 workspace package 如果确实是 Plugin，加载后仍遵循与社区 Plugin 相同的 Cordis 生命周期和权限边界；区别在工程和分发：前者随 dsh 统一编译、类型检查、测试和发布，后者通常独立成仓库，打包后通过 `dsh plugin --profile <name> add` 安装。是否随某个 Profile 默认启用，由 Bundle 配置决定。
+Workspace package 表示工程归属。其中一部分 package 实现可直接加载的 Plugin，另一部分提供类型、公共接口或基础库。实现 Plugin 的 workspace package 加载后遵循与社区 Plugin 相同的 Cordis 生命周期和权限边界；区别在工程和分发：前者随 dsh 统一编译、类型检查、测试和发布，后者通常独立成仓库，打包后通过 `dsh plugin --profile <name> add` 安装。是否随某个 Profile 默认启用，由 Bundle 配置决定。
 
 #### 独立仓库中的 Plugin 与 Bundle
 
