@@ -54,6 +54,30 @@ Web 与 headless 是两个 Profile。两者加载共同的基础 Bundle；Web �
 
 > 来源：[npm 与源码启动命令](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/README.md#L13-L35)；[Profile、Web alias 与源码运行行为](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md#L7-L84)。
 
+### <a id="web-trusted-host"></a>Web 域名信任与反向代理
+
+浏览器通过非 loopback 域名访问时，用可重复的 `--trusted-host <host[:port]>` 声明 `/api` 接受的 authority；值只能是规范化的裸主机名或 `host:port`，不能带 scheme、路径或用户信息。请求的 `Host` 必须是 loopback 或命中该清单；浏览器带 `Origin` 时，其 authority 还必须与 `Host` 相同，显式的 cross-site 请求会被拒绝。这个开关只处理 DNS rebinding（DNS 重绑定）与同源检查，不提供身份认证。
+
+```sh
+npx @deepseek-ai/dsh web --trusted-host <public-host>
+```
+
+`trusted-host` 不放开配置平面：`settings.*`、`credentials.*`、预设编辑、宿主文件选择和模型端点探测仍只接受 loopback，因此远程浏览器不能持久化设置，依赖这些 API 的首次 API Key 引导也可能不出现。dsh Web 当前没有 TLS 或认证层；只需要普通远程 API 时，应在外层限制可达性并使用 `--trusted-host`，密钥与设置留在本机完成。
+
+已经由反向代理完成强认证、又确实需要远程设置 UI 时，可以让代理在鉴权后把上游 `Host` 与 `Origin` 改写成 loopback。这样会绕过 dsh 对配置平面的 loopback 限制，必须保证所有 HTTP 与 WebSocket 路径都先经过认证，且后端端口不能被不受信任的客户端直接访问：
+
+```caddyfile
+https://<public-host> {
+	authorize with <policy>
+	reverse_proxy <private-upstream>:3080 {
+		header_up Host 127.0.0.1:3080
+		header_up Origin http://127.0.0.1:3080
+	}
+}
+```
+
+> 来源：[Web CLI 的 `--trusted-host` 参数](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/bundle/web-app/src/startup.ts#L43-L79)；[authority、Origin 与 cross-site 检查](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/connection/src/api-request-trust.ts#L40-L122)；[始终限定为 loopback 的配置与凭据方法](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/connection/src/index.ts#L69-L148)；[远程浏览器的设置限制](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/ui-settings/README.md#L17-L20)；[Web server 不提供 TLS 或认证](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/host/webserver/README.md#L19-L22)。
+
 ## <a id="runtime-composition"></a>运行时组合
 
 dsh 的组合分成主进程与单个 Agent 两层。Profile 先应用 Bundle、用户配置和命令行 `--patch` overlay（覆盖层：只在本次启动叠加，不会改写 Profile 目录中的配置），组成主进程的 Plugin 树；创建 Agent 时，Agent preset（这个 Session 采用的 Agent 能力配方）再加入 prompt、tools 和策略。
