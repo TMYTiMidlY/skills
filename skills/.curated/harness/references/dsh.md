@@ -48,7 +48,7 @@ cd /path/to/project
 dsh web
 ```
 
-运行时语境中的 workspace 表示 Agent 操作的项目目录；Plugin 工程语境中的 workspace package 表示 dsh monorepo 里由 pnpm 统一管理的子包。两组术语的完整关系见 Plugin 开发篇的 [Monorepo、workspace 与 package 名称](dsh-plugin.md#monorepo-workspace-terms)。
+这里的 workspace 表示 Agent 操作的项目目录。Plugin 的运行实例、配置项和可安装 package 之间的关系见 Plugin 开发篇的 [Plugin、Loader entry 与 package](dsh-plugin.md#plugin-entry-package)。
 
 Web 与 headless 是两个 Profile。两者加载共同的基础 Bundle；Web 继续加入浏览器应用和 HTTP 服务，headless 继续加入一次性 runner，并在 Agent idle 后输出结果。
 
