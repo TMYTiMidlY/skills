@@ -41,7 +41,16 @@ pnpm dsh web
 | Web | `dsh web` 或 `dsh --profile web` | 交互式会话、设置、trajectory 和 Plugin UI；默认监听 `127.0.0.1:3080` |
 | headless | `dsh --profile headless "<task>"` | 一次性任务；等待 Agent idle 后输出最后一条 assistant 文本，不启动 HTTP 服务 |
 
-两种形态都以启动命令所在目录作为默认 workspace，也就是 Agent 读写文件和执行命令的项目目录。它不是 pnpm 多包仓库中的 workspace package；后者是 dsh 官方 monorepo 内统一管理的子包，见 Plugin 开发篇的[代码位置](dsh-plugin.md#code-location)。Web 与 headless 是不同的 Profile：它们共享基础 Bundle，再分别叠加浏览器应用或一次性 runner。
+`dsh web` 和 `dsh --profile headless` 都把启动命令所在目录设为 Agent 的默认 workspace。先进入目标项目再启动 dsh，Agent 的相对文件路径和命令便以该项目目录为起点：
+
+```sh
+cd /path/to/project
+dsh web
+```
+
+运行时语境中的 workspace 表示 Agent 操作的项目目录；Plugin 工程语境中的 workspace package 表示 dsh monorepo 里由 pnpm 统一管理的子包。两组术语的完整关系见 Plugin 开发篇的 [Monorepo、workspace 与 package 名称](dsh-plugin.md#monorepo-workspace-terms)。
+
+Web 与 headless 是两个 Profile。两者加载共同的基础 Bundle；Web 继续加入浏览器应用和 HTTP 服务，headless 继续加入一次性 runner，并在 Agent idle 后输出结果。
 
 > 来源：[npm 与源码启动命令](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/README.md#L13-L35)；[Profile、Web alias 与源码运行行为](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md#L7-L84)。
 
