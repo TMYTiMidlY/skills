@@ -107,6 +107,10 @@ OpenList（AList 的活跃 fork）的 **REST API 编程接入**（两种 token�
 
 MinerU（mineru.net）提供 VLM 模型将 PDF 转为 Markdown/JSON，支持公式和表格识别。默认使用云端 API / Open API；未经用户明确允许，不要在本机安装或部署 MinerU。详细流程见 [references/mineru.md](references/mineru.md)。
 
+## OpenAlex 数据访问与全文下载
+
+OpenAlex 官方 CLI 的 uv 全局安装、API key / 匿名预算与计费、DOI / filter 元数据下载、Content API 和 OA / 许可证边界，以及网站、OQL/OQO、Snapshot、Sync、R2 全文档案、Unpaywall、Agents 与社区 SDK 的分工见 [references/openalex.md](references/openalex.md)。其中记录了 `openalex-official 0.3.3` 把 Content API 的 `200 application/pdf` 误判为失败且仍计费的交叉实测、源码根因、上游 issue 状态和当前绕行方式。
+
 ## Docker（安装 + 多用户共用）
 
 Ubuntu 上装 Docker Engine 的**官方推荐方式**（apt 仓库法，非 `get.docker.com` 便捷脚本）与让多个非 root 用户共用见 [references/docker.md](references/docker.md)：官方 apt 仓库法完整步骤（modern `signed-by` keyring、arch/codename 动态取、Engine+CLI+containerd+buildx+compose 五件套）、多用户共用（`usermod -aG docker` 把用户加进包安装时自动建好的 `docker` 组 = 免 sudo 读写 `/var/run/docker.sock`）、**组变更生效时机的坑**（`usermod -aG` 只改组数据库、已登录会话要**重登**才生效，`newgrp`/`sg docker -c` 可不重登临时激活并顺带验证，`id -nG <user>` 查库 vs 无参 `id -nG` 查当前会话的区别）、以及**安全取舍**（docker 组 ≈ 免密 root，`-v /:/host` 一行提权；可信开发机常规做法 / 给 sudoer 加风险不变 / 给非 sudoer 加 = 变相发 root，替代方案 rootless Docker、`sudo docker`、细粒度 sudoers）。含一次 HFNL（Ubuntu 24.04）实操记录。
