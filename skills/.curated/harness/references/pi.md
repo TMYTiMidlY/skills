@@ -1,10 +1,10 @@
 # pi — 极简可扩展编码 agent（harness / runtime 参考）
 
 > **harness skill 的 reference。** 面向要理解/调试/对比编码 agent runtime 的工程师，覆盖：pi 的定位与设计取舍、runtime 架构、
-> 配置与指令发现、五种调用形态（TUI / print / JSON / RPC / SDK）、接入 **Codex / Copilot 官方订阅**（切模型 · 上下文 · effort）、
+> 配置与指令发现、五种调用形态（TUI / print / JSON / RPC / SDK）、账号 OAuth 与 API key 的 provider 接入（切模型 · 上下文 · effort）、
 > 扩展与 skill 系统与自研插件、多 agent 协同、手机远控，以及生态与社区。
 >
-> **来源基线**：`earendil-works/pi`（原 `badlogic/pi-mono`）@ `8479bd8`（2026-07-11），npm `@earendil-works/pi-coding-agent` v0.80.6，MIT。
+> **来源基线**：全文 runtime 主体为 `earendil-works/pi`（原 `badlogic/pi-mono`）@ `8479bd8`（2026-07-11），npm `@earendil-works/pi-coding-agent` v0.80.6；Provider 鉴权与 `/login` 一节已单独复核到 [v0.84.3](https://github.com/earendil-works/pi/tree/v0.84.3)（`4e58f324`，2026-08-24）；MIT。
 > ⚠️ 时效：模型名（`gpt-5.6-*`、`claude-sonnet-5`、`claude-opus-4.8`）、版本号、star 数、画廊包数（~5.1k）都会变；标注"快照"处以你查证当时为准。
 >
 > **集成状态图例**（全文用）：🟩 Core（主仓内置） · 🟦 官方示例（`examples/`，需自行拷贝） · 🟨 官方实验包（API 不稳定） · 🟧 独立 first-party 仓库 · ⬜ 社区包/项目。
@@ -20,7 +20,7 @@
 - **自定义 provider 不会把 `GET /v1/models` 自动导入 `/model`**；`models.json` 里必须显式列出每个模型。→ 见 [接自定义模型](pi-custom-model.md#models-fields)
 - **`reasoning:true` 只是能力声明，`compat.thinkingFormat` 才决定请求怎么写**；自定义域名常识别不出厂商，漏配就「选 `off` 仍思考 / 选 `low` 仍不思考」。→ 见 [接自定义模型](pi-custom-model.md#thinking-layers)
 - **effort 在 UI 里叫 "thinking level"**（`off|minimal|low|medium|high|xhigh|max` 七档），不是统一的 `reasoning_effort`。→ 见 [接自定义模型](pi-custom-model.md#thinking-layers)
-- **订阅接入用 pi 自己的 OAuth**，不复用官方 Codex / Copilot CLI 的凭据文件。→ 见 [用 Codex 订阅](#codex-sub)、[用 Copilot 订阅](#copilot-sub)
+- **`/login` 先分账号 OAuth 与 API key**：账号分支里既有订阅，也有不代表订阅的 OpenRouter / Radius OAuth；Codex / Copilot 由 pi 自行走 OAuth，不复用各自 CLI 的凭据文件。→ 见 [Provider 与凭据](#provider-creds)、[用 Codex 订阅](#codex-sub)、[用 Copilot 订阅](#copilot-sub)
 - **信任（trust）不是沙箱**：只决定加不加载项目级 `.pi/*` 与 `.agents/skills`，不限制工具能干什么；要隔离请上容器。→ 见 [安全 · 信任 · 隔离](#security-trust)
 - **核心没有内置 Web UI / MCP / sub-agent / 权限弹窗**——都靠扩展或社区包补（`Mode` 只有 `text|json|rpc`）。→ 见 [Primitives, not features](#primitives)、[调用形态](#invocation-modes)、[Web 界面](#web-ui)
 
@@ -63,7 +63,7 @@ pi 的核心哲学是**中心极小**：给你原语，让你把 agent 适配到
 | 系统提示词 | 极短、稳定 | 数百行、每版变 | 中 | 中 | 中 |
 | 扩展性 | TS 扩展 + skill（全 OS 权限） | 插件 + MCP | 插件 + MCP | 较封闭 | 较封闭 |
 | MCP | 显式不内置（可扩展补） | 内置 | 内置 | — | — |
-| 订阅接入 | Codex/Copilot/Claude Pro-Max 全 OAuth | Claude 订阅 | 多家 | 仅 OpenAI | 仅 GitHub |
+| 订阅 / 账号接入 | Claude/Copilot/Kimi/Codex/Grok 订阅 OAuth；另有 OpenRouter/Radius OAuth | Claude 订阅 | 多家 | 仅 OpenAI | 仅 GitHub |
 | 会话模型 | JSONL **树**（可分叉） | 线性 | 线性 | 线性 | 线性 |
 | 语言/生态 | TypeScript | — | Go | — | — |
 
@@ -89,7 +89,7 @@ pi 的核心哲学是**中心极小**：给你原语，让你把 agent 适配到
 |---|---|---|
 | `@earendil-works/pi-coding-agent` | `packages/coding-agent/` | **主 CLI**（`bin: pi`）：TUI/print/json/rpc、会话树、包管理、skill/扩展加载、SDK 出口 |
 | `@earendil-works/pi-agent-core` | `packages/agent/` | **agent runtime 库**：agent loop、工具执行、context 变换、transport 抽象、prompt 模板 |
-| `@earendil-works/pi-ai` | `packages/ai/` | **统一 LLM API**：35 个 provider、9 种 wire API、OAuth/apiKey 鉴权、模型目录、token/成本核算、thinking level 抽象 |
+| `@earendil-works/pi-ai` | `packages/ai/` | **统一 LLM API**：内置 / 动态 provider 目录、多种 wire API、OAuth/apiKey 鉴权、模型目录、token/成本核算、thinking level 抽象 |
 | `@earendil-works/pi-tui` | `packages/tui/` | **终端 UI 库**：差分渲染、markdown、宽字符布局 |
 | `@earendil-works/pi-orchestrator`（🟨） | `packages/orchestrator/` | **多实例进程督程**（实验性，API 不稳定，见 [pi-orchestrator](#pi-orchestrator)） |
 
@@ -107,7 +107,7 @@ flowchart TD
         LOOP[agent loop<br/>stream → parse toolCalls → exec → append → repeat]
     end
     subgraph AI [pi-ai]
-        PROV[Provider 抽象<br/>OAuth / apiKey · 9 种 wire API]
+        PROV[Provider 抽象<br/>OAuth / apiKey · 多种 wire API]
     end
     MODE --> LOOP
     RES --> LOOP
@@ -295,21 +295,39 @@ session.dispose();
 
 ### <a id="provider-creds"></a>Provider 与凭据
 
-`pi-ai` 用统一 `Provider` 抽象，鉴权分 `apiKey`/`oauth`。共 **35 个内置 provider id**；**订阅制（OAuth `/login`）三家**：`openai-codex`（ChatGPT Plus/Pro）、`anthropic`（Claude Pro/Max）、`github-copilot`。其余走 apiKey（openai、azure-openai-responses、google、google-vertex、amazon-bedrock、mistral、groq、cerebras、xai、openrouter、deepseek、nvidia、kimi-coding、minimax(-cn)、moonshotai(-cn)、huggingface、fireworks、together、opencode(-go)、cloudflare-*、zai(-coding-cn)、ant-ling、vercel-ai-gateway、xiaomi* 等）。
+`pi-ai` 的 `Provider` 可以同时暴露 `auth.oauth` 和 `auth.apiKey`。不带 provider 参数执行 `/login` 时，pi 先让人选 **Sign in with an account**（OAuth）或 **Sign in with an API key**，再只列出实现了该鉴权方法的 provider。因此，账号分支的列表是“OAuth-capable providers”，不是所有内置 provider，也不等于“全部按订阅扣额度”。
 
-> `packages/coding-agent/docs/providers.md`:14-22、`docs/{settings.md,models.md,compaction.md}`；`packages/ai/src/models.ts`；`packages/ai/src/providers/all.ts:69-107`、`packages/ai/src/types.ts:32-67`（35 个 `KnownProvider` id）、`packages/ai/src/env-api-keys.ts:64-173`。
+v0.84.3 的账号 / OAuth 分支包含下列 provider：
+
+| Provider | OAuth 凭据的含义 | API key / token 替代入口 |
+|---|---|---|
+| [Anthropic (`anthropic`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/anthropic.ts#L43-L58) | Claude Pro/Max 账号；`isSubscription: true` | `ANTHROPIC_API_KEY` |
+| [GitHub Copilot (`github-copilot`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/github-copilot.ts#L9-L17) | Copilot 订阅；`isSubscription: true` | `COPILOT_GITHUB_TOKEN` |
+| [Kimi For Coding (`kimi-coding`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/kimi-coding.ts#L8-L22) | Kimi Code 订阅；`isSubscription: true` | `KIMI_API_KEY` |
+| [OpenAI Codex (`openai-codex`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/openai-codex.ts#L8-L20) | ChatGPT Plus/Pro；`isSubscription: true`，且只有 OAuth | — |
+| [OpenRouter (`openrouter`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/openrouter.ts#L8-L21) | PKCE 登录后铸造用户可控的 API key，从 OpenRouter credits 扣费；未标记为订阅 | `OPENROUTER_API_KEY` |
+| [Radius (`radius`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/radius.ts#L20-L33) | `pi-messages` gateway 的 OAuth；未标记为订阅，权益取决于 gateway | `RADIUS_API_KEY` |
+| [xAI (`xai`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/xai.ts#L7-L22) | SuperGrok / X Premium 订阅；`isSubscription: true` | `XAI_API_KEY` |
+
+Anthropic、GitHub Copilot、Kimi For Coding、OpenAI Codex 和 xAI 的 OAuth 实现明确设了 `isSubscription: true`；OpenRouter 与 Radius 只是使用 OAuth 登录，没有该订阅标记。
+
+> [v0.84.3 的 provider 文档](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/docs/providers.md#L14-L49) 在 Subscriptions 列表中漏了 Kimi For Coding；同版本的 `kimi-coding.ts` 已注册 `oauth` 且设置 `isSubscription: true`，而 [`/login` 列表是直接从 `provider.auth.oauth` 生成的](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/src/modes/interactive/interactive-mode.ts#L5391-L5425)；故本表以同 tag 源码和实际 UI 为准。
+
+账号分支里的状态描述的是“这个 provider 当前有什么凭据”：`unconfigured` 表示尚无有效凭据，`stored` 表示已存相同类型的 OAuth 凭据，`API key configured` 表示当前使用 API key，但此行正在展示它另外支持的 OAuth 入口。每个 provider 在 `auth.json` 中只有一个带类型的凭据；重新选另一种方法登录会替换它。
+
+> 状态的类型不匹配分支见 [OAuth selector](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/src/modes/interactive/components/oauth-selector.ts#L164-L180)；账号 / API key 两段选择见 [login auth-type selector](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/src/modes/interactive/interactive-mode.ts#L5480-L5554)。
 
 凭据/设置三文件（`~/.pi/agent/`）：`auth.json`（凭据）、`settings.json`（默认 provider/model、thinking、compaction…）、`models.json`（自定义 provider / 模型 override，如本地 ollama、改 `contextWindow`）。
 
-> `packages/coding-agent/docs/providers.md`:14-22、`docs/{settings.md,models.md,compaction.md}`；`packages/ai/src/models.ts`。
+> [Provider 凭据文档](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/docs/providers.md#L94-L185)；[provider 与凭据存储接口](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/models.ts#L99-L201)。
 
-**鉴权解析顺序**（先命中先用）：① `--api-key` 运行期覆盖 → ② `auth.json` 的 apiKey → ③ `auth.json` 的 OAuth → ④ 环境变量 → ⑤ `models.json`/扩展注册的 provider key。**注意：已存的凭据会盖过环境变量**。
+**鉴权解析顺序**（先命中先用）：① `--api-key` 运行期覆盖 → ② `auth.json` 的单个已存凭据（`api_key` 或 `oauth`）→ ③ 环境变量 → ④ `models.json`/扩展注册的 provider key。**已存凭据会盖过环境变量**；OAuth 刷新失败也不会静默回退到 env key。
 
-> `packages/coding-agent/src/core/auth-storage.ts:465-472`、`src/core/model-registry.ts:825-834`。
+> [Provider 凭据解析](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/auth/resolve.ts#L45-L112)；[CLI / 文件配置的顺序](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/docs/providers.md#L310-L317)。
 
-**`pi-ai` 内部**：统一 9 种 wire API（`openai-completions`/`mistral-conversations`/`openai-responses`/`azure-openai-responses`/`openai-codex-responses`/`anthropic-messages`/`bedrock-converse-stream`/`google-generative-ai`/`google-vertex`）；流式工具参数用 `partial-json` 容错解析；全链路 abort（`stopReason:"aborted"`）；**跨 provider 上下文接力**（保留 thinking 块/工具调用/结果，可中途换家）；token/成本核算。
+**`pi-ai` 内部**：统一 `openai-completions`/`mistral-conversations`/`openai-responses`/`azure-openai-responses`/`openai-codex-responses`/`anthropic-messages`/`bedrock-converse-stream`/`google-generative-ai`/`google-vertex`/`pi-messages` 这些 wire API；流式工具参数用 `partial-json` 容错解析；全链路 abort（`stopReason:"aborted"`）；**跨 provider 上下文接力**（保留 thinking 块/工具调用/结果，可中途换家）；token/成本核算。
 
-> `packages/ai/README.md:1-4,227-232,1046-1058,1186-1230`；`packages/ai/src/types.ts:15-24,352-372`；`src/utils/json-parse.ts:97-124`；`src/api/{openai-completions.ts:189-192,443-467,bedrock-converse-stream.ts:239-242}`；`src/models.ts:386-405`。
+> [wire API 类型](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/types.ts#L15-L31)；`partial-json` / abort / 跨 provider 序列化的其余引用仍按全文 v0.80.6 基线。
 
 ### <a id="codex-sub"></a>用 OpenAI Codex 官方订阅（ChatGPT Plus/Pro）
 
@@ -789,7 +807,7 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 
 ## 置信度
 
-- **高**（本地 clone + 上游锁定源码直证）：分包、agent loop、会话树与回读 schema、配置/指令发现、五模式与 31 条 RPC 命令、SDK、provider/OAuth、鉴权顺序、thinking level / `thinkingLevelMap` / `thinkingFormat` 的职责与各 serializer 分支、33 事件/15 可改写、扩展与 skill、subagent/orchestrator、远控、**四款社区网页前端的驱动方式（SDK 进程内 / 进程内扩展镜像 / N×`--mode rpc` / 扩展启动器→rpc）与端口**、**网页 `ask_user` 交互协议兼容性（pi-web·firstpick·dashboard 支持、tau 仅终端、jmfederico 无桥；源码 `extension_ui_request`/`setUIContext`/`EXTENSION_UI_BLOCKING_METHODS` 直证）**、`pi-web-ui` 组件库性质与删除时点/原因及其归宿 sitegeist（git+npm+API 直证）、信任非沙箱、三种容器化、平台要求。
+- **高**（本地 clone + 上游锁定源码直证）：分包、agent loop、会话树与回读 schema、配置/指令发现、五模式与 31 条 RPC 命令、SDK、provider/OAuth（含 v0.84.3 的账号列表、订阅标记与状态语义）、鉴权顺序、thinking level / `thinkingLevelMap` / `thinkingFormat` 的职责与各 serializer 分支、33 事件/15 可改写、扩展与 skill、subagent/orchestrator、远控、**四款社区网页前端的驱动方式（SDK 进程内 / 进程内扩展镜像 / N×`--mode rpc` / 扩展启动器→rpc）与端口**、**网页 `ask_user` 交互协议兼容性（pi-web·firstpick·dashboard 支持、tau 仅终端、jmfederico 无桥；源码 `extension_ui_request`/`setUIContext`/`EXTENSION_UI_BLOCKING_METHODS` 直证）**、`pi-web-ui` 组件库性质与删除时点/原因及其归宿 sitegeist（git+npm+API 直证）、信任非沙箱、三种容器化、平台要求。
 - **中/快照**：画廊 ~5.1k 包数与各包月下载、popular 排名（随时间变）。
 - **随时间变化**：模型名/上下文窗口/版本号/star 数。
 - **存疑**：`pi-skills` README 的 `{baseDir}` 说法与主仓行为不一致（已在正文标注）；OpenClaw 组织变动仅作者一手推文；Reddit 讨论未抓取核实；`pi-web-ui` 从 monorepo 删除后 sitegeist 如何适配无公开记录——其公开仓库 HEAD 停在 2026-03-18（**删除前**），仍以 `file:../pi-mono/packages/web-ui` 链接、未 vendored。
