@@ -1,11 +1,15 @@
 ---
 name: network
-description: 配置或排查 OpenWrt 路由器、外部 Wi-Fi 接入本地网络、客户端代理、泄漏防护、远程接入及 WSL/远端网络管道时使用。核心是先还原设备角色、认证、DNS、路由和隧道的实际数据路径，再分层处理无线链路或代理与组网配置。
+description: 配置或排查 Caddy 反向代理与 caddy-security、OpenWrt、外部 Wi-Fi、客户端代理、远程接入及 WSL/远端网络管道时使用。核心是还原 TLS、认证、DNS、路由和隧道的实际数据路径，再分层处理。
 ---
 
 # Network
 
-本 skill 索引 OpenWrt 设备管理、外部 Wi-Fi 接入本地网络、客户端代理、远程接入、组网管道与服务端节点入口。受限网络下的 Git clone / submodule 获取由 `git` skill 覆盖，Caddy 反代和公网节点质量检测由 `vps-maintenance` skill 覆盖。
+本 skill 索引 Caddy、OpenWrt 设备管理、外部 Wi-Fi 接入本地网络、客户端代理、远程接入、组网管道与服务端节点入口。受限网络下的 Git clone / submodule 获取由 `git` skill 覆盖；VPS 初始化、安全加固和公网节点质量检测由 `vps-maintenance` skill 覆盖。
+
+## Caddy 与 caddy-security
+
+Caddy 安装、域名/IP 站点、反向代理、证书、Caddyfile 更新、Admin API、caddy-security OAuth/角色/cookie 与运行态排障见 [references/caddy.md](references/caddy.md)。修改 Caddy 或认证配置前先读该 reference。
 
 ## OpenWrt 设备管理
 

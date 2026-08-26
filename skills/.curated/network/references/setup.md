@@ -11,7 +11,7 @@
 - 多个 Unix 用户需要各自独立的浏览器终端与编辑器。
 - 公网只暴露 Caddy；Mihomo、Zellij、VS Code 和 Caddy Admin API 都留在本机或组网内部。
 
-具体的 Caddy 指令、OAuth provider 选项和更新流程仍以 `vps-maintenance` skill 的 Caddy 主题为准；Zellij token 的完整生命周期见 `software` skill 的 Zellij 主题。
+具体的 Caddy 指令、OAuth provider 选项和更新流程仍以 [caddy.md](caddy.md) 为准；Zellij token 的完整生命周期见 `software` skill 的 Zellij 主题。
 
 ## <a id="topology"></a>链路与信任边界
 

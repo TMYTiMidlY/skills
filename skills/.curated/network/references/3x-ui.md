@@ -8,7 +8,7 @@
 
 - 客户端节点配置、协议选型 / 性能、Brutal / 拥塞控制、DNS / WebRTC 泄漏排查 → [mihomo.md](mihomo.md)。
 - **独立 systemd 版 Hysteria2 服务端**（不经面板、官方脚本装）→ [hysteria2.md](hysteria2.md)。
-- Caddy 反代本身的写法（`reverse_proxy`、站点模式、`authorize`/caddy-security、证书）→ `vps-maintenance` skill 的 caddy.md。
+- Caddy 反代本身的写法（`reverse_proxy`、站点模式、`authorize`/caddy-security、证书）→ [caddy.md](caddy.md)。
 - 带宽 / 丢包质量测试、被墙运营事实 → `vps-maintenance` skill 的 vps-quality。
 
 ## 面板改动怎么变成 Xray 生效
@@ -178,7 +178,7 @@ proxy.example.com {
 - **`encode gzip` + `tls { protocols tls1.3 }`**：直接抄官方，**官方明确要求必须强制 TLS 1.3**。TLS1.3-only 缩小握手指纹面；gzip 对已加密的二进制 WS 隧道没实质增益，但压面板 / 订阅的文本响应有用、也无害，官方留着我们就留着。
 - **`handle /websocket*` + `@ws` 匹配 `Connection: Upgrade` / `Upgrade: websocket`**：官方同款（官方示例里叫 `route /api/v1*` + `@websockets`，只是 path 名不同）。只有真正的 WS 升级请求才反代进 xray；有人直接 `GET` 探测 → 落 `respond 403`，把节点藏在「一个普通网站」后。**这个 path 随便起，但必须和第 1 步 inbound 的 `wsSettings.path` 完全一致**。
 - **`/sub/*` → 3x-ui 内置订阅服务**（官方 Caddy 示例没带、但 nginx 示例带了这一段）：面板「订阅设置」里开启（端口 `2096`、路径 `/sub/` 是 3x-ui 默认值，[`internal/web/service/setting.go`](https://github.com/MHSanaei/3x-ui/blob/659f0f404ce8ee68e38ac28481627f45930eca00/internal/web/service/setting.go#L86-L87) 里 `subPort`/`subPath` 的默认），客户端订阅地址就是 `https://proxy.example.com/sub/<subId>`。
-- **根路径 → 面板**（官方用 `route /admin*` + `basic_auth`）：面板和节点**共用一个域名**。这里换成 `authorize with admin`（caddy-security）是 RackNerd 的现网做法；**没装 caddy-security 就照官方用 `basic_auth`**，或干脆别经 Caddy 暴露面板（留 `127.0.0.1:54324` 走 SSH 隧道进）。`authorize` / caddy-security 细节见 `vps-maintenance` skill 的 caddy.md。
+- **根路径 → 面板**（官方用 `route /admin*` + `basic_auth`）：面板和节点**共用一个域名**。这里换成 `authorize with admin`（caddy-security）是 RackNerd 的现网做法；**没装 caddy-security 就照官方用 `basic_auth`**，或干脆别经 Caddy 暴露面板（留 `127.0.0.1:54324` 走 SSH 隧道进）。`authorize` / caddy-security 细节见 [caddy.md](caddy.md)。
 - **`header {...}` 安全头**：HSTS / nosniff / SAMEORIGIN / `-Server` / `-X-Powered-By` 全是官方推荐同款。**但官方原版这个块顶部还有两行 `header_up Authorization/Content-Type`——那是 bug，必须删**（见下注）。
 - 差异小结：**协议骨架（gzip、tls1.3、@websockets 匹配、安全头）与官方逐字一致**；只有「面板认证方式」和「多一个订阅路由」按现网需要改过，功能等价。
 

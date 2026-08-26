@@ -6,7 +6,7 @@
 
 > **本文件 = 简明索引 + 安装/部署。** 每节是 1-3 句的速查。
 >
-> 服务端基础设施（建桶、CI key 创建、bucket policy、Caddy 边缘 + Accept-rewrite、viewer / `_viewer.html` 部署）→ **vps-maintenance** skill 的 Caddy 文档私链分享站章节（含完整端到端部署步骤）。RustFS 桶日常操作的客户端坑（mc / boto3 行为差异、versioning、跨桶 copy、删桶）→ 本 skill 的 [rustfs.md](rustfs.md)（批量 ops 注意点见 [rustfs-bulk-ops.md](rustfs-bulk-ops.md)）。
+> 服务端基础设施（建桶、CI key 创建、bucket policy、Caddy 边缘 + Accept-rewrite、viewer / `_viewer.html` 部署）→ **network** skill 的 [Caddy 文档私链分享站章节](../../network/references/caddy.md)（含完整端到端部署步骤）。RustFS 桶日常操作的客户端坑（mc / boto3 行为差异、versioning、跨桶 copy、删桶）→ 本 skill 的 [rustfs.md](rustfs.md)（批量 ops 注意点见 [rustfs-bulk-ops.md](rustfs-bulk-ops.md)）。
 
 ---
 
@@ -25,7 +25,7 @@ CI key 部署后存两处：
 
 ### 1. 建桶 + 发受限 CI key
 
-完整步骤（建桶 + 发 CI key + Caddy 反代 + viewer 部署）都在 **vps-maintenance** skill 的 `references/caddy.md` §「文档私链分享站」。建好 CI key 后存进仓库 secret 与本机 `~/.mc/config.json`。（**software** skill 的 `references/rustfs.md` 只讲 mc / boto3 客户端操作坑，**不**讲 RustFS 服务部署。）
+完整步骤（建桶 + 发 CI key + Caddy 反代 + viewer 部署）都在 **network** skill 的 [`references/caddy.md`](../../network/references/caddy.md) §「文档私链分享站」。建好 CI key 后存进仓库 secret 与本机 `~/.mc/config.json`。（**software** skill 的 `references/rustfs.md` 只讲 mc / boto3 客户端操作坑，**不**讲 RustFS 服务部署。）
 
 ### 2. 设 `public/*` 匿名可读的 bucket policy
 

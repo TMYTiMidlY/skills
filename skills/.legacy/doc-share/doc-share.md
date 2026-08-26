@@ -6,7 +6,7 @@
 
 ## 前置条件
 
-**服务端已配置**：在 `vps-maintenance` skill 里完成「无额外认证的文档分享私链（WebDAV + Markdeep viewer）」相关章节——**装好 caddy-webdav 扩展**并配置 Caddy site block（`/dav/*` basic_auth 上传端 + capability URL `/<token>/*` 读取端 + viewer 挂载 + 凭据生成）。没这一步就没得上传也没得分享。
+**服务端已配置**：先按同目录的 [caddy-webdav-server.md](caddy-webdav-server.md) 完成「无额外认证的文档分享私链（WebDAV + Markdeep viewer）」服务端配置——**装好 caddy-webdav 扩展**并配置 Caddy site block（`/dav/*` basic_auth 上传端 + capability URL `/<token>/*` 读取端 + viewer 挂载 + 凭据生成）。没这一步就没得上传也没得分享。
 
 **本地 `~/.env` 提供四项**（上传走 basic_auth；分享的 capability URL 本身不需要凭据，**但也放进 `.env`**——skill 上传后才能拼出成品链接、做 200 验证、直接贴回给用户）：
 
@@ -259,7 +259,7 @@ systemctl enable copyparty       # 先不 start，下一步写完 conf 再启
 }
 ```
 
-不需要 `header_up`、`encode`、特殊 cookie 处理——copyparty 自己处理 `X-Forwarded-For`、cookie path、HEAD/Range，按 default Caddyfile semantics 就够了。reload Caddy 之前先 `caddy validate`（见 `vps-maintenance` skill 的 caddy reference）。
+不需要 `header_up`、`encode`、特殊 cookie 处理——copyparty 自己处理 `X-Forwarded-For`、cookie path、HEAD/Range，按 default Caddyfile semantics 就够了。reload Caddy 之前先 `caddy validate`（见 `network` skill 的 [Caddy reference](../../.curated/network/references/caddy.md)）。
 
 **Step 8 启动 + 验证**：
 

@@ -352,7 +352,7 @@ https://panel.example.com {
 - **端口被占 / 想限定监听网卡 → 用 `bind`**：`bind` 的分组机制、独占端口 vs 共享端口的正反用法见下一节；`address already in use`（常见 Docker 占了 `127.0.0.1:port`）的诊断修复、以及共享端口误加 `bind` 导致的域名白屏，见文末「排障与诊断」。
 
 - **公网端口别忘了放行安全组/防火墙**。  
-  中国大陆 Aliyun ECS 的未备案 SNI 封锁与“IP 直连 + `tls internal`”绕过方案另见 [icp-filing.md](icp-filing.md)。
+  中国大陆 Aliyun ECS 的未备案 SNI 封锁与“IP 直连 + `tls internal`”绕过方案另见 [icp-filing.md](../../vps-maintenance/references/icp-filing.md)。
 
 ### `bind` 与 listener 分组：独占端口 vs 共享端口
 
@@ -1245,7 +1245,7 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 | 证书签不出 / ACME 反复失败 / 垃圾子域名狂签 | DNS 没指过来，或 on-demand `ask` 太宽 | 本节「reload 卡住」第 3 条 + 「`on_demand_tls`」节 |
 | `tls internal` 站点长停后重启，日志 `certificate expired beyond grace period` + 反复 `open .../<IP>.key: no such file` | 旧证书清理与内存续签任务交错 | 本节「`tls internal` 站点长停后首启卡在旧证书清理 / 续签」 |
 | docs-share viewer 渲染 / 下载 / 缓存异常 | viewer 壳子 / Markdeep / SigV4 细节 | docs-share「这套方案踩过的坑」 |
-| 大陆 Aliyun ECS 未备案 SNI 被封 | 备案 / SNI 封锁 | [icp-filing.md](icp-filing.md) |
+| 大陆 Aliyun ECS 未备案 SNI 被封 | 备案 / SNI 封锁 | [icp-filing.md](../../vps-maintenance/references/icp-filing.md) |
 
 ### 通用诊断入口：admin API 与 pprof
 
