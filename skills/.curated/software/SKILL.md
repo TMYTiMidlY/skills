@@ -71,7 +71,7 @@ RustFS（Rust 实现的 S3 兼容对象存储，github.com/rustfs/rustfs）+ Min
 
 ## Windows / Office 激活
 
-镜像下载（山己几子木）与激活工具（MAS、CMWTAT、Microsoft Office For MacOS）见 [references/activation.md](references/activation.md)。
+MAS（`irm https://get.activated.win | iex`；HWID / Ohook / TSforge / Online KMS 四种机制的产品支持、联网需求与持久性各不相同——HWID 不激活 Office，Ohook 不支持商店版 Office 而 TSforge 支持）、CMWTAT、macOS 的 VL Serializer 路线，以及正版与第三方介质来源、[国内直连的可达性](references/activation.md#cn-reachability)见 [references/activation.md](references/activation.md)。
 
 ## macOS 小问题集锦
 
