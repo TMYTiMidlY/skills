@@ -56,6 +56,8 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
   - 关键词：`127.0.0.11`、`hostname resolving error`、`no such host`、`getent hosts 失败但 IP 直连通`、`存量网络 DNS 损坏`、`tried to kill container, but did not receive an exit event`
 - **子仓库 `git status` 冒出几十个 untracked 分发软链** → 手动 `source` 工作区 `.envrc` 让 `$PWD` 停在子仓库，链铺深一层；而 `core.excludesFile` 里含斜杠的 pattern 是 anchored、只挡仓库根那层 → [直达](references/linux.md#envrc-subdir-links)
   - 关键词：`.envrc`、`direnv`、`link_into_subdirs`、`core.excludesFile`、`gitignore 含斜杠 anchored`、`check-ignore NOT ignored`、`BASH_SOURCE guard`
+- **`npx` 长时间单核、无 stdout/端口，像卡死在 `idealTree`，约 15 分钟后却成功** → npm 先在内存中构造依赖树，直到最后十几秒才生成 `_npx/node_modules` 并启动应用；95/150 秒超时只证明“尚未完成”，不能证明求解不收敛 → [直达](references/linux.md#npm-idealtree-slow)
+  - 关键词：`idealTree buildDeps`、`npm exec`、`npx @deepseek-ai/dsh`、`单核`、`_npx 安装树 0 文件`、`exit 137`、`14 分 50 秒`、`Arborist`
 
 ### NAS / Synology
 
