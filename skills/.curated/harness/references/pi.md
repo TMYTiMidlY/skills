@@ -1,7 +1,7 @@
 # pi — 极简可扩展编码 agent（harness / runtime 参考）
 
 > **harness skill 的 reference。** 面向要理解/调试/对比编码 agent runtime 的工程师，覆盖：pi 的定位与设计取舍、runtime 架构、
-> 配置与指令发现、五种调用形态（TUI / print / JSON / RPC / SDK）、账号 OAuth 与 API key 的 provider 接入（切模型 · 上下文 · effort）、
+> 配置与指令发现、五种调用形态（TUI / print / JSON / RPC / SDK）、Provider 的 OAuth 与 API key/token 鉴权（切模型 · 上下文 · effort）、
 > 扩展与 skill 系统与自研插件、多 agent 协同、手机远控，以及生态与社区。
 >
 > **来源基线**：全文 runtime 主体为 `earendil-works/pi`（原 `badlogic/pi-mono`）@ `8479bd8`（2026-07-11），npm `@earendil-works/pi-coding-agent` v0.80.6；Provider 鉴权与 `/login` 一节已单独复核到 [v0.84.3](https://github.com/earendil-works/pi/tree/v0.84.3)（`4e58f324`，2026-08-24）；MIT。
@@ -20,7 +20,7 @@
 - **自定义 provider 不会把 `GET /v1/models` 自动导入 `/model`**；`models.json` 里必须显式列出每个模型。→ 见 [接自定义模型](pi-custom-model.md#models-fields)
 - **`reasoning:true` 只是能力声明，`compat.thinkingFormat` 才决定请求怎么写**；自定义域名常识别不出厂商，漏配就「选 `off` 仍思考 / 选 `low` 仍不思考」。→ 见 [接自定义模型](pi-custom-model.md#thinking-layers)
 - **effort 在 UI 里叫 "thinking level"**（`off|minimal|low|medium|high|xhigh|max` 七档），不是统一的 `reasoning_effort`。→ 见 [接自定义模型](pi-custom-model.md#thinking-layers)
-- **`/login` 先分账号 OAuth 与 API key**：账号分支里既有订阅，也有不代表订阅的 OpenRouter / Radius OAuth；Codex / Copilot 由 pi 自行走 OAuth，不复用各自 CLI 的凭据文件。→ 见 [Provider 与凭据](#provider-creds)、[用 Codex 订阅](#codex-sub)、[用 Copilot 订阅](#copilot-sub)
+- **`/login` 会先让你选择鉴权方式**：**Sign in with an account** 走 OAuth，**Sign in with an API key** 直接使用 key/token，之后 pi 只列出支持该方式的 provider。OAuth 和 API key 描述的是“怎么取得请求凭据”，不是计费类别；两者是否使用不同账单或额度池，要按 provider 分别判断。→ 见 [Provider 与凭据](#provider-creds)、[用 Codex 订阅](#codex-sub)、[用 Copilot 订阅](#copilot-sub)
 - **信任（trust）不是沙箱**：只决定加不加载项目级 `.pi/*` 与 `.agents/skills`，不限制工具能干什么；要隔离请上容器。→ 见 [安全 · 信任 · 隔离](#security-trust)
 - **核心没有内置 Web UI / MCP / sub-agent / 权限弹窗**——都靠扩展或社区包补（`Mode` 只有 `text|json|rpc`）。→ 见 [Primitives, not features](#primitives)、[调用形态](#invocation-modes)、[Web 界面](#web-ui)
 
@@ -63,7 +63,7 @@ pi 的核心哲学是**中心极小**：给你原语，让你把 agent 适配到
 | 系统提示词 | 极短、稳定 | 数百行、每版变 | 中 | 中 | 中 |
 | 扩展性 | TS 扩展 + skill（全 OS 权限） | 插件 + MCP | 插件 + MCP | 较封闭 | 较封闭 |
 | MCP | 显式不内置（可扩展补） | 内置 | 内置 | — | — |
-| 订阅 / 账号接入 | Claude/Copilot/Kimi/Codex/Grok 订阅 OAuth；另有 OpenRouter/Radius OAuth | Claude 订阅 | 多家 | 仅 OpenAI | 仅 GitHub |
+| 鉴权入口 | OAuth：Claude/Copilot/Kimi/Codex/OpenRouter/Radius/xAI；API key/token：多家 | Claude 账号 / API key | 多家 | OpenAI 账号 / API key | GitHub 账号 / token |
 | 会话模型 | JSONL **树**（可分叉） | 线性 | 线性 | 线性 | 线性 |
 | 语言/生态 | TypeScript | — | Go | — | — |
 
@@ -291,31 +291,33 @@ session.dispose();
 
 ---
 
-## Provider 凭据与订阅接入
+## Provider 鉴权方式
 
 ### <a id="provider-creds"></a>Provider 与凭据
 
-`pi-ai` 的 `Provider` 可以同时暴露 `auth.oauth` 和 `auth.apiKey`。不带 provider 参数执行 `/login` 时，pi 先让人选 **Sign in with an account**（OAuth）或 **Sign in with an API key**，再只列出实现了该鉴权方法的 provider。因此，账号分支的列表是“OAuth-capable providers”，不是所有内置 provider，也不等于“全部按订阅扣额度”。
+`pi-ai` 的 `Provider` 可以同时暴露 `auth.oauth` 和 `auth.apiKey`。不带 provider 参数执行 `/login` 时，pi 先让人选 **Sign in with an account**（OAuth）或 **Sign in with an API key**，再只列出实现了该鉴权方法的 provider。这两个选项只区分凭据的获取和传递方式；它们是否落到不同的订阅额度、credits 或 API 账单，由 provider 的账号体系决定。
 
-v0.84.3 的账号 / OAuth 分支包含下列 provider：
+v0.84.3 选择 OAuth 后会列出下列 provider：
 
-| Provider | OAuth 凭据的含义 | API key / token 替代入口 |
-|---|---|---|
-| [Anthropic (`anthropic`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/anthropic.ts#L43-L58) | Claude Pro/Max 账号；`isSubscription: true` | `ANTHROPIC_API_KEY` |
-| [GitHub Copilot (`github-copilot`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/github-copilot.ts#L9-L17) | Copilot 订阅；`isSubscription: true` | `COPILOT_GITHUB_TOKEN` |
-| [Kimi For Coding (`kimi-coding`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/kimi-coding.ts#L8-L22) | Kimi Code 订阅；`isSubscription: true` | `KIMI_API_KEY` |
-| [OpenAI Codex (`openai-codex`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/openai-codex.ts#L8-L20) | ChatGPT Plus/Pro；`isSubscription: true`，且只有 OAuth | — |
-| [OpenRouter (`openrouter`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/openrouter.ts#L8-L21) | PKCE 登录后铸造用户可控的 API key，从 OpenRouter credits 扣费；未标记为订阅 | `OPENROUTER_API_KEY` |
-| [Radius (`radius`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/radius.ts#L20-L33) | `pi-messages` gateway 的 OAuth；未标记为订阅，权益取决于 gateway | `RADIUS_API_KEY` |
-| [xAI (`xai`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/xai.ts#L7-L22) | SuperGrok / X Premium 订阅；`isSubscription: true` | `XAI_API_KEY` |
+| Provider | OAuth 登录 | API key / token 登录 | 计费 / 额度关系 |
+|---|---|---|---|
+| [Anthropic (`anthropic`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/anthropic.ts#L43-L58) | Claude Pro/Max 账号；`isSubscription: true` | `ANTHROPIC_API_KEY` | 分开：OAuth 使用 Claude 账号的 Extra Usage，key 使用 Anthropic API 账单 |
+| [GitHub Copilot (`github-copilot`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/github-copilot.ts#L9-L17) | GitHub 设备码登录，再换 Copilot token；`isSubscription: true` | `COPILOT_GITHUB_TOKEN`（须已是可用的 Copilot token） | 同一套 Copilot 订阅权益；差别在 token 的获取和存储 |
+| [Kimi For Coding (`kimi-coding`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/kimi-coding.ts#L8-L22) | Kimi Code 设备码登录；`isSubscription: true` | `KIMI_API_KEY` | 不能只看凭据类型判断：Coding 分发 key 也可使用 Coding plan / booster 额度，以 [`/usages` 返回](kimi.md#usages) 为准 |
+| [OpenAI Codex (`openai-codex`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/openai-codex.ts#L8-L20) | ChatGPT Plus/Pro；`isSubscription: true` | 该 provider 不支持；OpenAI API key 走 `openai` provider | 使用 ChatGPT 账号的 Codex 权益 |
+| [OpenRouter (`openrouter`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/openrouter.ts#L8-L21) | PKCE 登录后铸造用户可控的 API key | `OPENROUTER_API_KEY` | 都从 OpenRouter credits 扣费；OAuth 只是代你生成 key |
+| [Radius (`radius`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/radius.ts#L20-L33) | `pi-messages` gateway OAuth | `RADIUS_API_KEY` | 由具体 gateway 定义 |
+| [xAI (`xai`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/xai.ts#L7-L22) | SuperGrok / X Premium 账号；`isSubscription: true` | `XAI_API_KEY` | 分开：OAuth 使用 Grok 账号的周额度 / Extra Usage Credits，key 使用 xAI API 账单 |
 
-Anthropic、GitHub Copilot、Kimi For Coding、OpenAI Codex 和 xAI 的 OAuth 实现明确设了 `isSubscription: true`；OpenRouter 与 Radius 只是使用 OAuth 登录，没有该订阅标记。
+`isSubscription: true` 只是 pi 给 OAuth 凭据加的运行时标记，用于识别 Anthropic、GitHub Copilot、Kimi For Coding、OpenAI Codex 和 xAI 的账号权益；它不能代替 provider 的计费规则，也不能用来推断 API key 落到哪个额度池。
+
+> Anthropic 的 Extra Usage 说明、OpenRouter 铸造 key 的行为见 [v0.84.3 provider 文档](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/docs/providers.md#L28-L49)；xAI 明确说明 Grok 与 API [共用账号但分开计费](https://docs.x.ai/console/faq/accounts)；Kimi Coding key 的额度语义见同 skill 的 [Kimi Code reference](kimi.md#usages)。
 
 > [v0.84.3 的 provider 文档](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/docs/providers.md#L14-L49) 在 Subscriptions 列表中漏了 Kimi For Coding；同版本的 `kimi-coding.ts` 已注册 `oauth` 且设置 `isSubscription: true`，而 [`/login` 列表是直接从 `provider.auth.oauth` 生成的](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/src/modes/interactive/interactive-mode.ts#L5391-L5425)；故本表以同 tag 源码和实际 UI 为准。
 
-账号分支里的状态描述的是“这个 provider 当前有什么凭据”：`unconfigured` 表示尚无有效凭据，`stored` 表示已存相同类型的 OAuth 凭据，`API key configured` 表示当前使用 API key，但此行正在展示它另外支持的 OAuth 入口。每个 provider 在 `auth.json` 中只有一个带类型的凭据；重新选另一种方法登录会替换它。
+在 OAuth provider 列表里，状态描述的是“这个 provider 当前有什么凭据”：`unconfigured` 表示尚无有效凭据，`stored` 表示已存 OAuth 凭据，`API key configured` 表示当前使用 API key，但该 provider 另外支持 OAuth。每个 provider 在 `auth.json` 中只有一个带类型的凭据；重新选另一种方法登录会替换它。
 
-> 状态的类型不匹配分支见 [OAuth selector](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/src/modes/interactive/components/oauth-selector.ts#L164-L180)；账号 / API key 两段选择见 [login auth-type selector](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/src/modes/interactive/interactive-mode.ts#L5480-L5554)。
+> 状态的类型不匹配分支见 [OAuth selector](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/src/modes/interactive/components/oauth-selector.ts#L164-L180)；OAuth / API key 两种鉴权方式的选择见 [login auth-type selector](https://github.com/earendil-works/pi/blob/v0.84.3/packages/coding-agent/src/modes/interactive/interactive-mode.ts#L5480-L5554)。
 
 凭据/设置三文件（`~/.pi/agent/`）：`auth.json`（凭据）、`settings.json`（默认 provider/model、thinking、compaction…）、`models.json`（自定义 provider / 模型 override，如本地 ollama、改 `contextWindow`）。
 
