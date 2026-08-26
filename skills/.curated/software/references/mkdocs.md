@@ -1385,7 +1385,7 @@ StandardError=journal
 WantedBy=default.target
 ```
 
-外部 TLS/认证网关把整个 `<docs-domain>` 转到 `<gateway-port>`，且认证必须发生在普通页面、编辑 WebSocket和辅助API之前。具体证书、OAuth、caddy-security或服务器加固由 `vps-maintenance` skill 负责；EasyTier、端口转发、WSL/宿主链路、来源ACL和路由由 `network` skill 负责。本文只定义上游契约。
+外部 TLS/认证网关把整个 `<docs-domain>` 转到 `<gateway-port>`，且认证必须发生在普通页面、编辑 WebSocket和辅助API之前。具体证书、OAuth 和 caddy-security 由 `network` skill 的 [Caddy reference](../../network/references/caddy.md) 负责；服务器加固由 `vps-maintenance` skill 负责；EasyTier、端口转发、WSL/宿主链路、来源 ACL 和路由由 `network` skill 负责。本文只定义上游契约。
 
 #### 验收
 

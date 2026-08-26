@@ -1,6 +1,6 @@
 ---
 name: vps-maintenance
-description: 初始化或维护 VPS/服务器时使用，涵盖安全加固、网络与 IP 质量检查、反向代理和基础服务部署。远程操作优先使用 portal；客户端网络与微信 Bot 操作分别转用 network、wechat-clawbot skill。
+description: 初始化或维护 VPS/服务器时使用，涵盖安全加固、网络与 IP 质量检查和基础服务部署。远程操作优先使用 portal；Caddy 与客户端网络转用 network，微信 Bot 操作转用 wechat-clawbot skill。
 ---
 
 # VPS Maintenance
@@ -9,10 +9,12 @@ description: 初始化或维护 VPS/服务器时使用，涵盖安全加固、�
 
 当用户要配置新服务器或 VPS、做服务器侧安全配置、安装或调整服务器上的基础服务时使用本 skill。实际远程操作优先使用 portal MCP server；当前环境未提供时，遵循 `software` skill 的 SSH 远程执行、sudo 与远端文件编辑规范。
 
+Caddy 反向代理、证书和 caddy-security 配置由 `network` skill 覆盖；本 skill 只保留服务器宿主、防火墙和质量检测侧的衔接。
+
 如果用户没有明确指定任务类型，先确认是：
 
 - **新服务器**：新购服务器的防火墙、用户、SSH 密钥部署与 SSH 服务端配置。
-- **服务安装**：按需配置 BBR、EasyTier、Caddy、caddy-security、error-pages。
+- **服务安装**：按需配置 BBR、EasyTier、error-pages；Caddy / caddy-security 转用 `network` skill。
 - **质量检测**：网络、IP、历史服务器质量评估。
 
 ## 新服务器
@@ -159,7 +161,7 @@ sudo sysctl -p
 
 ### Caddy 与 caddy-security
 
-Caddy 反向代理、域名/IP 模式、local root CA、Caddyfile 修改流程、caddy-security GitHub OAuth、cookie scope、环境变量见 [references/caddy.md](references/caddy.md)。
+Caddy 反向代理、域名/IP 模式、local root CA、Caddyfile 与 Admin API、caddy-security GitHub OAuth、cookie scope、环境变量转用 `network` skill 的 [Caddy reference](../network/references/caddy.md)。
 
 尤其是修改 Caddyfile、EasyTier、SSH 转发、systemd 单元、防火墙规则时，不要凭记忆改，先读对应 reference。
 
