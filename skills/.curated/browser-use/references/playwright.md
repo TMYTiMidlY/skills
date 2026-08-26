@@ -68,7 +68,9 @@ playwright-cli install --skills
 
 ### 运行形态与诊断
 
-Playwright CLI 默认无头运行，不会出现用户可见窗口；需要观察或人工接管时，在 `open` 上加 `--headed`。`show` 打开的监控面板同样属于可见界面。该行为可在 [`@playwright/cli` v0.1.18 README](https://github.com/microsoft/playwright-cli/blob/v0.1.18/README.md#L47-L79) 中核对。Playwright MCP 则默认有头，需显式使用 `--headless`；库脚本由 `headless` launch option 决定。
+Playwright CLI 默认无头运行，不会出现用户可见窗口；需要观察或人工接管时，在 `open` 上加 `--headed`。`show` 打开的监控面板同样属于可见界面。Playwright MCP 则默认有头，需显式使用 `--headless`；库脚本由 `headless` launch option 决定。
+
+> 核验基线：[`@playwright/cli` v0.1.18 README](https://github.com/microsoft/playwright-cli/blob/v0.1.18/README.md#L47-L79)。
 
 启动前不要假定某个浏览器一定存在。先看 `playwright-cli --help open`、配置文件和已安装浏览器；默认 channel 缺失时，显式选择现有的 Firefox、WebKit、Chrome 或 Edge，或安装所需浏览器。浏览器进程在受限沙箱内还可能需要额外运行权限。
 
@@ -225,7 +227,7 @@ asyncio.run(main())
 
 ## CLI vs MCP：到底用哪个
 
-[`@playwright/cli` v0.1.18 README](https://github.com/microsoft/playwright-cli/blob/v0.1.18/README.md#L5-L19) 对两个入口的定位是：
+[`@playwright/cli` 的入口定位](https://github.com/microsoft/playwright-cli/blob/v0.1.18/README.md#L5-L19) 区分了两类工作：
 
 - **CLI（`@playwright/cli` + SKILLS）= coding agent 首选**。CLI 调用 **token 更省**：不往上下文里塞庞大的工具 schema 和冗长的无障碍树，agent 用简洁、专用命令直接动作 —— 适合要同时兼顾大代码库、测试、推理、还要省上下文窗口的高吞吐 agent。
 - **MCP** 适合需要**持久状态 + 富内省 + 对页面结构反复推理**的专门 agentic loop（探索式自动化、自愈测试、长程自治），此时"维持连续浏览器上下文"的价值盖过 token 成本。
