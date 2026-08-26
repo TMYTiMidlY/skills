@@ -503,17 +503,26 @@ Linux 主机启用 Mihomo TUN，并由自动路由或策略路由将目标流量
 
 System 栈先从本地监听套接字（listener）`Accept()` 连接，再调用连接处理器的 `handler.NewConnection`；gVisor 栈先创建连接端点（endpoint）并调用 `Complete(false)` 完成前端连接，再交给同一处理器。Mihomo 随后进入规则匹配、选择出站（outbound）和目标侧拨号，因此应用的 `connect()` 可以先返回成功，目标侧的拒绝、过滤或路由失败随后表现为连接结束（EOF）、重置（reset）或超时（timeout）。调用顺序见 [`stack_system.go` 的 `acceptLoop`](https://github.com/MetaCubeX/sing-tun/blob/dfc71de64aed159d9a09a5df43077bab0671db1f/stack_system.go#L335-L352) 和 [`stack_gvisor_tcp.go` 的 `Forward`](https://github.com/MetaCubeX/sing-tun/blob/dfc71de64aed159d9a09a5df43077bab0671db1f/stack_gvisor_tcp.go#L80-L115)。
 
-`nc -z` 在 `connect()` 成功后结束，因此记录的是应用侧连接。SSH、HTTP 和 TLS 会继续等待版本串、响应头或握手数据，能够显示目标侧拨号的后续结果。大量端口同时返回 `succeeded` 时，可以记录目标路由、仅连接探测结果和协议首包：
+检查已知端口上的服务时，直接使用相应的协议客户端，并以完整的协议响应判断服务是否可用：
 
 ```bash
-ip route get <目标IP>
-nc -zv -w 3 <目标IP> <端口>
-timeout 5 nc -v <目标IP> 22
+# SSH：收到服务端版本串并进入密钥交换或认证
+ssh -vvv -o ConnectTimeout=6 user@<目标IP>
+
+# HTTP：收到 HTTP 状态行和响应头
 curl --noproxy '*' -v --max-time 8 http://<目标IP>:<端口>/
+
+# TLS：完成握手并显示协议与证书信息
 timeout 8 openssl s_client -connect <目标IP>:<端口> -brief
 ```
 
-物理网络路径可用相同目标、端口和超时参数做对照，并用路由结果确认出接口：
+扫描协议未知的 TCP 端口时，应在能够直接到达目标、且目标流量未被 TUN 接管的网络环境中执行，例如在同一网络内未启用 TUN 的另一台主机上运行：
+
+```bash
+nmap -Pn -sT --reason -p <端口列表> <目标IP>
+```
+
+同一台主机存在经物理网卡直达目标的路由时，也可以把客户端绑定到该网卡或源地址，形成 `应用 → 物理网卡 → 目标` 的路径。先用路由查询确认这个地址与接口组合，再使用相同的目标、端口和超时参数检查：
 
 ```bash
 ip route get <目标IP> from <物理网卡IP> oif <物理网卡>
@@ -522,7 +531,7 @@ ssh -B <物理网卡> -o ConnectTimeout=6 user@<目标IP>
 curl --interface <物理网卡> --noproxy '*' --connect-timeout 4 <URL>
 ```
 
-在这条连接链中，`IP-CIDR,<目标>,DIRECT` 决定流量进入 Mihomo 后选择的 outbound；`route-exclude-address`、接口绑定和系统路由决定探测流量进入哪条网络路径。路由调整后的 `ip route get` 输出是对照成立的依据。
+`IP-CIDR,<目标>,DIRECT` 作用于流量进入 Mihomo 之后的出站选择，连接链仍是 `应用 → TUN → Mihomo → DIRECT → 目标`。TUN 前端仍会先建立应用侧连接，因此 `nc -z` 可能在目标侧拨号完成前返回 `succeeded`。`route-exclude-address` 可以把目标地址排除出 TUN 自动路由，接口绑定和系统路由再决定是否形成 `应用 → 物理网卡 → 目标` 的直达路径；两类配置的边界见 [DIRECT 与真正 bypass](#direct-bypass)。
 
 > **实测条件与结果（2026-08-21）**：一台 Linux 主机启用 Mihomo TUN，`Meta` 是点对点 TUN，策略规则把非回环流量送入专用路由表，目标 IPv4 的路由出口为 `dev Meta`，TUN 地址上存在本地 TCP 监听套接字。对同一字面 IPv4 地址抽样 26 个 TCP 端口，包括 `1`、`12345`、`54321` 和 `65534`，经 `Meta` 路径执行 `nc -z` 均立即成功；SSH 在服务端版本串前关闭，HTTP 连接后返回 `Empty reply from server`，TLS 未收到服务端握手数据。对照组绑定物理网卡，并确认路由出口为该物理网卡；同一目标的 22/139 返回 `Connection refused`，445 返回 `timeout`。目标、探针和超时参数保持一致，出接口变化对应两组不同结果，将“全端口开放”定位到 TUN 前端完成应用侧握手的时序。
 
