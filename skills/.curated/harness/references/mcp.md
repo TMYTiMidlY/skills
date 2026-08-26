@@ -68,6 +68,15 @@ workspace 配置从 cwd 向上扫描到 git root，每一级都检查 `.mcp.json
 
 `copilot mcp add` 和 `copilot mcp remove` 只写用户级 `mcp-config.json`；要改变 workspace 定义，应编辑命中的 `.mcp.json` / `.github/mcp.json`。`/mcp add` 保存后会在当前会话立即启动 server，无需重启。插件提供的 server 随插件安装 / 卸载而变；`--additional-mcp-config` 只活在本次进程。
 
+**`github-mcp-server` 官方例子（本机 Docker）**：Copilot CLI 已内置 GitHub MCP；如果只想使用 GitHub 工具，无需再安装，在活动会话运行 `/mcp show github-mcp-server` 即可检查。明确要另接本机容器版时，GitHub 官方文档给出的非交互例子是：
+
+```bash
+copilot mcp add github --env GITHUB_PERSONAL_ACCESS_TOKEN=YOUR_GITHUB_PAT -- docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+copilot mcp get github
+```
+
+这会新增 config key `github`，与内置的 `github-mcp-server` 分开。GitHub 网页示例当前把选项写成 `-e`，但 1810 的 Copilot CLI `1.0.81-9` 实测报 `unknown option '-e'`；上面改用该版本支持的 `--env`。它的值会写入用户配置，只放最小权限 PAT，且不要提交该配置。完整说明见 [`github/github-mcp-server` 的 Copilot CLI 安装指南](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-copilot-cli.md)。
+
 > 依据：[GitHub 官方 MCP 文档](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)与[加载优先级](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#mcp-server-loading-priority)（2026-08-26 核）；1810 实测 Copilot CLI `1.0.81-9` 的 `copilot mcp --help`、`list --help` 与 `get --help`。更细的 walk-up 与历史版本行为见 [Copilot CLI 配置发现](copilot-discovery.md)。
 
 ### Claude Code
@@ -84,6 +93,15 @@ Claude Code 有三个用户可选 scope：local 和 user 都存在 `~/.claude.js
 
 `claude mcp add --scope <scope>` 和 `remove --scope <scope>` 修改对应来源；不写 `--scope` 时 add 默认 local，remove 会查找该项所在 scope。插件 MCP 写在插件根 `.mcp.json` 或 `plugin.json`，应通过插件安装 / 卸载管理；`/mcp` 的 toggle 只记录当前项目的启停选择，不删除定义。项目 `.mcp.json` 改动后若审批状态干扰验证，可用 `claude mcp reset-project-choices` 重置该项目的选择。
 
+**`github-mcp-server` 官方例子（本机 Docker + OAuth）**：上游当前优先给出无需预先创建 PAT 的 OAuth 命令；在目标项目目录的普通终端运行：
+
+```bash
+claude mcp add github -e GITHUB_OAUTH_CALLBACK_PORT=8085 -- docker run -i --rm -p 127.0.0.1:8085:8085 -e GITHUB_OAUTH_CALLBACK_PORT ghcr.io/github/github-mcp-server
+claude mcp get github
+```
+
+第一条把本机 Docker 进程注册为 `github`；server 首次启动时走浏览器登录，回调端口只绑定 loopback。默认 scope 是当前项目的 local；要跨项目使用，再按需加 `--scope user`。PAT 版本和无 Docker 的 binary 版本见 [`github/github-mcp-server` 的 Claude 安装指南](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-claude.md)。
+
 > 依据：[Claude Code MCP 官方文档](https://code.claude.com/docs/en/mcp)（2026-08-26 核）；1810 实测 Claude Code `2.1.202` 的 `claude mcp --help` 与 `list --help`。Claude Code 闭源，scope 合并和 WebSocket 枚举边界按官方文档记录。
 
 ### Codex
@@ -96,6 +114,24 @@ Codex 把 MCP 放在普通 TOML 配置层的 `[mcp_servers.<key>]` 下。日常�
 
 `codex mcp add` / `remove` 当前只改用户级 `${CODEX_HOME}/config.toml`；项目级 server 要直接编辑项目 `.codex/config.toml`。插件 manifest 决定 transport，用户 TOML 只在 `[plugins."<plugin-id>".mcp_servers.<server>]` 下覆盖 enabled 和工具策略。桌面端或 IDE 从设置页保存后要按界面提示 Restart。
 
+**`github-mcp-server` 官方例子**：上游给出的 Codex shell 命令连接 GitHub 托管的 HTTP server；启动 Codex 前须让 `GITHUB_PAT_TOKEN` 在其环境中可见：
+
+```bash
+codex mcp add github --url https://api.githubcopilot.com/mcp/ --bearer-token-env-var GITHUB_PAT_TOKEN
+codex mcp get github
+```
+
+这不是本机 server。上游给本机 Docker 版提供的是 TOML 配置，没有另列等价的 `codex mcp add` 命令：
+
+```toml
+[mcp_servers.github]
+command = "docker"
+args = ["run", "-i", "--rm", "-p", "127.0.0.1:8085:8085", "-e", "GITHUB_OAUTH_CALLBACK_PORT", "ghcr.io/github/github-mcp-server"]
+env = { GITHUB_OAUTH_CALLBACK_PORT = "8085" }
+```
+
+保存后重启 Codex，再用 `/mcp` 看连接和工具。完整说明见 [`github/github-mcp-server` 的 Codex 安装指南](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-codex.md)。
+
 > 依据：[OpenAI MCP 官方文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)；`openai/codex@4ef836f` 的[配置层发现](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/config/src/loader/mod.rs#L103-L121)、[MCP 子命令与参数](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L46-L98)、[list 的枚举边界](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L627-L700)及[用户级写入](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L349-L441)；1810 实测 Codex CLI `0.149.1`。
 
 ### Gemini CLI
@@ -106,6 +142,14 @@ Gemini CLI 把 server 定义放在各层 `settings.json` 的 `mcpServers`。持�
 
 `gemini mcp add` 默认写项目 `.gemini/settings.json`，`--scope user` 改写用户文件；`remove` 同样按 scope 删除。持久 enable / disable 状态另存 `~/.gemini/mcp-server-enablement.json`，`--session` 才是不落盘的临时开关。手改 settings 后用 `/mcp reload` 重启 server 并重新发现工具；若改的是要求 restart 的全局 `mcp.allowed` / `mcp.excluded` 策略，则重启 CLI。
 
+**`github-mcp-server` 官方例子**：上游对 Gemini CLI 的推荐入口是安装仓库自带 extension：
+
+```bash
+gemini extensions install https://github.com/github/github-mcp-server
+```
+
+该方式连接 GitHub 托管的 server，并要求环境或 `~/.gemini/.env` 中存在 `GITHUB_MCP_PAT`。若明确要本机 Docker 版，上游没有给 `gemini mcp add` 命令，而是要求把 Docker `command` / `args` 写进 `~/.gemini/settings.json`；见 [`github/github-mcp-server` 的 Gemini CLI 安装指南](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-gemini-cli.md)。
+
 > 依据：[Gemini CLI MCP 官方文档](https://geminicli.com/docs/tools/mcp-server/)与[配置层文档](https://geminicli.com/docs/reference/configuration/)（2026-08-26 核）。1810 未安装 Gemini CLI，本节未做 live 验证；命令、路径和 trust 行为按官方文档记录。
 
 ### Cursor
@@ -115,6 +159,27 @@ Cursor Editor 与 Cursor CLI 共用 MCP 配置。用户级文件是 `~/.cursor/m
 `agent mcp list` 显示 server 名、连接状态、配置来源和 transport，`agent mcp list-tools <identifier>` 显示某台 server 的工具与参数；交互态 `/mcp list` 使用同一界面。当前 `agent mcp` 没有 add / remove：新增、改 transport 或删除定义要编辑 `mcp.json`，或在 Cursor 的 Customize 页面操作。`agent mcp enable` / `disable` 改的是本机批准 / 禁用状态，不改 JSON 定义。
 
 Cursor CLI 文档把配置优先级概括为“project → global → nested”，同时说会自动发现父目录，但没有公开同名 server 横跨多个父目录时的字段合并算法。遇到重名时，以 `agent mcp list` 显示的 configuration source 和实际状态为准，不从文件顺序反推。手改文件后至少用新进程运行 `agent mcp list`；官方没有承诺当前会话热重载配置。更新自定义 server 的实现文件后，官方要求重启 Cursor。
+
+**`github-mcp-server` 官方例子（本机 Docker + OAuth）**：Cursor CLI 没有 `agent mcp add`；上游安装指南要求把下面的 server 项写入 `~/.cursor/mcp.json`，保存后重启 Cursor：
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-p", "127.0.0.1:8085:8085",
+        "-e", "GITHUB_OAUTH_CALLBACK_PORT",
+        "ghcr.io/github/github-mcp-server"
+      ],
+      "env": { "GITHUB_OAUTH_CALLBACK_PORT": "8085" }
+    }
+  }
+}
+```
+
+随后用 `agent mcp list-tools github` 验证。PAT 和托管 HTTP 版本见 [`github/github-mcp-server` 的 Cursor 安装指南](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-cursor.md)。
 
 > 依据：[Cursor MCP 配置文档](https://cursor.com/docs/mcp)与[Cursor CLI MCP 文档](https://cursor.com/docs/cli/mcp)（2026-08-26 核）；1810 实测 Cursor CLI `2026.08.11-e8db854` 的 `agent mcp --help`。Cursor 闭源，父目录重名合并的未公开部分保持未定。
 
