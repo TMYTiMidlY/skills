@@ -486,58 +486,45 @@ curl -sS -H 'Accept: application/json' \
 <a id="7-tun-路由的边界"></a>
 ## <a id="tun-routing"></a>TUN 与系统路由
 
-### <a id="tun-tcp-false-open"></a>TUN 下 TCP“全端口开放”的假阳性
+### <a id="tun-tcp-false-open"></a>TUN 接管下的 TCP 端口探测
 
-**典型症状**：`nc -zv <目标IP> <端口>` 对正常端口、随机高位端口甚至几乎所有端口都报 `succeeded`；SSH 则先打印 `Connection established`，随后在收到服务端版本串之前报 `kex_exchange_identification: Connection closed by remote host`。HTTP 常表现为 `Connected` 后 `Empty reply from server`，TLS、SMB 等协议可能在已经“连接成功”后一直收不到一个字节。
+Linux 主机启用 Mihomo TUN，并由自动路由或策略路由将目标流量送入 `Meta` 等 TUN 设备时，只判断 `connect()` 结果的探针可能把大量甚至全部 TCP 端口报告为 `open`。常见表现是 `nc -zv <目标IP> <端口>` 立即返回 `succeeded`；SSH 先打印 `Connection established`，随后在服务端版本串出现前报 `kex_exchange_identification: Connection closed by remote host`；HTTP 在 `Connected` 后返回 `Empty reply from server`，TLS 则收不到服务端握手数据。
 
-这组现象不能证明目标真的开放了这些端口，也还没走到 SSH 用户名、密钥或密码认证。SSH 只有出现 `Remote protocol version ...` 才说明收到了真实 SSH banner；没有这一行，故障仍在 TCP 前端与服务端协议握手之间。
-
-**原理：TUN 把一条连接拆成两个独立阶段。**
+这些结果来自 TUN 前端建立应用侧连接与 Mihomo 拨目标侧连接的先后顺序：
 
 ```text
-应用 socket ── A: 本机 TCP 握手 ──> sing-tun 本地 endpoint/listener
-                                      │ handler.NewConnection
-                                      ▼
-                                 Mihomo 规则与 outbound
-                                      │
-                                      └── B: 另行拨号 ──> 真实目标 IP:端口
+应用 socket ── 应用侧 TCP 握手 ──> sing-tun endpoint/listener
+                                       │ 交给连接处理器
+                                       ▼
+                              Mihomo 规则与 outbound
+                                       │
+                                       └── 目标侧 TCP 拨号 ──> <目标IP>:<端口>
 ```
 
-Mihomo 的 sing-tun 前端先在本机接住被 TUN 路由进来的 TCP：System 栈会把包改写到本地 `net.Listener`，`Accept()` 后才调用 `handler.NewConnection`；gVisor 栈同样先创建本地 endpoint、完成前端连接，再把连接交给 handler。Mihomo 收到 handler 回调后才进行规则匹配、选择 outbound 并拨真实目标。因此 A 成功时，应用的 `connect()` 已经返回成功；B 此刻仍可能尚未建立，甚至最终被拒绝、过滤或路由失败。源码顺序见 [`stack_system.go` 的 `acceptLoop`](https://github.com/MetaCubeX/sing-tun/blob/meta/stack_system.go#L322-L343) 和 [`stack_gvisor_tcp.go` 的 `Forward`](https://github.com/MetaCubeX/sing-tun/blob/meta/stack_gvisor_tcp.go#L69-L106)。
+System 栈先从本地监听套接字（listener）`Accept()` 连接，再调用连接处理器的 `handler.NewConnection`；gVisor 栈先创建连接端点（endpoint）并调用 `Complete(false)` 完成前端连接，再交给同一处理器。Mihomo 随后进入规则匹配、选择出站（outbound）和目标侧拨号，因此应用的 `connect()` 可以先返回成功，目标侧的拒绝、过滤或路由失败随后表现为连接结束（EOF）、重置（reset）或超时（timeout）。调用顺序见 [`stack_system.go` 的 `acceptLoop`](https://github.com/MetaCubeX/sing-tun/blob/dfc71de64aed159d9a09a5df43077bab0671db1f/stack_system.go#L335-L352) 和 [`stack_gvisor_tcp.go` 的 `Forward`](https://github.com/MetaCubeX/sing-tun/blob/dfc71de64aed159d9a09a5df43077bab0671db1f/stack_gvisor_tcp.go#L80-L115)。
 
-`nc -z` 是“只 connect、不交换应用数据”的探针：A 一成功它就把端口判为开放并迅速关闭，来不及验证 B，所以最容易把任意目标端口显示成 open。SSH、HTTP、TLS、SMB 会继续等待 banner / 响应，才把 B 的失败暴露为 EOF、reset 或 timeout。这和显式 HTTP 代理先回 `200 Connection established`、随后 outbound 才失败是同一类“两段连接”语义，只是发生在 TUN 的透明 TCP 前端。
-
-**什么时候会触发**：
-
-- Mihomo TUN 已启用，且 `auto-route` 或策略路由把目标导向 `Meta` 等 TUN 设备；目标是字面 IP 时也会发生，**与 DNS fake-ip 无关**。
-- 目标没有在 TUN 路由层被真正排除。`IP-CIDR,<目标>,DIRECT` 只改变 B 使用的 outbound，A 仍经过 TUN，因此不等于旁路，也不能让 connect-only 扫描自动变成真实端口探测。
-- 探针只判断 `connect()` 是否成功，或在真实 outbound 的失败被传回前就结束。目标不可达、端口过滤、代理节点故障或规则链拨号失败时，假阳性尤其明显。
-- 这不是“任何 TUN 软件、任何版本都必然让所有端口开放”的协议保证；应把它作为 **Mihomo/sing-tun 路径中的已验证失败模式**。若目标根本没有进入 TUN，或实现把 outbound 结果同步到前端握手，表现会不同。
-
-**诊断时先确认走了哪条路，再验证应用层**：
+`nc -z` 在 `connect()` 成功后结束，因此记录的是应用侧连接。SSH、HTTP 和 TLS 会继续等待版本串、响应头或握手数据，能够显示目标侧拨号的后续结果。大量端口同时返回 `succeeded` 时，可以记录目标路由、仅连接探测结果和协议首包：
 
 ```bash
 ip route get <目标IP>
-# 可疑例：<目标IP> via 198.18.0.2 dev Meta src 198.18.0.1
-
-# connect-only 结果只作线索；必须拿真实协议响应
-timeout 5 nc -v <目标IP> 22                  # SSH 应看到 SSH-2.0-...
+nc -zv -w 3 <目标IP> <端口>
+timeout 5 nc -v <目标IP> 22
 curl --noproxy '*' -v --max-time 8 http://<目标IP>:<端口>/
-smbclient -L //<目标IP> -N                   # SMB 至少应返回协议/认证层结果
-rpcinfo -p <目标IP>                          # NFS/rpcbind 应返回 RPC 结果
+timeout 8 openssl s_client -connect <目标IP>:<端口> -brief
 ```
 
-若要得到真实网络的端口状态，应让这次探测**确实不经过 TUN**，并再次核对路由。例如 Linux 上可让支持该功能的客户端绑定物理网卡：
+物理网络路径可用相同目标、端口和超时参数做对照，并用路由结果确认出接口：
 
 ```bash
 ip route get <目标IP> from <物理网卡IP> oif <物理网卡>
+nc -s <物理网卡IP> -zv -w 3 <目标IP> <端口>
 ssh -B <物理网卡> -o ConnectTimeout=6 user@<目标IP>
 curl --interface <物理网卡> --noproxy '*' --connect-timeout 4 <URL>
 ```
 
-如果绑定接口仍被系统策略接管，就临时关闭 TUN，或在确认不会切断当前远程会话后配置 `route-exclude-address`；操作后必须再用 `ip route get` 复核。不要只加 `DIRECT` 规则便宣称已经绕过。NAS 场景同理：TCP 445 的 `nc -z` 成功不是“可挂载网络磁盘”，必须得到 SMB negotiate / 认证响应；NFS、WebDAV、SFTP 也分别以真实协议响应为准。
+在这条连接链中，`IP-CIDR,<目标>,DIRECT` 决定流量进入 Mihomo 后选择的 outbound；`route-exclude-address`、接口绑定和系统路由决定探测流量进入哪条网络路径。路由调整后的 `ip route get` 输出是对照成立的依据。
 
-> **本机复现（2026-08-21，Linux + Mihomo TUN）**：目标字面 IP 的路由显示 `via 198.18.0.2 dev Meta`；经该路径抽样 26 个端口，包括 `1`、`12345`、`54321`、`65534`，`nc -z` 全部成功。但 HTTP 对正常端口和随机端口都只回 empty reply，TLS 与 SMB 收不到数据，SSH 在服务端 banner 前关闭。绑定物理网卡后，同一目标的 22/139 立即 `refused`、445 `timeout`。这组 A/B 对照证明“全端口开放”来自 TUN 前端，且该路径当时没有可用 SMB 服务；`198.18.x` 在这里是 TUN 链路地址，不是目标域名的 fake-ip 解析结果。
+> **实测条件与结果（2026-08-21）**：一台 Linux 主机启用 Mihomo TUN，`Meta` 是点对点 TUN，策略规则把非回环流量送入专用路由表，目标 IPv4 的路由出口为 `dev Meta`，TUN 地址上存在本地 TCP 监听套接字。对同一字面 IPv4 地址抽样 26 个 TCP 端口，包括 `1`、`12345`、`54321` 和 `65534`，经 `Meta` 路径执行 `nc -z` 均立即成功；SSH 在服务端版本串前关闭，HTTP 连接后返回 `Empty reply from server`，TLS 未收到服务端握手数据。对照组绑定物理网卡，并确认路由出口为该物理网卡；同一目标的 22/139 返回 `Connection refused`，445 返回 `timeout`。目标、探针和超时参数保持一致，出接口变化对应两组不同结果，将“全端口开放”定位到 TUN 前端完成应用侧握手的时序。
 
 ### <a id="direct-bypass"></a>DIRECT 与真正 bypass
 
