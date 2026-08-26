@@ -1,14 +1,14 @@
 # DeepSeek Harness（dsh）Plugin 开发
 
-本文先说明 Plugin、运行配置与可安装 package 的关系，再介绍现成 Plugin 的安装方式、社区扩展形态和权限；开发部分区分创造模式中的运行时原型、独立仓库中的源码 Plugin，以及 dsh 官方仓库中的 package。模块、生命周期和各类扩展接口放在后半篇按需查阅。运行方式、内置扩展的用户行为和完整权限模型见 [DeepSeek Harness 运行时](dsh.md)。
+本文先说明运行中的 Plugin、配置实例和安装包分别是什么，再给出一条从临时原型到源码仓库、分层验证、Profile 安装和后续维护的完整开发流程。模块、生命周期和各类扩展接口都放在这条流程中；现成 Plugin 与社区生态放在文末，不打断开发主线。运行方式、内置扩展的用户行为和完整权限模型见 [DeepSeek Harness 运行时](dsh.md)。
 
-> **来源口径：** 官方实现按 2026-08-16 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)核对；本次新增和改写的社区项目按 2026-08-17 完整克隆到本地后核对，未改结论的旧条目保留原固定来源。源码和文档链接固定到对应 commit，正文不反复书写 commit hash。
+> **来源口径：** 模块、生命周期和社区项目的原有结论按 2026-08-16 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)及 2026-08-17 的社区仓库快照保留；开发、安装和测试流程另按 2026-08-26 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e)复核。源码和文档链接固定到对应 commit，正文不反复书写 commit hash。
 
-## <a id="packaging-and-community"></a>安装现成 Plugin 与社区生态
+## <a id="plugin-objects"></a>Plugin、配置与安装包的关系
 
-dsh 把模型、工具、界面和工作流都组合成 Plugin。使用现成扩展时，先确认它会加入哪个 Profile、是否包含与 dsh 主进程同权限运行的代码，以及安装后需要刷新页面还是重启进程。
+开发前先分开五个对象。Plugin 是运行代码；Loader entry 是一次配置好的加载实例；package 是安装和解析代码的单位；Bundle 给 package 附上一层默认配置；Profile 决定一套应用实际组合哪些 Bundle。后续所有“临时”“持久”“已安装”都由这些对象落在哪一层决定。
 
-### <a id="plugin-entry-package"></a>Plugin、Loader entry 与 package
+### <a id="plugin-entry-package"></a>Plugin、Loader entry、package、Bundle 与 Profile
 
 这几个对象分别描述运行、配置和分发：
 
@@ -20,47 +20,787 @@ dsh 把模型、工具、界面和工作流都组合成 Plugin。使用现成扩
 | Bundle | 声明 `dsh.bundle` 并携带 patch 的可安装 package | patch 向配置树插入或覆盖 Loader entry |
 | Profile | 一套可启动的配置组合 | 按顺序应用 Bundle patch 和用户 patch |
 
-官方 Web Settings 的“插件配置”标签页编辑已运行 Host Plugin 主动开放的用户设置；“插件列表”标签页只读展示 Loader entry、有效启停状态和 Fiber 状态，点击卡片用于展开详情。package 的安装、删除和更新由 `dsh plugin` 负责，Loader entry 的启停由配置 patch 表达；社区 Settings 扩展可以增加操作入口，见后文的[插件市场与主题](#plugin-market)。
+官方 Web Settings 的“插件配置”标签页编辑已运行 Host Plugin 主动开放的用户设置；“插件列表”标签页只读展示 Loader entry、有效启停状态和 Fiber 状态，点击卡片用于展开详情。package 的安装、删除和更新由 `dsh plugin` 负责，Loader entry 的启停由配置 patch 表达；社区 Settings 扩展可以增加操作入口，见文末的[插件市场与主题](#plugin-market)。
 
 因此，设置页清单中的一项表示一个 Plugin 配置实例；可安装 package 是承载代码和 Bundle 配置的分发单元。一个 package 可以贡献多个 Loader entry，同一个 Plugin module 也可以出现多个实例，普通库 package 则只提供依赖。
 
-> 来源：[Plugin、Bundle 与 Profile 的关系](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L29)；[官方 Plugin 配置页的范围](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/ui-settings-plugins/README.md#L5-L25)；[官方 Plugin inventory 的只读边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/ui-settings-plugin-inventory/README.md#L5-L20)。
+一个 package 没有 `dsh.bundle` 时仍可作为普通依赖安装，只是不会自动贡献配置层；本地 module 也可以不经过 package，直接由绝对路径挂载。因此 `package.json`、Bundle patch 和预构建产物是特定分发路线的要求，不是每个临时 Plugin 的共同前置。无论采用哪条路线，真正启动时都必须有 Loader 能解析并导入的运行 module。
 
-### <a id="plugin-loading-paths"></a>安装和加载方式
+> 来源：[Plugin、Bundle 与 Profile 的关系](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L29)；[官方 Plugin 配置页的范围](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/ui-settings-plugins/README.md#L5-L25)；[官方 Plugin inventory 的只读边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/ui-settings-plugin-inventory/README.md#L5-L20)；[Bundle 与普通依赖](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L9-L64)。
 
-最常见的安装入口是：
+### <a id="plugin-loading-paths"></a>代码来源、配置层与生效范围
 
-```sh
-dsh plugin --profile <name> add <package-or-git-spec>
-```
-
-这条命令先把 package 安装为目标 Profile 的依赖，再检查它是否声明 `dsh.bundle`。带 Bundle 声明的 package 会加入 Profile 的 Bundle 列表，其 patch 在 Profile 下次启动时创建或调整 Loader entry；普通 package 只成为可解析的依赖，可以再由用户 patch 挂载。
+同一段 Plugin 代码可以由临时内存、命令行 overlay、持久 patch 或已安装 Bundle 挂载。这些入口使用相同的 Loader entry 形状，但保存位置和生效时间不同。
 
 | 入口 | 代码从哪里来 | 配置保存位置 | 生效范围 |
 |---|---|---|---|
-| `dsh plugin --profile <name> add <spec>` | npm、Git、本地目录或 tarball package | Profile 依赖与 Bundle 列表 | 持久安装；Bundle 列表随下次启动生效 |
+| `dsh plugin --profile <name> add <spec>` | npm、Git、本地目录或 tarball package | Profile 依赖与 Bundle 列表 | 持久安装；Bundle 成员随下次启动生效 |
 | Profile 的 `cordis.patch.yml` | 已可解析的 package 或本地 module | 当前 Profile | 持久配置，并在运行时监视有效改动 |
 | `$DSH_HOME/cordis.patch.yml` | 已可解析的 package 或本地 module | Harness home | 对所有 Profile 生效，并在运行时监视有效改动 |
 | `--patch <path>` | 已可解析的 package 或本地 module | 只来自本次命令行 | 当前启动；适合本地开发和临时覆盖 |
 | 创造模式 | 进程内的临时代码 | 当前 DSH 进程内存 | 原型停用、删除或重启前有效 |
 
-安装 package 与应用 patch 是相邻的两层。正式发布的 Plugin package 通常同时携带 module 和 Bundle patch：`dsh plugin` 安装 package 并把 Bundle 加入 Profile，启动时再由 patch 创建 Plugin entry。直接传 `--patch` 使用同一种配置格式，同时保持 Profile 的依赖和 Bundle 列表不变；patch 通过绝对路径可以直接加载本地 module，通过 package 名称加载时则要求该 package 已经可解析。
+安装 package 与应用 patch 是相邻的两层。可安装 Plugin package 通常同时携带 module 和 Bundle patch：`dsh plugin` 安装 package 并把 Bundle 加入 Profile，启动时再由 patch 创建 Loader entry。直接传 `--patch` 使用同一种配置格式，同时保持 Profile 的依赖和 Bundle 列表不变；patch 通过绝对路径可以直接加载本地 module，通过 package 名称加载时则要求该 package 已经可解析。
 
 Agent preset 还会为每个 Agent 组合 prompt、tools 和策略类 Plugin。它选择部署中已有的 Agent 侧 module，作用范围和 Host Profile 的 Bundle、patch 分开。
 
-npm package 通常已经包含编译后的文件。从 Git 仓库地址安装时拿到的是源码，TypeScript package 可能通过 `prepare` 现场构建，并要求使用者显式授权 pnpm `allowBuilds`。这项授权会在安装期执行 package 代码，不受 Agent 工具沙箱保护。
+Bundle 列表在 Profile 启动时确定；通过 `dsh plugin` 添加、删除或更新 Bundle 后需要重启该 Profile。Profile 与 Harness home 的 patch 支持运行时重载；主题和部分浏览器端 Plugin 还可以即时切换或通过 HMR 刷新。这些差异在开发流程的[操作影响表](#operation-effects)中按动作展开。
 
-Bundle 列表在 Profile 启动时确定；通过 `dsh plugin` 添加、删除或更新 Bundle 后需要重启该 Profile。Profile 与 Harness home 的 patch 支持运行时重载；主题和部分浏览器端 Plugin 还可以即时切换或通过 HMR 刷新。
+> 来源：[Bundle 安装、Profile manifest 与配置层顺序](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L9-L128)；[Profile、`--patch` 与运行时重载](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L7-L84)。
 
-> 来源：[Bundle 安装、Profile manifest、配置层顺序与 Git 构建授权](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/publish.md#L9-L178)；[Profile、`--patch` 与运行时重载](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md#L7-L84)。
+## <a id="plugin-basics"></a>Plugin 开发流程
 
-### 官方发现约定
+一条完整开发链路从需求和扩展位置开始，经过可选的临时原型，再落成源码仓库；源码先以 `--patch` 挂载，逐层实现并验证，最后才打包、安装到 Profile 和发布。创造模式不是必经步骤，发布也不等于安装：每个阶段都有独立的产物和验收门。
+
+```mermaid
+flowchart LR
+    A[确定需求与扩展位置] --> B{需要先试验吗}
+    B -->|是| C[创造模式中的临时原型]
+    B -->|否| D[建立源码仓库]
+    C --> D
+    D --> E[通过 --patch 加载本地源码]
+    E --> F[实现模块与扩展能力]
+    F --> G[分层验证]
+    G --> H[打包真实安装产物]
+    H --> I[安装到干净 Profile]
+    I --> J[版本维护与发布]
+```
+
+### <a id="workflow-entry"></a>开发入口的选择
+
+入口只决定从哪一步开始，不改变源码 Plugin 最终需要的质量门。
+
+| 当前目标 | 开发入口 | 下一阶段 |
+|---|---|---|
+| 扩展位置或可行性还不确定 | 在创造模式中检查真实接口并制作临时原型 | 将确认过的行为提炼成源码工程 |
+| 功能边界已经明确，或一开始就需要依赖、测试和构建 | 直接建立独立源码仓库 | 用 `--patch` 挂载最小 module |
+| 修改 dsh 官方能力并准备向上游贡献 | 在 dsh 官方仓库中新增或修改 package | 按官方 package、测试和文档清单注册 |
+| 只安装、更新或移除现成 package | 不进入开发流程，使用 `dsh plugin --profile <name> ...` | 重启目标 Profile 验证新 Bundle 集合 |
+| 只启停 Loader entry 或改用户配置 | 修改 Profile/Home patch 或官方 Settings | 观察热重载和 Fiber 状态 |
+
+创造模式中运行的是**临时 Plugin**：它和源码 Plugin 都遵循 Cordis 的加载与生命周期规则，但没有对应的源码工程、构建产物和发布包。它适合回答“这个想法能否工作”，源码开发负责把答案变成长期可用的软件。
+
+> 来源：[创造模式的定位与能力](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L1-L27)；[创造模式与源码开发的环境差异](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L10-L80)。
+
+### <a id="operation-effects"></a>开发步骤与操作影响
+
+“永久”至少有三种含义：代码写进仓库、package 安装进 Profile、Loader entry 在重启后仍存在。下面按这三层列出每个操作实际改变什么。
+
+| 操作 | 源码或产物 | Profile 磁盘状态 | 当前运行进程 | 恢复与下一步 |
+|---|---|---|---|---|
+| 创建或更新临时 Plugin | 只增加进程内 Package 版本 | 不变 | 激活成功后立即提供能力 | 可切回旧 Package；重启会清空整个实验 |
+| 暂停临时 Plugin | 临时版本保留 | 不变 | 撤销当前注册和界面 | 可再次运行已有 Package |
+| 删除临时 Plugin | 删除进程内全部版本 | 不变 | 撤销当前效果 | 只能从另有保存的源码重新创建 |
+| 建立或修改源码仓库 | 文件和 Git 工作区改变 | 不变 | 未挂载时无影响 | Git commit 只保存源码历史，不会安装 Plugin |
+| 以 `--patch` 启动本地 module | 源码文件保留在原处 | Profile 依赖与 Bundle 列表不变 | 只对本次启动加入 overlay；有效改动可由 HMR 重载 | 退出进程即失去挂载关系，源码仍在 |
+| 修改 Profile/Home `cordis.patch.yml` | package 源码不变 | patch 持久改变 | 有效修改通常热重载对应 entry | 回退 patch 即可；无需改 package |
+| `dsh --dump-config` | 不变 | 不变 | 不启动应用或 Plugin | 只验证配置合成，不能替代实际启动 |
+| `pnpm pack` 或等价打包 | 新增可审查的安装产物 | 不变 | 不变 | 检查 tarball 后再装进干净 Profile |
+| `dsh plugin ... add` | 安装 npm、Git、目录或 tarball package | 写依赖、lockfile 和 Bundle 列表 | 已运行进程保持原 Bundle 集合 | 重启目标 Profile 后验证 |
+| `dsh plugin ... update/remove` | 更新或移除已安装 package | 重写依赖和 Bundle 列表 | 已运行进程保持原 Bundle 集合 | 重启后切换；回滚 package 版本需再次安装旧版本 |
+| Git commit、tag 或 GitHub Release | 保存或标记仓库版本，可附发布产物 | 不变 | 不变 | 仍需单独安装；发布动作不会替用户更新 Profile |
+
+> 来源：[创造模式的版本、停用与删除语义](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L368-L420)；[配置 dump 的非启动语义](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/src/dump-config.ts#L1-L52)；[Profile 安装和重启边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L41-L64)。
+
+### <a id="creation-mode-plugin-development"></a>创造模式中的临时原型
+
+切换到 [`cordis` preset（创造模式）](dsh.md#creation-mode)后，Agent 会保留标准模式的编码能力，并获得一组专门面向 DSH 自身的开发上下文。此时加入的是**开发手段**，不是某个现成 Plugin；具体扩展仍由 Agent 根据用户目标现场创建。
+
+#### 创造模式提供的开发上下文
+
+创造模式通过三层内容指导 Agent：
+
+| 层 | 切换时的状态 | 提供的内容 |
+|---|---|---|
+| 专用角色提示 | 自动加入 | 告诉 Agent 可以检查和修改当前 DSH，区分 Host 与 Agent preset 的职责，并要求复制后再修改官方 preset |
+| 运行时开发提示与工具说明 | 自动加入 | 说明临时 Plugin 的用途、版本和批准规则、检查与修改流程、后台与网页界面的分工，以及常见错误和恢复方式 |
+| 两份模式专用 Skill | 先加入名称与摘要，正文按需加载 | `cordis-plugin-development` 负责临时 Plugin 开发；`editing-cordis-compositions` 负责 Agent preset 与 Cordis 组合 |
+
+因此，具体的工具调用顺序、版本处理、浏览器批准、生命周期和故障恢复规则，确实会由创造模式直接提供给 Agent；更长的示例和组合规范则保存在 Skill 正文中，在任务需要时才加载，并不是切换模式时一次性塞入全部提示词。
+
+从用户视角看，这些上下文让 Agent 能够检查正在运行的 DSH、创建和调整临时 Plugin、诊断加载或界面问题，以及创作新的 Agent preset。网页界面的临时扩展需要用户批准后才会加载。创造模式可以接触真实的 DSH 主进程，应视为与直接执行终端命令相近的高权限能力，只在受信任的开发场景中使用。
+
+> 来源：[创造模式自动加入的 persona 与 preset 创作规则](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L1-L30)；[动态 Plugin 系统提示词的注册](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/src/index.ts#L35-L43)与[提示内容](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/src/prompt.ts#L3-L110)；[模式专用 Skill 的挂载](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L241-L262)、[动态 Plugin 开发 Skill](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L1-L10)与[组合创作 Skill](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/editing-cordis-compositions/SKILL.md#L1-L10)；[Skill 目录消息只包含摘要、正文按需加载](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/skill/tool-skill/README.md#L5-L31)。
+
+#### 创建、修改与验证临时 Plugin
+
+创造模式创建的临时 Plugin 可以作为源码 Plugin 的原型。先检查实际 Host/Client 接口，再定义一个版本并运行；失败时读取该版本的诊断，追加新版本修复，而不是覆盖旧版本。两者使用同一套 Cordis Plugin 思路，所以已经确认的行为、扩展位置和部分代码可以继续利用；区别在于临时 Plugin 只存在于当前 DSH 进程，源码 Plugin 则有磁盘上的源码、配置、依赖、测试和发布方式。
+
+临时原型只需要证明扩展位置、接口契约和用户行为成立，不应在这一阶段假定 TypeScript 编译、package resolution、安装脚本、干净 Profile 或发布包已经通过。
+
+#### 临时版本的保留、停用与清理
+
+每次修改临时 Plugin 时，创造模式都会保留一份新的代码版本，旧版本仍可用于比较或恢复。上游界面和工具把这种临时代码版本称为 **Package**；这里的 Package 表示“一个临时代码版本”，而 `package.json` 声明的软件 package 表示构建和分发单元。
+
+- **临时停用**：撤销 Plugin 当前提供的工具、监听和界面，但保留它及其代码版本，之后可以重新启用；
+- **删除实验**：移除这个临时 Plugin 和它的全部版本；
+- **重启 DSH**：清空创造模式保存在进程内存中的临时 Plugin。
+
+需要跨重启保留的功能，应在重启前落成源码 Plugin；需要长期保留的 Agent 组合，则写入用户自己的 Agent preset。
+
+> 来源：[创造模式随 preset 提供的运行时工具和开发指导](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L241-L258)；[动态 Plugin 的开发范围与版本处理](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L10-L47)；[版本切换、恢复和清理](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L368-L420)；[临时停用并保留版本](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L455-L490)、[删除整个实验](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L202-L235)与[进程重启后的缺失状态](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L1240-L1250)。
+
+#### 从临时原型提炼源码工程
+
+创造模式不会一键生成长期工程。迁移时先记录已经确认的扩展位置、接口、配置字段、错误行为和清理方式，再把必要代码整理进源码仓库。源码工程仍需独立补齐依赖声明、类型、测试、构建、README、许可证、Bundle patch 和安装验收；临时版本的批准记录、Package id 和运行状态不属于发布产物。
+
+如果原型只证明了其中一半，例如 Host 能返回数据但 Client 还未渲染，就只把已证实的结论带入源码工程，并把另一半留作待验证项。这样临时试验不会被误写成完整兼容承诺。
+
+### <a id="source-plugin-development"></a>建立源码仓库
+
+源码仓库是长期维护的真相源：它保存人可读源码、依赖和测试；安装包是从某个源码版本生成的交付物；Profile 则是某台部署实际安装了什么。三者分别版本化，避免让一个不断变化的 checkout 同时充当源码、发布物和生产安装。
+
+#### <a id="code-location"></a>代码位置与贡献边界
+
+源码 Plugin 可以放在独立仓库中，作为 package 通过 npm、Git、本地目录或 tarball 分发；也可以放在 dsh 官方仓库中，随 dsh 一起构建、测试和发布。两种位置使用相同的 Cordis Plugin 模块与生命周期。
+
+##### 独立 GitHub 仓库中的可安装 package
+
+独立开发的 Plugin 从普通 TypeScript / JavaScript module 开始。本地检查完成后，再把代码与 `cordis.patch.yml` 打成声明 `dsh.bundle` 的 package，使用者通过 `dsh plugin --profile <name> add` 安装。一个 package 也可以同时服务多个宿主，只把 dsh 适配 module 和 Bundle 配置放在对应入口中。
+
+##### dsh 官方仓库中的 package
+
+官方仓库 package 通常位于 `packages/<group>/<pkg>/`，需要 `package.json`、TypeScript project reference、README、约束声明（invariant）和测试。主进程代码与浏览器代码分别编译，普通 package 只能注册到其中一侧。
+
+目录路径负责源码分类，`package.json` 的 `name` 提供依赖和导入名称。例如 `packages/core/session` 的 package 名称是 `@deepseek-ai/dsh-session`；其他 package 通过这个名称声明依赖。官方仓库中的 package 可以实现可直接加载的 Plugin，也可以只提供类型、公共接口或基础库；Bundle 配置决定其中的 Plugin 是否随某个 Profile 加载。
+
+新增 package 时应先找相同角色的现有实现作为模板。工具可看 `packages/shell/tool-bash`，能力的具体实现可看 `packages/shell/bash-local`，模型适配器可看 `packages/llm/llm-deepseek`，Web 界面 Plugin 可看 `packages/client/ui-workflow-run`。
+
+> 来源：[官方仓库 package 的文件、角色与注册清单](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-package.md#L7-L43)；[`dsh-session` 的目录与 package 名称](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/session/package.json#L1-L12)；[纯类型 package 示例](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/util/brand/README.md#L1-L5)；[Bundle、Profile 与配置层的关系](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L17-L29)。
+
+#### 独立仓库的目录与文件职责
+
+独立仓库保持一个清楚的 package 根。具体构建工具可以变化，但每类文件只承担一种责任：
+
+```text
+.
+├── package.json
+├── pnpm-lock.yaml
+├── tsconfig.json
+├── .gitignore
+├── src/
+├── test/
+├── cordis.patch.yml
+├── README.md
+├── LICENSE
+└── .github/workflows/ci.yml
+```
+
+- `src/` 是人维护的实现；`test/` 覆盖配置、生命周期、错误和真实入口。
+- `package.json` 声明运行入口、导出、文件清单、依赖、Node 版本、构建测试命令和可选的 `dsh.bundle`。
+- `cordis.patch.yml` 只表达 Bundle 默认配置；用户部署差异留给 Profile/Home patch，不写回 package。
+- lockfile 固定开发和 CI 的依赖解析；README 说明安装、兼容、权限、更新和卸载；LICENSE 与实际发布包一致。
+- `dist/` 或 `lib/` 是生成物。若提交它，CI 要验证源码重建后没有漂移；若不提交，Git 安装必须能自包含地构建，预构建分发则必须在打包检查中确认产物已进入 tarball。
+- 本地 `artifacts/` 可以存放待检查的 tarball，但不代替 release/tag；是否提交生成包由仓库策略决定。
+
+#### 依赖、构建与兼容范围
+
+运行时直接导入的普通库进入 `dependencies`；由宿主提供且必须共享同一实例的接口放入 `peerDependencies`，并在开发依赖中提供可测试版本；编译器和测试框架只属于开发依赖。不要依靠未声明的全局包、开发机缓存或 monorepo 相邻目录。
+
+`engines`、peer range、README 的支持范围和 CI/烟雾测试矩阵应描述同一组环境。宿主升级后即使旧代码还能导入，也要重新验证 Config、Fiber、真实入口和用户行为，再扩大兼容声明。
+
+构建脚本按分发路线设计：支持 Git 安装时，`prepare` 必须能在独立 checkout 中生成所有入口；只分发预构建 npm package 或 tarball 时，可以在 `prepack` 阶段构建和检查。`prepare` 与 `prepack` 的运行时机不同，不能用 README 承诺代替 package script 的实际行为。
+
+> 来源：[Git 安装和预构建分发](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L153-L178)；[npm lifecycle scripts](https://docs.npmjs.com/cli/v11/using-npm/scripts/)（2026-08-26 查阅）；[官方仓库的依赖约束示例](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/cookbook/adding-a-package.md#L7-L35)。
+
+#### 分支、提交与版本记录
+
+主分支保存能够通过仓库检查的源码；功能分支和 pull request 承载待审改动。提交按可独立审查和回退的行为边界拆分，不把生成包、无关格式化和功能修改混成一条。一次版本发布应从一个明确提交产生，使 `package.json` 版本、tag、release notes 和安装产物能互相追溯。
+
+源码回退、package 版本回退和 Profile 配置回退是三种操作：Git revert 只改变后续源码历史，不会自动替换已经安装的 package；移动 tag 会破坏既有引用，不作为更新方式；部署回滚应重新安装一个已知 package 版本并恢复相配的用户 patch。
+
+#### 持续集成与发布产物
+
+独立仓库的 CI 至少从 lockfile 安装依赖，运行类型/静态检查、单元测试和构建，再生成实际 package 并检查其文件清单。随后在临时 Profile 安装这个产物，从 Loader 入口启动并验证卸载；只在源码目录运行测试不能证明发布包可用。
+
+无凭据 CI 覆盖可重复的模块、配置、生命周期和打包行为；必须访问外部服务的 smoke test 按凭据条件运行，并检查真实结果或外部状态。只 mock 昂贵或不确定的边界，不能用 mock 结果替代最终用户路径。
+
+GitHub Actions 可以保存 tarball、测试报告或截图为 workflow artifact，方便在发布前检查。CI 成功仍只表示某个 commit 通过门禁；创建 tag、GitHub Release 或 registry 版本是后续独立动作。
+
+> 来源：[DSH 测试层级与真实入口](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/testing.md#L7-L49)；[GitHub Actions 的 Node.js 构建、测试与 artifact](https://docs.github.com/en/actions/tutorials/build-and-test-code/nodejs)（2026-08-26 查阅）。
+
+### <a id="local-source-loading"></a>加载本地源码
+
+源码工程先通过命令行 overlay 挂载最小 module，确认解析和生命周期成立，再逐步增加功能；这一阶段不修改 Profile 的依赖或 Bundle 清单。
+
+#### 通过 `--patch` 加载最小 Plugin
+
+本地源码开发时，可以用 `--patch` 直接加载绝对路径指向的 Plugin module。它的持久性和其他配置入口见前文的[代码来源、配置层与生效范围](#plugin-loading-paths)；这里给出最小开发示例。
+
+```yaml
+- insert:
+    - id: hello
+      name: '/absolute/path/to/my-plugin.ts'
+```
+
+```sh
+dsh web --patch ./cordis.patch.yml
+```
+
+先确认最简单的 module 能成功加载，再逐步加入 Config、service、Tool 或 UI。这样导入路径、配置、依赖和业务逻辑不会同时报错。模块形式和生命周期规则见后文的[实现 Plugin 模块](#plugin-runtime)。
+
+> 来源：[仓库外第一个 Plugin 与 overlay 加载路径](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/index.md#L7-L64)。
+
+#### 源码与 patch 修改的生效范围
+
+`--patch` 保存的是本次启动的挂载关系，不会把 package 加进 Profile，也不会把 overlay 写入 Profile 的 `cordis.patch.yml`。源码文件和 patch 文件本身仍留在仓库；退出进程后，可再次用同一命令挂载。
+
+开发期 HMR 会在 module 或配置发生有效变化时卸载旧 Fiber、清理注册并加载新版本。浏览器端代码还需要对应 client bundle 的构建或 watcher；看到配置树变化不代表浏览器已经加载新代码。每次引入新的依赖、入口或构建产物后，应做一次完整重启，避免只在已有 module cache 或 watcher 状态下通过。
+
+> 来源：[Profile 与命令行 overlay](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L7-L43)；[Plugin 清理与 HMR](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/framework/index.md#L7-L131)。
+
+### <a id="plugin-runtime"></a>实现 Plugin 模块
+
+源码 module 先满足 Cordis 的导出、配置和生命周期契约，再注册具体能力。这里的规则对后续 Tool、Provider、协议、界面和 Session 扩展共同生效。
+
+#### 模块形式与配置
+
+module 的导出形式决定 Loader 把谁当作 Plugin 本体；Config schema 则决定部署值何时校验、如何补默认值。
+
+##### 函数式 Plugin 与 Service 类
+
+普通函数式 Plugin 使用具名导出，不提供 default export：
+
+```ts
+import type { Context } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
+
+export const name = 'greet-plugin'
+export const inject = ['tools']
+
+export interface Config {
+  greeting: string
+}
+
+export const Config: Schema<Config> = Schema.object({
+  greeting: Schema.string().default('Hello'),
+})
+
+export function apply(ctx: Context, config: Config): void {
+  // Register effects through ctx.
+}
+```
+
+提供 Cordis service 的 package 通常默认导出一个 `Service` 子类：
+
+```ts
+import { Service, type Context } from '@deepseek-ai/cordis'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    metrics: MetricsService
+  }
+}
+
+export default class MetricsService extends Service {
+  static inject = ['llm']
+
+  constructor(ctx: Context) {
+    super(ctx, 'metrics')
+  }
+
+  record(name: string, value: number): void {
+    // ...
+  }
+}
+```
+
+不要同时给函数式 Plugin 增加 default export。Loader 会把 default export 当作 Plugin 本体，导致同一 module 上的 `inject`、`Config` 或 `apply` 不再被识别。
+
+##### 配置 Schema 与加载校验
+
+所有部署可能调整的值都应进入 `Config`，由 Schemastery 在加载时验证并填充默认值：
+
+```ts
+export interface Config {
+  timeoutMs: number
+  mode: 'fast' | 'accurate'
+}
+
+export const Config = Schema.object({
+  timeoutMs: Schema.number().default(30_000),
+  mode: Schema.union(['fast', 'accurate']).default('fast'),
+})
+```
+
+Schema 无法表达的跨字段或数值约束，应在 Plugin 加载时显式检查。无效配置要让 Fiber 进入失败状态并报告原因，不要静默跳过 Plugin，也不要在第一次真实请求时才暴露本可提前发现的问题。
+
+> 来源：[Plugin 的 module 形式、依赖和 class form](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/index.md#L15-L138)；[Config schema、默认值和失败策略](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/config.md#L7-L100)；[Function Plugin 与 Service class 的 export 规则](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/AGENTS.md#L3-L17)。
+
+#### 生命周期与协作
+
+Fiber 把一次 Plugin 加载的依赖、注册和清理绑定成一个生命周期范围；service 与 event 再让不同 Fiber 协作。
+
+##### Plugin 生命周期与热更新
+
+每个 Plugin 实例都由一个 Fiber 管理。Fiber 是它的生命周期范围：等待必需 service、执行 Plugin，并在卸载时撤销这个 Plugin 注册的监听器、工具和其他资源。
+
+```ts
+export function apply(ctx: Context): void {
+  ctx.on('session/event', handler)
+
+  ctx.effect(() => {
+    const socket = openSocket()
+    return async () => {
+      await socket.close()
+    }
+  })
+}
+```
+
+`ctx.on()`、registry 的 `register()` 和 `ctx.effect()` 都会把清理函数绑定到当前 Fiber。热更新时，Cordis 先卸载旧 Fiber、完成清理，再加载新代码；新代码抛错时 Fiber 进入 `FAILED`，不会自动恢复旧模块。放在 module 顶层的 singleton、没有登记的 timer，或没有等待退出的子进程会绕过这套清理机制。
+
+> 代码落点：[Cordis Fiber 状态与 effect 实现](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/vendor/cordis/src/fiber.ts#L142-L220)；[启动失败与 `FAILED` 状态](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/vendor/cordis/src/fiber.ts#L646-L667)；[Plugin 清理、dispose 与 HMR 语义](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/framework/index.md#L7-L131)。
+
+##### Service 依赖与隔离
+
+Service 是一个 Plugin 提供给其他 Plugin 的具名能力。使用方通过 `inject` 声明自己必须依赖哪些 service：
+
+```ts
+export const inject = ['tools', 'metrics']
+
+export function apply(ctx: Context): void {
+  ctx.metrics.record('loaded', 1)
+}
+```
+
+必需 service 尚未出现时，使用方保持 `PENDING`；提供方消失时，使用方自动卸载，并在 service 恢复后重新加载。可选 service 不写进 `inject`，而是在使用点通过 `ctx.get(name)` 查询。
+
+同名 service 可以在不同 Cordis group 中隔离。一个 Agent preset 或子树需要自己的 shell、tools 或 policy 时，应使用 isolate realm，而不是给 service 发明新的全局名称。
+
+> 来源：[Service 提供、消费与依赖消失后的行为](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/framework/service.md#L7-L110)；[Service isolation](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/framework/service.md#L111-L139)。
+
+##### 事件与拦截点
+
+Event 让 Plugin 在不直接依赖彼此的情况下通信。常见模式：
+
+| 模式 | 行为 | 适合 |
+|---|---|---|
+| `emit` | 广播给全部 listener | 通知和观察 |
+| `bail` | 第一个有效返回值结束分发 | 查询或短路选择 |
+| `serial` | 按顺序 await，首个有效值停止 | 顺序决策 |
+| `waterfall` | listener 包裹下游结果 | 可组合的拦截与策略 |
+
+Waterfall listener 必须调用 `next()` 才会把控制权交给下游；不调用表示有意截断：
+
+```ts
+ctx.on('tools/pre-execute', async (exec, next) => {
+  if (!isAllowed(exec)) {
+    return { kind: 'deny', reason: 'Denied by policy.' }
+  }
+  return next()
+})
+```
+
+Cordis event 与写入 Session 日志的事件不同。`agent/*`、`tools/*` 等 Cordis event 只描述当前运行过程；`turn/*`、`step/*`、`tool/result` 等 Session event 会持久保存，用于恢复和回放。
+
+> 来源：[Event 模式、typed events 与 effect 清理](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/framework/events.md#L23-L138)；[运行时扩展点地图](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L53-L129)。
+
+### <a id="tool-and-providers"></a>实现工具与可替换能力
+
+功能需要直接暴露给模型时实现 Tool；需要在不改变调用方式的前提下替换底层能力时，再拆接口、Provider 和使用方。简单能力不必为了形式完整而预先拆包。
+
+#### 工具 Plugin
+
+Tool 同时定义模型参数、程序化返回值、模型可见内容和界面呈现，四者保持分层才能稳定测试和回放。
+
+##### 参数、结构化结果与显示方式
+
+Tool Plugin 注入 `ctx.tools`，用 `defineTool()` 声明模型看到的参数和程序化返回值：
+
+```ts
+import { defineTool } from '@deepseek-ai/dsh-tools'
+
+export const name = 'tool-greet'
+export const inject = ['tools']
+
+export function apply(ctx: Context): void {
+  ctx.tools.register(defineTool({
+    name: 'greet',
+    description: 'Greet someone by name.',
+    parameters: {
+      name: { type: 'string', required: true },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      exec.signal.throwIfAborted()
+      return `Hello, ${args.name}!`
+    },
+  }))
+}
+```
+
+`execute()` 返回由 `output.schema` 定义的稳定 JSON 值，`output.render()` 再把它转换成模型能看到的内容。id、状态和其他字段应保留为结构化数据，不要藏进自然语言，也不要为了显示一张 UI 卡片而改写原始返回值。
+
+界面如何显示工具结果是另一层逻辑。以后回放仍需要的信息通过 `presentationMeta` 写入持久化结果，再由 `presentCall` / `presentResult` 选择普通文本、终端、diff、搜索或网页卡片。
+
+##### 执行策略与后台任务
+
+| 扩展点 | 用途 |
+|---|---|
+| `tools/pre-execute` | 可组合的 allow / ask / deny 策略 |
+| `ctx.tools.guard()` | 后续 listener 不能撤销的最终拒绝 |
+| `tools/execute` | 包裹真实 dispatch，用于 deadline、retry 或 metrics |
+| `tools/post-execute` | 改写 value、模型内容或附加上下文 |
+| `tools/result` | 观察不可变的最终结果 |
+
+前台工作必须响应 `exec.signal`。一旦工具返回 job id，后续后台任务就不再由这次工具调用负责；应把它注册进 `ctx.jobs`，由 job 自己处理取消、所属 Plugin 卸载和完成状态。
+
+> 来源：[Tool 最小形态与 execute contract](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-tool.md#L7-L56)；[执行策略、Code Mode 与 UI presentation](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-tool.md#L57-L94)。
+
+#### 可替换能力接口
+
+可替换能力把稳定调用契约与具体实现分开，使不同 Provider 能在相同使用方下切换。
+
+##### 接口定义、Provider 与使用方
+
+需要替换实现而不改变调用方式时，把能力拆成三个角色：
+
+| 角色 | 负责什么 | shell 示例 |
+|---|---|---|
+| 接口定义 | 定义稳定接口和请求 / 返回类型 | `dsh-shell` |
+| Provider | 提供一种具体实现 | `dsh-bash-local`、`dsh-pwsh-local` |
+| 使用方 | 把能力暴露给模型或其他调用者 | `dsh-tool-bash` |
+
+Provider 和使用方都依赖接口定义，但彼此不直接依赖。替换 Provider 时，Tool schema 和调用方式可以保持不变；修改使用方呈现给模型的内容时，也不要求改执行器。
+
+##### 能力实现的 package 拆分
+
+只有角色确实需要独立演进或替换时才拆成多个 package。一个简单 Tool 同时拥有输入校验和执行逻辑并不违规；过早拆分会增加 manifest、project reference、tests 和版本协调成本。
+
+公共接口应满足所有现有使用方，不把某个 Tool、UI 或传输协议的私有字段塞进 service。Provider 负责把调用请求整理成完整参数，并在入口处应用默认值与上限；不要把默认行为零散地藏在执行函数中。
+
+> 来源：[三角色能力设计与 Bash 示例](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/practice/index.md#L7-L155)；[仓库中的 capability seam 清单](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/capability-seams.md#L1-L40)。
+
+#### 模型适配器
+
+模型适配器是 LLM 能力的一种 Provider，重点是协议转换、流式顺序、取消、凭据和 provider 路由，而不是重新实现 Agent loop。
+
+##### 流式协议与错误处理
+
+模型适配器是 `ctx.llm` 的 Provider，负责把某家模型服务的协议转换成 dsh 的统一接口：
+
+```ts
+class MyAdapter extends LlmAdapter {
+  async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    // Translate provider wire events into StreamChunk.
+  }
+}
+
+export const name = 'llm-my-provider'
+export const inject = ['llm']
+
+export function apply(ctx: Context, config: Config): void {
+  ctx.llm.registerAdapter(['my-provider'], new MyAdapter(config))
+}
+```
+
+适配器必须遵守统一的流式输出顺序：usage 出现在 finish 之前，finish 之后不再输出；工具参数以原始 JSON 字符串逐段传递；block index 第一次出现后不再改变；不支持的 `GenerateOptions` 要明确报错。网络或协议本身失败可以抛异常，模型服务在正常响应里返回的失败则用 error / aborted finish 表达。
+
+适配器需要响应 `options.signal`。模型服务要求保留的 response id、signature 等专用状态，只保存为能够完整还原的最小 JSON，并由同一个适配器实例判断能否用于后续请求。
+
+##### 注册、配置与验证
+
+一个适配器可以服务多个 provider 路由，但同一路由不能重复注册。凭据应通过 Config 和 dsh 的凭据接口解析，不在代码中读取自创 key 文件。
+
+实现时应把协议类型、请求序列化、响应解析、流片段转换和 adapter class 分开。检查至少覆盖片段顺序、usage / finish、工具参数、取消、不支持的字段、模型服务报错，以及一次连接真实服务的 smoke test。
+
+> 来源：[LLM adapter 形态和协议义务](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-an-llm-adapter.md#L7-L43)；[DeepSeek adapter 的注册实现](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/llm/llm-deepseek/src/index.ts#L240-L276)。
+
+### <a id="protocol-and-ui-plugins"></a>实现协议与界面 Plugin
+
+协议 Plugin 负责把外部客户端接到 Agent/Session 生命周期；Web 界面 Plugin 负责把已经存在的运行状态投影成浏览器交互。两者可以配合，但不互相替代。
+
+#### 接入外部协议
+
+外部协议先定义连接、Agent 所有权、输入时段和输出观察范围，再映射具体命令和 Session event。
+
+##### Agent 控制与 Session 事件
+
+协议 Plugin 把外部客户端接到 `ctx.agents`。它通常负责：
+
+1. 创建或恢复 Agent；
+2. 把外部输入交给 `followup()`、`steer()` 或取消接口；
+3. 订阅 `session/event`，把已写入 Session 日志的输出转换回外部协议；
+4. 在连接关闭时释放自己创建的 Agent，并等待清理完成。
+
+```ts
+export const inject = ['agents']
+
+export function apply(ctx: Context): void {
+  ctx.on('session/event', (session, event) => {
+    if (event.type === 'assistant/message') {
+      sendCommittedText(session.id, event.data.message)
+    }
+  })
+
+  // Wire handlers create agents and feed input through ctx.agents.
+}
+```
+
+不要把 `followup()` 当成“这个 prompt 对应一个结果 Promise”。排队输入、steering 输入和系统注入内容可能在同一段运行时间里共同产生输出；协议若要提供“一次运行的结果”，必须先定义自己从何时观察到何时。
+
+##### ACP 实现案例
+
+`dsh-acp` 是完整案例。它通过 stdio 通信，为连接创建新 Agent，映射权限请求和取消操作，只发送已经写入日志的 assistant message，并在断开连接时清理该连接创建的全部 Session。
+
+ACP package 也说明“协议接入”与“完整界面”不是一回事：推理过程、工具活动、计划、标题和界面呈现仍留在 Session 日志或 Web 界面中，不应为了协议方便全部塞进传输格式。
+
+> 来源：[协议驱动 Plugin 形态](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/extension-cookbook.md#L63-L93)；[ACP Plugin 的连接关闭与 Agent / Session 清理](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/acp/acp/src/index.ts#L348-L414)。
+
+#### Web 界面 Plugin
+
+浏览器扩展分成 Node 侧入口与 Client 入口，并通过 slot 和可回放事件接入已有页面。
+
+##### 浏览器端 package 与界面插槽
+
+Web 界面 Plugin 分成 Node 侧加载入口和浏览器 `/client` 入口。package 通过 `dsh.client` 声明浏览器代码，并在 `apply(ctx)` 中把组件注册到 slot（预留的界面插槽）；普通业务组件不直接获得 `ctx`。
+
+```ts
+export const inject = ['conversationEvents', 'slots']
+
+export function apply(ctx: ClientContext): void {
+  ctx.conversationEvents.register(reviewDefinition)
+  ctx.slots.inject('conversation.chat.node', () =>
+    ctx.slots.register({
+      name: 'conversation.chat.node',
+      key: 'review-job',
+    }, ReviewNodeView))
+}
+```
+
+在 dsh 官方仓库中新增浏览器端 package 时，还要加入 `tsconfig.client.json`、Web Bundle 的 Cordis 配置和依赖清单；独立仓库不修改这些上游聚合文件，而是由自己的 package 和 Bundle 携带 Client 入口及加载配置。`dsh.client.inject` 只说明浏览器端依赖哪些 package，不决定加载顺序；是否真正启用仍由 Cordis 的 service 依赖决定。
+
+##### 对话节点与历史回放
+
+“对话节点”（Conversation Node）把一组已经写入 Session 日志的事件按顺序归并成稳定状态，再生成带稳定 key 的界面节点：
+
+```ts
+const reviewDefinition: ConversationNodeDefinition<ReviewState> = {
+  kind: 'review-job',
+  target: 'chat',
+  match: event => event.type === 'review/start'
+    ? { id: String(event.data.reviewId), role: 'start' }
+    : event.type === 'review/progress'
+      ? { id: String(event.data.reviewId), role: 'update' }
+      : null,
+  start: (_context, match) => initialState(match.event),
+  update: (context, match) => reduceState(context.state, match.event),
+  buildViewNode: context => buildNode(context),
+}
+```
+
+每个相关 event 都要携带稳定业务 id；`match()` 只检查当前 event，不能扫描整段 Session 历史。State 必须能按日志顺序得到同样结果，renderer 只读取最终节点数据。测试同时覆盖完整回放、只有更新事件的日志尾部、向前补找起始事件，以及实时追加与从头回放结果一致。
+
+> 来源：[Web Client package 与 slot 规则](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/AGENTS.md#L1-L83)；[Conversation Node 的事件、State 与测试路径](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-conversation-node.md#L9-L231)。
+
+### <a id="session-data-plugins"></a>实现会话数据 Plugin
+
+当一项事实需要在恢复、分叉或历史回放后仍然成立时，把它设计成 Session event，并从日志派生界面或查询状态。
+
+#### 扩展 Session 事件类型
+
+模型能看到、或恢复会话时必须重建的事实，都应写入 Session 日志。Plugin 通过 TypeScript 的 declaration merging（声明合并）扩展 `SessionEventMap`，增加自己的事件类型：
+
+```ts
+declare module '@deepseek-ai/dsh-session/types' {
+  interface SessionEventMap {
+    'review/start': {
+      reviewId: ReviewId
+      title: string
+    }
+    'review/end': {
+      reviewId: ReviewId
+      summary: string
+    }
+  }
+}
+```
+
+新 event 要有稳定 id、可序列化数据和明确的回放方式。只有实时观察价值、无需恢复的过程信号才留在 Cordis event；不要把运行中的对象、callback 或仅主进程可用的 handle 写进 Session。
+
+#### 持久状态与回放
+
+不要在 Session 日志之外再维护第二份权威状态。用于查询、界面和遥测的状态都从 Session event 计算；需要缓存时，记录自己处理到日志的哪个位置，并能从剩余日志重新构建。
+
+向模型加入新内容时也要先写入 Session event，再由日志生成请求。绕过日志直接修改 prompt，会让恢复、分叉、遥测和界面回放得到彼此不一致的历史。
+
+> 来源：[Session log 与 model-visible invariant](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L63-L97)；[Session subsystem 的事件类型与存储语义](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/subsystems/session.md#L1-L120)。
+
+### <a id="verification-and-debugging"></a>分层验证 Plugin
+
+验证顺序与故障范围对应：先确认配置树，再确认 module 和 Fiber，随后检查生命周期与用户行为，最后只从真实发布包安装。前一层通过不能替代后一层；依赖安装成功也只表示 package 可解析，不表示 Plugin 已经进入 `ACTIVE`。
+
+#### 配置层合成检查
+
+```sh
+dsh --profile <name> --dump-config
+```
+
+`--dump-config` 展示 Bundle、Profile、Harness home 与 `--patch` overlay 合成后的配置树，并报告未匹配的 patch 目标。它不会启动应用、导入 Plugin、求值 `!!js` 或执行 Config schema，因此只用来确认配置项是否插入、覆盖顺序是否符合预期。
+
+#### 模块导入、配置校验与 Fiber 状态
+
+通过实际 Loader 和目标 `cordis.yml` 启动 Plugin，依次确认 package 名或绝对路径能解析、module 入口可导入、Config 校验通过、必需 service 存在，并检查 Fiber 状态：
+
+| 状态 | 通常表示 | 下一项检查 |
+|---|---|---|
+| `ACTIVE` | `apply()` 已完成，必需依赖已满足 | 验证注册的能力和用户可见行为 |
+| `PENDING` | 某个必需 service 尚未提供 | 核对 `inject`、分组和加载该 provider 的 entry |
+| `FAILED` | 导入、Config 或 `apply()` 抛错 | 读取该 Fiber 的原始诊断，不用配置 dump 猜原因 |
+
+包含浏览器部分的 Plugin 还要在真实 Web 启动方式中确认 Client package、Slot 注册和渲染行为，不能用 Host Fiber 或配置 dump 代替。
+
+#### 单元测试与资源清理
+
+每项注册到 Cordis 注册表中的能力都应有热更新安全测试：加载 Plugin、确认注册出现，再卸载它并确认注册消失。生命周期测试还要等待异步清理真正结束，不能只断言 abort 或 kill 已被调用。
+
+Tool、Provider 和 event policy 的单元测试覆盖错误路径、顺序、取消和重复注册。只 mock network、clock 等昂贵或非确定边界，尽量使用真实下游实现。配置测试同时覆盖默认值、无效值和跨字段约束，避免把本可在加载期发现的问题拖到第一次真实请求。
+
+#### 用户界面与真实能力
+
+用户可见的 Plugin 要通过 Loader 启动实际 composition，验证页面、协议、模型可见输入或外部副作用。外部能力的 smoke test 应检查真实返回或再次读取外部状态，不以 Plugin 自报“成功”作为证据。
+
+模型、协议或 UI 输出发生变化时，增加不需要真实凭据的 snapshot；依赖真实服务的路径再用有凭据 smoke test 补足。无凭据测试证明组装和回放，有凭据测试证明当前服务仍接受真实请求，两者不能互相替代。
+
+#### 发布包与干净 Profile
+
+最后从实际 tarball、npm 版本或 Git spec 安装到隔离的 Harness home 或测试 Profile，不从源码工作区的 `node_modules` 借依赖。检查至少覆盖：
+
+- package 清单包含 manifest 指向的入口、类型声明、patch、浏览器 bundle 和运行文件；
+- `dsh --profile <name> --dump-config` 能看到预期 Bundle layer；
+- 完整启动后目标 Fiber 进入预期状态，真实入口和 CLI `bin` 使用构建后的文件；
+- remove 后依赖和 Bundle layer 消失，重启后不再加载；
+- 不应被修改的 Profile、默认模型或其他 entry 保持不变。
+
+官方仓库新增 package 还要按其新增 package 清单注册构建、类型检查和文档入口，再运行仓库级检查：
+
+```sh
+pnpm install
+pnpm run doc-sync
+pnpm run constraints
+pnpm run typecheck
+pnpm run lint
+pnpm run build
+pnpm run hygiene
+```
+
+> 来源：[配置 dump 的非启动语义](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/src/dump-config.ts#L1-L52)；[Fiber 状态与缺失依赖诊断](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cordis-tutorial/06-composition-and-hmr.md#L63-L109)；[测试层级、真实入口与 snapshot](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/testing.md#L7-L49)；[官方仓库 package 检查](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/cookbook/adding-a-package.md#L109-L118)。
+
+### <a id="packaging-and-installation"></a>打包并安装到 Profile
+
+源码、安装包和 Profile 分别回答“怎样维护”“交付哪些字节”“这套部署启用什么”。打包阶段把前两者连接起来，安装阶段再把 package 及其 Bundle layer 写进 Profile。
+
+#### Bundle 声明与 Profile 清单
+
+要让安装命令自动把 package 加入 Profile 的 Bundle 列表，package 用 `dsh.bundle` 指向 patch：
+
+```json
+{
+  "name": "dsh-hello-plugin",
+  "type": "module",
+  "main": "dist/index.js",
+  "files": ["dist", "cordis.patch.yml"],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
+```
+
+```yaml
+- insert:
+    - id: hello
+      name: dsh-hello-plugin
+```
+
+Profile 清单保存按顺序应用的 Bundle 列表，由 `dsh plugin` 创建和维护。一个 package 没有 `dsh.bundle` 时仍可作为普通依赖安装，但不会自动启用 Plugin；用户可以再用自己的 patch 挂载其中的 module。本地绝对路径 module 则可以完全不经过 package。
+
+#### Bundle 默认值与用户覆盖
+
+完整配置入口见前文的[代码来源、配置层与生效范围](#plugin-loading-paths)。Bundle 应提供能直接加载的默认 entry，不把某台部署的凭据、路径或偏好写进 patch。Profile、Harness home 和命令行 patch 都可以按 row id 覆盖 Bundle entry，而且覆盖会替换完整 `config`；用户覆盖同样要重述目标 entry 需要的全部配置。
+
+#### 分发形式与安装期构建
+
+`dsh plugin --profile <name> add <spec>` 把 spec 交给 pnpm，再根据安装后 manifest 中的 `dsh.bundle` 对齐 Bundle 列表。四种常见 spec 的主要差别是安装端拿到什么、是否执行代码和后续能否复现：
+
+| 分发形式 | 安装端取得 | 构建时机 | 主要影响与边界 |
+|---|---|---|---|
+| npm package | registry 中的 package tarball | 发布前构建 | 可按版本安装；package 应已包含运行产物，不靠用户 checkout |
+| Git spec，宜固定 commit | 仓库源码 | Git 安装时由 `prepare` 构建 | pnpm 需要用户授权 `allowBuilds`；授权等于允许 package 在安装期执行代码 |
+| 本地 checkout | 指向当前源码目录的 link | 使用前由开发者构建 | 不需要 Git 安装构建授权，但源码或生成物变化会改变下一次加载结果，适合本地迭代 |
+| `pnpm pack` tarball | manifest `files` 选出的固定 package 内容 | 作者打包前由 `prepack`/`prepare` 构建 | 安装端不需要现场构建；原 tarball 通常只在安装、更新或重装时再次使用 |
+
+源码仓库里的 `prepack` 是作者生成 tarball 时的门禁，不等于消费者安装 tarball 时会再次构建。Git 安装的 `prepare` 则运行在使用者机器上，不受 Agent 工具沙箱保护。若不希望要求这项授权，分发已构建的 npm package 或 `pnpm pack` tarball；这两条都是受支持的预构建路线，不需要为这个 Plugin 自身的源码构建授权。依赖 package 的独立安装脚本仍需分别审查。tarball 不是 DSH 专用格式，也不是唯一方式。
+
+> 来源：[Package、Profile 和 Git 构建授权](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L9-L178)；[npm lifecycle 的 `prepare` 与 `prepack`](https://docs.npmjs.com/cli/v11/using-npm/scripts/)（2026-08-26 查阅）。
+
+#### Profile 安装与实际加载路径
+
+安装成功后，Profile manifest 会把 package 记为依赖，并在 package 声明 Bundle 时把名称加入 `dsh.profile.bundles`；lockfile 记录实际解析的版本、路径或完整性信息。当前进程不会替换启动时的 Bundle 集合，添加、更新和移除后都应重启目标 Profile。
+
+下一次启动先读取 Profile 的 Bundle 列表，再从已安装 package 读取 `dsh.bundle.patch`，由 patch 插入 Loader entry；entry 的 `name` 通过 Node resolution 导入已安装的运行入口。npm tarball、Git URL 或本地 tarball 是安装来源，不是每次请求都会读取的运行入口。package manager 可能用链接或内容寻址存储实现 `node_modules`，但 Loader 看到的逻辑边界仍是 Profile 可解析的 package。
+
+tarball 固定的是这个 package 的文件，不是完整运行环境。普通 dependencies、宿主 peer、Node/DSH 版本、外部服务和用户 patch 仍分别决定运行结果；版本号和 lockfile 也不能让一个可变的本地路径自动变成不可变发布物。
+
+> 来源：[Bundle manifest、Profile manifest 和 Node resolution](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L9-L128)；[Bundle 变更的重启边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L41-L64)。
+
+### <a id="plugin-maintenance"></a>维护和发布 Plugin
+
+安装完成后，源码历史、package 版本和 Profile 配置继续独立演进。维护时先确认要回退的是哪一层，再选择 Git、package manager 或 patch 操作。
+
+#### 更新、回滚与卸载
+
+| 目标 | 操作层 | 结果 |
+|---|---|---|
+| 修正后续源码历史 | 新 commit 或 revert | 只改变仓库；已安装版本不动 |
+| 临时回到旧实验版本 | 创造模式中的旧 Package | 只影响当前进程；重启后实验仍会消失 |
+| 撤销用户配置 | Profile/Home patch | 持久修改配置，通常经 HMR 生效 |
+| 更新已安装 package | `dsh plugin --profile <name> update ...` 或安装明确新版本 | 改 Profile 依赖/lockfile；重启后使用新 Bundle 集合 |
+| 回滚已安装 package | 重新安装明确旧版本、旧 commit 或旧 tarball | 改 Profile 依赖/lockfile；重启后回到旧 package |
+| 完全卸载 | `dsh plugin --profile <name> remove <package>` | 删除依赖和 Bundle 成员；重启后不再加载 |
+
+同一 package 版本应对应固定内容；已经发布的 tag 或 registry version 不用移动和覆盖来表达修正，而是发布新版本。回滚后还要核对用户 patch：旧 package 的 Config schema 可能不接受新版本留下的字段。
+
+#### 发布前检查
+
+发布前至少确认：
+
+- `package.json` 的名称、版本、Node 入口、类型声明、`bin`、`files` 和 `dsh.bundle` / `dsh.client` 都指向真实发布文件；
+- README 给出每条受支持的安装命令、目标 Profile、Node/DSH 兼容范围、更新和卸载方式；
+- 主进程权限、网络或子进程行为、凭据保存位置、安装脚本和 `allowBuilds` 条件写清楚；
+- package、许可证、测试结果和干净 Profile 安装验收一致；
+- release notes 说明用户可见变化、配置迁移和已知限制，不用源码提交列表代替升级说明。
+
+#### GitHub Release、npm 与 tarball
+
+GitHub Release 基于 Git tag，适合把一个源码点、release notes 和额外构建产物放在一起。GitHub 自动提供的 ZIP/tar.gz 是该 tag 的**源码归档**，不等同于 `pnpm pack` 根据 package manifest 生成的 npm `.tgz`；如果用户要用 `.tgz` 安装，应把经过 CI 验收的 npm tarball 作为独立 release asset 上传。
+
+CI workflow artifact 用于某次运行的检查和交接，不自动构成稳定 release。npm 发布也不是必经步骤：独立项目可以只提供固定 commit 的 Git 安装，或在 GitHub Release 附 tarball；选择哪条路线都要在 README 说明构建授权、版本固定和更新方法。
+
+> 来源：[GitHub Release、tag、源码归档与 release asset](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)（2026-08-26 查阅）；[DSH 支持的 Git、npm 与 tarball 路线](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L153-L178)。
+
+#### 社区发现信息
+
+公开仓库可以添加 [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic，并在 README 写清 package 名、目标 Profile 和安装入口。这个操作只改变仓库的发现信息，不改变 package 或任何 Profile；topic、目录和安全审核的区别见社区生态的[官方发现约定](#community-discovery)。
+
+开发流程到这里完成：仓库保存可维护源码，release/tag 标记可追踪版本，package 承载可安装字节，Profile 记录部署选择，启动后的 Loader/Fiber 决定实际运行状态。任何一层改变，都回到对应验收门验证，不用另一层的“成功”代替。
+
+## <a id="packaging-and-community"></a>现成 Plugin 与社区生态
+
+下面的项目用于认识现有扩展形态和安装边界，不是开发流程的必经步骤。使用现成扩展时，先确认它会加入哪个 Profile、是否包含与 dsh 主进程同权限运行的代码，以及安装后需要刷新页面还是重启进程。
+
+### <a id="community-discovery"></a>官方发现约定
 
 官方建议 Plugin 仓库添加 [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic（GitHub 仓库话题标签），让社区更容易发现项目。topic 表示项目自报的分类；官方目录、精选、签名和安全审核分别需要自己的机制。
 
 因此“能被 topic 或社区目录找到”“能被 `dsh plugin --profile <name> add` 安装”“已经通过安全审计”是三件不同的事。
 
-> 来源：[官方 README 的 `dsh-plugin` 发现约定](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/README.md#L37-L45)。
+> 来源：[官方 README 的 `dsh-plugin` 发现约定](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/README.md#L37-L45)；[GitHub topic 的分类和发现作用](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/classifying-your-repository-with-topics?apiVersion=2022-11-28)（2026-08-26 查阅）。
 
 ### 桌面应用与终端界面
 
@@ -115,552 +855,4 @@ ModLens 在 DSH 中既可以注册 `modlens_read_image` Tool，也可以为已�
 - 同时支持多个宿主的 package 应把核心能力和接入 dsh 的适配代码分开，避免把 dsh 的 Session、UI 或 Config 概念带进其他宿主。
 - 包含主进程入口的社区 Plugin 按启动 dsh 的用户权限运行；目录热度不能替代 package 声明、依赖、构建脚本和权限检查。完整权限模型见运行时篇的 [信任边界](dsh.md#trust-boundaries)。
 
-Plugin 卸载、热替换和失败状态的完整语义见后文的[模块、配置与生命周期](#plugin-runtime)。
-
-## <a id="plugin-basics"></a>创造模式与源码开发
-
-创造模式是一套运行时开发能力，源码开发则是完整的软件工程。两者可以衔接，但没有固定先后关系：需求还不清楚时，可以先在创造模式中试验；目标已经明确，或一开始就需要长期维护、测试和发布时，可以直接编写源码 Plugin。
-
-| 目标 | 合适的做法 |
-|---|---|
-| 安装或移除可安装 package 与 Bundle | 使用 `dsh plugin --profile <name> add ...` 或 `remove ...` |
-| 启停一个 Loader entry | 修改 Profile 或 Harness home 的 patch；社区市场也可以提供对应界面 |
-| 调整已开放的 Plugin 用户设置 | 使用官方 Settings 的“插件配置”页 |
-| 了解 DSH 当前有哪些扩展点，或排查某个 Plugin 为什么没有工作 | 切换创造模式，让 Agent 检查正在运行的 DSH |
-| 快速试做一个小工具、界面入口或行为调整 | 在创造模式中创建临时 Plugin |
-| 开发需要依赖、持久数据、完整测试、构建或发布的功能 | 直接编写源码 Plugin |
-| 修改 DSH 官方能力并准备向上游贡献 | 在 dsh 官方仓库中新增或修改 package |
-
-创造模式中运行的是**临时 Plugin**：它和正式 Plugin 都遵循 Cordis 的加载与生命周期规则，但没有对应的源码工程、构建产物和发布包。它适合回答“这个想法能否工作”，源码开发负责把答案变成长期可用的软件。
-
-> 来源：[创造模式的定位与能力](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L1-L27)；[创造模式与源码开发的环境差异](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L10-L80)。
-
-## <a id="creation-mode-plugin-development"></a>创造模式中的 Plugin 开发
-
-切换到 [`cordis` preset（创造模式）](dsh.md#creation-mode)后，Agent 会保留标准模式的编码能力，并获得一组专门面向 DSH 自身的开发上下文。此时加入的是**开发手段**，不是某个现成 Plugin；具体扩展仍由 Agent 根据用户目标现场创建。
-
-### 切换时 Agent 实际获得什么
-
-创造模式通过三层内容指导 Agent：
-
-| 层 | 切换时的状态 | 提供的内容 |
-|---|---|---|
-| 专用角色提示 | 自动加入 | 告诉 Agent 可以检查和修改当前 DSH，区分 Host 与 Agent preset 的职责，并要求复制后再修改官方 preset |
-| 运行时开发提示与工具说明 | 自动加入 | 说明临时 Plugin 的用途、版本和批准规则、检查与修改流程、后台与网页界面的分工，以及常见错误和恢复方式 |
-| 两份模式专用 Skill | 先加入名称与摘要，正文按需加载 | `cordis-plugin-development` 负责临时 Plugin 开发；`editing-cordis-compositions` 负责 Agent preset 与 Cordis 组合 |
-
-因此，具体的工具调用顺序、版本处理、浏览器批准、生命周期和故障恢复规则，确实会由创造模式直接提供给 Agent；更长的示例和组合规范则保存在 Skill 正文中，在任务需要时才加载，并不是切换模式时一次性塞入全部提示词。
-
-从用户视角看，这些上下文让 Agent 能够检查正在运行的 DSH、创建和调整临时 Plugin、诊断加载或界面问题，以及创作新的 Agent preset。网页界面的临时扩展需要用户批准后才会加载。创造模式可以接触真实的 DSH 主进程，应视为与直接执行终端命令相近的高权限能力，只在受信任的开发场景中使用。
-
-> 来源：[创造模式自动加入的 persona 与 preset 创作规则](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L1-L30)；[动态 Plugin 系统提示词的注册](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/src/index.ts#L35-L43)与[提示内容](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/tool-cordis/src/prompt.ts#L3-L110)；[模式专用 Skill 的挂载](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L241-L262)、[动态 Plugin 开发 Skill](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L1-L10)与[组合创作 Skill](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/editing-cordis-compositions/SKILL.md#L1-L10)；[Skill 目录消息只包含摘要、正文按需加载](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/skill/tool-skill/README.md#L5-L31)。
-
-### 临时 Plugin 与正式 Plugin
-
-创造模式创建的临时 Plugin 可以作为正式 Plugin 的原型。两者使用同一套 Cordis Plugin 思路，所以已经确认的行为、扩展位置和部分代码可以继续利用；区别在于临时 Plugin 只存在于当前 DSH 进程，正式 Plugin 则有磁盘上的源码、配置、依赖、测试和发布方式。
-
-创造模式不会一键生成正式 Plugin。确认原型后，需要让 Agent 把实现整理成源码工程，补齐配置、依赖、测试、构建和安装说明，再按正式启动方式验收。最终可以发布为独立社区 Plugin；需要修改 DSH 官方实现的代码则放进官方仓库中的相应 package。
-
-### 临时版本的保留与清理
-
-每次修改临时 Plugin 时，创造模式都会保留一份新的代码版本，旧版本仍可用于比较或恢复。上游界面和工具把这种临时代码版本称为 **Package**；这里的 Package 表示“一个临时代码版本”，而 `package.json` 声明的软件 package 表示构建和分发单元。
-
-- **临时停用**：撤销 Plugin 当前提供的工具、监听和界面，但保留它及其代码版本，之后可以重新启用；
-- **删除实验**：移除这个临时 Plugin 和它的全部版本；
-- **重启 DSH**：清空创造模式保存在进程内存中的临时 Plugin。
-
-需要跨重启保留的功能，应在重启前落成源码 Plugin；需要长期保留的 Agent 组合，则写入用户自己的 Agent preset。
-
-> 来源：[创造模式随 preset 提供的运行时工具和开发指导](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L241-L258)；[动态 Plugin 的开发范围与版本处理](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L10-L47)；[版本切换、恢复和清理](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L368-L420)；[临时停用并保留版本](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L455-L490)、[删除整个实验](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L202-L235)与[进程重启后的缺失状态](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/extensions/cordis-host-runner/src/index.ts#L1240-L1250)。
-
-## <a id="source-plugin-development"></a>源码 Plugin 的开发与发布
-
-### <a id="code-location"></a>选择代码位置
-
-源码 Plugin 可以放在独立仓库中，作为 package 通过 npm、Git、本地目录或 tarball 分发；也可以放在 dsh 官方仓库中，随 dsh 一起构建、测试和发布。两种位置使用相同的 Cordis Plugin 模块与生命周期。
-
-#### 独立仓库中的可安装 package
-
-独立开发的 Plugin 从普通 TypeScript / JavaScript module 开始。本地检查完成后，再把代码与 `cordis.patch.yml` 打成声明 `dsh.bundle` 的 package，使用者通过 `dsh plugin --profile <name> add` 安装。一个 package 也可以同时服务多个宿主，只把 dsh 适配 module 和 Bundle 配置放在对应入口中。
-
-#### dsh 官方仓库中的 package
-
-官方仓库 package 通常位于 `packages/<group>/<pkg>/`，需要 `package.json`、TypeScript project reference、README、约束声明（invariant）和测试。主进程代码与浏览器代码分别编译，普通 package 只能注册到其中一侧。
-
-目录路径负责源码分类，`package.json` 的 `name` 提供依赖和导入名称。例如 `packages/core/session` 的 package 名称是 `@deepseek-ai/dsh-session`；其他 package 通过这个名称声明依赖。官方仓库中的 package 可以实现可直接加载的 Plugin，也可以只提供类型、公共接口或基础库；Bundle 配置决定其中的 Plugin 是否随某个 Profile 加载。
-
-新增 package 时应先找相同角色的现有实现作为模板。工具可看 `packages/shell/tool-bash`，能力的具体实现可看 `packages/shell/bash-local`，模型适配器可看 `packages/llm/llm-deepseek`，Web 界面 Plugin 可看 `packages/client/ui-workflow-run`。
-
-> 来源：[官方仓库 package 的文件、角色与注册清单](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-package.md#L7-L43)；[`dsh-session` 的目录与 package 名称](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/core/session/package.json#L1-L12)；[纯类型 package 示例](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/util/brand/README.md#L1-L5)；[Bundle、Profile 与配置层的关系](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L17-L29)。
-
-### 通过 `--patch` 加载最小 Plugin
-
-本地源码开发时，可以用 `--patch` 直接加载绝对路径指向的 Plugin module。它的持久性和其他配置入口见前文的[安装和加载方式](#plugin-loading-paths)；这里给出最小开发示例。
-
-```yaml
-- insert:
-    - id: hello
-      name: '/absolute/path/to/my-plugin.ts'
-```
-
-```sh
-dsh web --patch ./cordis.patch.yml
-```
-
-先确认最简单的 module 能成功加载，再逐步加入 Config、service、Tool 或 UI。这样导入路径、配置、依赖和业务逻辑不会同时报错。模块形式和生命周期规则见后文的[模块、配置与生命周期](#plugin-runtime)。
-
-> 来源：[仓库外第一个 Plugin 与 overlay 加载路径](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/index.md#L7-L64)。
-
-### <a id="verification-and-debugging"></a>实现与验证
-
-每加一层功能，先运行最贴近改动的检查，再扩展到实际启动、浏览器界面和最终发布包。依赖安装成功只表示 package 可解析，不表示 Plugin 已经进入 `ACTIVE`。
-
-#### 配置层合成检查
-
-```sh
-dsh --profile web --dump-config
-```
-
-`--dump-config` 展示 Bundle、Profile、Harness home 与 `--patch` overlay 合成后的配置树，并报告未匹配的 patch 目标。它不会启动应用、导入 Plugin、求值 `!!js` 或执行 Config schema，因此只用来确认配置项是否插入、覆盖顺序是否符合预期。
-
-#### 实际启动与 Fiber 状态
-
-通过实际的 Loader 和目标 `cordis.yml` 启动 Plugin，确认 module 入口可导入、Config 校验通过、必需 service 存在，并检查 Fiber 状态。`ACTIVE` 表示加载完成；`PENDING` 通常表示必需 service 尚未提供；`FAILED` 表示导入、配置或 `apply()` 抛出异常。
-
-包含浏览器部分的 Plugin 还要在真实 Web 启动方式中确认 Client package、Slot 注册和渲染行为，不能用配置 dump 代替。
-
-#### 单元测试与资源清理
-
-每项注册到 Cordis 注册表中的能力都应有热更新安全测试：加载 Plugin、确认注册出现，再卸载它并确认注册消失。生命周期测试还要等待异步清理真正结束，不能只断言 abort 或 kill 已被调用。
-
-Tool、Provider 和 event policy 的单元测试覆盖错误路径、顺序、取消和重复注册。只 mock LLM、network、clock 等昂贵或非确定边界，尽量使用真实下游实现。
-
-#### 仓库检查与发布包验收
-
-用户能够看到的 Plugin 要通过 Loader 启动实际使用的 `cordis.yml`，确认整套配置按发布后的方式工作。模型、协议或 UI 输出发生变化时，增加不需要真实 API key 的 snapshot；真实 provider 行为再用带 key 的 smoke test 检查。
-
-官方仓库新增 package 先按新增 package 清单注册构建、类型检查和文档入口，再运行基础检查：
-
-```sh
-pnpm install
-pnpm run doc-sync
-pnpm run constraints
-pnpm run typecheck
-pnpm run lint
-pnpm run build
-pnpm run hygiene
-```
-
-发布前检查 `npm pack` 或其他实际产物，确认其中包含入口、类型声明、patch、浏览器 bundle 和运行文件，而不是只检查源码目录。
-
-> 来源：[配置 dump 的非启动语义](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/src/dump-config.ts#L1-L52)；[配置层与未匹配 patch 的输出](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md#L32-L43)；[Fiber 状态与缺失依赖诊断](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cordis-tutorial/06-composition-and-hmr.md#L63-L109)；[测试层级、真实入口与 snapshot 要求](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/testing.md#L7-L49)；[仓库内 package 的验证命令](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-package.md#L109-L118)。
-
-### <a id="packaging-and-installation"></a>打包与安装
-
-#### Bundle 声明与 Profile 清单
-
-可安装 Plugin package 用 `dsh.bundle` 指向 patch：
-
-```json
-{
-  "name": "dsh-hello-plugin",
-  "type": "module",
-  "main": "index.js",
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    }
-  }
-}
-```
-
-```yaml
-- insert:
-    - id: hello
-      name: dsh-hello-plugin
-```
-
-Profile 清单保存按顺序应用的 Bundle 列表，由 `dsh plugin` 创建和维护。一个 package 没有 `dsh.bundle` 时仍可作为普通依赖安装，但不会自动启用 Plugin。
-
-#### Bundle 默认值与用户覆盖
-
-完整配置入口见前文的[安装和加载方式](#plugin-loading-paths)。对 Bundle author 而言，关键规则是 Profile、Harness home 和命令行 patch 都可以按 row id 覆盖 Bundle entry，而且覆盖会替换完整 `config`。Bundle 应提供可直接使用的完整默认值；用户覆盖同样要重述目标 entry 需要的全部配置。
-
-#### npm、Git 与发布文件
-
-npm package 应在发布前包含运行产物。Git install 获取的是 source；TypeScript package 需要 `prepare` 自行构建，且 pnpm 要求使用者显式 `allowBuilds`。
-
-`allowBuilds` 是执行 package 代码的授权，不受 Agent sandbox 保护。若不希望要求这项授权，可发布带构建产物的 npm package 或 `pnpm pack` tarball。完整权限关系见运行时篇的 [Plugin 与安装脚本](dsh.md#trust-boundaries)。
-
-> 来源：[Bundle/Profile manifest、安装和配置顺序](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/publish.md#L9-L128)；[Git build script 与预构建分发](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/publish.md#L153-L178)。
-
-### 发布前检查与社区发现
-
-发布前至少确认：
-
-- `package.json`、入口、类型声明和 `dsh.bundle` / `dsh.client` 指向真实发布文件；
-- README 给出安装命令、支持的 dsh 版本范围和目标 Profile；
-- 主进程权限、网络或子进程行为、安装脚本和 `allowBuilds` 条件写清楚；
-- package、许可证、测试和干净 Profile 安装验收一致；
-- 仓库添加 `dsh-plugin` topic，源码与文档引用固定到 release tag 或 commit。
-
-GitHub topic、社区目录或市场只负责帮助人找到 Plugin；发布者和使用者仍需自行审查权限与依赖。
-
-## <a id="plugin-runtime"></a>模块、配置与生命周期
-
-### 模块形式与配置
-
-#### 函数式 Plugin 与 Service 类
-
-普通函数式 Plugin 使用具名导出，不提供 default export：
-
-```ts
-import type { Context } from '@deepseek-ai/cordis'
-import Schema from '@deepseek-ai/schemastery'
-
-export const name = 'greet-plugin'
-export const inject = ['tools']
-
-export interface Config {
-  greeting: string
-}
-
-export const Config: Schema<Config> = Schema.object({
-  greeting: Schema.string().default('Hello'),
-})
-
-export function apply(ctx: Context, config: Config): void {
-  // Register effects through ctx.
-}
-```
-
-提供 Cordis service 的 package 通常默认导出一个 `Service` 子类：
-
-```ts
-import { Service, type Context } from '@deepseek-ai/cordis'
-
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    metrics: MetricsService
-  }
-}
-
-export default class MetricsService extends Service {
-  static inject = ['llm']
-
-  constructor(ctx: Context) {
-    super(ctx, 'metrics')
-  }
-
-  record(name: string, value: number): void {
-    // ...
-  }
-}
-```
-
-不要同时给函数式 Plugin 增加 default export。Loader 会把 default export 当作 Plugin 本体，导致同一 module 上的 `inject`、`Config` 或 `apply` 不再被识别。
-
-#### 配置 Schema 与加载校验
-
-所有部署可能调整的值都应进入 `Config`，由 Schemastery 在加载时验证并填充默认值：
-
-```ts
-export interface Config {
-  timeoutMs: number
-  mode: 'fast' | 'accurate'
-}
-
-export const Config = Schema.object({
-  timeoutMs: Schema.number().default(30_000),
-  mode: Schema.union(['fast', 'accurate']).default('fast'),
-})
-```
-
-Schema 无法表达的跨字段或数值约束，应在 Plugin 加载时显式检查。无效配置要让 Fiber 进入失败状态并报告原因，不要静默跳过 Plugin，也不要在第一次真实请求时才暴露本可提前发现的问题。
-
-> 来源：[Plugin 的 module 形式、依赖和 class form](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/index.md#L15-L138)；[Config schema、默认值和失败策略](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/basic/config.md#L7-L100)；[Function Plugin 与 Service class 的 export 规则](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/AGENTS.md#L3-L17)。
-
-### 生命周期与协作
-
-#### Plugin 生命周期与热更新
-
-每个 Plugin 实例都由一个 Fiber 管理。Fiber 是它的生命周期范围：等待必需 service、执行 Plugin，并在卸载时撤销这个 Plugin 注册的监听器、工具和其他资源。
-
-```ts
-export function apply(ctx: Context): void {
-  ctx.on('session/event', handler)
-
-  ctx.effect(() => {
-    const socket = openSocket()
-    return async () => {
-      await socket.close()
-    }
-  })
-}
-```
-
-`ctx.on()`、registry 的 `register()` 和 `ctx.effect()` 都会把清理函数绑定到当前 Fiber。热更新时，Cordis 先卸载旧 Fiber、完成清理，再加载新代码；新代码抛错时 Fiber 进入 `FAILED`，不会自动恢复旧模块。放在 module 顶层的 singleton、没有登记的 timer，或没有等待退出的子进程会绕过这套清理机制。
-
-> 代码落点：[Cordis Fiber 状态与 effect 实现](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/vendor/cordis/src/fiber.ts#L142-L220)；[启动失败与 `FAILED` 状态](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/vendor/cordis/src/fiber.ts#L646-L667)；[Plugin 清理、dispose 与 HMR 语义](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/framework/index.md#L7-L131)。
-
-#### Service 依赖与隔离
-
-Service 是一个 Plugin 提供给其他 Plugin 的具名能力。使用方通过 `inject` 声明自己必须依赖哪些 service：
-
-```ts
-export const inject = ['tools', 'metrics']
-
-export function apply(ctx: Context): void {
-  ctx.metrics.record('loaded', 1)
-}
-```
-
-必需 service 尚未出现时，使用方保持 `PENDING`；提供方消失时，使用方自动卸载，并在 service 恢复后重新加载。可选 service 不写进 `inject`，而是在使用点通过 `ctx.get(name)` 查询。
-
-同名 service 可以在不同 Cordis group 中隔离。一个 Agent preset 或子树需要自己的 shell、tools 或 policy 时，应使用 isolate realm，而不是给 service 发明新的全局名称。
-
-> 来源：[Service 提供、消费与依赖消失后的行为](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/framework/service.md#L7-L110)；[Service isolation](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/framework/service.md#L111-L139)。
-
-#### 事件与拦截点
-
-Event 让 Plugin 在不直接依赖彼此的情况下通信。常见模式：
-
-| 模式 | 行为 | 适合 |
-|---|---|---|
-| `emit` | 广播给全部 listener | 通知和观察 |
-| `bail` | 第一个有效返回值结束分发 | 查询或短路选择 |
-| `serial` | 按顺序 await，首个有效值停止 | 顺序决策 |
-| `waterfall` | listener 包裹下游结果 | 可组合的拦截与策略 |
-
-Waterfall listener 必须调用 `next()` 才会把控制权交给下游；不调用表示有意截断：
-
-```ts
-ctx.on('tools/pre-execute', async (exec, next) => {
-  if (!isAllowed(exec)) {
-    return { kind: 'deny', reason: 'Denied by policy.' }
-  }
-  return next()
-})
-```
-
-Cordis event 与写入 Session 日志的事件不同。`agent/*`、`tools/*` 等 Cordis event 只描述当前运行过程；`turn/*`、`step/*`、`tool/result` 等 Session event 会持久保存，用于恢复和回放。
-
-> 来源：[Event 模式、typed events 与 effect 清理](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/framework/events.md#L23-L138)；[运行时扩展点地图](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L53-L129)。
-
-## <a id="tool-and-providers"></a>工具与可替换能力
-
-### 工具 Plugin
-
-#### 参数、结构化结果与显示方式
-
-Tool Plugin 注入 `ctx.tools`，用 `defineTool()` 声明模型看到的参数和程序化返回值：
-
-```ts
-import { defineTool } from '@deepseek-ai/dsh-tools'
-
-export const name = 'tool-greet'
-export const inject = ['tools']
-
-export function apply(ctx: Context): void {
-  ctx.tools.register(defineTool({
-    name: 'greet',
-    description: 'Greet someone by name.',
-    parameters: {
-      name: { type: 'string', required: true },
-    },
-    output: {
-      schema: { type: 'string' },
-      render: (_args, value) => [{ type: 'text', text: value }],
-    },
-    async execute(args, exec) {
-      exec.signal.throwIfAborted()
-      return `Hello, ${args.name}!`
-    },
-  }))
-}
-```
-
-`execute()` 返回由 `output.schema` 定义的稳定 JSON 值，`output.render()` 再把它转换成模型能看到的内容。id、状态和其他字段应保留为结构化数据，不要藏进自然语言，也不要为了显示一张 UI 卡片而改写原始返回值。
-
-界面如何显示工具结果是另一层逻辑。以后回放仍需要的信息通过 `presentationMeta` 写入持久化结果，再由 `presentCall` / `presentResult` 选择普通文本、终端、diff、搜索或网页卡片。
-
-#### 执行策略与后台任务
-
-| 扩展点 | 用途 |
-|---|---|
-| `tools/pre-execute` | 可组合的 allow / ask / deny 策略 |
-| `ctx.tools.guard()` | 后续 listener 不能撤销的最终拒绝 |
-| `tools/execute` | 包裹真实 dispatch，用于 deadline、retry 或 metrics |
-| `tools/post-execute` | 改写 value、模型内容或附加上下文 |
-| `tools/result` | 观察不可变的最终结果 |
-
-前台工作必须响应 `exec.signal`。一旦工具返回 job id，后续后台任务就不再由这次工具调用负责；应把它注册进 `ctx.jobs`，由 job 自己处理取消、所属 Plugin 卸载和完成状态。
-
-> 来源：[Tool 最小形态与 execute contract](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-tool.md#L7-L56)；[执行策略、Code Mode 与 UI presentation](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-tool.md#L57-L94)。
-
-### 可替换能力接口
-
-#### 接口定义、Provider 与使用方
-
-需要替换实现而不改变调用方式时，把能力拆成三个角色：
-
-| 角色 | 负责什么 | shell 示例 |
-|---|---|---|
-| 接口定义 | 定义稳定接口和请求 / 返回类型 | `dsh-shell` |
-| Provider | 提供一种具体实现 | `dsh-bash-local`、`dsh-pwsh-local` |
-| 使用方 | 把能力暴露给模型或其他调用者 | `dsh-tool-bash` |
-
-Provider 和使用方都依赖接口定义，但彼此不直接依赖。替换 Provider 时，Tool schema 和调用方式可以保持不变；修改使用方呈现给模型的内容时，也不要求改执行器。
-
-#### 能力实现的 package 拆分
-
-只有角色确实需要独立演进或替换时才拆成多个 package。一个简单 Tool 同时拥有输入校验和执行逻辑并不违规；过早拆分会增加 manifest、project reference、tests 和版本协调成本。
-
-公共接口应满足所有现有使用方，不把某个 Tool、UI 或传输协议的私有字段塞进 service。Provider 负责把调用请求整理成完整参数，并在入口处应用默认值与上限；不要把默认行为零散地藏在执行函数中。
-
-> 来源：[三角色能力设计与 Bash 示例](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/practice/index.md#L7-L155)；[仓库中的 capability seam 清单](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/capability-seams.md#L1-L40)。
-
-### 模型适配器
-
-#### 流式协议与错误处理
-
-模型适配器是 `ctx.llm` 的 Provider，负责把某家模型服务的协议转换成 dsh 的统一接口：
-
-```ts
-class MyAdapter extends LlmAdapter {
-  async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    // Translate provider wire events into StreamChunk.
-  }
-}
-
-export const name = 'llm-my-provider'
-export const inject = ['llm']
-
-export function apply(ctx: Context, config: Config): void {
-  ctx.llm.registerAdapter(['my-provider'], new MyAdapter(config))
-}
-```
-
-适配器必须遵守统一的流式输出顺序：usage 出现在 finish 之前，finish 之后不再输出；工具参数以原始 JSON 字符串逐段传递；block index 第一次出现后不再改变；不支持的 `GenerateOptions` 要明确报错。网络或协议本身失败可以抛异常，模型服务在正常响应里返回的失败则用 error / aborted finish 表达。
-
-适配器需要响应 `options.signal`。模型服务要求保留的 response id、signature 等专用状态，只保存为能够完整还原的最小 JSON，并由同一个适配器实例判断能否用于后续请求。
-
-#### 注册、配置与验证
-
-一个适配器可以服务多个 provider 路由，但同一路由不能重复注册。凭据应通过 Config 和 dsh 的凭据接口解析，不在代码中读取自创 key 文件。
-
-实现时应把协议类型、请求序列化、响应解析、流片段转换和 adapter class 分开。检查至少覆盖片段顺序、usage / finish、工具参数、取消、不支持的字段、模型服务报错，以及一次连接真实服务的 smoke test。
-
-> 来源：[LLM adapter 形态和协议义务](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-an-llm-adapter.md#L7-L43)；[DeepSeek adapter 的注册实现](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/llm/llm-deepseek/src/index.ts#L240-L276)。
-
-## <a id="protocol-and-ui-plugins"></a>协议与界面 Plugin
-
-### 接入外部协议
-
-#### Agent 控制与 Session 事件
-
-协议 Plugin 把外部客户端接到 `ctx.agents`。它通常负责：
-
-1. 创建或恢复 Agent；
-2. 把外部输入交给 `followup()`、`steer()` 或取消接口；
-3. 订阅 `session/event`，把已写入 Session 日志的输出转换回外部协议；
-4. 在连接关闭时释放自己创建的 Agent，并等待清理完成。
-
-```ts
-export const inject = ['agents']
-
-export function apply(ctx: Context): void {
-  ctx.on('session/event', (session, event) => {
-    if (event.type === 'assistant/message') {
-      sendCommittedText(session.id, event.data.message)
-    }
-  })
-
-  // Wire handlers create agents and feed input through ctx.agents.
-}
-```
-
-不要把 `followup()` 当成“这个 prompt 对应一个结果 Promise”。排队输入、steering 输入和系统注入内容可能在同一段运行时间里共同产生输出；协议若要提供“一次运行的结果”，必须先定义自己从何时观察到何时。
-
-#### ACP 实现案例
-
-`dsh-acp` 是完整案例。它通过 stdio 通信，为连接创建新 Agent，映射权限请求和取消操作，只发送已经写入日志的 assistant message，并在断开连接时清理该连接创建的全部 Session。
-
-ACP package 也说明“协议接入”与“完整界面”不是一回事：推理过程、工具活动、计划、标题和界面呈现仍留在 Session 日志或 Web 界面中，不应为了协议方便全部塞进传输格式。
-
-> 来源：[协议驱动 Plugin 形态](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/extension-cookbook.md#L63-L93)；[ACP Plugin 的连接关闭与 Agent / Session 清理](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/acp/acp/src/index.ts#L348-L414)。
-
-### Web 界面 Plugin
-
-#### 浏览器端 package 与界面插槽
-
-Web 界面 Plugin 分成 Node 侧加载入口和浏览器 `/client` 入口。package 通过 `dsh.client` 声明浏览器代码，并在 `apply(ctx)` 中把组件注册到 slot（预留的界面插槽）；普通业务组件不直接获得 `ctx`。
-
-```ts
-export const inject = ['conversationEvents', 'slots']
-
-export function apply(ctx: ClientContext): void {
-  ctx.conversationEvents.register(reviewDefinition)
-  ctx.slots.inject('conversation.chat.node', () =>
-    ctx.slots.register({
-      name: 'conversation.chat.node',
-      key: 'review-job',
-    }, ReviewNodeView))
-}
-```
-
-一个新的浏览器端 package 还要加入 `tsconfig.client.json`、Web Bundle 的 Cordis 配置和依赖清单。`dsh.client.inject` 只说明浏览器端依赖哪些 package，不决定加载顺序；是否真正启用仍由 Cordis 的 service 依赖决定。
-
-#### 对话节点与历史回放
-
-“对话节点”（Conversation Node）把一组已经写入 Session 日志的事件按顺序归并成稳定状态，再生成带稳定 key 的界面节点：
-
-```ts
-const reviewDefinition: ConversationNodeDefinition<ReviewState> = {
-  kind: 'review-job',
-  target: 'chat',
-  match: event => event.type === 'review/start'
-    ? { id: String(event.data.reviewId), role: 'start' }
-    : event.type === 'review/progress'
-      ? { id: String(event.data.reviewId), role: 'update' }
-      : null,
-  start: (_context, match) => initialState(match.event),
-  update: (context, match) => reduceState(context.state, match.event),
-  buildViewNode: context => buildNode(context),
-}
-```
-
-每个相关 event 都要携带稳定业务 id；`match()` 只检查当前 event，不能扫描整段 Session 历史。State 必须能按日志顺序得到同样结果，renderer 只读取最终节点数据。测试同时覆盖完整回放、只有更新事件的日志尾部、向前补找起始事件，以及实时追加与从头回放结果一致。
-
-> 来源：[Web Client package 与 slot 规则](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/AGENTS.md#L1-L83)；[Conversation Node 的事件、State 与测试路径](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-conversation-node.md#L9-L231)。
-
-## <a id="session-data-plugins"></a>会话数据 Plugin
-
-### 扩展 Session 事件类型
-
-模型能看到、或恢复会话时必须重建的事实，都应写入 Session 日志。Plugin 通过 TypeScript 的 declaration merging（声明合并）扩展 `SessionEventMap`，增加自己的事件类型：
-
-```ts
-declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
-    'review/start': {
-      reviewId: ReviewId
-      title: string
-    }
-    'review/end': {
-      reviewId: ReviewId
-      summary: string
-    }
-  }
-}
-```
-
-新 event 要有稳定 id、可序列化数据和明确的回放方式。只有实时观察价值、无需恢复的过程信号才留在 Cordis event；不要把运行中的对象、callback 或仅主进程可用的 handle 写进 Session。
-
-### 持久状态与回放
-
-不要在 Session 日志之外再维护第二份权威状态。用于查询、界面和遥测的状态都从 Session event 计算；需要缓存时，记录自己处理到日志的哪个位置，并能从剩余日志重新构建。
-
-向模型加入新内容时也要先写入 Session event，再由日志生成请求。绕过日志直接修改 prompt，会让恢复、分叉、遥测和界面回放得到彼此不一致的历史。
-
-> 来源：[Session log 与 model-visible invariant](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L63-L97)；[Session subsystem 的事件类型与存储语义](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/subsystems/session.md#L1-L120)。
+Plugin 卸载、热替换和失败状态的完整语义见开发流程的[实现 Plugin 模块](#plugin-runtime)。
