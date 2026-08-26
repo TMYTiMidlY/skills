@@ -1,6 +1,6 @@
 ---
 name: browser-use
-description: 需要自动操作网页、复用浏览器登录态、截图填表、下载当前身份可访问的文件或提取嵌入数据时使用。Playwright、直接 HTTP 与专用解析工具可以按任务组合；需要浏览器指纹兼容时再考虑 Camoufox。
+description: 需要自动操作网页、复用浏览器登录态、截图填表、下载当前身份可访问的文件或提取嵌入数据时使用。Playwright、直接 HTTP 与文件格式解析工具可以按任务组合；需要浏览器指纹兼容时再考虑 Camoufox。
 ---
 
 # Browser Use Skill
@@ -51,7 +51,7 @@ Playwright 的 Node 与 Python 入口共享同一套浏览器驱动模型，但�
 
 Camoufox 是经过指纹兼容改造的 Firefox，Python 接口继续使用 Playwright 的页面模型。当前文档以官方源码 tag [`v152.0.4-beta.29`](https://github.com/daijro/camoufox/tree/v152.0.4-beta.29) 为架构基线；Python 包、浏览器二进制和系统运行库是彼此独立的三层。它能减少常见自动化与指纹不一致，不保证所有站点、验证码、账号权限或代理组合都可用。
 
-稳定包 `camoufox` 和实验分发 `cloverlabs-camoufox` 都安装 `camoufox` import/CLI 命名空间，应放在不同隔离环境中。它们与源码 tag、浏览器 release 的对应关系，以及安装和无管理员权限环境见 [references/camoufox.md](references/camoufox.md)。
+官方分发 `camoufox` 和 CloverLabs 分发 `cloverlabs-camoufox` 都安装 `camoufox` import/CLI 命名空间，应放在不同隔离环境中。它们与源码 tag、浏览器 release 的对应关系，以及安装和无管理员权限环境见 [references/camoufox.md](references/camoufox.md)。
 
 ## 现有浏览器会话
 
