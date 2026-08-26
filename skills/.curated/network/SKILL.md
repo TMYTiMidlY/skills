@@ -17,7 +17,7 @@ OpenWrt 的设备支持、首次安装、镜像类型、升级恢复、BusyBox/p
 
 ## Mihomo / Clash 客户端与泄漏控制
 
-Mihomo 产品与配置发现、GUI 配置链、流量选择、协议性能、REST API、TUN 路由，以及 DNS / WebRTC 泄漏原理和探测见 [references/mihomo.md](references/mihomo.md)。
+Mihomo 产品与配置发现、GUI 配置链、流量选择、协议性能、REST API、TUN 路由与 TCP 端口探测假阳性，以及 DNS / WebRTC 泄漏原理和探测见 [references/mihomo.md](references/mihomo.md)。
 
 ## 共享 Linux 节点
 
