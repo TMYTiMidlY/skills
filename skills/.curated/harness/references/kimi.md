@@ -1,8 +1,8 @@
 # Kimi Code CLI（Moonshot 官方编码 agent：runtime / 鉴权 / 额度）
 
-> **harness skill 的 reference。** 面向要在服务器上跑、或不想走官方 OAuth、直接用 API key 驱动 Kimi Code CLI 的工程师。覆盖：它是什么与分发形态、`~/.kimi-code` 数据目录与 `config.toml`、两套鉴权（Kimi Code 托管 **OAuth** vs 静态 **API key**）与 provider 选型、`/login` 后落地的文件状态、**不登录只用 key 直连**的配置、**用 key 查额度 / 余额**（`/usages` 端点）与"为什么 TUI 余额面板必须 OAuth"，以及**审批 / 权限模式**（默认 / YOLO / Auto / Plan）的差别。
+> **harness skill 的 reference。** 面向要理解 Kimi Code 与 pi 的实现边界、在服务器上运行 CLI，或不走官方 OAuth 而直接用 API key 的工程师。覆盖：它是什么与分发形态、TUI 与 agent runtime 的代码边界、`~/.kimi-code` 数据目录与 `config.toml`、两套鉴权（Kimi Code 托管 **OAuth** vs 静态 **API key**）与 provider 选型、`/login` 后落地的文件状态、**不登录只用 key 直连**的配置、**用 key 查额度 / 余额**（`/usages` 端点）与"为什么 TUI 余额面板必须 OAuth"，以及**审批 / 权限模式**（默认 / YOLO / Auto / Plan）的差别。
 >
-> 源码引用锚定 [`MoonshotAI/kimi-code`](https://github.com/MoonshotAI/kimi-code) tag `@moonshot-ai/kimi-code@0.27.0`（commit [`5cc1949`](https://github.com/MoonshotAI/kimi-code/tree/5cc194956f6f9752d172aa4994385d2d2e7a066f)，与本文实测的二进制同版本）；标 🔬 的是本机实测结论、标 📄 的引官方文档。
+> 鉴权、额度与审批相关源码引用锚定 [`MoonshotAI/kimi-code`](https://github.com/MoonshotAI/kimi-code) tag `@moonshot-ai/kimi-code@0.27.0`（commit [`5cc1949`](https://github.com/MoonshotAI/kimi-code/tree/5cc194956f6f9752d172aa4994385d2d2e7a066f)，与本文实测的二进制同版本）；[与 pi 的代码边界](#pi-boundary)另以 2026-08-26 的 commit [`4b04492`](https://github.com/MoonshotAI/kimi-code/tree/4b044926e3ca4bc98916128a9fb4ce2b2906cc4f) 核对。标 🔬 的是本机实测结论、标 📄 的引官方文档。
 
 ## <a id="what"></a>是什么 / 分发形态
 
@@ -10,6 +10,21 @@ Moonshot 官方的终端编码 agent，**MIT 开源**，TypeScript monorepo（pn
 
 - **分发是 Node SEA 单文件二进制**（single executable application）：`<KIMI_CODE_HOME>/bin/kimi`，约 160MB、`file` 认成 ELF（not stripped、带 debug_info），自带 `rg`/`fd`。装法 `curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash`（302 跳 `cdn.kimi.com/binaries/...`），也发 npm 包 `@moonshot-ai/kimi-code`。分发形态本身与 Codex/Claude/Copilot 的对照见同 skill 的 [install.md](install.md)。
 - 命令面（`kimi --help`）：裸 `kimi` 进 TUI，`-p <prompt>` 一次性非交互，子命令 `provider`（非交互增删 provider）/`login`/`doctor`（校验配置）/`acp`（Agent Client Protocol over stdio）/`server`/`web`/`export`/`vis`。
+
+### <a id="pi-boundary"></a>与 pi 的代码边界
+
+“Kimi Code 基于 pi”需要按层理解。当前代码把终端 UI 和 agent runtime 分成两条实现链：
+
+| 层 | 当前实现 | 与 pi 的关系 |
+|---|---|---|
+| 终端 UI | 仓库内的 `@moonshot-ai/pi-tui` 0.84.4 | 是 `pi-tui` 的内置 fork；0.84.2 时重新基于上游 0.84.1 与其后 main 快照同步，并保留 Kimi 补丁 |
+| Agent runtime | 默认 `@moonshot-ai/agent-core-v2`；`KIMI_CODE_LEGACY_FLAG` 才切回 Moonshot 的 `agent-core` | 当前依赖和 import 链不使用 Pi 的 `pi-agent-core`、`pi-ai` 或 `pi-coding-agent` |
+
+Kimi 自己的 README 也把上游关系限定为 **TUI 建在 `pi-tui` 上**；CLI 的 `kimi -p`、交互式 TUI 和 `doctor` 默认选择 `agent-core-v2`，`kimi web` 始终启动同一代引擎的 `kap-server`。因此准确表述是：**Kimi Code 的 TUI 基于 pi-tui；当前 agent runtime 由 Moonshot 的 agent-core 实现**。
+> TUI 归属见 [README.zh-CN.md#L124-L126](https://github.com/MoonshotAI/kimi-code/blob/4b044926e3ca4bc98916128a9fb4ce2b2906cc4f/README.zh-CN.md#L124-L126)，fork 版本与同步基线见 [`packages/pi-tui/package.json#L1-L4`](https://github.com/MoonshotAI/kimi-code/blob/4b044926e3ca4bc98916128a9fb4ce2b2906cc4f/packages/pi-tui/package.json#L1-L4) 和 [`CHANGELOG.md#L15-L27`](https://github.com/MoonshotAI/kimi-code/blob/4b044926e3ca4bc98916128a9fb4ce2b2906cc4f/packages/pi-tui/CHANGELOG.md#L15-L27)。默认引擎门控见 [`experimental-v2.ts#L4-L11`](https://github.com/MoonshotAI/kimi-code/blob/4b044926e3ca4bc98916128a9fb4ce2b2906cc4f/apps/kimi-code/src/cli/experimental-v2.ts#L4-L11) 与 [`run-shell.ts#L85-L91`](https://github.com/MoonshotAI/kimi-code/blob/4b044926e3ca4bc98916128a9fb4ce2b2906cc4f/apps/kimi-code/src/cli/run-shell.ts#L85-L91)；引擎包及其依赖见 [`agent-core-v2/package.json#L1-L90`](https://github.com/MoonshotAI/kimi-code/blob/4b044926e3ca4bc98916128a9fb4ce2b2906cc4f/packages/agent-core-v2/package.json#L1-L90)。
+
+🔬 对完整公开历史（根提交 [`842e699`](https://github.com/MoonshotAI/kimi-code/commit/842e699a643d8a60647bd824d28255c56ad61a42) 至 `4b04492`）扫描 manifests、lockfile 与源码，Pi 相关的 agent 包均未出现；公开首版也只有 `@earendil-works/pi-tui`。这项检查能确定公开代码的依赖与路由边界，不能证明或排除公开仓库之前的思想、设计或代码来源。
+> `@mariozechner/clipboard` 仍是 CLI 的可选原生剪贴板依赖，见 [`apps/kimi-code/package.json#L80-L95`](https://github.com/MoonshotAI/kimi-code/blob/4b044926e3ca4bc98916128a9fb4ce2b2906cc4f/apps/kimi-code/package.json#L80-L95)；它不属于 Pi 的 agent runtime。
 
 ## <a id="home"></a>数据目录 `~/.kimi-code` 与 config.toml
 
