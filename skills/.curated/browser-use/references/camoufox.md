@@ -4,7 +4,7 @@ description: Camoufox 的源码架构、PyPI 分发关系、运行依赖、环�
 
 # Camoufox
 
-Camoufox 是带指纹兼容改造的 Firefox。Python 层封装 Playwright 的同步、异步 Firefox API，生成启动配置并管理可并存的浏览器 release；浏览器补丁和 Juggler 改动则位于同一源码树的底层目录。本文的架构与接口结论按[官方源码基线](https://github.com/daijro/camoufox/tree/v152.0.4-beta.29)核验。
+Camoufox 是带指纹兼容改造的 Firefox。Python 层封装 Playwright 的同步、异步 Firefox API，生成启动配置并管理可并存的浏览器 release；浏览器补丁和 Juggler 改动则位于同一源码树的底层目录。
 
 源码 tag、Python 包和浏览器二进制使用不同版本号。诊断前先分清这三个对象，避免把“升级了 PyPI 包”误当成“浏览器 release 也已经切换”。
 
@@ -38,7 +38,7 @@ uvx --from "camoufox[geoip]" camoufox fetch
 
 ### CLI 命令
 
-锁定源码基线的包管理 CLI 由 [`pythonlib/camoufox/__main__.py`](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/__main__.py#L218-L255) 定义：
+包管理 CLI 由 [`pythonlib/camoufox/__main__.py`](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/__main__.py#L218-L255) 定义：
 
 | 命令 | 作用 |
 |---|---|
@@ -60,7 +60,7 @@ Camoufox 能否启动取决于三层彼此独立的内容：
 
 包能 import 只能证明第一层可用；`CamoufoxNotInstalled` 指向第二层；`libgtk-3.so.0`、`libasound.so.2` 或 `XPCOMGlueLoad` 一类错误指向第三层。先按报错和 `ldd` 的实际缺项补库，不把某台机器的依赖清单当成所有发行版的固定答案。
 
-锁定源码基线还会在 Linux 启动前确认 Firefox 所需的 `~/.camoufox` profile 目录存在；只读 HOME 应在收紧权限前准备该目录。[源码](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/pkgman.py#L82-L114)
+在 Linux 上，Camoufox 启动前会检查 `~/.camoufox` 目录是否存在。若 HOME 已经只读且该目录不存在，启动会失败；应先创建目录，再收紧 HOME 权限。[源码](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/pkgman.py#L82-L114)
 
 ## <a id="python-environments"></a>Python 临时环境
 
@@ -165,7 +165,7 @@ with Camoufox(headless=True) as browser:
     page.goto("https://example.com")
 ```
 
-`AsyncCamoufox` 提供等价异步入口。锁定源码基线默认 `headless=False`；Linux 上 `headless="virtual"` 使用 Xvfb，普通 `headless=True` 使用 Firefox 无头模式。[启动源码](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/sync_api.py#L82-L127) [参数源码](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/utils.py#L466-L605)
+`AsyncCamoufox` 提供等价异步入口。未指定 `headless` 时，Camoufox 以有头模式启动；Linux 上 `headless="virtual"` 使用 Xvfb，`headless=True` 使用 Firefox 无头模式。[启动源码](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/sync_api.py#L82-L127) [参数源码](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/utils.py#L466-L605)
 
 常用参数包括 `os`、`geoip`、`proxy`、`locale`、`humanize`、`screen`、`window`、`fingerprint`、`fingerprint_preset`、`addons`、`block_webrtc` 和 `browser`。默认由 BrowserForge 生成指纹，也可选择随包分发的真实指纹预设。
 
@@ -176,11 +176,11 @@ with Camoufox(fingerprint_preset=True, os="macos") as browser:
 
 `fingerprint_preset=True` 随机选择随包分发的预设；传入具体 dict 可以固定一个预设。
 
-浏览器核心改动在 Firefox/C++/Juggler 层，减少普通 JS 注入留下的痕迹；同一源码基线的 Python 接口提供 `NewContext` / `AsyncNewContext`，其中按 context 的部分覆盖通过短生命周期 init script 应用。分析可检测性时，应分别考察浏览器底层改动和 context 初始化脚本这两条实现路径。[context 源码](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/sync_api.py#L153-L180)
+浏览器核心改动在 Firefox/C++/Juggler 层，减少普通 JS 注入留下的痕迹。Python 接口还提供 `NewContext` / `AsyncNewContext`，其中按 context 的部分覆盖通过短生命周期 init script 应用。分析可检测性时，应分别考察浏览器底层改动和 context 初始化脚本这两条实现路径。[context 源码](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/sync_api.py#L153-L180)
 
 ## <a id="agent-cli"></a>Agent CLI
 
-不想写 Python 脚本时，可以在 Camoufox 上再加一层命令式操作。这些是独立第三方项目，不属于官方 tag，命令面应按各自固定源码核对：
+不想写 Python 脚本时，可以在 Camoufox 上再加一层命令式操作。下面两个 CLI 都是独立第三方项目，不是 Camoufox 官方组件；命令面应按各自固定源码核对：
 
 | 项目 | 操作模型 | 侧重点 |
 |---|---|---|
@@ -217,7 +217,7 @@ camoufox-cli close
 
 ## <a id="access-boundaries"></a>反爬兼容性与访问边界
 
-Camoufox 改善的是浏览器指纹和自动化一致性，不承诺对所有站点、IP、代理、账号或版本稳定通过。官方 tag 自身仍标注项目处于开发中；升级浏览器 release 也可能同时带来兼容修复和新回归。
+Camoufox 改善的是浏览器指纹和自动化一致性，不承诺对所有站点、IP、代理、账号或版本稳定通过。[上游 README](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/README.md#L14) 明确标注项目仍在开发中；升级浏览器 release 也可能同时带来兼容修复和新回归。
 
 验证码、交互验证和登录挑战属于页面状态。Playwright 或 Camoufox 可以继续读取页面、保留会话并交给人完成必要步骤；出现验证码时先沿访问状态排查，locator 则继续用于页面元素定位。站点已有稳定公开接口或可复现的 HTTP 请求时，直接 HTTP 与浏览器可以并用。
 
