@@ -2,25 +2,25 @@
 
 本文从使用者和集成者视角说明 DeepSeek Harness 的运行方式、组合模型、内置扩展、程序化入口和权限边界。编写、测试和分发 Plugin 的代码路径见 [DeepSeek Harness Plugin 开发](dsh-plugin.md)。
 
-> **来源口径：** 本文按 2026-08-16 的[官方仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)核对。源码与文档链接固定到该状态，但可读文字不展示内部 ref；社区项目链接在开发篇固定到各自调研时的仓库状态。
+> **来源口径：** 架构与运行时主体按 2026-08-16 的[官方仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)核对。安装、分发和 systemd 部署部分另按 npm `0.1.1-rc.2`、tag [`dsh-v0.1.1-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e) 与 2026-08-21 至 2026-08-23 的 Ubuntu 现场实测核对；这一段明确写出日期和版本，是因为 developer preview 的分发面变化快，不能把一次现场结果冒充永久行为。源码与文档链接固定到相应状态；社区项目链接在开发篇固定到各自调研时的仓库状态。
 
 ## <a id="product-position"></a>产品定位与来源口径
 
 DeepSeek Harness（`dsh`）是 DeepSeek 开源的 agent harness。它以 Cordis 为 Plugin 运行框架：模型适配、system prompt、工具、agent loop、Session、持久化、沙箱、审批和界面都通过同一棵 Plugin 树组合，因此部署可以替换实现或增加策略，而不必修改一个特权核心。
 
-项目处于 developer preview（开发者预览），会继续发生兼容性破坏；Session 格式也没有跨版本兼容承诺。仓库采用 MIT 许可，官方安装入口是 npm 包 [`@deepseek-ai/dsh`](https://registry.npmjs.org/%40deepseek-ai%2Fdsh)。截至本次核验，官方仓库尚无 Git tag 或 GitHub Release。
+项目处于 developer preview（开发者预览），会继续发生兼容性破坏；Session 格式也没有跨版本兼容承诺。仓库采用 MIT 许可，官方安装入口是 npm 包 [`@deepseek-ai/dsh`](https://registry.npmjs.org/%40deepseek-ai%2Fdsh)。架构快照时仓库尚无 tag；到 2026-08-22 已发布 `dsh-v0.1.0-rc.7`、`dsh-v0.1.0-rc.8`、`dsh-v0.1.1-rc.1` 和 `dsh-v0.1.1-rc.2` 四个 tag。
 
 > 来源：[DeepSeek Harness 的产品定位、预览状态和许可](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/README.md#L5-L55)；[Cordis Plugin 树与可替换能力](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L37)。
 
 ## <a id="install-and-run"></a>安装与启动
 
-运行要求是 Node.js `^22.19.0 || >=24.0.0`。只需使用安装版时，可直接启动 Web UI：
+运行要求是 Node.js `^22.19.0 || >=24.0.0`。官方 README 给出的安装版入口是：
 
 ```sh
 npx @deepseek-ai/dsh web
 ```
 
-> 无版本号的安装命令跟随 npm 发布版本；截至本文核验日为 [`0.1.0-rc.6`](https://unpkg.com/@deepseek-ai/dsh@0.1.0-rc.6/package.json)。正文实现细节按源码快照核对，其[根版本为 `0.1.0-rc.5`](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/package.json#L1-L10)；需要复现该快照时使用下面的源码构建流程。
+无版本号会跟随 npm `latest`；可复现部署应显式钉版本。**不能把这条 `npx` 命令直接放进长期服务**：多个隔离测试在 95 或 150 秒内仍停留于 npm Arborist 的 peer dependency 求解，一次最终成功的真实运行则耗时约 14 分 50 秒才执行 dsh。它不是已经证明的死循环，但启动时延极高且没有进度反馈；`legacy-peer-deps` 之类绕过求解的办法又会暴露缺失 runtime peer。完整证据见下面的[发布面现场报告](#npm-publish-field-report)。
 
 源码 checkout 需要先安装依赖并构建运行产物：
 
@@ -33,6 +33,150 @@ pnpm dsh web
 ### npm 安装与源码构建
 
 安装版从 npm 取得已构建的 CLI；源码模式则以仓库中的 TypeScript 入口启动，但仍依赖预先生成的 Host、Client 和前端产物。源码改变后若没有重新构建，CLI 可能读取旧的浏览器 bundle，因此源码开发应把 `pnpm run build` 看成运行前置，而不是由启动命令自动完成的步骤。
+
+### 分发与运行路径
+
+| 路径 | 2026-08-22 现场结果 | 适用边界 |
+|---|---|---|
+| `npx @deepseek-ai/dsh@<version> …` | npm 可在 `idealTree/placeDep` 阶段单核计算约 15 分钟后才启动 dsh | 仍是官方 README 的安装版入口；适合人工等待的临时运行，不放进 service |
+| `pnpm dlx @deepseek-ai/dsh@<version> …` | Linux 冷 store 47 秒完成，热 store 约 1 秒；Web 返回 HTTP 200，`node-pty` 实际 PTY 通过 | 临时体验或预热后运行；首次启动依赖网络和可写 cache，不是最稳的开机路径 |
+| 固定 tag 的源码 checkout + `pnpm install && pnpm run build` | 官方支持的源码路径，使用仓库锁文件和 `allowBuilds` | 当前更适合长期 service；升级前要重建，且 Session 格式无跨版本承诺 |
+| `npm install -g @deepseek-ai/dsh@<version>` | 普通全局安装可完成，随后 `dsh web` 已在 Linux 实机运行 | README 未把它列为主入口，但固定可执行路径适合 user service；**不需要 `--allow-scripts`** |
+| `pnpm add -g @deepseek-ai/dsh` | 社区报告动态裸 import 在 pnpm 全局链接布局下找不到包 | 不用；`pnpm dlx` 与 `pnpm add -g` 不是同一种布局 |
+
+已有普通 npm 全局安装时，长期服务可以固定该 NVM 版本下的 `dsh` 绝对路径；追求锁文件和源码可审计时，则固定 tag、从源码构建，并让 unit 直接执行构建后的 `apps/cli/lib/bin.js`。两种方式都把 `WorkingDirectory` 留给 Agent 的项目 workspace，不在每次 service 启动时重新解析 package。快速试用可用 `pnpm dlx`，但应先人工预热并确认版本、Web 和终端能力。
+
+### <a id="npm-publish-field-report"></a>npm 发布面现场报告
+
+以下结论来自 Ubuntu 24.04、48 个逻辑 CPU、Node `v24.19.0` / `v26.5.0`、npm `11.17.0`、Arborist `9.8.0` 和隔离的 HOME、cwd、npmrc、cache、`DSH_HOME`。实验只写 `/tmp`，结束后删除测试树；原始日志另存为独立的会话产物。
+
+#### 历史版本、Node 与 cache 对照
+
+隔离矩阵中的 `npx --yes @deepseek-ai/dsh@<version> --version` 最多运行 150 秒，之后先 TERM、5 秒后 KILL。`137` 因而表示实验主动强杀，**不是 OOM**；超时是“完成时间大于观测窗口”的删失数据，不能单凭它写成死循环或不收敛。
+
+| dsh | Node | 结果 | `_npx` 安装树 |
+|---|---:|---|---:|
+| `0.0.1-rc.1` | 24 | 150 秒内未完成；同时请求到多个未发布 package 的 404 | 0 文件 |
+| `0.0.1-rc.5` | 24 | 150 秒内未完成，停留于 `idealTree` | 0 文件 |
+| `0.1.0-rc.2` | 24 | 150 秒内未完成，停留于 `idealTree` | 0 文件 |
+| `0.1.0-rc.6` | 24 | 150 秒内未完成，停留于 `idealTree` | 0 文件 |
+| `0.1.0-rc.7` | 24 | 150 秒内未完成，停留于 `idealTree` | 0 文件 |
+| `0.1.0-rc.8` | 24 | 150 秒内未完成，停留于 `idealTree` | 0 文件 |
+| `0.1.1-rc.2` | 24 | 150 秒内未完成，停留于 `idealTree` | 0 文件 |
+| `0.1.1-rc.2` | 26 | 150 秒内未完成，停留于 `idealTree` | 0 文件 |
+
+Node 24 与 26 下的 npm、npx、Arborist 版本以及 `npm exec` / `can-place-dep.js` / `node.js` 文件哈希完全相同；换 Node 只换 V8，不会换求解算法。完整 Node 26 对照同样在 155 秒后仍未写出安装树。
+
+随后在另一真实用户环境中，Node `22.23.1`、npm `11.18.0`、混合 cache、`@latest → 0.1.1-rc.2` 的同一类命令**最终成功**。内核 start tick 显示 npm 父进程到 dsh 子进程相差 890.19 秒，即 14 分 50.19 秒；`_npx/node_modules` 在启动后约 14 分 39 秒才创建，`.bin/dsh` 和 dsh 子进程又约 13 秒后出现。已有 TCP 活动把开始监听的上界收紧到约 14 分 50～53 秒，dsh 自身启动只占最后几秒。
+
+这两轮环境不能混为一谈：成功现场同时改变了 Node、npm、HOME 和 cache，不能把收敛归因于其中任一变量。冷 cache 已复现极慢；以同一隔离 cache 重跑又得到 `128 cache hit / 0 cache miss`，95 秒后仍停在相同位置且安装树仍为 0 文件。这说明 cache 命中不能保证快速完成，也不能由此证明 cache 对 15 分钟总时延毫无影响。没有损坏证据时不要先清空 `~/.npm`：它会丢掉可复用下载，却不会改变 peer 图本身。
+
+#### 单核热点与依赖图
+
+`ps` 的 `80%–97% CPU` 表示约一个逻辑核，不是 48 核整机满载；当时整机 load average 约 `1.1`。进程处于 `R`，磁盘计数不再前进，内存从约 476 MiB 增到 779 MiB。`silly + timing` 的最后阶段是：
+
+```text
+npm timing idealTree:init Completed in 4ms
+npm silly idealTree buildDeps
+npm silly placeDep ROOT @deepseek-ai/dsh-base@0.1.1-rc.2 ...
+```
+
+另一轮 Node 24 隔离进程的 17 秒 Node Inspector CPU profile self samples：
+
+```text
+42.72%  URL          node:internal/url
+20.47%  getBundler   @npmcli/arborist/lib/node.js
+19.31%  SemVer       semver/classes/semver.js
+```
+
+热点调用链是 `CanPlaceDep → satisfiedBy → depValid → npm-package-arg.resolve → SemVer/URL`，以及 `canPlacePeers → inBundle → getBundler` 的递归遍历。`0.1.1-rc.2` 源码图量化为 199 个传递内部 package、1472 条内部边，其中 1138 条是 peer dependency；`@deepseek-ai/cordis` 被 192 个内部包引用，图中还存在强连通环。tag `rc.7 → rc.8 → 0.1.1-rc.1 → rc.2` 的 peer 边数为 `1121 → 1130 → 1136 → 1138`，所以这不是最新一个版本突然引入的问题。
+
+这些证据把延迟主体定位到 npm 执行 dsh 之前的 Arborist 依赖树构造阶段，并证明其中大量 CPU 花在 peer 放置、bundle 归属和 package spec/semver 解析上；它们没有单独锁定“哪一条 peer 环”或“哪一次 fixed point”决定了 15 分钟总时延。准确说法是**求解极慢且反馈缺失**，不是已证明永久不收敛。
+
+安装策略对照也没有得到正确 workaround：
+
+| 对照 | 结果 |
+|---|---|
+| npm 11 默认 | 隔离测试窗口内未完成；另一真实环境约 14 分 50 秒后完成 |
+| `install-strategy=nested` / `shallow` | 测试窗口内仍未完成 |
+| 隔离 npm 12.0.2 | 测试窗口内仍未完成 |
+| `legacy-peer-deps=true` | 约 67 秒装完，但运行时报缺包 |
+
+`legacy-peer-deps` 的失败是：
+
+```text
+ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/cordis-plugin-group'
+imported from @deepseek-ai/dsh-app-boot/lib/index.js
+```
+
+`dsh-app-boot` 顶层静态 import 该包，却只把它列为 peer；绕过 peer 求解自然不会安装它。官方 Discussions 还报告它只是第一批缺失 runtime package。
+
+#### `allow-scripts` 与安装模式
+
+**安装和运行 dsh 不需要 `--allow-scripts`。** 官方 README 的 `npx` 命令不带它；Linux 上普通全局安装与 `dsh web` 也已经在不手工追加该 option 的路径下工作。全局安装应保持为普通命令：
+
+```sh
+npm install --global @deepseek-ai/dsh@<verified-version>
+```
+
+`allow-scripts` 是 npm 11 的安装期代码白名单，值应列**真正拥有 lifecycle script 的依赖包**；顶层 `@deepseek-ai/dsh` 没有这些脚本，只允许顶层包不会向依赖传递授权。它不是 dsh 官方安装步骤，也不能把 npm warning 当成“全部批准”的命令。现场全局安装曾提示：
+
+```text
+@deepseek-ai/dsh-subprocess-local
+koffi
+node-pty
+@google/genai
+protobufjs
+```
+
+官方源码的 `pnpm-workspace.yaml` 明确允许 `node-pty`、`koffi`、`dsh-subprocess-local`，明确拒绝不需要的 `@google/genai`、`protobufjs` 和 `node-addon-require-builtin` 脚本。这是**源码仓库自身的 pnpm 供应链策略**，不是要求 npm 安装版用户翻译成 `--allow-scripts`。现场最初把五项全部放行，是错误判断，不能复制进部署 SOP。
+
+另一个容易照抄出错的命令是：
+
+```sh
+npm install -g --allow-scripts=<packages>
+```
+
+`--allow-scripts` 只是 option，没有提供安装目标；`npm install -g` 因而解释成“把当前目录的 package 全局安装”，会读取 cwd 的 `package.json`。在 `$HOME` 没有该文件时得到 `/home/<user>/package.json ENOENT`。dsh 部署不应使用这条命令，也不应靠手工全放行来修 warning。
+
+现场还看到 npm 11 的**全局安装**在空 `allow-scripts` 下完成，而 npx 的**本地临时安装**在 `legacy-peer-deps` 走到 reify 后自动执行了这些脚本。不同 install mode 的实测行为不同；warning 本身不改变正确的安装命令。若某个 native 能力实际失败，应针对具体 package、平台和预编译产物诊断，不能先 blanket-allow（整批放行）所有脚本。
+
+#### 官方报告与 release gate
+
+官方仓库关闭 Issues / PR，只开 Discussions。到 2026-08-22，相关帖子包括：
+
+- [#176：首次 `npx` 8 分钟无进度](https://github.com/deepseek-ai/deepseek-harness/discussions/176)；
+- [#223：Cordis 互相 peer，严格求解 fixed point 不收敛](https://github.com/deepseek-ai/deepseek-harness/discussions/223)；
+- [#1032：`cordis-plugin-group` 静态 import 却只声明 peer](https://github.com/deepseek-ai/deepseek-harness/discussions/1032)，以及 macOS [#982](https://github.com/deepseek-ai/deepseek-harness/discussions/982)、Windows [#1030](https://github.com/deepseek-ai/deepseek-harness/discussions/1030) 和早期 [#273](https://github.com/deepseek-ai/deepseek-harness/discussions/273)；
+- [#55：`pnpm add -g` 链接布局导致动态加载失败](https://github.com/deepseek-ai/deepseek-harness/discussions/55)。
+
+这些帖子当时没有 DeepSeek maintainer 回复；四个 release note 也没有宣称修复。`rc.7` 的[安装瘦身提交](https://github.com/deepseek-ai/deepseek-harness/commit/93a95e838da235c1c519ee8c6bf8f5ac1778394e)把 79 个 browser-only 声明移走、减少 103 个 tarball 和 6.05 MB，但现场矩阵证明它没有消除 npm peer 求解退化。
+
+官方 packed-install gate 没复现 README 的单包 consumer。它生成的临时项目把**全部** tarball 都列为顶层依赖：
+
+```ts
+dependencies: Object.fromEntries(
+  [...packed].map(([name, entry]) => [name, entry.url])
+)
+```
+
+这会预先满足大量 peer，也补齐按名称动态挂载但不在普通代码依赖闭包里的 package；与只安装 `@deepseek-ai/dsh` 的 `npx` 图不同。因此“CI 安装通过”和“真实 npx 卡死/缺包”可以同时成立。
+
+> 来源：[官方安装命令](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/README.md#L13-L35)；[`dsh` 聚合包依赖](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/package.json#L20-L103)；[`dsh-app-boot` 的 peer 声明](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/boot/app-boot/package.json#L31-L61)；[packed-install consumer 的构造](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/scripts/release/verify-packed-install.ts#L88-L109)；[源码 `allowBuilds`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/pnpm-workspace.yaml#L34-L55)。
+
+#### pnpm 隔离结果
+
+用与 tag 对应的 pnpm `11.7.0`，在独立 HOME、cwd、store、cache 与 `DSH_HOME` 中执行：
+
+```sh
+pnpm dlx @deepseek-ai/dsh@0.1.1-rc.2 --version
+```
+
+冷 store 47 秒解析 504 个包、下载 449 个、加入 447 个，退出 0；热 store 再跑约 1.028 秒。随后以同一隔离树启动 `dsh web`，`127.0.0.1:3081` 返回 HTTP 200；直接调用安装树中的 `node-pty` 创建 `/bin/sh` PTY，退出 0 并输出 `PNPM_PTY_OK`。
+
+pnpm 没有 npm Arborist 的单核退化，但报告一项真实 peer 不一致：`react-dom@19.2.8` 要求 `react ^19.2.8`，安装树为 `react 18.3.1`。它还在自己的 dlx cache 中生成 `allowBuilds` 待决项；Linux 所需预编译 `node-pty` / Koffi binary 已随包存在，所以本次版本、Web、PTY smoke 均通过，不能据此保证别的平台无需构建脚本。
+
+结论是 **`pnpm dlx` 可用，不等于 `pnpm add -g` 可用**。长期服务仍以固定源码 tag + build 更可控。
 
 ### Web 与 headless
 
@@ -53,6 +197,221 @@ dsh web
 Web 与 headless 是两个 Profile。两者加载共同的基础 Bundle；Web 继续加入浏览器应用和 HTTP 服务，headless 继续加入一次性 runner，并在 Agent idle 后输出结果。
 
 > 来源：[npm 与源码启动命令](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/README.md#L13-L35)；[Profile、Web alias 与源码运行行为](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md#L7-L84)。
+
+### <a id="systemd-user-service"></a>新设备上的 systemd 用户服务
+
+dsh 的配置、凭据和 Session 都归普通用户 HOME，Web 又不需要 root，因此个人服务器优先使用 **user service**（用户级服务）。它由 `systemd --user` 托管，不需要把 agent 进程交给 root；若要求无人登录也开机启动，则还要启用 linger。
+
+下面先给**固定 npm 全局安装 + 绝对入口**的完整模板；这适合已经完成全局安装的机器。需要锁文件和源码审计时，再换成固定 tag 的源码入口。两条路径都不在 service 启动时运行 npx：网络下载和依赖求解放在部署阶段，service 启动才是确定性的。
+
+#### Node 与 pnpm 的固定版本
+
+NVM 允许多个 Node 版本并存；目录里同时有 `v24`、`v26` 只表示都安装过，不表示 service 应用哪一个。`default` alias 才是新 shell 默认选择：
+
+```sh
+export NVM_DIR="$HOME/.nvm"
+. "$NVM_DIR/nvm.sh"
+nvm alias default
+nvm version default
+nvm current
+node --version
+command -v node
+```
+
+例如现场主机在 2026-08-22 是：
+
+```text
+default -> lts/* -> v24.19.0
+nvm version default -> v24.19.0
+```
+
+Node 24 当时是 LTS，Node 26 只是另一个已安装版本。unit 中应写**解析后的精确版本目录**，而不是 `lts/*`，否则 alias 日后移动到新 LTS，旧版本下安装的全局包和 service 路径会不同步。
+
+systemd 不会加载 NVM，不是因为 `.bashrc` 缺少 `~/.local/bin`：user manager 直接 `execve()` `ExecStart`，不会启动交互 Bash，也不会 source `~/.bashrc` / `nvm.sh`。NVM 的 Node 在 `~/.nvm/versions/node/<version>/bin`，所以要把精确目录写进 unit。
+
+只有源码路径需要 pnpm。源码 tag 会在[根 `package.json` 的 `packageManager`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/package.json#L1-L10)钉 pnpm 版本，优先匹配它：
+
+```sh
+grep '"packageManager"' package.json
+pnpm --version
+```
+
+Node 发行版若带 Corepack，可用相应 tag 声明的版本，例如：
+
+```sh
+corepack prepare pnpm@11.7.0 --activate
+```
+
+有些新 Node 发行版不再附 Corepack；这时按 pnpm 官方安装方式取得相同版本，不要静默换另一个 major。
+
+#### 固定版本的 npm 全局安装
+
+全局安装不需要 `--allow-scripts`：
+
+```sh
+npm install --global @deepseek-ai/dsh@<verified-version>
+command -v dsh
+dsh --version
+readlink -f "$(command -v dsh)"
+```
+
+确认 `dsh` 位于前面选定的 NVM 版本目录，例如 `%h/.nvm/versions/node/v24.19.0/bin/dsh`。在写 unit 前先人工 smoke：
+
+```sh
+install -d -m 0755 "$HOME/dsh-workspace"
+cd "$HOME/dsh-workspace"
+dsh web --no-open --host 127.0.0.1 --port 3080
+```
+
+看到 `dsh web: http://127.0.0.1:3080` 并确认 HTTP 200 后，用 `Ctrl+C` 停止手工进程，再交给 systemd；不能让手工进程和 service 同时争用 3080。
+
+#### 固定 tag 的安装与构建
+
+目录只是示例，可按机器布局调整；关键是 tag 与构建产物固定：
+
+```sh
+install -d -m 0755 "$HOME/src" "$HOME/dsh-workspace"
+git clone https://github.com/deepseek-ai/deepseek-harness.git \
+  "$HOME/src/deepseek-harness"
+git -C "$HOME/src/deepseek-harness" fetch --tags
+git -C "$HOME/src/deepseek-harness" switch --detach <verified-tag>
+
+cd "$HOME/src/deepseek-harness"
+pnpm install --frozen-lockfile
+pnpm run build
+test -f apps/cli/lib/bin.js
+```
+
+`pnpm run build` 是必要前置；源码启动不会替你重建前端和 Host/Client 产物。升级 tag 后同样要重新 install/build。
+
+不要把 dsh 源码目录直接设为 service 的 `WorkingDirectory`，否则 Agent 默认 workspace 就会变成 dsh 自己的仓库。构建后的 CLI `apps/cli/lib/bin.js` 是 [package 声明的 `bin` 入口](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/package.json#L11-L18)，可以由绝对 Node 路径从另一个 workspace 启动。
+
+#### User manager 与 linger
+
+```sh
+loginctl show-user "$USER" -p Linger
+sudo loginctl enable-linger "$USER"
+loginctl show-user "$USER" -p Linger    # 应为 Linger=yes
+```
+
+开启 linger 需要管理员权限。没有 linger 时，user service 只在该用户 login session 存活；最后一个 SSH session 退出或机器重启后无人登录，服务不会持续运行。
+
+**不要在 user unit 里写 `After=network-online.target` / `Wants=network-online.target`。** 这是 system manager 的 target，user manager 看不见，写了不会获得网络顺序保证。dsh Web 本身先监听本地端口，模型网络失败可在请求时暴露；需要启动重试就用 `Restart=always` / `RestartSec=`。systemd 用户服务的一般生命周期与凭据边界归 `software` skill 维护。
+
+#### User unit 模板
+
+先把示例里的 `v24.19.0` 换成前面 `nvm version default` 得到并实际验证过的精确版本：
+
+```ini
+[Unit]
+Description=DeepSeek Harness Web
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dsh-workspace
+Environment=PATH=%h/.nvm/versions/node/v24.19.0/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.nvm/versions/node/v24.19.0/bin/dsh web --no-open --host 127.0.0.1 --port 3080
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dsh
+
+[Install]
+WantedBy=default.target
+```
+
+保存为：
+
+```text
+~/.config/systemd/user/dsh.service
+```
+
+这几项各有独立用途：
+
+| 项 | 为什么需要 |
+|---|---|
+| 绝对 `dsh` | service 不依赖 NVM shell function，也不在启动时做 package resolution |
+| `Environment=PATH=…` | 全局 npm bin 指向的 `lib/bin.js` 首行是 `#!/usr/bin/env node`：绝对 `dsh` 只解决“脚本在哪”，`env` 仍靠 PATH 找 Node；该 PATH 还会被 Plugin、MCP 和子进程继承 |
+| `WorkingDirectory` | 它就是 Agent 默认 workspace；必须与 dsh 源码/安装目录分开 |
+| `--no-open` | 无头 service 不应尝试打开桌面浏览器 |
+| `--host 127.0.0.1` | dsh Web 没有内置认证/TLS，默认只给本机和 SSH tunnel |
+| `Restart=always` | clean exit 或失败后都恢复；显式 `systemctl stop` 不会被它反向拉起 |
+| `default.target` | user manager 的启用目标；配合 linger 才能无人登录开机启动 |
+
+若选用固定源码 tag，只替换 `ExecStart`，其余 service 语义不变：
+
+```ini
+# 固定源码 tag 构建后的入口
+ExecStart=%h/.nvm/versions/node/v24.19.0/bin/node %h/src/deepseek-harness/apps/cli/lib/bin.js web --no-open --host 127.0.0.1 --port 3080
+```
+
+不把 `pnpm dlx` 直接写进开机 service：它的首次运行会下载数百个包，cache miss 或 registry 故障会变成启动故障。`pnpm dlx` 适合人工试用和对照；不要使用已知有链接布局问题的 `pnpm add -g`。
+
+#### 遥测环境变量
+
+默认 Session telemetry 已是 `DISABLED`，所以模板**不主动**加入：
+
+```ini
+Environment=DSH_TELEMETRY_DISABLED=1
+```
+
+只有组织策略要求进程级硬关闭、并且明确接受今后不能通过普通配置开启 telemetry 时才加。它不是 dsh 能否启动的条件；擅自加入会把可配置策略变成 unit 强制策略。显式启用 telemetry 时又要注意当前默认没有脱敏规则，详见[遥测数据](#telemetry-data)。
+
+#### 加载、启用与验收
+
+先确认 3080 没有被此前手工启动的 dsh 占用：
+
+```sh
+ss -ltnp | grep '127.0.0.1:3080' || true
+ps -u "$(id -u)" -o pid=,cmd= | grep '[d]sh web' || true
+```
+
+若有手工进程，先让其正常退出；无法回到原终端时，核对 PID 后执行 `kill <pid>`。否则新 unit 会因 `EADDRINUSE` 进入重启循环。然后加载并启动：
+
+```sh
+install -d -m 0755 "$HOME/.config/systemd/user"
+systemd-analyze --user verify "$HOME/.config/systemd/user/dsh.service"
+systemctl --user daemon-reload
+systemctl --user enable --now dsh.service
+```
+
+不要只看 `enable --now` 的退出码；一个 unit 可以启动后立即重启循环。至少核对：
+
+```sh
+systemctl --user show dsh.service \
+  -p LoadState -p UnitFileState -p ActiveState -p SubState \
+  -p MainPID -p ExecMainStatus -p NRestarts -p FragmentPath
+systemctl --user status dsh.service --no-pager --lines=30
+ss -ltnp | grep '127.0.0.1:3080'
+curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:3080/
+journalctl --user -u dsh.service -n 100 --no-pager
+```
+
+预期是 `enabled`、`active/running`、`NRestarts=0`、loopback listener 和 HTTP 200。再做一次 `systemctl --user restart dsh.service`，确认固定入口和 cache 不依赖当前交互 shell。
+
+远端浏览器最安全的普通入口是 SSH tunnel：
+
+```sh
+ssh -N -L 3080:127.0.0.1:3080 <host>
+```
+
+然后访问本机 `http://127.0.0.1:3080`。要走非 loopback 域名或反向代理，继续看下一节；`--trusted-host` 只做 authority/Origin 检查，不是认证。
+
+#### 升级、回滚和残留状态
+
+升级前先停 unit并备份实际的 DSH home（默认 `~/.dsh`）。npm 全局路径显式安装目标版本：
+
+```sh
+systemctl --user stop dsh.service
+npm install --global @deepseek-ai/dsh@<new-verified-version>
+dsh --version
+systemctl --user start dsh.service
+```
+
+源码路径则切到明确 tag，重新 `pnpm install --frozen-lockfile && pnpm run build`，再启动并重复验收。developer preview 没有 Session 跨版本迁移承诺；不要让 unversioned `latest` 在重启时自动换版本。
+
+卸载 executable 或 unit 不会自动删除 `~/.dsh`；删除运行时和删除 Session/配置是两项独立操作。回滚时同样显式安装旧版本或切回旧 tag，并在恢复数据前核对该版本的 Session 兼容性。
 
 ### <a id="web-trusted-host"></a>Web 域名信任与反向代理
 
@@ -280,7 +639,7 @@ Host Plugin、Agent 工具、MCP server 和遥测处理的是不同权限主体�
 
 > 来源：[CLI 对默认权限和未受限能力的说明](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/reference/README.md#L68-L80)。
 
-### 遥测数据
+### <a id="telemetry-data"></a>遥测数据
 
 Session telemetry 默认是 `DISABLED`，不会因为启动 Web 或运行 Agent 自动上传数据。显式启用时：
 
