@@ -12,13 +12,13 @@ Camoufox 是带指纹兼容改造的 Firefox。当前文档以官方完整源码
 
 | 对象 | 当前核验版本 | 与源码的关系 |
 |---|---|---|
-| 官方源码与浏览器 release | [`v152.0.4-beta.29`](https://github.com/daijro/camoufox/tree/v152.0.4-beta.29) | 本文的架构基线；tag 中的 `pythonlib/pyproject.toml` 仍声明 `camoufox==0.5.5` |
-| PyPI `camoufox` | [`0.5.5`](https://pypi.org/project/camoufox/0.5.5/) | sdist 的 `camoufox/` 与官方 commit [`cd83f7f`](https://github.com/daijro/camoufox/tree/cd83f7fd2fdf631dfde0c7eb53bd3d30f102ec4a/pythonlib/camoufox) 逐文件一致 |
-| PyPI `cloverlabs-camoufox` | [`0.6.0`](https://pypi.org/project/cloverlabs-camoufox/0.6.0/) | sdist 的 `camoufox/` 与 CloverLabs commit [`2848aa1`](https://github.com/CloverLabsAI/camoufox/tree/2848aa19fe4fdc011445c62039de1cef79791275/pythonlib/camoufox) 逐文件一致；构建时包名和版本元数据改为独立分发 |
+| 官方源码与浏览器 release | [`v152.0.4-beta.29`](https://github.com/daijro/camoufox/tree/v152.0.4-beta.29) | 2026-08-20 的架构基线；tag 中的 `pythonlib/pyproject.toml` 声明 `camoufox==0.5.5` |
+| PyPI `camoufox` | [`0.5.5`](https://pypi.org/project/camoufox/0.5.5/) | 2026-08-18 发布；sdist 的 `camoufox/` 与 2026-08-12 的官方 commit [`cd83f7f`](https://github.com/daijro/camoufox/tree/cd83f7fd2fdf631dfde0c7eb53bd3d30f102ec4a/pythonlib/camoufox) 逐文件一致 |
+| PyPI `cloverlabs-camoufox` | [`0.6.0`](https://pypi.org/project/cloverlabs-camoufox/0.6.0/) | 2026-05-13 发布；sdist 的 `camoufox/` 与同日的 CloverLabs commit [`2848aa1`](https://github.com/CloverLabsAI/camoufox/tree/2848aa19fe4fdc011445c62039de1cef79791275/pythonlib/camoufox) 逐文件一致，构建时使用独立的包名和版本元数据 |
 
-> 以上对应关系于 2026-08-26 用两个 PyPI sdist 与完整 clone 逐文件比较。官方 tag 在发布 `camoufox==0.5.5` 后又合入了显示环境、启动参数和服务端修复，因此 tag 的 Python 源码比 PyPI 0.5.5 多出后续改动；二者版本字符串相同，不代表目录内容完全相同。
+> 以上对应关系于 2026-08-26 用两个 PyPI sdist 与完整 clone 逐文件比较。PyPI `camoufox==0.5.5` 保存了 `cd83f7f` 的 Python 包快照；随后形成的官方 tag 又合入了显示环境、启动参数和服务端修复，代表更新的源码检查点。
 
-两个 PyPI 分发都提供 `from camoufox...` 和 `camoufox` CLI，不能凭 `0.6.0 > 0.5.5` 判断 CloverLabs 分发更新：它们是不同项目名下的独立版本序列。需要并行对照时放在不同隔离环境，避免同名模块互相覆盖。
+两个 PyPI 分发都提供 `from camoufox...` 和 `camoufox` CLI。`cloverlabs-camoufox==0.6.0` 对应 CloverLabs 在5月形成的源码快照，`camoufox==0.5.5` 对应官方仓库在8月形成的源码快照；阅读和选择时以分发名、源码 commit、发布日期及所需能力为完整坐标。需要并行对照时放在不同隔离环境，避免同名模块互相覆盖。
 
 Python CLI 从 [`repos.yml`](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/repos.yml#L1-L39) 读取浏览器仓库和兼容范围，以 `official/stable`、`official/prerelease` 或固定版本选择浏览器。浏览器 tag 与 Python 包版本因此没有一一同号关系。
 
@@ -116,7 +116,7 @@ with Camoufox(headless=True) as browser:
 
 常用参数包括 `os`、`geoip`、`proxy`、`locale`、`humanize`、`screen`、`window`、`fingerprint`、`fingerprint_preset`、`addons`、`block_webrtc` 和 `browser`。默认由 BrowserForge 生成指纹，也可选择随包分发的真实指纹预设。
 
-浏览器核心改动在 Firefox/C++/Juggler 层，减少普通 JS 注入留下的痕迹；最新稳定接口同时提供 `NewContext` / `AsyncNewContext`，其中按 context 的部分覆盖通过短生命周期 init script 应用。因此不要把整套实现概括成“所有值都在 C++ 层，JavaScript 绝不可能检测”。[context 源码](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/sync_api.py#L153-L180)
+浏览器核心改动在 Firefox/C++/Juggler 层，减少普通 JS 注入留下的痕迹；最新稳定接口同时提供 `NewContext` / `AsyncNewContext`，其中按 context 的部分覆盖通过短生命周期 init script 应用。分析可检测性时，应分别考察浏览器底层改动和 context 初始化脚本这两条实现路径。[context 源码](https://github.com/daijro/camoufox/blob/v152.0.4-beta.29/pythonlib/camoufox/sync_api.py#L153-L180)
 
 ## <a id="agent-cli"></a>Agent CLI
 
@@ -133,6 +133,6 @@ with Camoufox(headless=True) as browser:
 
 Camoufox 改善的是浏览器指纹和自动化一致性，不承诺对所有站点、IP、代理、账号或版本稳定通过。官方 tag 自身仍标注项目处于开发中；升级浏览器 release 也可能同时带来兼容修复和新回归。
 
-验证码、交互验证和登录挑战属于页面状态。Playwright 或 Camoufox 可以继续读取页面、保留会话并交给人完成必要步骤，但不应把“出现验证码”直接归因于 locator 失败。站点已有稳定公开接口或可复现的 HTTP 请求时，直接 HTTP 与浏览器可以并用。
+验证码、交互验证和登录挑战属于页面状态。Playwright 或 Camoufox 可以继续读取页面、保留会话并交给人完成必要步骤；出现验证码时先沿访问状态排查，locator 则继续用于页面元素定位。站点已有稳定公开接口或可复现的 HTTP 请求时，直接 HTTP 与浏览器可以并用。
 
-代理同样不是单向增益：出口信誉、GeoIP、DNS、WebRTC、locale 和会话历史都可能改变结果。一次站点通过只能说明当时的浏览器版本、出口和请求路径可用，不能推广成“住宅代理一定更成功”或“Camoufox 一定能绕过”。调试时记录具体版本、出口、headed/headless 和失败响应，再决定调整哪一层。
+代理结果由出口信誉、GeoIP、DNS、WebRTC、locale 和会话历史共同决定。一次站点通过记录的是当时浏览器版本、出口和请求路径这组条件的表现；调试时继续记录 headed/headless 与失败响应，再据此调整对应层。
