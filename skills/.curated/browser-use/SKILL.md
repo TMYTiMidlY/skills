@@ -49,7 +49,7 @@ Playwright 的 Node 与 Python 入口共享同一套浏览器驱动模型，但�
 
 ## Camoufox
 
-Camoufox 是经过指纹兼容改造的 Firefox，Python 接口继续使用 Playwright 的页面模型。当前文档以官方源码 tag [`v152.0.4-beta.29`](https://github.com/daijro/camoufox/tree/v152.0.4-beta.29) 为架构基线；Python 包、浏览器二进制和系统运行库是彼此独立的三层。它能减少常见自动化与指纹不一致，不保证所有站点、验证码、账号权限或代理组合都可用。
+Camoufox 是经过指纹兼容改造的 Firefox，Python 接口继续使用 Playwright 的页面模型。Python 包、浏览器二进制和系统运行库是彼此独立的三层；它能减少常见自动化与指纹不一致，不保证所有站点、验证码、账号权限或代理组合都可用。
 
 官方分发 `camoufox` 和 CloverLabs 分发 `cloverlabs-camoufox` 都安装 `camoufox` import/CLI 命名空间，应放在不同隔离环境中。它们与源码 tag、浏览器 release 的对应关系，以及安装和无管理员权限环境见 [references/camoufox.md](references/camoufox.md)。
 
