@@ -43,9 +43,374 @@ sudo systemctl reload caddy
 
 注意：
 
-- **改 Caddyfile 用 `reload`**；**换二进制或改 systemd 环境变量用 `restart`**。
-- **`reload` 走 Caddy 的 admin（管理 / 控制）API**：本质是 `POST /load`（**默认 `localhost:2019`**，阻塞到加载完成 / 失败、失败自动回滚旧配置、零停机）。`curl localhost:2019/...` 是在本机访问它自己的控制口、免 sudo；admin API 全貌与 `pprof` 诊断见文末「排障与诊断 · 通用诊断入口」。
+- **小范围改 Caddyfile 可用 `reload`**；**加新域名 / 大改 / 换二进制 / 改 systemd 环境变量优先用有界的 `restart`**。
+- **`reload` 走 Caddy 的 admin（管理 / 控制）API**：本质是 `POST /load`（**默认 `localhost:2019`**，阻塞到加载完成 / 失败、失败自动回滚旧配置、零停机）。`curl localhost:2019/...` 是在本机访问它自己的控制口、免 sudo；细粒度运行态修改见下一节，`pprof` 诊断见文末「排障与诊断 · 通用诊断入口」。
 - **reload 出问题**（永久挂起 / 退出码非零 / `validate` 报 `{env.*}` / 域名白屏 / 登录死循环…）统一见文末「排障与诊断」节。
+
+
+## Admin API 运行态临时改配置（路由与 caddy-security）
+
+> 搜索词：`localhost:2019`、`/config/`、`PUT route`、`@id`、`autosave.json`、`--resume`、`apps.security.config`、临时路由、临时权限。
+
+### 先说结论：“能临时改”，但不等于“只改内存”
+
+Caddy 的 [Admin API](https://caddyserver.com/docs/api) 不只支持 `POST /load` 整份 reload，也支持沿原生 JSON 配置树做细粒度 `GET / POST / PUT / PATCH / DELETE`。HTTP 路由和 caddy-security 的 `security {}` 都在同一棵树里，所以两者都能运行态修改；默认控制口是 `127.0.0.1:2019`，本机访问不需要 sudo。
+
+每个写请求的真实过程不是“给当前 handler 打补丁”，而是：
+
+1. 在 raw JSON 上完成一次变更；
+2. 严格解码并 provision **整份新配置**；
+3. 启动新 apps、切换 current context、停止旧 apps；
+4. 成功后更新运行配置并默认写入 `autosave.json`；加载失败则继续跑旧配置，并把 raw JSON 回滚到旧值。
+
+因此单个 API 请求具有原子性，但影响面仍是整份配置。第三方 app（尤其 caddy-security）在 provision / Start / Stop 任一步卡住，`PUT /config/...` 与 `POST /load` 一样会占住 `rawCfgMu` 全局配置锁；详见文末“`systemctl reload caddy` 卡住 / 永久挂起”。
+
+“临时”的准确含义取决于启动方式：
+
+| Caddy 启动方式 | API 变更重启后怎样 |
+|---|---|
+| `caddy run --config /etc/caddy/Caddyfile`，**没有** `--resume` | API 变更虽默认 autosave，但下次进程启动仍从 Caddyfile 读，临时变更消失 |
+| `caddy reload --config /etc/caddy/Caddyfile` | 立即用文件适配出的完整配置覆盖 API 临时变更 |
+| `caddy run --resume` / `caddy-api.service` | 从 autosave 恢复，API 配置就是持久的唯一配置源（source of truth），不再算临时 |
+| `admin.config.persist=false` | 不写 autosave；这是全局持久化策略，不建议为一次临时操作来回切 |
+
+先看实际 unit，不要猜：
+
+```bash
+systemctl cat caddy | grep -E 'ExecStart=|ExecReload='
+```
+
+官方建议不要同时把 Caddyfile 和 Admin API 都当权威来源。这里的临时改法只适合应急验证、没有 root 写权限但明确获准修改运行态、或先验证路由再落 Caddyfile；最终仍应回写文件并按该机既有流程 validate + restart/reload。
+
+### `/config` 的方法语义：数组上的 `PUT` 是“插入”
+
+| 方法 | 对 object | 对 array |
+|---|---|---|
+| `GET` | 读取 | 读取元素或整个数组 |
+| `POST` | 新建或覆盖字段 | **追加**一个元素；路径以 `/...` 结尾可展开追加多个 |
+| `PUT` | 只新建，不允许目标键已存在 | **在指定 index 前插入**，原元素右移 |
+| `PATCH` | 只替换已存在字段 | **替换**指定 index，绝不是插入 |
+| `DELETE` | 删除字段 | 删除指定 index |
+
+所以把新路由放到 catch-all 前面要用 `PUT .../routes/<index>`；错用 `PATCH` 会直接覆盖原路由。数组 index 会随任何插入/删除漂移，给临时对象加全局唯一的 `"@id"`，后续统一走 `/id/<name>` 查询和回滚。
+
+### 动手前的最小保护
+
+```bash
+set -o pipefail
+ADMIN='http://127.0.0.1:2019'
+umask 077
+snapshot="/tmp/caddy-live-before-$(date +%Y%m%d-%H%M%S).json"
+
+# --noproxy 避免本机代理变量把 loopback 控制请求送出机器
+curl --noproxy '*' --fail --silent --show-error \
+  --max-time 10 "$ADMIN/config/" > "$snapshot"
+
+# 确认文件型还是 API 型启动方式
+systemctl cat caddy | grep -E 'ExecStart=|ExecReload='
+```
+
+保护规则：
+
+- 全量 `GET /config/` 可能含 OAuth client secret、JWT key、上游 token 或其原始占位符。备份必须 `0600` 语义，不要贴进聊天、工单或日志。
+- 先确认 Admin endpoint 只在 loopback 或权限受控的 Unix socket；**不要把 2019 暴露到公网或不可信本机用户**。拿到它就能改认证墙、反代到任意本机端口，权限近似“接管整个入口层”。
+- 先 `GET` 目标数组并算清插入点；不要复制另一台机器的 `srv0`、index 或 adapter 生成的 `groupNN`。
+- 一个对象一个唯一 `@id`，先写好对应 `DELETE /id/...` 回滚命令再发变更。
+- 多人/多自动化会同时改 Caddy 时要串行；若当前版本的 `GET /config/...` 响应带 `Etag`，写请求带回 `If-Match`，收到 412 就重新读取，不能在旧快照上硬重试。
+- 需要构造复杂 JSON 时，优先用**正在运行的同一个 Caddy 二进制**执行 `caddy adapt` / `POST /adapt`，或从 `GET /config/` 克隆同类对象；不要凭记忆手写第三方插件 JSON schema。
+
+### 实例：临时加入 DSH admin 路由
+
+这次实际场景是：公网 HTTPS 网关已经负责证书与 TLS，内层 Caddy 监听 `10.144.18.100:18080`，按 Host 分流；DSH 已监听 `127.0.0.1:3080`，现有 `admin_access` policy 只允许 `authp/admin`。
+
+先展开目标 route 数组，找到 blocked / catch-all 前的 index：
+
+```bash
+ROUTES_PATH='apps/http/servers/srv0/routes/0/handle/0/routes'
+
+curl --noproxy '*' --fail --silent --show-error \
+  "$ADMIN/config/$ROUTES_PATH" |
+jq -r '
+  to_entries[]
+  | [
+      .key,
+      (.value.match[0].host[0]
+       // (if .value.match[0].not then "<blocked>" else "<catch-all>" end)),
+      .value.group
+    ]
+  | @tsv
+'
+```
+
+当时输出里业务 Host 占 `0..17`、blocked 是 `18`、catch-all 是 `19`，所以在 `18` 前插入。payload 为：
+
+```json
+{
+  "@id": "temp_dsh_route",
+  "group": "group22",
+  "match": [
+    {
+      "host": [
+        "dsh.hfnl.app.chenzhaoyun.com"
+      ]
+    }
+  ],
+  "handle": [
+    {
+      "handler": "subroute",
+      "routes": [
+        {
+          "handle": [
+            {
+              "handler": "authentication",
+              "providers": {
+                "authorizer": {
+                  "gatekeeper_name": "admin_access",
+                  "route_matcher": "*"
+                }
+              }
+            },
+            {
+              "handler": "reverse_proxy",
+              "headers": {
+                "request": {
+                  "set": {
+                    "X-Forwarded-Port": [
+                      "443"
+                    ],
+                    "X-Forwarded-Proto": [
+                      "https"
+                    ]
+                  }
+                }
+              },
+              "stream_timeout": 86400000000000,
+              "upstreams": [
+                {
+                  "dial": "127.0.0.1:3080"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+`group22` 是当次适配结果里同级 `handle` 路由共享的 group，**不是稳定名字**。必须从相邻业务 route 复制当前值；下次 Caddyfile reload 后它可能变成别的 `groupNN`。这里保留它是为了让新路由与原有 `handle` 互斥组保持相同语义，不要在另一台机上照抄。
+
+将 JSON 保存为权限受控的 `/tmp/dsh-route.json` 后插入：
+
+```bash
+INSERT_AT=18
+
+curl --noproxy '*' --fail --silent --show-error \
+  --max-time 60 \
+  -X PUT \
+  -H 'Content-Type: application/json' \
+  --data-binary @/tmp/dsh-route.json \
+  "$ADMIN/config/$ROUTES_PATH/$INSERT_AT"
+```
+
+`stream_timeout` 的 JSON 数值单位是纳秒，`86400000000000` = 24h。内层 Caddy 收到的是 HTTP，所以显式告诉上游外部 origin 是 HTTPS；`Host` 默认已透传，不需要再写一条会触发 “Unnecessary header_up X-Forwarded-Host” 警告的配置。
+
+验证至少覆盖四层：
+
+```bash
+# 1. 对象已进入实时配置，并可按稳定 ID 找到
+curl --noproxy '*' --fail --silent --show-error \
+  --max-time 10 \
+  "$ADMIN/id/temp_dsh_route" | jq .
+
+# 2. 上游自身健康
+curl --noproxy '*' --silent --show-error \
+  -o /dev/null -w '%{http_code}\n' \
+  http://127.0.0.1:3080/
+
+# 3. 内层无 token 请求应被鉴权层拦截并跳统一登录
+curl --noproxy '*' --silent --show-error -D - -o /dev/null \
+  -H 'Host: dsh.hfnl.app.chenzhaoyun.com' \
+  -H 'X-Forwarded-Proto: https' \
+  http://10.144.18.100:18080/
+
+# 4. 公网证书、入口转发和登录回跳一起验证
+curl --noproxy '*' --silent --show-error -D - -o /dev/null \
+  https://dsh.hfnl.app.chenzhaoyun.com/
+```
+
+未登录的 302 只证明“有登录墙”，是否真的只允许 admin 还要核对 policy：
+
+```bash
+curl --noproxy '*' --fail --silent --show-error \
+  "$ADMIN/config/apps/security/config/authorization_policies" |
+jq '
+  map(select(.name == "admin_access"))
+  | map({name, access_list_rules})
+'
+```
+
+定向撤销不依赖已漂移的 index：
+
+```bash
+curl --noproxy '*' --fail --silent --show-error \
+  -X DELETE "$ADMIN/id/temp_dsh_route"
+```
+
+### 能不能临时改 `security {}`？能，但优先复用现有 policy
+
+这里的 `security {}` 指 caddy-security app，不是云厂商安全组或 Unix 用户组。常见运行态路径为：
+
+```text
+/config/apps/security/config/identity_providers
+/config/apps/security/config/authentication_portals
+/config/apps/security/config/authorization_policies
+```
+
+这些数组都能 `POST` 追加、`PUT` 插入、`PATCH` 替换、`DELETE` 删除。**但 JSON 字段属于当前 caddy-security / go-authcrunch 版本的内部 schema**，版本间会变；先读现网对象或从同版本 Caddyfile adapt，绝不能把下面示例当跨版本固定 schema。
+
+如果已有 `admin_access` 的语义正好是“只允许 admin”，像 DSH 这种新站点直接让 route 引用它即可。不要为一个站点临时改共享 `admin_access`，否则所有引用它的站点会同时扩大或收窄权限。
+
+确实需要独立 policy 时，最稳的是克隆现网同类 policy、换唯一 name / `@id`，而不是从零拼 cryptographic/cookie 字段：
+
+```bash
+set -o pipefail
+SEC="$ADMIN/config/apps/security/config"
+
+curl --noproxy '*' --fail --silent --show-error \
+  "$SEC/authorization_policies" |
+jq -ce '
+  map(select(.name == "admin_access"))
+  | if length != 1
+    then error("expected exactly one admin_access policy")
+    else .[0]
+    end
+  | .["@id"] = "temp_dsh_policy"
+  | .name = "temp_dsh_access"
+  | .access_list_rules = [
+      {
+        "action": "allow log debug",
+        "conditions": [
+          "match roles authp/admin"
+        ]
+      }
+    ]
+' |
+curl --noproxy '*' --fail --silent --show-error \
+  --max-time 60 \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  --data-binary @- \
+  "$SEC/authorization_policies"
+```
+
+随后把 route 里的 `gatekeeper_name` 改成 `temp_dsh_access`。回滚时先删引用者、再删 policy：
+
+```bash
+curl --noproxy '*' --fail --silent --show-error \
+  -X DELETE "$ADMIN/id/temp_dsh_route"
+curl --noproxy '*' --fail --silent --show-error \
+  -X DELETE "$ADMIN/id/temp_dsh_policy"
+```
+
+也可以临时追加 portal 的用户角色映射：
+
+```bash
+PORTAL_INDEX="$(
+  curl --noproxy '*' --fail --silent --show-error \
+    "$SEC/authentication_portals" |
+  jq -er '
+    to_entries
+    | map(select(.value.name == "hfnl_portal"))
+    | if length != 1
+      then error("expected exactly one hfnl_portal")
+      else .[0].key
+      end
+  '
+)"
+
+curl --noproxy '*' --fail --silent --show-error \
+  --max-time 60 \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  --data-binary '{
+    "@id": "temp_dsh_role_grant",
+    "actions": [
+      "action add role authp/temp_dsh"
+    ],
+    "matchers": [
+      "exact match realm hfnl_github",
+      "regex match sub (?i)^github\\.com/example$"
+    ]
+  }' \
+  "$SEC/authentication_portals/$PORTAL_INDEX/user_transformer_configs"
+```
+
+验证完成后可按 ID 定向撤销这条角色映射：
+
+```bash
+curl --noproxy '*' --fail --silent --show-error \
+  -X DELETE "$ADMIN/id/temp_dsh_role_grant"
+```
+
+这类 security 变更的生效边界不同：
+
+| 变更 | 对现有登录态的效果 |
+|---|---|
+| 改 `authorization_policies[].access_list_rules` / `allow roles` | 每次请求重新做 ACL，已有 JWT **立即**按新规则判定 |
+| 改 `authentication_portals[].user_transformer_configs` | 角色只在签发 JWT 时写入；已有 token 不变，用户必须 logout/relogin 或等过期 |
+| 改 identity provider realm / OAuth client / callback | 可能直接打断登录流；realm 还要同步 transformer 与 GitHub OAuth App |
+| 改 cookie name/domain | 可能让现有会话失效或造成无限 302 |
+| 改 JWT 签名 key / crypto 配置 | 旧 token 全部失效，错误配置还可能让所有人无法登录；不要拿它做普通临时试验 |
+
+`@id` 可以放进 route、policy、transformer 等任意 JSON object。Caddy 会在 raw config 中索引它，加载模块前再剥掉该元字段，所以第三方插件不会因未知 `@id` 报错。
+
+### 多请求不是事务；超时后禁止盲目重试
+
+单次 `PUT`/`POST` 加载失败会回滚旧配置，但“先加 policy、再加 route”是两个独立请求，中间没有跨请求事务。安全顺序是：
+
+1. 加一个尚未被引用的新 policy；
+2. 加引用它的 route；
+3. 验证公网和实际授权；
+4. 回滚时先删 route，再删 policy。
+
+如果写请求在客户端 `--max-time` 后超时：
+
+- **不要立刻再发同一请求**。服务端可能仍在配置锁内继续，甚至对象已经生效，只是旧 app 的 Stop / admin endpoint 收尾没返回。
+- 先测业务 URL，再 `GET /id/<id>`；若 `GET /config/` 也挂而 pprof 秒回，就是配置锁占住，按文末 reload 卡死流程处理。
+- `@id` 已存在时重复插入会报重复 ID；没有 ID 的重复 route 更糟，会得到两个相同 Host 规则。
+- 只有确认没有并发配置写入时，才可把先前全量快照 `POST /load` 回去；它会覆盖快照之后**所有人**的变更。通常优先用 `DELETE /id/...` 定向回滚。
+
+```bash
+# 最后手段：整份恢复；确认期间无人改配置后再做
+curl --noproxy '*' --fail --silent --show-error \
+  --max-time 60 \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  --data-binary @"$snapshot" \
+  "$ADMIN/load"
+```
+
+### 从临时路由落成 Caddyfile
+
+运行态验证通过后，把等价配置写入该机真正 import 的 route 文件：
+
+```caddyfile
+@dsh host dsh.hfnl.app.chenzhaoyun.com
+handle @dsh {
+    authorize with admin_access
+
+    reverse_proxy 127.0.0.1:3080 {
+        header_up X-Forwarded-Port 443
+        header_up X-Forwarded-Proto https
+        stream_timeout 24h
+    }
+}
+```
+
+然后验证**完整** Caddyfile（含 imports 和 service 环境变量），再 restart。新域名 / security 属较大变更，优先有界 `restart`，不要让可能卡锁的 `reload` 无限等。重启后重新检查公网 302、登录后的 200、policy 角色和 `systemctl is-active caddy`；此时 Caddyfile 是唯一事实来源，临时 `@id` 不应再存在。
+
 
 ## 基础反代：先选站点模式
 
@@ -1456,6 +1821,9 @@ reverse_proxy http://127.0.0.1:8082 {
 - 功能叠加顺序：**先反代，再错误页，再认证**
 - `reload` 只适合改 Caddyfile；**换二进制或改环境变量用 `restart`**
 - **`reload` 永久卡住 / 挂起**（终端不返回、服务仍在）：第一手 `systemctl restart caddy` 解卡；治本 = `timeout` 包住 reload + 收严 on-demand 签证 + `grace_period`/`stream_timeout` 封顶泄漏，详见「`systemctl reload caddy` 卡住 / 永久挂起」节
+- Admin API 的 `PUT /config/.../<index>` 会向数组**插入**，`PATCH` 才是替换；临时对象加唯一 `@id`，用 `/id/<name>` 验证和定向撤销
+- API 写入默认会 autosave；只有不带 `--resume`、重启仍从 Caddyfile 加载时，它才是“相对 Caddyfile 的临时配置”
+- `security {}` 也能经 `/config/apps/security/config/...` 临时改；优先复用现有 policy，改 portal transformer 后旧 JWT 必须重登才拿到新角色，JWT key/cookie/provider 不做普通临时试验
 - `tls internal` 场景下，**客户端只导 root CA**
 - **共享端口（`:443`）上的域名站点别写 `bind`**：会独占该 `IP:443`、劫持整段端口流量 → 其它域名 200 空 body 白屏；偏偏本机回环自查正常，极隐蔽。只有独占端口的站点才可以 bind。
 - `caddy-security`：
