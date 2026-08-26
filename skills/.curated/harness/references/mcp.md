@@ -1,10 +1,8 @@
-# MCP 工具名如何暴露给模型：五家客户端横向对照
+# MCP 配置发现与工具名：五家客户端横向对照
 
-一个 MCP server 声明了工具 `foo`，客户端把它塞进模型可见的 tool 列表时，是原样叫
-`foo`，还是加 server 名做命名空间（`<server>-foo` / `<server>__foo` /
-`mcp__<server>__foo` …）？本篇只聚焦 **tool-name 的前缀 / 命名空间化**：分隔符是什么、
-前缀串从哪来（客户端 MCP 配置里的 **server key** vs server 自己在 `initialize` 握手里
-声明的 name）、碰撞行为、截断 / 净化（sanitize）规则，以及其它 MCP 暴露层的坑。
+同一台 MCP server 在不同 coding agent 客户端里会遇到两层问题：客户端从哪些配置源发现并合并它，用户怎样列出、修改和验证最终生效的 server；连接后，server 声明的工具 `foo` 又以什么名字暴露给模型。本篇对照 Copilot CLI、Claude Code、Codex、Gemini CLI、Cursor 的这两层行为。
+
+配置发现决定“有哪些 server”，工具命名决定“模型看见什么 tool”。排查时先用客户端自己的列出 / 状态入口确认有效配置，不能只扫描一个用户配置文件：项目、插件 / 扩展、企业配置和单次运行覆盖都可能另外注入 server。
 
 **为什么这事要紧**：常有人给 MCP 工具名硬加 server 名当前缀（`portal_exec` /
 `myserver_search`），理由是"防撞名"。但如果客户端**本来就**按 server 命名空间化，那这个
@@ -36,13 +34,89 @@
 
 ## 准确度约定
 
-各家源码开放度不同，本篇的引用凭据也分两档，读时照此判断可信度：
+各家源码开放度不同，本篇把证据类型和核对时间放在对应章节附近：
 
-- **Codex**、**Gemini CLI**：真开源 → 每条行为都挂**锁到 commit-SHA permalink 的 file:line
-  源码链接**（点开即到那一行；SHA 不可变、不随 `main` 漂）。可直接照抄核实。
-- **Copilot CLI**、**Claude Code**、**Cursor**：闭源 / minified 分发 → 行为**不能**当源码级
-  事实。每条标注**验证方法**（live MCP server 实测 exposed 工具名 / 官方文档逐字）并就地标
-  日期与不确定度；厂商文档是滚动页，引的是核对当时（2026-07）的口径，引用前自己再核。
+- **配置发现、枚举与修改**：优先采用厂商官方文档，并用 1810 已安装的 CLI 核对实际命令面；Codex 另挂锁到 commit SHA 的配置 loader / MCP CLI 源码，Gemini CLI 未安装则明确标出未做 live 验证。滚动文档按文中日期理解。
+- **工具名装配**：Codex、Gemini CLI 真开源，行为挂锁到 commit SHA 的 file:line；Copilot CLI、Claude Code、Cursor 闭源 / minified，按 live MCP 观测或官方文档记录，并就地注明日期与未公开边界。
+
+## <a id="config-discovery"></a>MCP 配置的发现、枚举与修改
+
+这里的“发现”有两步：客户端先发现并合并 server 配置，再连接有效 server 并通过 MCP 的 `tools/list`、`prompts/list`、`resources/list` 等请求发现能力。各家的 `list` 命令对第二步做得并不一样，所以“配置已列出”不能一概等同于“server 已连接”。
+
+从哪个目录运行命令也会改变结果。项目配置参与合并的客户端，都应在目标项目的实际工作目录里执行枚举命令；只在 home 目录执行，会漏掉仅对项目生效的 server。
+
+| 客户端 | 持久配置的主要位置 | 枚举 / 状态入口 | 增删改入口 |
+|---|---|---|---|
+| **Copilot CLI** | `${COPILOT_HOME}/mcp-config.json`（默认 `~/.copilot/mcp-config.json`）、沿 cwd→git root 的 `.mcp.json` / `.github/mcp.json` | `copilot mcp list`、`copilot mcp get <name>`；两者可加 `--json`；交互态 `/mcp show` | `copilot mcp add/remove` 写用户配置；项目配置直接改对应 JSON；交互态 `/mcp add/edit/delete` |
+| **Claude Code** | `~/.claude.json`（local / user scope）、项目根 `.mcp.json`（project scope） | `claude mcp list`、`claude mcp get <name>`；交互态 `/mcp` | `claude mcp add/remove` 的 `--scope` 选择 local / project / user，或改对应 JSON |
+| **Codex** | `${CODEX_HOME}/config.toml`（默认 `~/.codex/config.toml`）、受信任项目的 `.codex/config.toml` | `codex mcp list`、`codex mcp get <name>`；两者可加 `--json`；运行中客户端 `/mcp` | `codex mcp add/remove` 只改用户配置；项目配置直接改 TOML；插件 server 通过插件管理 |
+| **Gemini CLI** | `~/.gemini/settings.json`、项目根 `.gemini/settings.json`、系统 settings；均在 `mcpServers` 下 | `gemini mcp list`；交互态 `/mcp list`、`/mcp desc`、`/mcp schema` | `gemini mcp add/remove` 的 `--scope` 选择 project / user，或改 settings；`/mcp reload` 重新发现 |
+| **Cursor** | `~/.cursor/mcp.json`、项目 / 父目录的 `.cursor/mcp.json` | `agent mcp list`、`agent mcp list-tools <id>`；交互态 `/mcp list` | 编辑 JSON 或在 Customize 管理；CLI 只提供 login / enable / disable，没有 add / remove |
+
+### Copilot CLI
+
+Copilot CLI 把多个来源按 server key 去重，优先级从高到低是：
+
+1. 单次启动的 `--additional-mcp-config`；
+2. 已安装插件提供的 MCP；
+3. workspace 配置；
+4. 用户配置 `${COPILOT_HOME}/mcp-config.json`。
+
+workspace 配置从 cwd 向上扫描到 git root，每一级都检查 `.mcp.json` 和 `.github/mcp.json`；同目录两者同名时 `.mcp.json` 胜出，目录冲突时离 cwd 更近的定义胜出。项目目录未获 trust 时这些 workspace server 不加载。内置 GitHub MCP 不依赖上述文件，并且不能被同名自定义项覆盖。
+
+`copilot mcp list` 按 user、workspace、plugin、builtin 分组并给出状态，`--json` 可供脚本读取；`copilot mcp get <name>` 同时列出 server 详情、工具和来源，环境变量与 header 默认遮蔽，只有显式 `--show-secrets` 才显示原值。交互态 `/mcp show` 提供同类检查入口。
+
+`copilot mcp add` 和 `copilot mcp remove` 只写用户级 `mcp-config.json`；要改变 workspace 定义，应编辑命中的 `.mcp.json` / `.github/mcp.json`。`/mcp add` 保存后会在当前会话立即启动 server，无需重启。插件提供的 server 随插件安装 / 卸载而变；`--additional-mcp-config` 只活在本次进程。
+
+> 依据：[GitHub 官方 MCP 文档](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)与[加载优先级](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#mcp-server-loading-priority)（2026-08-26 核）；1810 实测 Copilot CLI `1.0.81-9` 的 `copilot mcp --help`、`list --help` 与 `get --help`。更细的 walk-up 与历史版本行为见 [Copilot CLI 配置发现](copilot-discovery.md)。
+
+### Claude Code
+
+Claude Code 有三个用户可选 scope：local 和 user 都存在 `~/.claude.json`，但 local 挂在当前项目路径下；project 存在项目根 `.mcp.json`。同名 server 不做字段级合并，而是整项选最高优先级来源：
+
+1. local；
+2. project；
+3. user；
+4. plugin；
+5. claude.ai connector。
+
+`claude mcp list` 会对获准 server 做健康检查，并把项目配置中尚未批准的条目标成 pending approval；`claude mcp get <name>` 给单项详情，运行中的 `/mcp` 还能显示工具数和连接状态。WebSocket server 不出现在 `claude mcp list`，需用 `get` 或 `/mcp` 检查。
+
+`claude mcp add --scope <scope>` 和 `remove --scope <scope>` 修改对应来源；不写 `--scope` 时 add 默认 local，remove 会查找该项所在 scope。插件 MCP 写在插件根 `.mcp.json` 或 `plugin.json`，应通过插件安装 / 卸载管理；`/mcp` 的 toggle 只记录当前项目的启停选择，不删除定义。项目 `.mcp.json` 改动后若审批状态干扰验证，可用 `claude mcp reset-project-choices` 重置该项目的选择。
+
+> 依据：[Claude Code MCP 官方文档](https://code.claude.com/docs/en/mcp)（2026-08-26 核）；1810 实测 Claude Code `2.1.202` 的 `claude mcp --help` 与 `list --help`。Claude Code 闭源，scope 合并和 WebSocket 枚举边界按官方文档记录。
+
+### Codex
+
+Codex 把 MCP 放在普通 TOML 配置层的 `[mcp_servers.<key>]` 下。日常可见的来源是用户级 `${CODEX_HOME}/config.toml`、受信任项目的 `.codex/config.toml`、运行时 `-c key=value` 覆盖和插件 manifest；系统层位于 Linux / macOS 的 `/etc/codex/config.toml` 或 Windows 的 `%ProgramData%\OpenAI\Codex\config.toml`，企业配置还能提供或约束条目。项目层未获 trust 时会被发现但禁用。
+
+当前开源 loader 还会读取 `${PWD}/config.toml`，并沿父目录查找 `.codex/config.toml`，再纳入 git root 的 `.codex/config.toml`；项目层整体高于用户层，运行时覆盖最高。TOML 层递归合并，所以只检查 `~/.codex/config.toml` 不能代表当前 cwd 的最终 MCP 集合。
+
+`codex mcp list` / `get` 读取当前 cwd 的合并配置，并纳入插件提供的 server；默认表格给出 transport、启用和认证状态，但不会启动 STDIO server，也不是连接健康检查。`--json` 还会原样带出配置里的 `env`、`http_headers` 等字段，可能含凭据，不能未经清理直接贴进日志或对话。核验分两步：先在目标 cwd 运行 `codex mcp list` 看有效配置，再在新建或重启后的 TUI / IDE 里用 `/mcp` 看实际初始化状态。
+
+`codex mcp add` / `remove` 当前只改用户级 `${CODEX_HOME}/config.toml`；项目级 server 要直接编辑项目 `.codex/config.toml`。插件 manifest 决定 transport，用户 TOML 只在 `[plugins."<plugin-id>".mcp_servers.<server>]` 下覆盖 enabled 和工具策略。桌面端或 IDE 从设置页保存后要按界面提示 Restart。
+
+> 依据：[OpenAI MCP 官方文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)；`openai/codex@4ef836f` 的[配置层发现](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/config/src/loader/mod.rs#L103-L121)、[MCP 子命令与参数](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L46-L98)、[list 的枚举边界](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L627-L700)及[用户级写入](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L349-L441)；1810 实测 Codex CLI `0.149.1`。
+
+### Gemini CLI
+
+Gemini CLI 把 server 定义放在各层 `settings.json` 的 `mcpServers`。持久配置从低到高是系统 defaults、用户 `~/.gemini/settings.json`、项目根 `.gemini/settings.json`、系统 override；Linux 的两个系统文件分别是 `/etc/gemini-cli/system-defaults.json` 和 `/etc/gemini-cli/settings.json`，Windows / macOS 使用官方文档列出的平台目录。同名 server 由更高层定义覆盖。Extension 也能提供 MCP，本地 settings 可覆盖其标量和环境字段，工具 allow / deny 列表按“更严格者生效”的规则合并。
+
+`gemini mcp list` 会连接并显示所有有效 server 的配置摘要与状态；未受信任目录里的 STDIO server 不做连接测试，会显示 Disconnected。交互态 `/mcp list` 列 server / 工具，`desc` 加描述，`schema` 加参数 schema。
+
+`gemini mcp add` 默认写项目 `.gemini/settings.json`，`--scope user` 改写用户文件；`remove` 同样按 scope 删除。持久 enable / disable 状态另存 `~/.gemini/mcp-server-enablement.json`，`--session` 才是不落盘的临时开关。手改 settings 后用 `/mcp reload` 重启 server 并重新发现工具；若改的是要求 restart 的全局 `mcp.allowed` / `mcp.excluded` 策略，则重启 CLI。
+
+> 依据：[Gemini CLI MCP 官方文档](https://geminicli.com/docs/tools/mcp-server/)与[配置层文档](https://geminicli.com/docs/reference/configuration/)（2026-08-26 核）。1810 未安装 Gemini CLI，本节未做 live 验证；命令、路径和 trust 行为按官方文档记录。
+
+### Cursor
+
+Cursor Editor 与 Cursor CLI 共用 MCP 配置。用户级文件是 `~/.cursor/mcp.json`，项目配置是各目录的 `.cursor/mcp.json`；CLI 会从当前目录向父目录发现配置。Marketplace / plugin、团队分发和 Extension API 还可能动态提供 server，因此文件扫描不是完整清单。
+
+`agent mcp list` 显示 server 名、连接状态、配置来源和 transport，`agent mcp list-tools <identifier>` 显示某台 server 的工具与参数；交互态 `/mcp list` 使用同一界面。当前 `agent mcp` 没有 add / remove：新增、改 transport 或删除定义要编辑 `mcp.json`，或在 Cursor 的 Customize 页面操作。`agent mcp enable` / `disable` 改的是本机批准 / 禁用状态，不改 JSON 定义。
+
+Cursor CLI 文档把配置优先级概括为“project → global → nested”，同时说会自动发现父目录，但没有公开同名 server 横跨多个父目录时的字段合并算法。遇到重名时，以 `agent mcp list` 显示的 configuration source 和实际状态为准，不从文件顺序反推。手改文件后至少用新进程运行 `agent mcp list`；官方没有承诺当前会话热重载配置。更新自定义 server 的实现文件后，官方要求重启 Cursor。
+
+> 依据：[Cursor MCP 配置文档](https://cursor.com/docs/mcp)与[Cursor CLI MCP 文档](https://cursor.com/docs/cli/mcp)（2026-08-26 核）；1810 实测 Cursor CLI `2026.08.11-e8db854` 的 `agent mcp --help`。Cursor 闭源，父目录重名合并的未公开部分保持未定。
 
 ---
 
