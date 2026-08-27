@@ -161,7 +161,7 @@ sudo sysctl -p
 
 ### Caddy 与 caddy-security
 
-Caddy 反向代理、域名/IP 模式、local root CA、Caddyfile 与 Admin API、caddy-security GitHub OAuth、cookie scope、环境变量转用 `network` skill 的 [Caddy reference](../network/references/caddy.md)。
+Caddy 反向代理、域名/IP 模式、local root CA、Caddyfile 与 Admin API、caddy-security GitHub OAuth、cookie scope 和环境变量转用 `network` skill。docs-share 的 viewer 壳子由本 skill 的 [viewer 资产](assets/md-viewer.html) 提供。
 
 尤其是修改 Caddyfile、EasyTier、SSH 转发、systemd 单元、防火墙规则时，不要凭记忆改，先读对应 reference。
 
