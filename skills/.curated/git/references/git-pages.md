@@ -358,7 +358,7 @@ pages.example.com {
 
 permission / ask 端点有两种相反的失败模式：
 
-- 端点过于宽松时，任意主机名都可能触发证书申请，造成 CA 限流和 Caddy obtain 锁堆积。常见错误包括 `too many certificates`、`too many subdomain labels`，退避最长可达 30 天；同一时段的 obtain 锁还可能拖住 `caddy reload`。permission 应指向 git-pages 的 `:3001`。Caddy 限流和 reload 排障见 `network` skill 的 [Caddy 运维章节](../../network/references/caddy.md)。
+- 端点过于宽松时，任意主机名都可能触发证书申请，造成 CA 限流和 Caddy obtain 锁堆积。常见错误包括 `too many certificates`、`too many subdomain labels`，退避最长可达 30 天；同一时段的 obtain 锁还可能拖住 `caddy reload`。permission 应指向 git-pages 的 `:3001`。Caddy 的 on-demand TLS 限流与 reload 排障由 `network` skill 覆盖。
 - 端点不可用时，Caddy 会拒绝签发（fail closed），整个通配站点可能在 TLS 握手阶段不可达。先运行 `curl 'http://127.0.0.1:3001/?domain=<已发布域名>'`，再检查 git-pages 到 S3 的 `CheckDomain` 链路。
 
 ### <a id="dns-records"></a>DNS 解析与发布授权

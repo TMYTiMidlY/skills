@@ -259,7 +259,7 @@ systemctl enable copyparty       # 先不 start，下一步写完 conf 再启
 }
 ```
 
-不需要 `header_up`、`encode`、特殊 cookie 处理——copyparty 自己处理 `X-Forwarded-For`、cookie path、HEAD/Range，按 default Caddyfile semantics 就够了。reload Caddy 之前先 `caddy validate`（见 `network` skill 的 [Caddy reference](../../.curated/network/references/caddy.md)）。
+不需要 `header_up`、`encode`、特殊 cookie 处理——copyparty 自己处理 `X-Forwarded-For`、cookie path、HEAD/Range，按 default Caddyfile semantics 就够了。reload Caddy 之前先 `caddy validate`（相关 Caddy 配置与校验语义由 `network` skill 覆盖）。
 
 **Step 8 启动 + 验证**：
 

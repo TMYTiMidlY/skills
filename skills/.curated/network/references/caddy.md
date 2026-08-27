@@ -929,7 +929,7 @@ https://panel.example.com {
 - **端口被占 / 想限定监听网卡 → 用 `bind`**：`bind` 的分组机制、独占端口 vs 共享端口的正反用法见下一节；`address already in use`（常见 Docker 占了 `127.0.0.1:port`）的诊断修复、以及共享端口误加 `bind` 导致的域名白屏，见文末「排障与诊断」。
 
 - **公网端口别忘了放行安全组/防火墙**。  
-  中国大陆 Aliyun ECS 的未备案 SNI 封锁与“IP 直连 + `tls internal`”绕过方案另见 [icp-filing.md](../../vps-maintenance/references/icp-filing.md)。
+  中国大陆 Aliyun ECS 的未备案 SNI 封锁与“IP 直连 + `tls internal`”绕过方案由 `vps-maintenance` skill 的大陆备案与端口策略主题覆盖。
 
 ### `bind` 与 listener 分组：独占端口 vs 共享端口
 
@@ -1644,8 +1644,8 @@ app.example.com {               # 域名受保护业务
 >
 > **配套**：
 >
-> - **客户端怎么用**（凭据存哪、生成分享链接、Markdeep 写作惯例）→ `software` skill 的 `references/docs-share.md`
-> - **viewer 壳子** → [`../assets/md-viewer.html`](../assets/md-viewer.html)
+> - **客户端使用**（凭据存放、分享链接、Markdeep 写作惯例）由 `software` skill 覆盖
+> - **viewer 壳子资产**由 `vps-maintenance` skill 提供
 >
 > 本节只覆盖服务端：RustFS 桶 + 受限 CI key + Caddy 边缘反代 + viewer rewrite。
 
@@ -1682,13 +1682,15 @@ git push → forgejo (gitea-self-hosted) → forgejo-runner (DinD)
 
 ### 安装 viewer 壳子
 
+先从 `vps-maintenance` skill 取得 viewer 壳子资产，并将其路径代入 `<viewer-asset>`：
+
 ```bash
-sudo install -D -m 0644 ../assets/md-viewer.html /srv/viewer/_viewer.html
+sudo install -D -m 0644 <viewer-asset> /srv/viewer/_viewer.html
 ```
 
 viewer 壳子是**外置文件**（Caddy 本地 file_server 直接 serve），不在桶里——所以**不需要桶里有任何匿名可读对象就能跑 Idiom B**。
 
-> Idiom A 仍可并存：桶里另放一个对象级 anonymous policy 放行的 `viewer.html`（详见 `software/docs-share.md`「从零部署」步骤 4）。两者不冲突，因为 Caddy matcher 只对 `*.md` 生效，不影响 `/viewer.html` 路径。
+> Idiom A 仍可并存：桶里另放一个对象级 anonymous policy 放行的 `viewer.html`（该对象级 policy 的部署由 `software` skill 覆盖）。两者不冲突，因为 Caddy matcher 只对 `*.md` 生效，不影响 `/viewer.html` 路径。
 
 ### Caddy 站点模板
 
@@ -1822,7 +1824,7 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 | 证书签不出 / ACME 反复失败 / 垃圾子域名狂签 | DNS 没指过来，或 on-demand `ask` 太宽 | 本节「reload 卡住」第 3 条 + 「`on_demand_tls`」节 |
 | `tls internal` 站点长停后重启，日志 `certificate expired beyond grace period` + 反复 `open .../<IP>.key: no such file` | 旧证书清理与内存续签任务交错 | 本节「`tls internal` 站点长停后首启卡在旧证书清理 / 续签」 |
 | docs-share viewer 渲染 / 下载 / 缓存异常 | viewer 壳子 / Markdeep / SigV4 细节 | docs-share「这套方案踩过的坑」 |
-| 大陆 Aliyun ECS 未备案 SNI 被封 | 备案 / SNI 封锁 | [icp-filing.md](../../vps-maintenance/references/icp-filing.md) |
+| 大陆 Aliyun ECS 未备案 SNI 被封 | 备案 / SNI 封锁 | `vps-maintenance` skill |
 
 ### 通用诊断入口：admin API 与 pprof
 
