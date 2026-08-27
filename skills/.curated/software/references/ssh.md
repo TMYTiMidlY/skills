@@ -47,6 +47,26 @@ systemctl --user show ssh-agent.service \
 
 `FragmentPath` 能看出当前生效的是发行版 unit，还是 `~/.config/systemd/user/` 下的同名用户覆盖。
 
+`systemctl --user` 通过用户 D-Bus 控制 user manager，它不通过 agent socket。由非登录 shell、远端执行器或某些终端启动的进程可能没有 `XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS`，此时会报 `Failed to connect to bus: No medium found`（本地化后也可能显示“找不到介质”）。
+
+先区分“环境没有指向 bus”和“user manager 根本不存在”：
+
+```bash
+runtime_dir=/run/user/"$(id -u)"
+test -S "$runtime_dir/bus"
+pgrep -a -u "$(id -u)" -x systemd
+```
+
+若 bus socket 和 `systemd --user` 都存在，可以只给当前命令显式指定入口：
+
+```bash
+XDG_RUNTIME_DIR="$runtime_dir" \
+DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus" \
+systemctl --user status ssh-agent.service
+```
+
+这种前缀赋值只对该命令生效；同一 shell 需要连续管理 user unit 时可以 export。它们只帮助 `systemctl` 找到控制总线，不会设置 `SSH_AUTH_SOCK`、不会选择 agent，也不会解锁私钥。若 bus socket 或 user manager 不存在，单纯补变量无效，应检查登录会话、PAM/systemd 集成或 linger 状态。
+
 #### GCR `gcr-ssh-agent`
 
 GNOME 的 `gcr4` 包可提供 `gcr-ssh-agent.service` 和 `gcr-ssh-agent.socket`，对外 socket 通常是 `%t/gcr/ssh`。`%t` 在 systemd user unit 中展开为用户 runtime 目录，通常即 `/run/user/<UID>`。[Ubuntu 24.04 `gcr4` 文件清单](https://packages.ubuntu.com/noble/amd64/gcr4/filelist)列出了这两个 unit。
@@ -61,6 +81,31 @@ systemctl --user status gcr-ssh-agent.socket gcr-ssh-agent.service
 ```
 
 socket 已存在而进程尚未运行是正常状态，单看 `pgrep` 会把这种状态误判为 agent 不可用。
+
+无图形界面时，GCR 的“按需解锁”还有一层限制：它可以先广告 `~/.ssh` 中的公钥，但私钥需要 passphrase 且 Secret Service 没有已保存秘密时，会尝试启动 `org.gnome.keyring.SystemPrompter`。没有可用的 `DISPLAY` / `WAYLAND_DISPLAY` 或图形 prompter 启动失败时，签名请求会返回 `agent refused operation`，journal 常见：
+
+```text
+couldn't prompt for password: ... SystemPrompter exited with status 1
+the /usr/bin/ssh-add command failed
+```
+
+此时 `ssh-add -l` 仍可能列出身份，因为它只查询 GCR 广告的公钥；用签名探针才能复现真正故障：
+
+```bash
+agent_socket=/run/user/"$(id -u)"/gcr/ssh
+SSH_AUTH_SOCK="$agent_socket" ssh-add -T ~/.ssh/id_ed25519.pub
+journalctl --user -u gcr-ssh-agent.service -n 50 --no-pager
+```
+
+GCR 已向 OpenSSH 声明拥有该身份后，OpenSSH 会走 agent 签名分支；agent 拒绝签名时，不会进入“直接读取 `IdentityFile`、终端询问 passphrase、再执行 `AddKeysToAgent`”的路径。因此 `AddKeysToAgent yes` 不能修复这个故障。
+
+无图形环境可以从交互式 TTY 手动把私钥加入 GCR 的内部 agent：
+
+```bash
+SSH_AUTH_SOCK="$agent_socket" ssh-add ~/.ssh/id_ed25519
+```
+
+这会在终端读取 passphrase，并缓存到 agent 生命周期结束。重启 GCR service 会清空该内存缓存；无需为普通 SSH 连接反复 restart。若期望“首次交互式 SSH 在终端解锁，随后由 `AddKeysToAgent` 缓存”，原生 OpenSSH agent 比依赖图形 prompter 的 GCR 更符合这条调用链。
 
 #### OpenSSH `ssh-agent`
 
