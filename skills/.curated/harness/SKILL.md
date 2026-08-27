@@ -1,6 +1,6 @@
 ---
 name: harness
-description: 设计、集成或排查 Copilot、Claude Code、Codex、DeepSeek Harness、Hermes、pi 等 coding agent runtime 时使用。核心是通过工具注入、配置发现、会话、权限和进程/SDK 接口编排 agent；model、agent、harness、tool、skill 与外部系统的关系用于界定编排边界。
+description: 需要理解、比较或排查 Copilot、Claude Code、Codex、DeepSeek Harness、Hermes、pi 等 coding agent 编排框架（harness）时使用。重点介绍这些框架如何组织 agent loop、工具注入、配置发现、会话、权限与进程/SDK 接口，以及 model、agent、tool、skill 与外部系统在其中的位置。
 ---
 
 # Harness
@@ -61,7 +61,7 @@ MCP 2025-06-18 的 host/client/server 架构同样把 context aggregation、安�
 
 在这条闭环里，model 负责生成下一步，agent 是围绕目标持续决策的整体行为，harness 拥有循环和生命周期，tool 提供单项执行能力，Skill 提供按需注入的操作知识，外部系统保存真实状态和授权。角色仍取决于观察边界：coding-agent CLI 对直接用户是 harness；被上层 orchestrator 通过 subprocess 或 SDK 驱动时，整套 runtime 可以成为父 harness 的 agent-as-tool，接入形态见 [sdk.md](references/sdk.md)。
 
-单个 tool 的命名、schema、执行契约、错误、重试与 CLI/API/MCP adapter 归 `tool` skill；本 skill 负责把这些能力编排进完整 agent runtime。
+单个 tool 的命名、schema、执行契约、错误、重试与 CLI/API/MCP adapter 归 `tool` skill；本 skill 介绍这些能力如何被 agent 编排框架（harness）组织进完整 runtime。
 
 ## 范围
 
@@ -69,7 +69,7 @@ MCP 2025-06-18 的 host/client/server 架构同样把 context aggregation、安�
 - 对照 Claude Code、Codex、DeepSeek Harness 的 runtime 模型，做 harness 取舍。
 - 设计一个用代码驱动 coding agent 的 daemon / orchestrator（编排器）。
 - 在 CLI 子进程、SDK client、extension host、JSON-RPC、HTTP/webhook 几种集成形态间选型。
-- 理解并编排 agent 从上下文组装、模型决策、tool 执行、observation 回填到终止的运行闭环；单个 tool 的契约与 adapter 转用 `tool` skill。
+- 介绍 agent 编排框架如何组织从上下文组装、模型决策、tool 执行、observation 回填到终止的运行闭环；单个 tool 的契约与 adapter 转用 `tool` skill。
 
 ## References
 

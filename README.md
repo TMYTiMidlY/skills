@@ -9,7 +9,7 @@
 | Skill | 说明 |
 | --- | --- |
 | `manage-skills` | 创建、安装、重构、审查和合并本地 skill 的规范与工作流 |
-| `harness` | Coding agent runtime 编排：工具注入、配置发现、权限、会话与进程/SDK 接口；model / agent / harness / tool / skill 关系用于界定编排边界 |
+| `harness` | Coding agent 编排框架（harness）知识库：介绍 agent loop、工具注入、配置发现、权限、会话与进程/SDK 接口，以及 model / tool / skill 在 runtime 中的位置 |
 | `tool` | Agent tool 的能力边界与执行契约：schema、权限与副作用、错误/重试/取消、CLI / API / MCP adapter；含 Lark CLI 实例 |
 | `git` | Git/jj 提交与历史、隔离工作区、受限网络获取、发版 CI 与 forge/静态站 |
 | `software` | 本地软件、CLI 与自托管服务：终端和包管理工具、数据库、对象存储、Docker/PaaS、Overleaf、文档处理与桌面系统排障 |
