@@ -61,12 +61,56 @@ sudo mount.cifs //<smb-host>/<share> <mount-point> \
 
 ## 排障经验
 
-- `No route to host` 或 `Unable to determine destination address`：WSL/Linux 侧解析不到 Windows 可访问的 NetBIOS/局域网名字。用 Windows 侧 `ping -4 server` 或 `Resolve-DnsName server` 拿 IP，然后在 Linux CIFS 中使用 IP。
+- `No route to host` 或 `Unable to determine destination address`：WSL/Linux 侧解析不到 Windows 可访问的 NetBIOS/局域网名字。用 Windows 侧 `ping -4 server` 或 `Resolve-DnsName server` 拿 IP，然后在 Linux CIFS 中使用 IP（想用 `//hostname/` 代替 IP、以及它在 WSL 下为什么扛不住 IP 漂移，见下方专节）。
 - `Host is down`：IP 或路由不是 SMB 服务实际可用路径，或 445 端口不可达。可用 `timeout 3 bash -lc '</dev/tcp/IP/445'` 粗测端口。
 - `SessSetup = -13`：SMB 认证阶段被拒。检查用户名、密码、`domain=`、`sec=`、SMB 版本；也可以用 `smbclient -L` 验证凭据。
 - `smbclient` 能列出 share，但 `mount -t cifs` 失败：安装 `cifs-utils` 后使用 `mount.cifs` 再试；`mount.cifs` 会走更完整的 helper 逻辑。
 - Windows 已经能访问 `\\server\share` 不等于 Linux CIFS 一定能复用 Windows 会话；Linux CIFS 需要自己的凭据文件。
 - 切换正式挂载前先查占用者：`sudo fuser -vm <mount-point>`。如有残留 `rm`、`cp`、`du`、`find`，先停掉再 `umount`。
+
+## WSL2 NAT 下用 hostname 挂 CIFS：解析从哪来、为什么扛不住 IP 漂移
+
+把 fstab 的 `//<ip>/<share>` 换成 `//<hostname>/<share>`（例 `//Quantum/Team`）看着能免疫服务器 IP 漂移，但在 **WSL2 默认 NAT 网络**下有个反直觉结论：**Windows 能解析这个名字 ≠ Linux 能**，而 CIFS 是 Linux 侧发起、用的是 Linux 自己的解析器。
+
+**现象**：Windows 走 mDNS（多播 DNS，RFC 6762，`.local` 域）解析主机名——这也是资源管理器里输 `\\Quantum` 能通的原因；同一台机上的 Linux 却解析不了：
+
+```powershell
+# Windows（pwsh 7，cmdlet 输出 UTF-8）
+[System.Net.Dns]::GetHostAddresses("Quantum")   # → 10.100.158.93（与 Explorer 一致）
+Resolve-DnsName -Name Quantum                    # → Name=Quantum.local Type=A（.local 即 mDNS）
+```
+```bash
+# Linux 走 glibc getaddrinfo（mount.cifs 同一条路），不用 getent/dig：
+python3 -c 'import socket; print(socket.getaddrinfo("Quantum",445))'
+# → gaierror: [Errno -3] Temporary failure in name resolution
+```
+
+直接把 fstab 改成 `//Quantum/...` 会因解析失败而挂不上——WSL 的 DNS 通道不把 Windows 的 mDNS 结果透传给 Linux。
+
+**但 WSL 的 DNS 中继（`nameserver 10.255.255.254`）会读 Windows 的 hosts 文件**（实测）：Linux 能解析出只写在 `C:\Windows\System32\drivers\etc\hosts`、而 Linux `/etc/hosts` 里并没有的名字——例如 Docker Desktop 写的 `host.docker.internal`、Sangfor aTrust 写的 `localhost.sangfor.com.cn`。所以在 **Windows hosts** 加一行，Windows 与 Linux 就都能解析这个名字——比写 Linux `/etc/hosts` 好，后者会被 WSL `generateHosts=true` 每次启动重建、抹掉手写行（除非在 `/etc/wsl.conf` 里 `[network]` 段设 `generateHosts=false` 自己接管维护）：
+
+```
+# C:\Windows\System32\drivers\etc\hosts（需管理员/UAC；从 WSL 弹 UAC 的 pwsh 手法见 windows.md）
+10.100.158.93  Quantum
+```
+```bash
+# 加完在 Linux 侧验证解析已通，再改 fstab、重挂：
+python3 -c 'import socket; print(socket.getaddrinfo("Quantum",445)[0][4][0])'  # 应打印该 IP
+```
+
+**关键代价：这并不能扛 IP 漂移，只是把硬编码 IP 从 fstab 挪到 hosts。** 服务器 IP 再变时，Windows 靠 mDNS 照样连（且 hosts 里的旧条目优先级更高、反而会挡住 mDNS 的新结果，得记得一起改），而 Linux 挂载会断到有人手改那一行为止。相比 `//ip/` 直写 fstab，唯一好处是把"要改的地方"从 fstab 两行收敛到 hosts 一行、且走 UAC 不用 sudo。
+
+想让 Linux 真正跟随漂移（不动任何配置），只有更重、且在 WSL 下多半不划算的路子：
+
+| 方案 | 漂移自愈 | 代价 / 风险 |
+|---|---|---|
+| `//ip/` 直写 fstab | 否 | 漂移要改 fstab（需 sudo） |
+| `//hostname/` + Windows hosts 一行 | 否 | 漂移改 hosts 一行（UAC，无需 sudo）；两边通用 |
+| Linux 装 avahi + `libnss-mdns` 自己做 mDNS | 理论可 | WSL2 NAT 下 mDNS 多播多半出不了虚拟交换机、到不了物理 LAN（未实测）；需 root |
+| WSL 改 `networkingMode=mirrored` | 可 | 影响**全部** WSL 网络（代理 / portproxy / Docker 都受影响），要整机重启 WSL，风险大 |
+| 定时脚本：调 Windows 解析出真 IP 回写 Linux `/etc/hosts` | 可 | 多一个常驻活件、需 `generateHosts=false` 接管 hosts；脆 |
+
+**结论**：在 WSL2 NAT 环境里，"用 hostname 挂 CIFS 来免疫 IP 漂移"基本是伪需求——mDNS 出不了 NAT、hosts 又是硬编码。要么接受"漂移时改一处"（推荐 Windows hosts 一行，两边通用），要么上 mirrored 网络这种大改动。
 
 ## 性能验证
 

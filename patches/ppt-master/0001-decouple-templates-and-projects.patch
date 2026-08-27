@@ -1,121 +1,107 @@
-本地适配（嫁接 skill 在 upstream 基础上分叉），让模板与项目数据
-不再放在嫁接 skill 仓库目录里，重新嫁接 / 升级时不会丢用户数据，多机也能
-通过云盘 / 同步盘共享模板库。
+Keep ppt-master user data outside the grafted Skill directory.
 
-- scripts/config.py: 新增 require_user_templates_dir() / require_user_projects_dir()
-  以及 _missing_env_message() 友好错误，缺 env 时给出明确指引。
-- scripts/register_template.py: KIND_CONFIG 只保留 metadata（subdir / index_name /
-  id_key / needs_svg_roster），具体路径通过 _kind_paths() 在使用时 lazy 计算，
-  --help 不依赖 env。brands/layouts/decks 三种 kind 全部走 PPT_MASTER_TEMPLATES_DIR。
-- scripts/project_manager.py: _resolve_base / _default_projects_base 走
-  PPT_MASTER_PROJECTS_DIR。
-- SKILL.md 顶部 'Workspace setup (read first)' 提示两个 env vars；
-  references/executor-base.md / strategist.md / template-designer.md、
-  workflows/create-brand.md / create-template.md、
-  templates/README.md / brands/README.md / layouts/README.md / decks/README.md
-  全部把 ${SKILL_DIR}/templates 引用改写为 PPT_MASTER_TEMPLATES_DIR 路径。
+- Resolve editable Brand/Style/Layout/Deck libraries through
+  PPT_MASTER_TEMPLATES_DIR, including registration and Confirm UI discovery.
+- Resolve default project workspaces and source-move boundaries through
+  PPT_MASTER_PROJECTS_DIR, including Native Enhance.
+- Keep bundled templates, icons, charts, schemas, and scaffolds read-only.
+- Preserve env-free --help and explicit project-directory overrides.
+- Use uv for commands in the workflows touched by this adaptation.
 
+Index: ppt-master/.env.example
+===================================================================
+--- ppt-master.orig/.env.example
++++ ppt-master/.env.example
+@@ -18,6 +18,20 @@
+ #   3. 仓库根目录下的 .env（仅在 clone 模式下）
+ #   4. ~/.ppt-master/.env（用户级配置）
+ 
++# ─────────────────────────────────────────────────────────────
++# User workspaces / 用户工作区
++# ─────────────────────────────────────────────────────────────
++
++# Editable Brand/Style/Layout/Deck library. Expected subdirectories:
++# brands/, styles/, layouts/, decks/, each with its matching *_index.json.
++# 可编辑的 Brand/Style/Layout/Deck 模板库；四个 kind 各有子目录和索引文件。
++# PPT_MASTER_TEMPLATES_DIR=~/ppt-projects/templates
++
++# Default root used by project_manager.py init and as the trusted move boundary
++# for import-sources. An explicit init --dir still takes precedence.
++# project_manager.py init 的默认项目根目录，也是 import-sources 可移动源文件的边界。
++# PPT_MASTER_PROJECTS_DIR=~/ppt-projects
++
+ # Active backend (required) / 当前启用后端（必需）
+ # Recommended core backends: openai / gemini / qwen / zhipu / volcengine
+ # 推荐核心后端：openai / gemini / qwen / zhipu / volcengine
 Index: ppt-master/SKILL.md
 ===================================================================
 --- ppt-master.orig/SKILL.md
 +++ ppt-master/SKILL.md
-@@ -64,12 +64,22 @@ For complete tool documentation, see `${
+@@ -19,6 +19,32 @@ metadata:
  
- ## Template Index
+ PPT Master is a routed presentation workflow. This entry owns global execution discipline and route selection only; each selected route owns its procedure.
  
-+> **Workspace setup (read first).** This skill no longer ships the templates library or projects workspace inside `${SKILL_DIR}`. Two env vars locate user state:
-+>
-+> - `PPT_MASTER_TEMPLATES_DIR` — user's template library (must contain `brands/`, `layouts/`, `decks/` subdirs, each with its own `*_index.json`). Read / written by `register_template.py`.
-+> - `PPT_MASTER_PROJECTS_DIR` — user's projects root. Used by `project_manager.py init` as the default `--dir`.
-+>
-+> If either is unset and the user has not named a path in the conversation, **ask the user where to put their templates / projects before running any script that needs them**. Suggest `~/ppt-projects/{templates,}` as a typical layout. Once decided, `export` the env vars for the rest of the session (or persist them in `~/.ppt-master/.env`).
-+>
-+> Scripts that need these dirs error out with a clear message when the env var is missing — they do not silently fall back to `${SKILL_DIR}`.
++## Workspace Setup (Read First)
 +
- | Index | Path | Purpose |
- |-------|------|---------|
--| Layout templates | `${SKILL_DIR}/templates/layouts/layouts_index.json` | Query available page layout templates |
--| Brand presets | `${SKILL_DIR}/templates/brands/brands_index.json` | Query available brand identity presets (color / typography / logo / voice) |
--| Visualization templates | `${SKILL_DIR}/templates/charts/charts_index.json` | Query available visualization SVG templates (charts, infographics, diagrams, frameworks) |
--| Icon library | `${SKILL_DIR}/templates/icons/` | See `${SKILL_DIR}/templates/icons/README.md`; search icons on demand with `ls templates/icons/<library>/ \| grep <keyword>` |
-+| Layout templates | `${PPT_MASTER_TEMPLATES_DIR}/layouts/layouts_index.json` | Query available page-layout templates (user library) |
-+| Brand presets | `${PPT_MASTER_TEMPLATES_DIR}/brands/brands_index.json` | Query available brand identity presets (color / typography / logo / voice) |
-+| Deck templates | `${PPT_MASTER_TEMPLATES_DIR}/decks/decks_index.json` | Query available full-deck replicas (identity + structure + middle template-overview segments) |
-+| Visualization templates | `${SKILL_DIR}/templates/charts/charts_index.json` | Query available visualization SVG templates (charts, infographics, diagrams, frameworks) — read-only assets shipped with the skill |
-+| Icon library | `${SKILL_DIR}/templates/icons/` | See `${SKILL_DIR}/templates/icons/README.md`; search icons on demand with `ls templates/icons/<library>/ \| grep <keyword>` — read-only assets shipped with the skill |
++This graft keeps user-owned, writable data outside `${SKILL_DIR}`:
++
++- `PPT_MASTER_TEMPLATES_DIR` points to the editable template library. It must
++  contain `brands/`, `styles/`, `layouts/`, and `decks/`, each with its matching
++  `*_index.json`.
++- `PPT_MASTER_PROJECTS_DIR` points to the default projects root used by
++  `project_manager.py init` and the trusted move boundary for source imports.
++
++Bundled `${SKILL_DIR}/templates/` content is upstream-shipped, read-only
++reference material: icons, charts, schemas, scaffolds, and sample
++Brand/Style/Layout/Deck workspaces. Do not write user templates or projects
++there.
++
++If a required variable is unset and the user has not already chosen a path,
++ask where their templates or projects should live before running the dependent
++script. A typical setup is:
++
++```bash
++export PPT_MASTER_TEMPLATES_DIR=~/ppt-projects/templates
++export PPT_MASTER_PROJECTS_DIR=~/ppt-projects
++```
++
++The same values may be persisted in `~/.ppt-master/.env`.
++
+ ## Mandatory Load Order
  
- ## Standalone Workflows
- 
-@@ -178,9 +188,9 @@ The architecture has three independent r
- 
- | Kind | Physical dir | Contains | Frontmatter |
- |---|---|---|---|
--| **brand** | `templates/brands/<id>/` | identity-only segment: color / typography / logo / voice / icon style | `kind: brand` |
--| **layout** | `templates/layouts/<id>/` | structure-only segment: canvas / page structure / page types / SVG roster | `kind: layout` |
--| **deck** | `templates/decks/<id>/` | full replica: identity + structure + middle (template overview) segments | `kind: deck` |
-+| **brand** | `${PPT_MASTER_TEMPLATES_DIR}/brands/<id>/` | identity-only segment: color / typography / logo / voice / icon style | `kind: brand` |
-+| **layout** | `${PPT_MASTER_TEMPLATES_DIR}/layouts/<id>/` | structure-only segment: canvas / page structure / page types / SVG roster | `kind: layout` |
-+| **deck** | `${PPT_MASTER_TEMPLATES_DIR}/decks/<id>/` | full replica: identity + structure + middle (template overview) segments | `kind: deck` |
- 
- **Segment ownership** (governs fusion override priority):
- 
-@@ -250,9 +260,9 @@ When fusion happens (any multi-path case
- 
- ```markdown
- > **Fused from:**
--> - deck: `templates/decks/招商银行/` （base）
--> - brand: `templates/brands/anthropic/` （identity override）
--> - layout: `templates/layouts/academic_defense/` （structure override）
-+> - deck: `${PPT_MASTER_TEMPLATES_DIR}/decks/招商银行/` （base）
-+> - brand: `${PPT_MASTER_TEMPLATES_DIR}/brands/anthropic/` （identity override）
-+> - layout: `${PPT_MASTER_TEMPLATES_DIR}/layouts/academic_defense/` （structure override）
- > - conflicts resolved: Color Scheme from anthropic（user picked a）
- ```
- 
-Index: ppt-master/references/executor-base.md
-===================================================================
---- ppt-master.orig/references/executor-base.md
-+++ ppt-master/references/executor-base.md
-@@ -236,11 +236,11 @@ Strategist chooses the library and inven
- 
- **Searching for icons** — use terminal, zero token cost:
- ```bash
--ls skills/ppt-master/templates/icons/chunk-filled/ | grep home
--ls skills/ppt-master/templates/icons/tabler-filled/ | grep home
--ls skills/ppt-master/templates/icons/tabler-outline/ | grep chart
--ls skills/ppt-master/templates/icons/phosphor-duotone/ | grep house
--ls skills/ppt-master/templates/icons/simple-icons/ | grep github
-+ls ${SKILL_DIR}/templates/icons/chunk-filled/ | grep home
-+ls ${SKILL_DIR}/templates/icons/tabler-filled/ | grep home
-+ls ${SKILL_DIR}/templates/icons/tabler-outline/ | grep chart
-+ls ${SKILL_DIR}/templates/icons/phosphor-duotone/ | grep house
-+ls ${SKILL_DIR}/templates/icons/simple-icons/ | grep github
- ```
- 
- **Abstract concept → icon name** (names for `chunk-filled`; tabler libraries use their own equivalents — verify with `ls | grep`):
-Index: ppt-master/references/strategist.md
-===================================================================
---- ppt-master.orig/references/strategist.md
-+++ ppt-master/references/strategist.md
-@@ -134,7 +134,7 @@ See [`../templates/icons/README.md`](../
- > **After all eight confirmations are approved — when writing `design_spec.md` §VI / `spec_lock.md`**, then materialize the icon inventory:
- >
- > 3. Enumerate the concepts the deck actually needs (home, chart, users, …) based on the confirmed outline.
--> 4. Search for each concept's filename in the chosen library: `ls skills/ppt-master/templates/icons/<chosen-library>/ | grep <keyword>`
-+> 4. Search for each concept's filename in the chosen library: `ls ${SKILL_DIR}/templates/icons/<chosen-library>/ | grep <keyword>`
- > 5. Use the verified filename (without `.svg`) as the icon name; always include the library prefix (e.g., `chunk-filled/home`).
- > 6. List the final icon inventory and chosen library in `design_spec.md` §VI; record the same in `spec_lock.md icons` (including `stroke_width` for stroke-style libraries). Executor may only use icons from this list.
- >
+ 1. Read this file.
 Index: ppt-master/references/template-designer.md
 ===================================================================
 --- ppt-master.orig/references/template-designer.md
 +++ ppt-master/references/template-designer.md
-@@ -360,10 +360,10 @@ If suitable template resources already e
+@@ -11,7 +11,9 @@ Generate reusable structured page templa
+ ## Usage
  
- This section describes downstream reuse. The `Template_Designer` role itself is responsible for creating or normalizing the reusable library asset first.
+ - **Trigger**: `/create-template` → Create Layout or Create Deck child workflow
+-- **Workspace root**: `library` (default) → `skills/ppt-master/templates/<kind_dir>/<template_name>/`; `project` → the confirmed `<target_project>/`
++- **Workspace root**: `library` (default) →
++  `${PPT_MASTER_TEMPLATES_DIR}/<kind_dir>/<template_name>/`; `project` → the
++  confirmed `<target_project>/`
+ - **Template source**: `<template_workspace>/templates/` in both scopes
+ - **Input**: finalized template brief (output scope, target project when project-scoped, template ID, display name, kind, structural use cases or Deck application context, tone, theme mode, canvas format, optional reference assets, accepted basic template norms)
  
--**Example library structure** (query the appropriate kind's index — `templates/layouts/layouts_index.json` for structure-only templates, `templates/decks/decks_index.json` for full-PPT replicas, `templates/brands/brands_index.json` for identity-only presets):
-+**Example library structure** at `$PPT_MASTER_TEMPLATES_DIR/` (query the appropriate kind's index — `$PPT_MASTER_TEMPLATES_DIR/layouts/layouts_index.json` for structure-only templates, `$PPT_MASTER_TEMPLATES_DIR/decks/decks_index.json` for full-PPT replicas, `$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json` for identity-only presets):
+@@ -506,7 +508,7 @@ Both scopes use one complete workspace s
+ 
+ | Scope | `<template_workspace>` |
+ |---|---|
+-| `library` | `skills/ppt-master/templates/<kind_dir>/<template_name>/` |
++| `library` | `${PPT_MASTER_TEMPLATES_DIR}/<kind_dir>/<template_name>/` |
+ | `project` | `<target_project>/` |
+ 
+ Standard mode (default):
+@@ -589,10 +591,12 @@ If suitable template resources already e
+ 
+ This section describes downstream reuse of an existing workspace. Library and project scopes carry the same portable template contract.
+ 
+-**Example library structure** (query the appropriate kind's index — `templates/brands/brands_index.json` for identity, `templates/styles/styles_index.json` for roster-free direction/method, `templates/layouts/layouts_index.json` for brand-neutral structure, and `templates/decks/decks_index.json` for recurring applications with integrated identity/structure):
++**Example user-library structure** at `$PPT_MASTER_TEMPLATES_DIR` (query the
++matching kind index for identity, roster-free direction/method, brand-neutral
++structure, or recurring applications with integrated identity/structure):
  
  ```
 -templates/
@@ -123,195 +109,698 @@ Index: ppt-master/references/template-designer.md
  ├── brands/
  │   ├── anthropic/         # Anthropic brand identity (logo + colors + typography)
  │   └── google/            # Google brand identity
-@@ -384,7 +384,7 @@ templates/
- 
- - [x] Read `references/template-designer.md`
- - [x] Replication mode confirmed: `standard` | `fidelity` | `mirror`
--- [x] Every page listed in `design_spec.md §V Page Roster` saved to `templates/<layouts|decks>/<template_name>/` (decks for full-PPT replicas, layouts for structure-only)
-+- [x] Every page listed in `design_spec.md §V Page Roster` saved to `$PPT_MASTER_TEMPLATES_DIR/<layouts|decks>/<template_name>/` (decks for full-PPT replicas, layouts for structure-only)
- - [x] Naming convention applied (standard / fidelity: letter-suffix variants; mirror: `<NNN>_<page_type>.svg`)
- - [x] Templates follow design spec (colors, fonts, layout)
- - [x] Placeholder markers are clear and standardized (standard / fidelity); mirror SVGs contain **no** `{{}}` markers
 Index: ppt-master/scripts/config.py
 ===================================================================
 --- ppt-master.orig/scripts/config.py
 +++ ppt-master/scripts/config.py
-@@ -43,6 +43,71 @@ CHART_TEMPLATES_DIR = TEMPLATES_DIR / 'c
+@@ -41,7 +41,6 @@ WORKFLOWS_DIR = PROJECT_ROOT / 'workflow
+ # Repository root directory
+ REPO_ROOT = PROJECT_ROOT.parent.parent
+ EXAMPLES_DIR = REPO_ROOT / 'examples'
+-PROJECTS_DIR = REPO_ROOT / 'projects'
+ 
+ # Template subdirectories
+ CHART_TEMPLATES_DIR = TEMPLATES_DIR / 'charts'
+@@ -160,6 +159,66 @@ def load_prefixed_env_file(
+     return env_path
  
  
- # ============================================================
-+# User-controlled paths (decouple-templates patch)
-+# ============================================================
-+# This skill is grafted into a shared `skills/` repo. We do not want it to
-+# write generated artifacts (user templates, user projects) into the skill
-+# directory — that would make the skill dirty and break re-graft. So the
-+# user's templates library (brands / layouts / decks) and project workspace
-+# are taken from env vars; if unset, scripts error out and ask the user to
-+# set them.
-+#
-+# Env vars:
-+#   PPT_MASTER_TEMPLATES_DIR — user's templates library root (expects
-+#                              brands/, layouts/, decks/ subdirs).
-+#                              Used by register_template.py.
-+#   PPT_MASTER_PROJECTS_DIR  — user's projects root. Used by
-+#                              project_manager.py as the default --dir.
-+
-+PPT_MASTER_TEMPLATES_ENV = "PPT_MASTER_TEMPLATES_DIR"
-+PPT_MASTER_PROJECTS_ENV = "PPT_MASTER_PROJECTS_DIR"
++PPT_MASTER_TEMPLATES_ENV = 'PPT_MASTER_TEMPLATES_DIR'
++PPT_MASTER_PROJECTS_ENV = 'PPT_MASTER_PROJECTS_DIR'
 +
 +
-+def _missing_env_message(env_name: str, kind: str, example: str) -> str:
-+    return (
++def _configured_user_path(env_name: str) -> Optional[Path]:
++    """Return a configured user-data root without requiring it."""
++    load_prefixed_env_file(('PPT_MASTER_',))
++    raw = os.environ.get(env_name)
++    return Path(raw).expanduser() if raw else None
++
++
++def get_user_templates_dir() -> Optional[Path]:
++    """Return the configured template-library root, if any."""
++    return _configured_user_path(PPT_MASTER_TEMPLATES_ENV)
++
++
++def _require_user_path(
++    env_name: str,
++    configured: Optional[Path],
++    kind: str,
++    example: str,
++    expected: str = '',
++) -> Path:
++    """Return one configured user-data root or stop with actionable guidance."""
++    if configured is not None:
++        return configured
++
++    message = (
 +        f"ERROR: {env_name} is not set.\n"
-+        f"       This skill does not bundle a {kind} location inside SKILL_DIR.\n"
-+        f"       Point {env_name} at your own directory, e.g.:\n"
++        f"       This graft keeps {kind} outside the Skill directory so updates "
++        "cannot overwrite user data.\n"
++        f"       Set it in the current shell or ~/.ppt-master/.env, for example:\n"
 +        f"         export {env_name}={example}\n"
 +    )
++    if expected:
++        message += f"       Expected layout: {expected}\n"
++    raise SystemExit(message)
 +
 +
 +def require_user_templates_dir() -> Path:
-+    """Return PPT_MASTER_TEMPLATES_DIR or sys.exit with a clear error.
-+
-+    Resolved lazily — callers must invoke this at use time, not import time,
-+    so that `--help` and other env-free entry points keep working.
-+    """
-+    raw = os.environ.get(PPT_MASTER_TEMPLATES_ENV)
-+    if not raw:
-+        import sys
-+        sys.exit(
-+            _missing_env_message(
-+                PPT_MASTER_TEMPLATES_ENV,
-+                "user templates",
-+                "~/ppt-projects/templates",
-+            )
-+            + "       Expected subdirs: brands/, layouts/, decks/."
-+        )
-+    return Path(raw).expanduser()
++    """Return the user-owned Brand/Style/Layout/Deck library root."""
++    return _require_user_path(
++        PPT_MASTER_TEMPLATES_ENV,
++        get_user_templates_dir(),
++        'the editable template library',
++        '~/ppt-projects/templates',
++        'brands/, styles/, layouts/, decks/ (each with its *_index.json)',
++    )
 +
 +
 +def require_user_projects_dir() -> Path:
-+    """Return PPT_MASTER_PROJECTS_DIR or sys.exit with a clear error."""
-+    raw = os.environ.get(PPT_MASTER_PROJECTS_ENV)
-+    if not raw:
-+        import sys
-+        sys.exit(
-+            _missing_env_message(
-+                PPT_MASTER_PROJECTS_ENV,
-+                "user projects root",
-+                "~/ppt-projects",
-+            )
-+        )
-+    return Path(raw).expanduser()
++    """Return the user-owned projects root."""
++    return _require_user_path(
++        PPT_MASTER_PROJECTS_ENV,
++        _configured_user_path(PPT_MASTER_PROJECTS_ENV),
++        'the projects workspace',
++        '~/ppt-projects',
++    )
 +
 +
-+# ============================================================
- # Environment Configuration
  # ============================================================
- 
-Index: ppt-master/scripts/project_manager.py
+ # Canvas Format Configuration
+ # ============================================================
+Index: ppt-master/scripts/confirm_ui/server.py
 ===================================================================
---- ppt-master.orig/scripts/project_manager.py
-+++ ppt-master/scripts/project_manager.py
-@@ -1,11 +1,16 @@
- #!/usr/bin/env python3
- """PPT Master project management helpers.
+--- ppt-master.orig/scripts/confirm_ui/server.py
++++ ppt-master/scripts/confirm_ui/server.py
+@@ -57,6 +57,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
+     sys.path.insert(0, str(_SCRIPTS_DIR))
  
-+Project root resolution:
-+    --dir <path>                                 → use that path
-+    else $PPT_MASTER_PROJECTS_DIR                → use that path
-+    else                                         → error (no implicit fallback)
-+
+ from console_encoding import configure_utf8_stdio  # noqa: E402
++from config import require_user_templates_dir  # noqa: E402
+ from language_tags import (  # noqa: E402
+     LanguageTagError,
+     language_base,
+@@ -109,9 +110,9 @@ _HEX_COLOR_RE = re.compile(r'#?(?:[0-9A-
+ 
+ # Static option universe served at /api/catalogs (canvas synced live from config).
+ _SKILL_DIR = Path(__file__).resolve().parents[2]
+-_TEMPLATES_DIR = _SKILL_DIR / 'templates'
++_BUNDLED_TEMPLATES_DIR = _SKILL_DIR / 'templates'
+ _CATALOGS_PATH = Path(__file__).resolve().parent / 'static' / 'catalogs.json'
+-_ICON_LIBRARY_DIR = _TEMPLATES_DIR / 'icons'
++_ICON_LIBRARY_DIR = _BUNDLED_TEMPLATES_DIR / 'icons'
+ _AI_IMAGE_COMPARISON_DIR = _SKILL_DIR / 'references' / 'ai-image-comparison'
+ _TEMPLATE_LIBRARY_CONFIG = {
+     'brand': ('brands', 'brands_index.json'),
+@@ -321,12 +322,13 @@ def _read_template_options_input(confirm
+ 
+ def _build_template_library() -> tuple[dict, dict[str, dict], dict[str, dict], dict]:
+     """Build indexed library groups without scanning template directories."""
++    templates_dir = require_user_templates_dir()
+     library = {}
+     candidates = {}
+     registered_roots = {}
+     index_contracts = {}
+     for kind, (directory_name, index_name) in _TEMPLATE_LIBRARY_CONFIG.items():
+-        kind_dir = (_TEMPLATES_DIR / directory_name).resolve()
++        kind_dir = (templates_dir / directory_name).resolve()
+         index_path = kind_dir / index_name
+         index_data = _read_json_object(index_path)
+         index_contracts[kind] = index_data
+Index: ppt-master/scripts/docs/confirm_ui.md
+===================================================================
+--- ppt-master.orig/scripts/docs/confirm_ui.md
++++ ppt-master/scripts/docs/confirm_ui.md
+@@ -102,15 +102,15 @@ the same combined Stage-1 items as open
+ The following launch and wait commands belong to the **UI branch only**:
+ 
+ ```bash
+-python3 scripts/confirm_ui/server.py <project_path> --daemon         # launch combined Stage 1
+-python3 scripts/confirm_ui/server.py <project_path> --wait-only --wait-stage stage1  # communication + template selection
+-python3 scripts/confirm_ui/server.py <project_path> --complete-template-selection # after Stage-1 free-design closure / template install
+-python3 scripts/confirm_ui/server.py <project_path> --wait-only       # current final Stage 2
+-python3 scripts/confirm_ui/server.py <project_path> --daemon --port 5051
+-python3 scripts/confirm_ui/server.py <project_path> --no-browser
+-python3 scripts/confirm_ui/server.py <project_path> --timeout 0   # disable idle auto-shutdown
+-python3 scripts/confirm_ui/server.py <project_path> --reset-template-selection # clear prior template sidecars before a fresh UI run
+-python3 scripts/confirm_ui/server.py <project_path> --shutdown    # Step 4 cleanup (idempotent)
++uv run scripts/confirm_ui/server.py <project_path> --daemon         # launch combined Stage 1
++uv run scripts/confirm_ui/server.py <project_path> --wait-only --wait-stage stage1  # communication + template selection
++uv run scripts/confirm_ui/server.py <project_path> --complete-template-selection # after Stage-1 free-design closure / template install
++uv run scripts/confirm_ui/server.py <project_path> --wait-only       # current final Stage 2
++uv run scripts/confirm_ui/server.py <project_path> --daemon --port 5051
++uv run scripts/confirm_ui/server.py <project_path> --no-browser
++uv run scripts/confirm_ui/server.py <project_path> --timeout 0   # disable idle auto-shutdown
++uv run scripts/confirm_ui/server.py <project_path> --reset-template-selection # clear prior template sidecars before a fresh UI run
++uv run scripts/confirm_ui/server.py <project_path> --shutdown    # Step 4 cleanup (idempotent)
+ ```
+ 
+ - Without `--port`, binds the first free port from `127.0.0.1:5050`; the launch log prints the actual URL. `--port N` is exact and fails when unavailable. Auto-open is suppressed by `--no-browser`.
+@@ -170,12 +170,12 @@ separate artifact from the Strategist co
+ - The array supplies candidates for the one specified-root dropdown; it does
+   not authorize selecting several explicit roots in one confirmation.
+ - Do not write library entries into this file. The server reads only
+-  `templates/brands/brands_index.json`,
+-  `templates/styles/styles_index.json`,
+-  `templates/layouts/layouts_index.json`, and
+-  `templates/decks/decks_index.json`, derives each direct-child workspace root,
+-  and validates that it exists with `templates/design_spec.md`. It never scans
+-  kind directories.
++  `$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json`,
++  `$PPT_MASTER_TEMPLATES_DIR/styles/styles_index.json`,
++  `$PPT_MASTER_TEMPLATES_DIR/layouts/layouts_index.json`, and
++  `$PPT_MASTER_TEMPLATES_DIR/decks/decks_index.json`, derives each direct-child
++  workspace root, and validates that it exists with
++  `templates/design_spec.md`. It never scans kind directories.
+ 
+ Stage-1 `GET /api/recommendations` embeds this browser catalog as top-level
+ `template_options`:
+@@ -281,7 +281,7 @@ reads the source roots.
+ After free design closes or template installation succeeds, run:
+ 
+ ```bash
+-python3 scripts/confirm_ui/server.py <project_path> --complete-template-selection
++uv run scripts/confirm_ui/server.py <project_path> --complete-template-selection
+ ```
+ 
+ The command writes, and agents must not hand-author:
+Index: ppt-master/scripts/docs/project.md
+===================================================================
+--- ppt-master.orig/scripts/docs/project.md
++++ ppt-master/scripts/docs/project.md
+@@ -1,8 +1,8 @@
+ # Project Tools
+ 
+-> **Import boundary**: move only sources already under the repository's
+-> `projects/` tree. Copy every other local path, even when `--move` is supplied.
+-> Use `--copy` to preserve a projects-local source.
++> **Import boundary**: move only sources already under
++> `$PPT_MASTER_PROJECTS_DIR`. Copy every other local path, even when `--move`
++> is supplied. Use `--copy` to preserve a projects-local source.
+ 
+ Project tools create, validate, and inspect the standard PPT Master workspace.
+ 
+@@ -11,21 +11,21 @@ Project tools create, validate, and insp
+ Main entry point for project setup and validation.
+ 
+ ```bash
+-python3 scripts/project_manager.py init <project_name> --format ppt169
+-python3 scripts/project_manager.py import-sources <project_path> <source1_or_dir> [<source2_or_dir> ...]
+-python3 scripts/project_manager.py scaffold-spec <project_path>  # optional manual helper
+-python3 scripts/project_manager.py scaffold-lock <project_path>  # optional manual helper
+-python3 scripts/project_manager.py validate <project_path>
+-python3 scripts/project_manager.py info <project_path>
+-python3 scripts/project_manager.py page-context <project_path> P07 [--pretty] [--record-usage]
+-python3 scripts/project_manager.py page-context-report <project_path>
++uv run scripts/project_manager.py init <project_name> --format ppt169
++uv run scripts/project_manager.py import-sources <project_path> <source1_or_dir> [<source2_or_dir> ...]
++uv run scripts/project_manager.py scaffold-spec <project_path>  # optional manual helper
++uv run scripts/project_manager.py scaffold-lock <project_path>  # optional manual helper
++uv run scripts/project_manager.py validate <project_path>
++uv run scripts/project_manager.py info <project_path>
++uv run scripts/project_manager.py page-context <project_path> P07 [--pretty] [--record-usage]
++uv run scripts/project_manager.py page-context-report <project_path>
+ ```
+ 
+ Notes:
+ - `init --quick-generate`: `svg_output/` plus
+   `validation/workflow.log`; no README
+-- Files outside `projects/` are always copied into `sources/`
+-- `--move` applies only to sources under the repository's `projects/` tree
++- Files outside `$PPT_MASTER_PROJECTS_DIR` are always copied into `sources/`
++- `--move` applies only to sources under `$PPT_MASTER_PROJECTS_DIR`
+ - A directly supplied supported bitmap is also copied into `images/` with a
+   collision-safe basename while its original remains archived in `sources/`
+ - Directory inputs are expanded non-recursively. After Step 1 conversion,
+@@ -33,10 +33,10 @@ Notes:
+   original source. If Step 1 used `-o` to write Markdown elsewhere, pass both
+   the original source path/directory and the Markdown output path/directory.
+ - A projects-local supplied source directory left strictly empty after import
+-  (or empty from the start) is removed; every directory outside `projects/`
+-  remains untouched. `--copy` never removes directories.
+-- Files already under `projects/` move into `sources/` by default. Pass `--copy`
+-  to preserve them in place.
++  (or empty from the start) is removed; every directory outside the configured
++  projects root remains untouched. `--copy` never removes directories.
++- Files already under `$PPT_MASTER_PROJECTS_DIR` move into `sources/` by
++  default. Pass `--copy` to preserve them in place.
+ - `--move` and `--copy` are mutually exclusive.
+ - Normal Generate authoring reads `templates/design_spec_reference.md`, writes
+   the complete `design_spec.md` from scratch, then reads
+@@ -138,13 +138,14 @@ Common formats:
+ Examples:
+ 
+ ```bash
+-python3 scripts/project_manager.py init my_presentation --format ppt169
+-python3 scripts/project_manager.py scaffold-spec projects/my_presentation_ppt169_20251116  # optional
+-python3 scripts/project_manager.py scaffold-lock projects/my_presentation_ppt169_20251116  # optional
+-python3 scripts/project_manager.py validate projects/my_presentation_ppt169_20251116
+-python3 scripts/project_manager.py info projects/my_presentation_ppt169_20251116
+-python3 scripts/project_manager.py page-context projects/my_presentation_ppt169_20251116 P07 --record-usage
+-python3 scripts/project_manager.py page-context-report projects/my_presentation_ppt169_20251116
++uv run scripts/project_manager.py init my_presentation --format ppt169
++project_path="$PPT_MASTER_PROJECTS_DIR/my_presentation_ppt169_20251116"
++uv run scripts/project_manager.py scaffold-spec "$project_path"  # optional
++uv run scripts/project_manager.py scaffold-lock "$project_path"  # optional
++uv run scripts/project_manager.py validate "$project_path"
++uv run scripts/project_manager.py info "$project_path"
++uv run scripts/project_manager.py page-context "$project_path" P07 --record-usage
++uv run scripts/project_manager.py page-context-report "$project_path"
+ ```
+ 
+ ## `workflow_transcript.py` and `workflow_log.py`
+@@ -153,7 +154,7 @@ Project initialization creates `validati
+ milestone. Run later project-scoped Python tools normally:
+ 
+ ```bash
+-python3 scripts/<tool>.py <project_path> <args...>
++uv run scripts/<tool>.py <project_path> <args...>
+ ```
+ 
+ Their shared CLI bootstrap discovers the existing project log from the working
+@@ -172,7 +173,7 @@ For a Python helper whose arguments and
+ active project, set the routing signal on the same command:
+ 
+ ```bash
+-PPT_MASTER_PROJECT_PATH="<project_path>" python3 scripts/<helper>.py <args...>
++PPT_MASTER_PROJECT_PATH="<project_path>" uv run scripts/<helper>.py <args...>
+ ```
+ 
+ This variable selects only the destination transcript; it does not authorize
+@@ -182,7 +183,7 @@ Append a manual note only when an import
+ output:
+ 
+ ```bash
+-python3 scripts/workflow_log.py <project_path> "<material audit detail>"
++uv run scripts/workflow_log.py <project_path> "<material audit detail>"
+ ```
+ 
+ Suitable notes include a material stage handoff or rework reason, a
+@@ -208,7 +209,7 @@ from project_utils import get_project_in
+ You can also run it directly for quick checks:
+ 
+ ```bash
+-python3 scripts/project_utils.py <project_path>
++uv run scripts/project_utils.py <project_path>
+ ```
+ 
+ ## `batch_validate.py`
+@@ -216,10 +217,10 @@ python3 scripts/project_utils.py <projec
+ Batch-check project structure and compliance.
+ 
+ ```bash
+-python3 scripts/batch_validate.py examples
+-python3 scripts/batch_validate.py examples projects
+-python3 scripts/batch_validate.py --all
+-python3 scripts/batch_validate.py examples --export
++uv run scripts/batch_validate.py examples
++uv run scripts/batch_validate.py examples "$PPT_MASTER_PROJECTS_DIR"
++uv run scripts/batch_validate.py --all
++uv run scripts/batch_validate.py examples --export
+ ```
+ 
+ Use this for repository-wide health checks before release or cleanup.
+@@ -229,8 +230,8 @@ Use this for repository-wide health chec
+ Rebuild `examples/README.md` automatically.
+ 
+ ```bash
+-python3 scripts/generate_examples_index.py
+-python3 scripts/generate_examples_index.py examples
++uv run scripts/generate_examples_index.py
++uv run scripts/generate_examples_index.py examples
+ ```
+ 
+ ## `pptx_template_import.py`
+@@ -238,14 +239,14 @@ python3 scripts/generate_examples_index.
+ Unified PPTX preparation entry point for `/create-template`.
+ 
+ ```bash
+-python3 scripts/pptx_template_import.py <template.pptx>
+-python3 scripts/pptx_template_import.py <template.pptx> -o <output_dir>
+-python3 scripts/pptx_template_import.py <template.pptx> --manifest-only
+-python3 scripts/pptx_template_import.py <template.pptx> --skip-manifest
+-python3 scripts/pptx_template_import.py <template.pptx> --embed-images
+-python3 scripts/pptx_template_import.py <template.pptx> --inheritance-mode both
+-python3 scripts/pptx_template_import.py <template.pptx> --inheritance-mode flat
+-python3 scripts/pptx_template_import.py <template.pptx> --inheritance-mode layered
++uv run scripts/pptx_template_import.py <template.pptx>
++uv run scripts/pptx_template_import.py <template.pptx> -o <output_dir>
++uv run scripts/pptx_template_import.py <template.pptx> --manifest-only
++uv run scripts/pptx_template_import.py <template.pptx> --skip-manifest
++uv run scripts/pptx_template_import.py <template.pptx> --embed-images
++uv run scripts/pptx_template_import.py <template.pptx> --inheritance-mode both
++uv run scripts/pptx_template_import.py <template.pptx> --inheritance-mode flat
++uv run scripts/pptx_template_import.py <template.pptx> --inheritance-mode layered
+ ```
+ 
+ Notes:
+@@ -278,7 +279,7 @@ Implementation note:
+ Show standardized fixes for common project errors.
+ 
+ ```bash
+-python3 scripts/error_helper.py
+-python3 scripts/error_helper.py missing_readme
+-python3 scripts/error_helper.py missing_readme project_path=my_project
++uv run scripts/error_helper.py
++uv run scripts/error_helper.py missing_readme
++uv run scripts/error_helper.py missing_readme project_path=my_project
+ ```
+Index: ppt-master/scripts/native_enhance_pptx.py
+===================================================================
+--- ppt-master.orig/scripts/native_enhance_pptx.py
++++ ppt-master/scripts/native_enhance_pptx.py
+@@ -13,9 +13,9 @@ Usage:
+     python3 scripts/native_enhance_pptx.py apply <project_path>
+ 
+ Examples:
+-    python3 scripts/native_enhance_pptx.py init projects/source.pptx --name fire_station
+-    python3 scripts/native_enhance_pptx.py plan projects/fire_station_native_enhance_20260626
+-    python3 scripts/native_enhance_pptx.py apply projects/fire_station_native_enhance_20260626
++    uv run scripts/native_enhance_pptx.py init <source.pptx> --name fire_station
++    uv run scripts/native_enhance_pptx.py plan <project_path>
++    uv run scripts/native_enhance_pptx.py apply <project_path>
+ 
+ Dependencies:
+     Same as native_enhance_pptx_core.py.
+Index: ppt-master/scripts/native_enhance_pptx_core.py
+===================================================================
+--- ppt-master.orig/scripts/native_enhance_pptx_core.py
++++ ppt-master/scripts/native_enhance_pptx_core.py
+@@ -10,14 +10,14 @@ Enhancement modules: read-only delivery
+ slide auto-advance timings, and optional global or per-slide page transitions.
+ 
  Usage:
--    python3 scripts/project_manager.py init <project_name> [--format ppt169] [--dir projects]
--    python3 scripts/project_manager.py import-sources <project_path> <source1> [<source2> ...] [--move | --copy]
--    python3 scripts/project_manager.py validate <project_path>
--    python3 scripts/project_manager.py info <project_path>
-+    uv run scripts/project_manager.py init <project_name> [--format ppt169] [--dir <projects_root>]
-+    uv run scripts/project_manager.py import-sources <project_path> <source1> [<source2> ...] [--move | --copy]
-+    uv run scripts/project_manager.py validate <project_path>
-+    uv run scripts/project_manager.py info <project_path>
- """
+-    python3 scripts/native_enhance_pptx.py init <source.pptx> [--name project_name]
+-    python3 scripts/native_enhance_pptx.py apply <project_path> [--output output.pptx]
+-    python3 scripts/native_enhance_pptx.py validate <project_path> [--materials {all,notes}]
++    uv run scripts/native_enhance_pptx.py init <source.pptx> [--name project_name]
++    uv run scripts/native_enhance_pptx.py apply <project_path> [--output output.pptx]
++    uv run scripts/native_enhance_pptx.py validate <project_path> [--materials {all,notes}]
  
- from __future__ import annotations
-@@ -42,6 +47,27 @@ except ImportError:
- TOOLS_DIR = Path(__file__).resolve().parent
- SKILL_DIR = TOOLS_DIR.parent
- REPO_ROOT = SKILL_DIR.parent.parent
-+
-+# decouple-templates patch: projects no longer default to REPO_ROOT/projects.
-+# Path resolution is lazy via the config helper so --help still works without env.
-+if str(TOOLS_DIR) not in sys.path:
-+    sys.path.insert(0, str(TOOLS_DIR))
-+try:
-+    from config import require_user_projects_dir  # noqa: E402
-+except ImportError:  # pragma: no cover — config.py is shipped alongside this script
-+    require_user_projects_dir = None  # type: ignore[assignment]
-+
-+
-+def _default_projects_base() -> Path:
-+    """Return PPT_MASTER_PROJECTS_DIR or sys.exit with a clear error."""
-+    if require_user_projects_dir is None:  # pragma: no cover — defensive
-+        sys.exit(
-+            "ERROR: scripts/config.py is missing — cannot resolve "
-+            "PPT_MASTER_PROJECTS_DIR."
-+        )
-+    return require_user_projects_dir()
-+
-+
- SOURCE_DIRNAME = "sources"
- TEXT_SOURCE_SUFFIXES = {".md", ".markdown", ".txt"}
- TABLE_TEXT_SUFFIXES = {".csv", ".tsv"}
-@@ -112,8 +138,15 @@ class ProjectManager:
+ Examples:
+-    python3 scripts/native_enhance_pptx.py init projects/source.pptx --name fire_station
+-    python3 scripts/native_enhance_pptx.py apply projects/fire_station_native_enhance_20260626
+-    python3 scripts/native_enhance_pptx.py validate projects/fire_station_native_enhance_20260626
++    uv run scripts/native_enhance_pptx.py init <source.pptx> --name fire_station
++    uv run scripts/native_enhance_pptx.py apply <project_path>
++    uv run scripts/native_enhance_pptx.py validate <project_path>
  
+ Dependencies:
+     ffprobe for narration decodability and audio-duration validation.
+@@ -46,6 +46,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
+     sys.path.insert(0, str(_SCRIPTS_DIR))
+ 
+ from attribution_guard import require_skill_integrity  # noqa: E402
++from config import require_user_projects_dir  # noqa: E402
+ from console_encoding import configure_utf8_stdio  # noqa: E402
+ from pptx_delivery_check import audit_pptx_delivery  # noqa: E402
+ from pptx_animations import (  # noqa: E402
+@@ -1637,10 +1638,15 @@ def init_project(args: argparse.Namespac
+ 
+     stem = _sanitize_slug(args.name or source_pptx.stem)
+     date = datetime.now().strftime("%Y%m%d")
++    projects_root = (
++        Path(args.projects_root).expanduser().resolve()
++        if args.projects_root
++        else require_user_projects_dir().resolve()
++    )
+     project_path = (
+         Path(args.project_dir).expanduser().resolve()
+         if args.project_dir
+-        else Path(args.projects_root).expanduser().resolve() / f"{stem}_native_enhance_{date}"
++        else projects_root / f"{stem}_native_enhance_{date}"
+     )
+     if project_path.exists() and any(project_path.iterdir()):
+         print(f"error: project directory already exists and is not empty: {project_path}", file=sys.stderr)
+@@ -1650,7 +1656,6 @@ def init_project(args: argparse.Namespac
+         (project_path / dirname).mkdir(parents=True, exist_ok=True)
+ 
+     archived_pptx = project_path / "sources" / source_pptx.name
+-    projects_root = Path(args.projects_root).expanduser().resolve()
+     source_import_mode = _archive_source_pptx(source_pptx, archived_pptx, projects_root)
+ 
+     source_md = project_path / "sources" / f"{source_pptx.stem}.md"
+@@ -2321,7 +2326,14 @@ def build_parser() -> argparse.ArgumentP
+     init.add_argument("source_pptx", help="source .pptx file")
+     init.add_argument("--name", default=None, help="ASCII project name slug")
+     init.add_argument("--project-dir", default=None, help="explicit project directory")
+-    init.add_argument("--projects-root", default="projects", help="projects root (default: projects)")
++    init.add_argument(
++        "--projects-root",
++        default=None,
++        help=(
++            "projects root (default: $PPT_MASTER_PROJECTS_DIR; "
++            "explicit value overrides it)"
++        ),
++    )
+     init.add_argument(
+         "--transition",
+         default="fade",
+Index: ppt-master/scripts/project_management/cli.py
+===================================================================
+--- ppt-master.orig/scripts/project_management/cli.py
++++ ppt-master/scripts/project_management/cli.py
+@@ -41,10 +41,10 @@ from .page_context import (
+     render_page_context,
+ )
+ from .paths import (
+-    PROJECTS_ROOT,
+     REPO_ROOT,
+     SCRIPTS_DIR,
+     SOURCE_TO_MD_DIR,
++    get_projects_root,
+ )
+ from .project_specs import scaffold_project_artifact, validate_project_artifacts
+ 
+@@ -224,7 +224,14 @@ class ProjectManager:
      CANVAS_FORMATS = CANVAS_FORMATS
  
--    def __init__(self, base_dir: str = "projects") -> None:
--        self.base_dir = Path(base_dir)
-+    def __init__(self, base_dir: str | None = None) -> None:
-+        self.base_dir: Path | None = Path(base_dir) if base_dir else None
+     def __init__(self, base_dir: str | Path | None = None) -> None:
+-        self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd() / "projects"
++        self.base_dir = Path(base_dir) if base_dir is not None else None
 +
 +    def _resolve_base(self, override: str | None = None) -> Path:
 +        if override:
 +            return Path(override)
 +        if self.base_dir is not None:
 +            return self.base_dir
-+        return _default_projects_base()
++        return get_projects_root()
  
-     def init_project(
-         self,
-@@ -121,7 +154,7 @@ class ProjectManager:
-         canvas_format: str = "ppt169",
-         base_dir: str | None = None,
+     def scaffold_artifact(self, project_path: str, artifact: str) -> str:
+         """Delegate deterministic Markdown scaffold rendering."""
+@@ -238,7 +245,7 @@ class ProjectManager:
+         *,
+         quick_generate: bool = False,
      ) -> str:
 -        base_path = Path(base_dir) if base_dir else self.base_dir
 +        base_path = self._resolve_base(base_dir)
  
-         normalized_format = normalize_canvas_format(canvas_format)
-         if normalized_format not in self.CANVAS_FORMATS:
-@@ -757,7 +790,7 @@ def parse_init_args(argv: list[str]) ->
+         if (
+             not project_name
+@@ -766,6 +773,7 @@ class ProjectManager:
  
-     project_name = argv[2]
-     canvas_format = "ppt169"
--    base_dir = "projects"
-+    base_dir: str | None = None
+         expanded_items: list[str] = []
+         supplied_dirs: list[Path] = []
++        projects_root: Path | None = None
+         for item in source_items:
+             if is_url(item):
+                 expanded_items.append(item)
+@@ -827,23 +835,25 @@ class ProjectManager:
+                 summary["skipped"].append(f"{item}: directories are not supported")
+                 continue
  
-     i = 3
-     while i < len(argv):
+-            inside_projects = is_within_path(source_path, PROJECTS_ROOT)
+             if copy:
++                inside_projects = False
+                 effective_move = False
+-            elif inside_projects:
+-                effective_move = True
+             else:
+-                effective_move = False
++                if projects_root is None:
++                    projects_root = get_projects_root()
++                inside_projects = is_within_path(source_path, projects_root)
++                effective_move = inside_projects
+             if move and not inside_projects:
+                 print(
+-                    f"note: {source_path} is outside {PROJECTS_ROOT}; copied "
+-                    f"(not moved). Only sources under projects/ may be moved.",
++                    f"note: {source_path} is outside {projects_root}; copied "
++                    "(not moved). Only sources under the configured projects "
++                    "root may be moved.",
+                     file=sys.stderr,
+                 )
+             elif inside_projects and not move and not copy:
+                 print(
+-                    f"note: {source_path} is under projects/; moved into the target "
+-                    f"project. Pass --copy to preserve it.",
++                    f"note: {source_path} is under {projects_root}; moved into "
++                    "the target project. Pass --copy to preserve it.",
+                     file=sys.stderr,
+                 )
+             suffix = source_path.suffix.lower()
+@@ -1000,7 +1010,11 @@ class ProjectManager:
+         # its files move into the target project. Every other location is copied
+         # and remains untouched, even when the caller passes --move.
+         for directory in supplied_dirs:
+-            if copy or not is_within_path(directory, PROJECTS_ROOT):
++            if copy:
++                continue
++            if projects_root is None:
++                projects_root = get_projects_root()
++            if not is_within_path(directory, projects_root):
+                 continue
+             if directory.is_dir() and not any(directory.iterdir()):
+                 try:
+@@ -1096,7 +1110,10 @@ def build_parser() -> argparse.ArgumentP
+     mode.add_argument(
+         "--move",
+         action="store_true",
+-        help="Move local sources under projects/; sources elsewhere are copied",
++        help=(
++            "Move local sources under $PPT_MASTER_PROJECTS_DIR; "
++            "sources elsewhere are copied"
++        ),
+     )
+     mode.add_argument("--copy", action="store_true", help="Copy local source files")
+ 
+Index: ppt-master/scripts/project_management/paths.py
+===================================================================
+--- ppt-master.orig/scripts/project_management/paths.py
++++ ppt-master/scripts/project_management/paths.py
+@@ -2,16 +2,17 @@
+ """
+ PPT Master - Project Management Paths
+ 
+-Own the repository and Skill resource roots used by project-management modules.
++Own the Skill resource roots used by project-management modules.
+ 
+ Usage:
+-    Import the required path constants from project_management.paths.
++    Import the required path constants or lazy user-path helpers from
++    project_management.paths.
+ 
+ Examples:
+-    from project_management.paths import PROJECTS_ROOT, SCHEMA_DIR
++    from project_management.paths import get_projects_root, SCHEMA_DIR
+ 
+ Dependencies:
+-    None (only uses the standard library)
++    Standard library plus scripts/config.py for the user projects root
+ """
+ 
+ from pathlib import Path
+@@ -20,8 +21,14 @@ PACKAGE_DIR = Path(__file__).resolve().p
+ SCRIPTS_DIR = PACKAGE_DIR.parent
+ SKILL_DIR = SCRIPTS_DIR.parent
+ REPO_ROOT = SKILL_DIR.parent.parent
+-PROJECTS_ROOT = REPO_ROOT / "projects"
+ SOURCE_TO_MD_DIR = SCRIPTS_DIR / "source_to_md"
+ CHARTS_DIR = SKILL_DIR / "templates" / "charts"
+ SCHEMA_DIR = SKILL_DIR / "templates" / "schemas"
+ SCAFFOLD_DIR = SKILL_DIR / "templates" / "scaffolds"
++
++
++def get_projects_root() -> Path:
++    """Resolve the user-owned projects root lazily."""
++    from config import require_user_projects_dir
++
++    return require_user_projects_dir()
+Index: ppt-master/scripts/project_manager.py
+===================================================================
+--- ppt-master.orig/scripts/project_manager.py
++++ ppt-master/scripts/project_manager.py
+@@ -5,14 +5,19 @@ PPT Master - Project Management Tool
+ Stable CLI entry point for project creation, source import, validation, and
+ page-context diagnostics. Implementation lives in ``project_management/``.
+ 
++Default project root resolution:
++    --dir <path>                  -> use that path
++    else $PPT_MASTER_PROJECTS_DIR -> use that path
++    else                          -> stop with configuration guidance
++
+ Usage:
+-    python3 scripts/project_manager.py init <project_name> [--format ppt169]
+-    python3 scripts/project_manager.py import-sources <project_path> <sources...>
+-    python3 scripts/project_manager.py validate <project_path>
++    uv run scripts/project_manager.py init <project_name> [--format ppt169]
++    uv run scripts/project_manager.py import-sources <project_path> <sources...>
++    uv run scripts/project_manager.py validate <project_path>
+ 
+ Examples:
+-    python3 scripts/project_manager.py init demo --format ppt169
+-    python3 scripts/project_manager.py validate projects/demo
++    uv run scripts/project_manager.py init demo --format ppt169
++    uv run scripts/project_manager.py validate <project_path>
+ 
+ Dependencies:
+     Same as project_management.cli.
+@@ -49,15 +54,14 @@ from project_management.cli import (  #
+     sanitize_name,
+ )
+ from project_management.paths import (  # noqa: E402
+-    PROJECTS_ROOT,
+     REPO_ROOT,
+     SKILL_DIR,
++    get_projects_root,
+ )
+ 
+ __all__ = [
+     "BITMAP_IMAGE_SUFFIXES",
+     "IMAGE_ASSET_SUFFIXES",
+-    "PROJECTS_ROOT",
+     "REPO_ROOT",
+     "SKILL_DIR",
+     "SOURCE_DIRNAME",
+@@ -68,6 +72,7 @@ __all__ = [
+     "ProjectManager",
+     "build_parser",
+     "derive_url_basename",
++    "get_projects_root",
+     "is_url",
+     "is_within_path",
+     "main",
 Index: ppt-master/scripts/register_template.py
 ===================================================================
 --- ppt-master.orig/scripts/register_template.py
 +++ ppt-master/scripts/register_template.py
-@@ -47,30 +47,45 @@ except ImportError:
+@@ -4,12 +4,12 @@
+ Four kinds, four workspace roots, four index files. The shared model lives
+ in ``templates/README.md``; each kind's schema lives in its directory README:
+ 
+-| --kind  | Workspace roots         | Index file                    |
+-|---------|-------------------------|-------------------------------|
+-| brand   | ``templates/brands/``   | ``brands_index.json``         |
+-| style   | ``templates/styles/``   | ``styles_index.json``         |
+-| layout  | ``templates/layouts/``  | ``layouts_index.json``        |
+-| deck    | ``templates/decks/``    | ``decks_index.json``          |
++| --kind  | Workspace roots                            | Index file                    |
++|---------|--------------------------------------------|-------------------------------|
++| brand   | ``$PPT_MASTER_TEMPLATES_DIR/brands/``      | ``brands_index.json``         |
++| style   | ``$PPT_MASTER_TEMPLATES_DIR/styles/``      | ``styles_index.json``         |
++| layout  | ``$PPT_MASTER_TEMPLATES_DIR/layouts/``     | ``layouts_index.json``        |
++| deck    | ``$PPT_MASTER_TEMPLATES_DIR/decks/``       | ``decks_index.json``          |
+ 
+ Current workspaces keep ``design_spec.md`` and any SVG roster under
+ ``<workspace>/templates/``. Assets live in optional ``images/`` / ``icons/``
+@@ -56,7 +56,11 @@ from xml.etree import ElementTree as ET
+ 
+ from attribution_guard import require_skill_integrity
+ from console_encoding import configure_utf8_stdio
+-from config import CANVAS_FORMATS
++from config import (
++    CANVAS_FORMATS,
++    get_user_templates_dir,
++    require_user_templates_dir,
++)
+ 
+ try:
+     import yaml  # type: ignore
+@@ -69,35 +73,41 @@ configure_utf8_stdio()
  
  SCRIPT_DIR = Path(__file__).resolve().parent
  SKILL_DIR = SCRIPT_DIR.parent
 -TEMPLATES_DIR = SKILL_DIR / "templates"
-+
-+# decouple-templates patch: templates library is user-controlled (env var),
-+# not bundled inside SKILL_DIR. KIND_CONFIG keeps kind metadata (id_key,
-+# needs_svg_roster) at import time so --help still works; concrete paths are
-+# resolved lazily via _kind_paths() at use time.
-+from config import require_user_templates_dir  # noqa: E402
  
  KIND_CONFIG = {
      "brand": {
@@ -320,6 +809,14 @@ Index: ppt-master/scripts/register_template.py
 +        "subdir": "brands",
 +        "index_name": "brands_index.json",
          "id_key": "brand_id",
+         "needs_svg_roster": False,
+     },
+     "style": {
+-        "dir": TEMPLATES_DIR / "styles",
+-        "index": TEMPLATES_DIR / "styles" / "styles_index.json",
++        "subdir": "styles",
++        "index_name": "styles_index.json",
+         "id_key": "style_id",
          "needs_svg_roster": False,
      },
      "layout": {
@@ -340,37 +837,69 @@ Index: ppt-master/scripts/register_template.py
      },
  }
  
- 
-+def _kind_paths(kind: str) -> dict:
-+    """Resolve {dir, index} for a kind, anchored at PPT_MASTER_TEMPLATES_DIR.
 +
-+    Lazy: errors out only when actually called, not at import time.
-+    """
++def _kind_paths(kind: str) -> tuple[Path, Path]:
++    """Resolve a kind's workspace directory and index in the user library."""
 +    cfg = KIND_CONFIG[kind]
-+    base = require_user_templates_dir() / cfg["subdir"]
-+    return {"dir": base, "index": base / cfg["index_name"]}
++    kind_dir = require_user_templates_dir() / cfg["subdir"]
++    return kind_dir, kind_dir / cfg["index_name"]
 +
-+
- # ---------------------------------------------------------------------------
- # design_spec.md parsing
- # ---------------------------------------------------------------------------
-@@ -265,7 +280,7 @@ def _write_index(path: Path, data: "Orde
+ _BRAND_REQUIRED_SECTIONS = (
+     ("I", "Brand Overview"),
+     ("II", "Color Scheme"),
+@@ -1155,9 +1165,11 @@ def validate_style_workspace(template_ro
+     scaffolding out of the Style contract.
+     """
+     root = Path(template_root)
++    templates_dir = get_user_templates_dir()
++    style_dir = templates_dir / "styles" if templates_dir is not None else None
+     expected_id = (
+         root.name
+-        if root.resolve().parent == KIND_CONFIG["style"]["dir"].resolve()
++        if style_dir is not None and root.resolve().parent == style_dir.resolve()
+         else None
+     )
+     return _extract_entry("style", expected_id, root)
+@@ -1186,7 +1198,7 @@ def _write_index(path: Path, data: "Orde
  
  
  def _enumerate_ids(kind: str) -> list[str]:
 -    base = KIND_CONFIG[kind]["dir"]
-+    base = _kind_paths(kind)["dir"]
++    base, _ = _kind_paths(kind)
      if not base.exists():
          return []
      return sorted(
-@@ -331,13 +346,15 @@ def main() -> int:
+@@ -1216,7 +1228,10 @@ def _print_completion_card(kind: str, te
+     print(f"## {pretty_kind} Registration Complete")
+     print()
+     print(f"**{pretty_kind} ID**: {template_id}")
+-    print(f"**Path**: `templates/{dir_name}/{template_id}/`")
++    print(
++        f"**Path**: "
++        f"`{require_user_templates_dir() / dir_name / template_id}/`"
++    )
+     if kind in ("brand", "deck"):
+         primary = entry.get("primary_color") or "—"
+         print(f"**Primary Color**: {primary}")
+@@ -1261,7 +1276,10 @@ def main() -> int:
+     )
+     parser.add_argument(
+         "template_id", nargs="?",
+-        help="Template directory id (under templates/<kind_dir>/). Omit with --rebuild-all.",
++        help=(
++            "Template directory id (under "
++            "$PPT_MASTER_TEMPLATES_DIR/<kind_dir>/). Omit with --rebuild-all."
++        ),
+     )
+     parser.add_argument(
+         "--kind", choices=list(KIND_CONFIG.keys()), default="deck",
+@@ -1276,14 +1294,13 @@ def main() -> int:
+     if not args.template_id and not args.rebuild_all:
          parser.error("provide a template_id or use --rebuild-all")
  
-     cfg = KIND_CONFIG[args.kind]
+-    cfg = KIND_CONFIG[args.kind]
 -    base = cfg["dir"]
-+    paths = _kind_paths(args.kind)
-+    base = paths["dir"]
-+    index_path = paths["index"]
++    base, index_path = _kind_paths(args.kind)
  
      if args.rebuild_all:
          ids = _enumerate_ids(args.kind)
@@ -381,7 +910,7 @@ Index: ppt-master/scripts/register_template.py
              return 0
      else:
          ids = [args.template_id]
-@@ -357,12 +374,12 @@ def main() -> int:
+@@ -1303,12 +1320,12 @@ def main() -> int:
      if args.rebuild_all:
          index = OrderedDict((tid, extracted[tid]["entry"]) for tid in sorted(extracted))
      else:
@@ -400,349 +929,452 @@ Index: ppt-master/templates/README.md
 ===================================================================
 --- ppt-master.orig/templates/README.md
 +++ ppt-master/templates/README.md
-@@ -1,4 +1,9 @@
+@@ -1,16 +1,24 @@
 -# Template Resources
-+# Template Resources (upstream-shipped, read-only)
++# Template Resources (Bundled, Read-Only)
 +
-+> **Read first.** Everything under `${SKILL_DIR}/templates/` is the **upstream-shipped sample / read-only asset library** that ships with the skill:
-+>
-+> - `brands/`, `layouts/`, `decks/` — **sample libraries**. Your editable template library lives at `$PPT_MASTER_TEMPLATES_DIR/{brands,layouts,decks}/` (typically `~/ppt-projects/templates/{brands,layouts,decks}/`); `register_template.py` writes there. The samples in this directory are reference material — copy one into your library as a starting point, or pass any one of these sample directories directly to SKILL.md Step 3 as a brand / layout / deck path.
-+> - `charts/`, `icons/`, `design_spec_reference.md`, `spec_lock_reference.md` — **shipped assets and references** that all projects consume directly from `${SKILL_DIR}/templates/`. No env-var indirection.
++> `${SKILL_DIR}/templates/` contains upstream-shipped references, assets, and
++> sample workspaces. User-created Brand/Style/Layout/Deck workspaces and their
++> active discovery indexes live under
++> `$PPT_MASTER_TEMPLATES_DIR/{brands,styles,layouts,decks}/`. The template
++> registrar and confirmation UI read and write that user library; they do not
++> mutate this bundled directory. Bundled samples remain usable through an
++> explicit workspace path.
  
- ## Design Specification & Outline Reference
+ ## Reusable template kinds
  
-@@ -64,4 +69,4 @@ The `icons/` directory contains 11,600+
+ Brand, Style, Layout, and Deck are independent template kinds, not stages of one
+ inheritance hierarchy.
+ 
+-| Kind | Owns | Does not own | Discovery index |
++| Kind | Owns | Does not own | Active discovery index |
+ |---|---|---|---|
+-| [`brands/`](./brands/) | Identity: color, typography, logo, voice, icon style | Page structure or SVG roster | [`brands_index.json`](./brands/brands_index.json) |
+-| [`styles/`](./styles/) | Direction/method: reusable communication method, visual language, composition rhythm, and information-expression defaults | Official brand identity, current-project application, page structure, or SVG roster | [`styles_index.json`](./styles/styles_index.json) |
+-| [`layouts/`](./layouts/) | Brand-neutral structure: canvas, Master/Layout graph, page types, slots, SVG roster | Brand identity or a recurring communication application | [`layouts_index.json`](./layouts/layouts_index.json) |
+-| [`decks/`](./decks/) | A recurring presentation family: application contract + integrated identity + structure | — | [`decks_index.json`](./decks/decks_index.json) |
++| [`brands/`](./brands/) | Identity: color, typography, logo, voice, icon style | Page structure or SVG roster | `$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json` |
++| [`styles/`](./styles/) | Direction/method: reusable communication method, visual language, composition rhythm, and information-expression defaults | Official brand identity, current-project application, page structure, or SVG roster | `$PPT_MASTER_TEMPLATES_DIR/styles/styles_index.json` |
++| [`layouts/`](./layouts/) | Brand-neutral structure: canvas, Master/Layout graph, page types, slots, SVG roster | Brand identity or a recurring communication application | `$PPT_MASTER_TEMPLATES_DIR/layouts/layouts_index.json` |
++| [`decks/`](./decks/) | A recurring presentation family: application contract + integrated identity + structure | — | `$PPT_MASTER_TEMPLATES_DIR/decks/decks_index.json` |
+ 
+ A brand is not “a layout minus its pages”, and a Style is not a roster-free
+ Deck: each owns a different segment. Use a brand for identity with free page
+@@ -39,7 +47,7 @@ which keeps the fixed route name and dis
+ [`Create Layout`](../workflows/create-template/create-layout.md), or
+ [`Create Deck`](../workflows/create-template/create-deck.md).
+ 
+-The four indexes are the complete library-discovery source for Default
++The four user-library indexes are the complete library-discovery source for Default
+ [`generate-pptx`](../workflows/generate-pptx.md) Stage-1 template selection.
+ Step 3 prepares candidate input without interaction or reading template
+ content. The Stage-1 page confirms the communication contract together with an
+@@ -74,7 +82,7 @@ count or order.
+ 
+ ## Workspace contract
+ 
+-Every package uses the same portable root under either this library or an
++Every package uses the same portable root under either the user library or an
+ initialized project:
+ 
+ ```text
+@@ -147,4 +155,4 @@ The `icons/` directory contains 11,600+
  | `simple-icons` | brand logos (company / product marks) | 3400+ |
  
  - **Usage & style rules**: [icons/README.md](./icons/README.md)
--- **Search icons**: `ls skills/ppt-master/templates/icons/<library>/ | grep <keyword>`
-+- **Search icons**: `ls ${SKILL_DIR}/templates/icons/<library>/ | grep <keyword>`
+-- **Search icons**: `rg --files skills/ppt-master/templates/icons/<library>/ | rg <keyword>`
++- **Search icons**: `rg --files ${SKILL_DIR}/templates/icons/<library>/ | rg <keyword>`
 Index: ppt-master/templates/brands/README.md
 ===================================================================
 --- ppt-master.orig/templates/brands/README.md
 +++ ppt-master/templates/brands/README.md
-@@ -1,4 +1,6 @@
+@@ -1,4 +1,8 @@
 -# Brand Identity Presets
-+# Brand Identity Presets (upstream-shipped samples)
++# Brand Identity Presets (Bundled Samples)
 +
-+> **About this directory.** This is the **upstream-shipped sample brand library** that ships read-only with the skill. Your own brand library lives at `$PPT_MASTER_TEMPLATES_DIR/brands/` (typically `~/ppt-projects/templates/brands/`); that's where `register_template.py --kind brand` writes and `brands_index.json` is rebuilt. The samples below are reference material — copy one into your library as a starting point if useful.
++> This directory is upstream-shipped, read-only sample material. The editable
++> Brand library and active index live at
++> `$PPT_MASTER_TEMPLATES_DIR/brands/`.
  
  This directory holds **brand-only templates**: identity bundles (color / typography / logo / voice / icon style) without an SVG page roster. Strategist locks the brand's identity segment as truth; Executor designs pages freely under those constraints.
  
-@@ -10,7 +12,7 @@ Brand application follows the **same exp
- 
- | User input at SKILL.md Step 3 | Behavior |
- |---|---|
--| An explicit brand directory path (e.g. `templates/brands/anthropic/`) | Copy `design_spec.md` + logo files + asset subdirectories into `<project_path>/templates/`; Strategist locks identity segment |
-+| An explicit brand directory path (e.g. `$PPT_MASTER_TEMPLATES_DIR/brands/anthropic/`, or any other resolvable path) | Copy `design_spec.md` + logo files + asset subdirectories into `<project_path>/templates/`; Strategist locks identity segment |
- | Bare brand name only ("use anthropic brand"), brand mention without path, or silence | Skip — same mechanical rule as all template kinds: bare names never trigger |
- | Brand path + layout path | Fuse into one `design_spec.md` — brand owns identity segment (color / typography / logo / voice / icon style); layout owns structure segment (canvas / page roster). See `SKILL.md` Step 3. |
- | Brand path + deck path | Fuse — brand identity overrides deck identity; structure + middle segments come from deck |
-@@ -24,7 +26,7 @@ Brand application follows the **same exp
- Run the standalone workflow:
- 
- ```
--Read skills/ppt-master/workflows/create-brand.md
-+Read ${SKILL_DIR}/workflows/create-brand.md
- ```
- 
- Three input paths are supported: brand asset (logo / brand site URL / branded PPTX / brand PDF), verbal spec dictated in chat, or empty skeleton for the user to fill in later.
-@@ -34,7 +36,7 @@ Three input paths are supported: brand a
- Every brand directory is self-contained:
+@@ -39,7 +43,7 @@ Three input paths are supported: brand a
+ Every brand uses the same workspace routing as layout and deck templates. Brand identity remains roster-free; omit empty optional directories instead of adding placeholder files.
  
  ```
 -templates/brands/<brand_id>/
 +$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/
- ├── design_spec.md            # required — brand identity spec (7 sections)
- ├── logo.<ext>                # optional — primary brand logo (single-lockup brands)
- │   …or…
-@@ -51,6 +53,6 @@ Logo filenames are descriptive, not cont
+ ├── templates/
+ │   └── design_spec.md        # required — brand identity spec
+ ├── images/                    # optional — logos and visual assets
+@@ -55,7 +59,12 @@ Logo filenames are descriptive, not cont
  
  ## Discovery index
  
--[brands_index.json](./brands_index.json) is a slim machine-readable map (`brand_id → { summary, primary_color }`). It is refreshed by `register_template.py --kind brand <brand_id>` after a brand is created or edited.
-+[brands_index.json](./brands_index.json) is a slim machine-readable map (`brand_id → { summary, primary_color }`). It is refreshed by `register_template.py --kind brand <brand_id>` after a brand is created or edited (output goes to **the user library** under `$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json`).
+-[brands_index.json](./brands_index.json) is a slim machine-readable map (`brand_id → { summary, primary_color }`). Refresh it with `register_template.py --kind brand <brand_id>` after a brand is created or edited. Registration rejects incomplete frontmatter, mismatched IDs, page SVGs, missing required identity sections, invalid or inconsistent colors/provenance, and broken workspace-local asset references.
++`$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json` is a slim
++machine-readable map (`brand_id → { summary, primary_color }`). Refresh it with
++`register_template.py --kind brand <brand_id>` after a brand is created or
++edited. Registration rejects incomplete frontmatter, mismatched IDs, page SVGs,
++missing required identity sections, invalid or inconsistent colors/provenance,
++and broken workspace-local asset references.
  
- Listing the index does not trigger any pipeline action — Step 3 triggers only on an explicit directory path supplied by the user, regardless of whether the brand appears in the index.
+ The Default Stage-1 template controls read this index as their complete
+ registered-brand catalog; chat discovery reads the same file and returns exact
 Index: ppt-master/templates/decks/README.md
 ===================================================================
 --- ppt-master.orig/templates/decks/README.md
 +++ ppt-master/templates/decks/README.md
-@@ -1,4 +1,6 @@
+@@ -1,4 +1,8 @@
 -# Deck Templates
-+# Deck Templates (upstream-shipped samples)
++# Deck Templates (Bundled Samples)
 +
-+> **About this directory.** This is the **upstream-shipped sample deck library** that ships read-only with the skill. Your own deck library lives at `$PPT_MASTER_TEMPLATES_DIR/decks/` (typically `~/ppt-projects/templates/decks/`); that's where `register_template.py --kind deck` writes and `decks_index.json` is rebuilt. The samples below are reference material — copy one into your library as a starting point, or pass any one of these sample directories directly to SKILL.md Step 3 as a deck path.
++> This directory is upstream-shipped, read-only sample material. The editable
++> Deck library and active index live at
++> `$PPT_MASTER_TEMPLATES_DIR/decks/`.
  
- **Deck = full-PPT replica.** Each deck reverse-engineers a specific organization's branded presentation and bundles its **identity + structure + middle** segments into one atomic asset. Use a deck when you want the complete look of a particular institution (color, typography, logo, page structure, voice) preserved as a whole.
+ **Deck = a reusable solution for a recurring presentation family.** It owns an
+ application context together with presentation identity and reusable page
+@@ -17,11 +21,11 @@ newly authored or materialized from vali
+ | Application planning | Strategist automatically decides which prototypes to select, repeat, skip, or reorganize and derives the exporter behavior |
+ | PPTX structure | The workspace is `structured`; the derived application plan decides whether generated pages compile its structure or use it only as visual reference |
  
-@@ -10,7 +12,7 @@ Full data model: [`docs/zh/templates-arc
+-The discovery source of truth is [`decks_index.json`](./decks_index.json)
++The discovery source of truth is
++`$PPT_MASTER_TEMPLATES_DIR/decks/decks_index.json`
+ (`deck_id → { summary, canvas_format, page_count, primary_color }`). This README
+ defines the kind and intentionally does not enumerate installed decks. The
+-shared kind and workspace model lives in the parent
+-[`README.md`](../README.md).
++shared kind and workspace model lives in the parent [`README.md`](../README.md).
  
- ## Trigger rule
+ Index `summary` values lead with the recurring presentation family and intended
+ outcome. Visual tone alone is not enough to select a Deck; open its Template
+@@ -136,8 +140,8 @@ flat directory shape alone is not a lega
+     └── <deck_id>_template_preview.pptx
+ ```
  
--Deck selection is **opt-in by explicit path**. The main workflow defaults to free design. A deck is only used when the user gives an explicit directory path in their initial message (e.g. `skills/ppt-master/templates/decks/招商银行/`). Bare names do not trigger. See [`SKILL.md`](../../SKILL.md) Step 3.
-+Deck selection is **opt-in by explicit path**. The main workflow defaults to free design. A deck is only used when the user gives an explicit directory path in their initial message (e.g. `$PPT_MASTER_TEMPLATES_DIR/decks/招商银行/`, or `${SKILL_DIR}/templates/decks/招商银行/` to use the bundled sample, or any other resolvable path). Bare names do not trigger. See [`SKILL.md`](../../SKILL.md) Step 3.
+-Library scope writes `skills/ppt-master/templates/decks/<deck_id>/` and updates
+-the index. Project scope uses an initialized `projects/<name>/` workspace and
++Library scope writes `${PPT_MASTER_TEMPLATES_DIR}/decks/<deck_id>/` and updates
++the index. Project scope uses an initialized `<target_project>/` workspace and
+ does not register globally. Empty optional directories are omitted.
  
- `decks_index.json` is a **discovery aid**, not a trigger — it lets the AI answer "what decks exist?" by listing ids and paths. Listing alone never advances the pipeline.
- 
-@@ -57,11 +59,11 @@ When the user gives a deck path **with**
- ## Creating a new deck
- 
- 1. Run [`workflows/create-template.md`](../../workflows/create-template.md) (default kind is `deck`)
--2. Resulting directory lands under `templates/decks/<id>/`
--3. Validate: `python3 skills/ppt-master/scripts/svg_quality_checker.py templates/decks/<id> --template-mode --format ppt169`
--4. Register: `python3 skills/ppt-master/scripts/register_template.py <id> --kind deck`
-+2. Resulting directory lands under `$PPT_MASTER_TEMPLATES_DIR/decks/<id>/`
-+3. Validate: `python3 ${SKILL_DIR}/scripts/svg_quality_checker.py $PPT_MASTER_TEMPLATES_DIR/decks/<id> --template-mode --format ppt169`
-+4. Register: `python3 ${SKILL_DIR}/scripts/register_template.py <id> --kind deck`
- 
--The register step updates [`decks_index.json`](./decks_index.json) — the single source of truth for deck discovery.
-+The register step updates [`decks_index.json`](./decks_index.json) — the single source of truth for deck discovery (output goes to **the user library** under `$PPT_MASTER_TEMPLATES_DIR/decks/decks_index.json`).
- 
- ---
- 
+ 1. Enter [`workflows/create-template.md`](../../workflows/create-template.md), which dispatches recurring-application output with integrated identity and structure to [`create-deck.md`](../../workflows/create-template/create-deck.md).
 Index: ppt-master/templates/layouts/README.md
 ===================================================================
 --- ppt-master.orig/templates/layouts/README.md
 +++ ppt-master/templates/layouts/README.md
-@@ -1,6 +1,8 @@
+@@ -1,4 +1,8 @@
 -# Layout Templates
-+# Layout Templates (upstream-shipped samples)
- 
--**Layout = structure-only template.** Captures canvas, page structure, page types, and SVG roster — but **no identity segment** (color / typography / logo / voice / icon style). Layered identity comes from `templates/brands/` or is decided per-deck in Strategist's Eight Confirmations. For full-identity replicas of specific PPTs, see [`templates/decks/`](../decks/) instead.
-+> **About this directory.** This is the **upstream-shipped sample layout library** that ships read-only with the skill. Your own layout library lives at `$PPT_MASTER_TEMPLATES_DIR/layouts/` (typically `~/ppt-projects/templates/layouts/`); that's where `register_template.py --kind layout` writes and `layouts_index.json` is rebuilt. The samples below are reference material — copy one into your library as a starting point, or pass any one of these sample directories directly to SKILL.md Step 3 as a layout path.
++# Layout Templates (Bundled Samples)
 +
-+**Layout = structure-only template.** Captures canvas, page structure, page types, and SVG roster — but **no identity segment** (color / typography / logo / voice / icon style). Layered identity comes from `$PPT_MASTER_TEMPLATES_DIR/brands/` or is decided per-deck in Strategist's Eight Confirmations. For full-identity replicas of specific PPTs, see [`templates/decks/`](../decks/) instead.
++> This directory is upstream-shipped, read-only sample material. The editable
++> Layout library and active index live at
++> `$PPT_MASTER_TEMPLATES_DIR/layouts/`.
  
- Single source of truth for what layouts exist: [`layouts_index.json`](./layouts_index.json) (`layout_id → { summary, canvas_format, page_count, page_types }`). This README explains the kind; it does **not** enumerate layouts.
+ **Layout = a structure-only reusable template bundle.** It owns canvas,
+ Master/Layout structure, page types, slot geometry, semantic text roles,
+@@ -29,11 +33,11 @@ the internal exporter plan automatically
+ | Application planning | Strategist automatically decides literal, structural, or style-only use and derives any strict/adaptive exporter value |
+ | PPTX structure | The workspace is `structured`; the derived application plan decides whether generated pages compile its structure or use it only as visual reference |
  
-@@ -10,7 +12,7 @@ Full data model: [`docs/zh/templates-arc
+-The discovery source of truth is [`layouts_index.json`](./layouts_index.json)
++The discovery source of truth is
++`$PPT_MASTER_TEMPLATES_DIR/layouts/layouts_index.json`
+ (`layout_id → { summary, canvas_format, page_count, page_types }`). This README
+ defines the kind and intentionally does not enumerate installed layouts. The
+-shared kind and workspace model lives in the parent
+-[`README.md`](../README.md).
++shared kind and workspace model lives in the parent [`README.md`](../README.md).
  
- ## Trigger rule
+ Layout mirror has one additional eligibility rule: the validated source
+ contract must already be brand-neutral and application-neutral. A source
+@@ -145,8 +149,9 @@ flat directory shape alone is not a lega
+     └── <layout_id>_template_preview.pptx
+ ```
  
--Layout selection is **opt-in by explicit path**. The main workflow defaults to free design. A layout is only used when the user gives an explicit directory path in their initial message (e.g. `skills/ppt-master/templates/layouts/academic_defense/`). Bare names do not trigger. See [`SKILL.md`](../../SKILL.md) Step 3.
-+Layout selection is **opt-in by explicit path**. The main workflow defaults to free design. A layout is only used when the user gives an explicit directory path in their initial message (e.g. `$PPT_MASTER_TEMPLATES_DIR/layouts/academic_defense/`, or `${SKILL_DIR}/templates/layouts/academic_defense/` to use the bundled sample, or any other resolvable path). Bare names do not trigger. See [`SKILL.md`](../../SKILL.md) Step 3.
+-Library scope writes `skills/ppt-master/templates/layouts/<layout_id>/` and
+-updates the index. Project scope uses an initialized `projects/<name>/`
++Library scope writes
++`${PPT_MASTER_TEMPLATES_DIR}/layouts/<layout_id>/` and updates the index.
++Project scope uses an initialized `<target_project>/`
+ workspace and does not register globally. Empty optional directories are
+ omitted.
  
- `layouts_index.json` is a **discovery aid**, not a trigger — it lets the AI answer "what layouts exist?" by listing ids and paths. Listing alone never advances the pipeline.
- 
-@@ -67,11 +69,11 @@ Templates use `{{PLACEHOLDER}}` to mark
- ## Creating a new layout
- 
- 1. Run [`workflows/create-template.md`](../../workflows/create-template.md) (default produces a deck; explicit "structure only / no identity" option produces a layout)
--2. Resulting directory lands under `templates/layouts/<id>/`
--3. Validate: `python3 skills/ppt-master/scripts/svg_quality_checker.py templates/layouts/<id> --template-mode --format ppt169`
--4. Register: `python3 skills/ppt-master/scripts/register_template.py <id> --kind layout`
-+2. Resulting directory lands under `$PPT_MASTER_TEMPLATES_DIR/layouts/<id>/`
-+3. Validate: `python3 ${SKILL_DIR}/scripts/svg_quality_checker.py $PPT_MASTER_TEMPLATES_DIR/layouts/<id> --template-mode --format ppt169`
-+4. Register: `python3 ${SKILL_DIR}/scripts/register_template.py <id> --kind layout`
- 
--The register step updates [`layouts_index.json`](./layouts_index.json) — the single source of truth for layout discovery.
-+The register step updates [`layouts_index.json`](./layouts_index.json) — the single source of truth for layout discovery (output goes to **the user library** under `$PPT_MASTER_TEMPLATES_DIR/layouts/layouts_index.json`).
- 
- ---
- 
-Index: ppt-master/workflows/create-brand.md
+Index: ppt-master/templates/styles/README.md
 ===================================================================
---- ppt-master.orig/workflows/create-brand.md
-+++ ppt-master/workflows/create-brand.md
-@@ -1,12 +1,14 @@
- ---
--description: Generate a brand-only template under `templates/brands/<id>/` — a design_spec.md that captures the user's colors / typography / logo / voice / icon style without an SVG page roster, so subsequent PPT projects inherit brand identity while keeping page layout free.
-+description: Generate a brand-only template under `$PPT_MASTER_TEMPLATES_DIR/brands/<id>/` — a design_spec.md that captures the user's colors / typography / logo / voice / icon style without an SVG page roster, so subsequent PPT projects inherit brand identity while keeping page layout free.
- ---
+--- ppt-master.orig/templates/styles/README.md
++++ ppt-master/templates/styles/README.md
+@@ -1,4 +1,8 @@
+-# Style Workspaces
++# Style Workspaces (Bundled Samples)
++
++> This directory is upstream-shipped, read-only sample material. The editable
++> Style library and active index live at
++> `$PPT_MASTER_TEMPLATES_DIR/styles/`.
  
- # Create Brand Workflow
+ **Style = a roster-free reusable communication method plus coordinated design defaults.** It can carry argument flow, page-role vocabulary, evidence and data-expression discipline, visual-system defaults, image/icon direction, and additional review focus. It does not own a current project's communication contract, reusable brand identity, page geometry, SVG prototypes, or a recurring application contract.
  
--> Standalone preset-creation workflow. Output is a brand template package at `skills/ppt-master/templates/brands/<brand_id>/`. Structurally a brand is a template minus the SVG page roster — Strategist locks the brand's color / typography / logo / voice as truth; Executor designs pages freely under those constraints.
-+> Standalone preset-creation workflow. Output is a brand template package at `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/`. Structurally a brand is a template minus the SVG page roster — Strategist locks the brand's color / typography / logo / voice as truth; Executor designs pages freely under those constraints.
-+>
-+> **Workspace setup (required)**: the user's brand library lives at `$PPT_MASTER_TEMPLATES_DIR/brands/`. If `PPT_MASTER_TEMPLATES_DIR` is unset and the user hasn't named a path, **ask** before running any registrar / `mkdir` command (typical answer: `~/ppt-projects/templates`). All paths below assume the env var is exported.
+@@ -91,7 +95,8 @@ Do not create empty `images/`, `icons/`,
+ 2. Validate with `svg_quality_checker.py --template-mode`.
+ 3. In library scope, register with `register_template.py <id> --kind style`.
  
--This workflow edits the global brand library, not any specific `projects/<x>/`. Consumption follows the same explicit-path rule as layout templates (see [Downstream consumption](#downstream-consumption-informational) at the end).
-+This workflow edits the user's global brand library, not any specific `<project_path>/`. Consumption follows the same explicit-path rule as layout templates (see [Downstream consumption](#downstream-consumption-informational) at the end).
- 
- > Companion: [`create-template.md`](./create-template.md) generates full templates with SVG pages. Use `create-brand.md` when the user wants identity-only locking with free page layout.
- 
-@@ -17,9 +19,9 @@ This workflow edits the global brand lib
- | "set up brand" / "extract brand from this logo" / 建立品牌 / 做品牌规范 | Run this workflow |
- | User provides a brand asset (logo / brand site URL / branded PPTX / brand PDF) and wants it locked across future projects | Run this workflow |
- | User mentions brand color or font once for a single deck only | Skip — handle inline via Strategist h.5 |
--| `templates/brands/<requested_id>/` already exists | Ask: update / replace / use a new id — never silently overwrite |
-+| `$PPT_MASTER_TEMPLATES_DIR/brands/<requested_id>/` already exists | Ask: update / replace / use a new id — never silently overwrite |
- 
--⛔ Never auto-trigger. Brand creation is a user-invoked identity setup; an empty `templates/brands/` is not an invitation to create one.
-+⛔ Never auto-trigger. Brand creation is a user-invoked identity setup; an empty `$PPT_MASTER_TEMPLATES_DIR/brands/` is not an invitation to create one.
- 
- ---
- 
-@@ -66,7 +68,7 @@ Whatever the user gives is `[user]`-labe
- 
- ## Step 2C: Empty skeleton
- 
--Write `templates/brands/<brand_id>/design_spec.md` with the full schema, every value as a TODO comment. Tell the user where the file is. No further prompting — the user owns it from here.
-+Write `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/design_spec.md` with the full schema, every value as a TODO comment. Tell the user where the file is. No further prompting — the user owns it from here.
- 
- ---
- 
-@@ -90,7 +92,7 @@ For fields not covered by the asset, ask
- Create the package directory:
- 
- ```bash
--mkdir -p "skills/ppt-master/templates/brands/<brand_id>"
-+mkdir -p "$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>"
- ```
- 
- ### Mandatory: `design_spec.md`
-@@ -151,18 +153,18 @@ primary_color: "#XXXXXX"
- ```
- 
- **Section scope rules**:
--- Layout / canvas / spacing / radius / shadow / page roster / signature design elements are OUT of brand scope. Those live in layout / deck templates (`templates/layouts/<id>/design_spec.md` or `templates/decks/<id>/design_spec.md`) or `shared-standards.md`. Do NOT add those sections here.
-+- Layout / canvas / spacing / radius / shadow / page roster / signature design elements are OUT of brand scope. Those live in layout / deck templates (`$PPT_MASTER_TEMPLATES_DIR/layouts/<id>/design_spec.md` or `$PPT_MASTER_TEMPLATES_DIR/decks/<id>/design_spec.md`) or `shared-standards.md`. Do NOT add those sections here.
- - HEX must be `#RRGGBB`
- - Font names are free strings; not validated against locally installed fonts
- - §VII is fully optional — list only directories that actually exist
- 
- ### Optional: logo file
- 
--If the user provided a logo, copy it to `templates/brands/<brand_id>/logo.<ext>` (preserve source extension).
-+If the user provided a logo, copy it to `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/logo.<ext>` (preserve source extension).
- 
- ### Optional: visual asset directories
- 
--If the user provided brand photo / illustration / icon folders, copy them as `images/` / `illustrations/` / `icons/` under `templates/brands/<brand_id>/`. Reference each in §VII of `design_spec.md`. Skip the entire section if none exist.
-+If the user provided brand photo / illustration / icon folders, copy them as `images/` / `illustrations/` / `icons/` under `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/`. Reference each in §VII of `design_spec.md`. Skip the entire section if none exist.
- 
- ### NOT created here
- 
-@@ -172,7 +174,7 @@ No SVG page roster. No canvas spec. No s
- 
- ## Step 5: Register and hand off
- 
--Update `templates/brands/brands_index.json` with the new entry (create the file if missing):
-+Update `$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json` with the new entry (create the file if missing):
- 
- ```json
- {
-@@ -188,17 +190,17 @@ Emit the confirmation card:
- 
- ```markdown
- ## ✅ Brand Saved
--- Path: `skills/ppt-master/templates/brands/<brand_id>/`
-+- Path: `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/`
- - Files: design_spec.md{, logo.<ext>}{, images/}{, illustrations/}{, icons/}
- - Fields locked: <list>
- - Provenance: <fact / approx / user counts>
- 
- How to use in a project:
--- Include the brand directory path in your initial Step 3 input — e.g. "做一个 Q4 总结 PPT, 用 skills/ppt-master/templates/brands/<brand_id>/ 这个品牌"
-+- Include the brand directory path in your initial Step 3 input — e.g. "做一个 Q4 总结 PPT, 用 ~/ppt-projects/templates/brands/<brand_id>/ 这个品牌"
- - Same explicit-path rule as layout templates: bare brand names never trigger
- - May be supplied together with a layout template path; Step 3 fuses both into a single `design_spec.md` (brand wins on identity tokens, layout wins on page structure) — see `SKILL.md` Step 3
--- To list available brands: open `templates/brands/brands_index.json`
--- To edit: modify `templates/brands/<brand_id>/design_spec.md` directly, then re-run `python3 skills/ppt-master/scripts/register_template.py --kind brand <brand_id>`
-+- To list available brands: open `$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json`
-+- To edit: modify `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/design_spec.md` directly, then re-run `uv run ${SKILL_DIR}/scripts/register_template.py --kind brand <brand_id>`
- ```
- 
- ---
-@@ -220,7 +222,7 @@ Brand application happens in [`SKILL.md`
- ## Notes
- 
- 1. **Brand is identity, not layout** — colors / typography / logo / voice / icon style only. Page roster, canvas spec, and signature design elements belong to layout templates; do not duplicate them here.
--2. **Self-contained package** — all brand assets (logo, images, illustrations, icons) live inside `templates/brands/<brand_id>/`. Nothing leaks to workspace root or `projects/`.
-+2. **Self-contained package** — all brand assets (logo, images, illustrations, icons) live inside `$PPT_MASTER_TEMPLATES_DIR/brands/<brand_id>/`. Nothing leaks to workspace root or to any specific `<project_path>/`.
- 3. **No script dependency** — Step 2A reuses existing converters plus AI inline reading. A dedicated `brand_extract.py` is not introduced unless future user feedback demands batch processing or precise color picking from raster logos.
--4. **Multi-brand support** — `templates/brands/` accepts any number of brands; agency / freelancer / multi-client workflows are natural.
-+4. **Multi-brand support** — `$PPT_MASTER_TEMPLATES_DIR/brands/` accepts any number of brands; agency / freelancer / multi-client workflows are natural.
- 5. **Precedence rule** — when a brand and a layout template both apply, Step 3 fuses them into one `design_spec.md`: brand wins on color / typography / logo / voice / icon style; layout wins on canvas / page roster / spacing / font-size hierarchy / signature visual elements. See `SKILL.md` Step 3 for the full precedence table.
+-The discovery source of truth is [`styles_index.json`](./styles_index.json).
++The discovery source of truth is
++`$PPT_MASTER_TEMPLATES_DIR/styles/styles_index.json`.
+ Each entry is `style_id → { summary, keywords }`; the index never duplicates
+ the full method or defaults. The Default Stage-1 template controls read this
+ file as their complete registered-Style catalog, and chat discovery returns
 Index: ppt-master/workflows/create-template.md
 ===================================================================
 --- ppt-master.orig/workflows/create-template.md
 +++ ppt-master/workflows/create-template.md
-@@ -9,6 +9,8 @@ description: Generate a new layout or de
- Generate a complete set of reusable PPT templates for the **global template library**.
- 
- > This workflow is for **library asset creation**, not project-level one-off customization. The output must be reusable by future PPT projects and discoverable from the appropriate index file.
-+>
-+> **Workspace setup (required)**: the user's template library lives at `$PPT_MASTER_TEMPLATES_DIR` (typically `~/ppt-projects/templates`). If the env var is unset and the user hasn't named a path, **ask** before running any registrar / `mkdir` command. All paths in this workflow that begin with `$PPT_MASTER_TEMPLATES_DIR/` assume the env var is exported (or that the user named an equivalent path).
- 
- > **Companion workflow**: identity-only locking (colors / typography / logo / voice without SVG pages) is handled by [`create-brand.md`](./create-brand.md). Use that when the user wants brand identity but free page layout; use this when fixed page structures are required.
- 
-@@ -18,8 +20,8 @@ This workflow produces one of two kinds
- 
- | Kind | When | Output dir | What `design_spec.md` writes |
- |---|---|---|---|
--| **deck** (default) | Source is a specific organization's branded PPT (e.g. company report, university defense template); the visual identity is part of the replica | `templates/decks/<id>/` | Full segments: identity + structure + middle |
--| **layout** | Source is a generic stylistic template (no specific brand); only the structural skeleton should be reusable; color / typography decided per-deck downstream | `templates/layouts/<id>/` | Structure segments only (canvas / page structure / page types / SVG roster); identity segment omitted |
-+| **deck** (default) | Source is a specific organization's branded PPT (e.g. company report, university defense template); the visual identity is part of the replica | `$PPT_MASTER_TEMPLATES_DIR/decks/<id>/` | Full segments: identity + structure + middle |
-+| **layout** | Source is a generic stylistic template (no specific brand); only the structural skeleton should be reusable; color / typography decided per-deck downstream | `$PPT_MASTER_TEMPLATES_DIR/layouts/<id>/` | Structure segments only (canvas / page structure / page types / SVG roster); identity segment omitted |
- 
- Default to **deck** unless the user explicitly says "structure only" / "layout only" / "no brand identity". When in doubt, lean deck — losing identity later is easy; reconstructing it from a layout-mode strip is not. See [`docs/zh/templates-architecture.md`](../../../docs/zh/templates-architecture.md) for the full kind / schema / fusion model.
- 
-@@ -42,14 +44,14 @@ Branch by the type of reference source t
- | Type | What the user supplied | Tool / read path | Replication modes available |
- |------|-------------------------|------------------|------------------------------|
- | **A** `.pptx` reference | A `.pptx` file path | `pptx_template_import.py` → `manifest.json` + `svg/master_*.svg` + `svg/layout_*.svg` + `svg/slide_*.svg` + `svg-flat/slide_*.svg` + `assets/` | `standard` / `fidelity` / `mirror` |
--| **B** Existing SVG assets | `projects/<x>/svg_output/`, `templates/layouts/<existing>`, or a loose `.svg` folder | `ls` + `Read` each `*.svg`; plus `design_spec.md` / `spec_lock.md` if present | `standard` / `fidelity` (AI visual clustering) / `mirror` (direct 1:1 copy) |
-+| **B** Existing SVG assets | `<project_path>/svg_output/`, `$PPT_MASTER_TEMPLATES_DIR/<layouts|decks>/<existing>`, `${SKILL_DIR}/templates/<layouts|decks>/<existing>` (bundled sample), or a loose `.svg` folder | `ls` + `Read` each `*.svg`; plus `design_spec.md` / `spec_lock.md` if present | `standard` / `fidelity` (AI visual clustering) / `mirror` (direct 1:1 copy) |
- | **C** Image / visual references | Screenshot folder, single image, PDF pages | `ls` + `Read` each file (multimodal visual recognition) | `standard` only |
- | **D** No reference source | Verbal description only ("McKinsey style", "tech blue", "dark minimal") | — | `standard` only |
- 
- `fidelity` and `mirror` are not available for type C / D — visual references and verbal-only briefs cannot drive page-by-page replication. Type A is the canonical path: `manifest.json` page-type candidates and the layered `svg/` workspace anchor cluster detection (fidelity) and verbatim copy (mirror) with factual data. Type B is supported with caveats:
- 
--- **mirror on type B** — direct 1:1 copy. B's SVGs are already self-contained (one file per page, equivalent to `svg-flat/slide_*.svg`). Page-type for the `<NNN>_<page_type>.svg` filename is read from the source filename when it follows the PPT Master naming convention (`01_cover.svg` → `cover`, `03a_content_two_col.svg` → `content`); fall back to `content` otherwise. Particularly natural when the source is `templates/layouts/<existing>` and the user wants to fork an existing template.
--- **fidelity on type B** — clustering relies on the AI's visual judgement of the SVGs; there is no `manifest.json.pageTypeCandidates` to anchor it. Variant count and grouping are more subjective and may need iteration. If the input is already a PPT Master template (`templates/layouts/<existing>`), parse the existing variant filenames (`03a_content_two_col` etc.) as authoritative cluster hints rather than re-clustering visually.
-+- **mirror on type B** — direct 1:1 copy. B's SVGs are already self-contained (one file per page, equivalent to `svg-flat/slide_*.svg`). Page-type for the `<NNN>_<page_type>.svg` filename is read from the source filename when it follows the PPT Master naming convention (`01_cover.svg` → `cover`, `03a_content_two_col.svg` → `content`); fall back to `content` otherwise. Particularly natural when the source is `$PPT_MASTER_TEMPLATES_DIR/<layouts|decks>/<existing>` (or `${SKILL_DIR}/templates/<layouts|decks>/<existing>` to fork a bundled sample) and the user wants to fork an existing template.
-+- **fidelity on type B** — clustering relies on the AI's visual judgement of the SVGs; there is no `manifest.json.pageTypeCandidates` to anchor it. Variant count and grouping are more subjective and may need iteration. If the input is already a PPT Master template (`$PPT_MASTER_TEMPLATES_DIR/<layouts|decks>/<existing>` or `${SKILL_DIR}/templates/<layouts|decks>/<existing>`), parse the existing variant filenames (`03a_content_two_col` etc.) as authoritative cluster hints rather than re-clustering visually.
- 
- ### 1A. `.pptx` reference
- 
-@@ -211,12 +213,12 @@ Step 4 MUST NOT run until `[TEMPLATE_BRI
- Create the final template directory:
- 
- ```bash
--mkdir -p "skills/ppt-master/templates/layouts/<template_id>"
-+mkdir -p "$PPT_MASTER_TEMPLATES_DIR/<kind_dir>/<template_id>"   # kind_dir: layouts or decks
- ```
- 
--> **Output location**: Global templates go to `skills/ppt-master/templates/layouts/`; project templates go to `projects/<project>/templates/`
-+> **Output location**: Global (reusable) templates go to `$PPT_MASTER_TEMPLATES_DIR/<layouts|decks>/`; project-scoped templates go to `<project_path>/templates/`
+@@ -8,11 +8,16 @@ description: Create Template entry workf
  >
--> The generated directory name must match the final template ID used in `layouts_index.json`.
-+> The generated directory name must match the final template ID used in the corresponding index file.
+ > **Role invoked for Create Layout/Create Deck**: [Template_Designer](../references/template-designer.md)
  
- **Switch to the Template_Designer role** and generate per role definition. The role input is the finalized brief from Step 3 plus the analysis bundle from Step 1.
+-Create one reusable template workspace under either the **global template library** or `projects/` from one or more reference channels or a direct user brief, then dispatch to exactly one child workflow.
++Create one reusable template workspace under either the **user template library**
++or an initialized project from one or more reference channels or a direct user
++brief, then dispatch to exactly one child workflow.
++
++**Default — library scope**: Write
++`${PPT_MASTER_TEMPLATES_DIR}/<kind_dir>/<template_id>/` and register it in the
++matching discovery index.
  
-@@ -267,13 +269,13 @@ Mirror mode does **not** invoke the "rec
+-**Default — library scope**: Write `skills/ppt-master/templates/<kind_dir>/<template_id>/` and register it in the matching discovery index.
+-
+-**Project scope**: Write the same portable workspace routing at `<project>/` and do not register any global index.
++**Project scope**: Write the same portable workspace routing at `<project>/`
++and do not register any user-library index.
+ 
+ **Hard rule — one workspace routing contract**: Output scope changes only the workspace parent and index registration. Both scopes use required `templates/`, optional `images/` / `icons/`, and optional on-demand `exports/`, with the same relative asset references and validation command. Create Template must not create an optional directory or placeholder file solely to retain an empty path. An initialized project may already contain empty `images/`, `icons/`, or `exports/` scaffolding; leave it untouched, do not count it as template output, and omit the path from completion unless this workflow wrote or adopted a real file there. Do not maintain a library-only self-contained-flat package branch or a project-only thin-bundle branch.
+ 
+@@ -24,10 +29,10 @@ Create Template is the fixed user-facing
+ 
+ | Child workflow | Select when | Library-scope output | Exclusive responsibility |
+ |---|---|---|---|
+-| [`Create Brand`](./create-template/create-brand.md) | Reuse identity only: colors, typography, logo, voice, and icon style | `templates/brands/<brand_id>/` | Identity analysis and identity-only `design_spec.md`; no SVG roster |
+-| [`Create Style`](./create-template/create-style.md) | Reuse a communication method and visual direction without identity truth or page prototypes | `templates/styles/<style_id>/` | Method, page-role vocabulary, evidence/data expression, visual defaults, image/icon direction, and advisory review focus; no SVG roster |
+-| [`Create Layout`](./create-template/create-layout.md) | Reuse a brand-neutral structural skeleton without a recurring communication application | `templates/layouts/<layout_id>/` | Canvas, page grammar, semantic text roles, Master/Layout/slot contract, and SVG roster; no brand identity or application contract |
+-| [`Create Deck`](./create-template/create-deck.md) | Reuse a branded structural system or a recurring presentation application | `templates/decks/<deck_id>/` | Descriptive application context, integrated identity/structure, and SVG roster |
++| [`Create Brand`](./create-template/create-brand.md) | Reuse identity only: colors, typography, logo, voice, and icon style | `${PPT_MASTER_TEMPLATES_DIR}/brands/<brand_id>/` | Identity analysis and identity-only `design_spec.md`; no SVG roster |
++| [`Create Style`](./create-template/create-style.md) | Reuse a communication method and visual direction without identity truth or page prototypes | `${PPT_MASTER_TEMPLATES_DIR}/styles/<style_id>/` | Method, page-role vocabulary, evidence/data expression, visual defaults, image/icon direction, and advisory review focus; no SVG roster |
++| [`Create Layout`](./create-template/create-layout.md) | Reuse a brand-neutral structural skeleton without a recurring communication application | `${PPT_MASTER_TEMPLATES_DIR}/layouts/<layout_id>/` | Canvas, page grammar, semantic text roles, Master/Layout/slot contract, and SVG roster; no brand identity or application contract |
++| [`Create Deck`](./create-template/create-deck.md) | Reuse a branded structural system or a recurring presentation application | `${PPT_MASTER_TEMPLATES_DIR}/decks/<deck_id>/` | Descriptive application context, integrated identity/structure, and SVG roster |
+ 
+ Select Create Brand only for identity-only intent. Select Create Style when the portable value is a communication method, evidence discipline, and visual direction but there is no official identity, page geometry, or prototype roster to retain. Select Create Layout only when identity remains downstream-selectable and the reusable artifact does not prescribe communication objectives, audience outcomes, a required narrative sequence, or scenario-specific starting content. Select Create Deck when structure carries brand identity or reusable application semantics. A complete source PPTX alone does not determine the kind: classify only the stable rules worth reusing. Ask one discriminator question only when the user's requested reusable artifact is genuinely ambiguous; once selected, enter that child workflow and do not repeat route selection inside its confirmation gate.
+ 
+@@ -41,8 +46,8 @@ Output scope is a shared Create Template
+ 
+ | Scope | `<template_workspace>` | Template source | Registration |
+ |---|---|---|---|
+-| `library` (default) | `skills/ppt-master/templates/<kind_dir>/<template_id>/` | `<template_workspace>/templates/` | Run `register_template.py` against the matching global index |
+-| `project` | `<target_project>/` | `<template_workspace>/templates/` | Do not update any global index |
++| `library` (default) | `${PPT_MASTER_TEMPLATES_DIR}/<kind_dir>/<template_id>/` | `<template_workspace>/templates/` | Run `register_template.py` against the matching user-library index |
++| `project` | `<target_project>/` | `<template_workspace>/templates/` | Do not update any user-library index |
+ 
+ Both scopes write this contract:
+ 
+@@ -93,7 +98,7 @@ The rows are evidence channels, not mutu
+ | Type | What the user supplied | Tool / read path | Internal strategies supported by the evidence |
+ |------|-------------------------|------------------|-----------------------------------------------|
+ | **A** `.pptx` reference | A `.pptx` file path | `pptx_template_import.py` → `manifest.json` + `native_structure.json` + `source_template.pptx` + layered SVGs + `assets/`; flat verification SVGs are opt-in | `standard` / `fidelity` / `mirror` |
+-| **B** Existing SVG assets | `projects/<x>/svg_output/`, a current template workspace root, a legacy flat template root, or a loose `.svg` folder | Normalize the source directory, create an editable authoring IR bundle with `svg_authoring_view.py`, then use its page SVGs; also read companion `design_spec.md` / `spec_lock.md` when present | `standard` / `fidelity`; `mirror` only when the source already carries a complete explicit Master/Layout/placeholder/native-object contract |
++| **B** Existing SVG assets | `<project_path>/svg_output/`, a current template workspace root, a legacy flat template root, or a loose `.svg` folder | Normalize the source directory, create an editable authoring IR bundle with `svg_authoring_view.py`, then use its page SVGs; also read companion `design_spec.md` / `spec_lock.md` when present | `standard` / `fidelity`; `mirror` only when the source already carries a complete explicit Master/Layout/placeholder/native-object contract |
+ | **C** Image / visual references | PNG/JPG/WebP images, screenshots, moodboards, PDF page visuals, or a visual-reference folder | `ls` + `Read` each supplied visual or PDF (multimodal recognition) | `standard` only by itself |
+ | **D** Text / document / website / asset references | Direct conversation text, pasted requirements, Markdown/TXT, DOCX/PDF/HTML/URL, brand/design manuals, or supplied logo/icon/font assets | Use direct text as-is; read plain text/Markdown; convert supported documents/URLs with `source_to_md.py` into a temporary analysis workspace; inventory explicit assets | `standard` only by itself |
+ | **E** No reference material | A template request with no external source and no substantive brief yet | Skip analysis; collect every required value in Steps 2–3 | `standard` only |
+@@ -132,7 +137,7 @@ Type B is supported with caveats:
+ Run the unified preparation helper:
  
  ```bash
- # Replace <kind_dir> with "decks" or "layouts" depending on the kind decided above
--ls -la "skills/ppt-master/templates/<kind_dir>/<template_id>"
-+ls -la "$PPT_MASTER_TEMPLATES_DIR/<kind_dir>/<template_id>"
+-python3 skills/ppt-master/scripts/pptx_template_import.py "<reference_template.pptx>"
++uv run ${SKILL_DIR}/scripts/pptx_template_import.py "<reference_template.pptx>"
  ```
  
- Run SVG validation on the template directory:
+ This produces, in one workspace:
+@@ -165,13 +170,13 @@ It is an analysis aid, not a final direc
+ Keep `<import_workspace>/svg/` unchanged as lossless native-payload backing. If the optional `<import_workspace>/svg-flat/` verification tree was requested, keep it unchanged too. Before the Template_Designer reads or edits any imported page SVG, create the canonical non-destructive authoring IR bundle:
  
  ```bash
--python3 skills/ppt-master/scripts/svg_quality_checker.py "skills/ppt-master/templates/<kind_dir>/<template_id>" --template-mode --format <canvas_format>
-+uv run ${SKILL_DIR}/scripts/svg_quality_checker.py "$PPT_MASTER_TEMPLATES_DIR/<kind_dir>/<template_id>" --template-mode --format <canvas_format>
+-python3 skills/ppt-master/scripts/svg_authoring_view.py "<import_workspace>/svg" -o "<import_workspace>/authoring-svg" --projection-kind layered
++uv run ${SKILL_DIR}/scripts/svg_authoring_view.py "<import_workspace>/svg" -o "<import_workspace>/authoring-svg" --projection-kind layered
+ ```
+ 
+ Only when the import explicitly used `--inheritance-mode both`, create the optional complete-page verification IR:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/svg_authoring_view.py "<import_workspace>/svg-flat" -o "<import_workspace>/authoring-svg-flat" --projection-kind flat
++uv run ${SKILL_DIR}/scripts/svg_authoring_view.py "<import_workspace>/svg-flat" -o "<import_workspace>/authoring-svg-flat" --projection-kind flat
+ ```
+ 
+ Each bundle contains editable SVGs, a model-readable `authoring_summary.json`, and a tool-only `authoring_manifest.json`. The projection removes opaque text payload, duplicate hidden geometry carriers, and import-only identity attributes while keeping visible shape intent, compact preset/frame metadata, structure markers, logical ids, valid asset references, and a reserved `data-pptx-source-ref` on each imported logical object. Model-facing `data-pptx-frame` values and safe transform page coordinates use at most two decimals; normalized crop ratios, path geometry, transform linear coefficients, and the immutable lossless source retain their required precision. The summary lists the current SVG roster plus per-file canvas, size, text, image, vector, placeholder, and source-ref counts. The machine manifest records relative source files, document hashes, source paths, and initial authoring-subtree hashes; it does not duplicate opaque payload and MUST NOT enter model context. Source refs are unique within one document and are interpreted by tools together with that document's manifest record.
+@@ -180,7 +185,7 @@ In-place vector and picture normalizatio
+ After any other direct IR edit, refresh it before the next analysis pass:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/svg_authoring_view.py "<import_workspace>/authoring-svg" --refresh-summary
++uv run ${SKILL_DIR}/scripts/svg_authoring_view.py "<import_workspace>/authoring-svg" --refresh-summary
+ ```
+ 
+ `authoring-svg/` is the canonical editable IR for template creation. The lossless trees are read only by materialization when an unchanged referenced object needs supported native payload or fallback evidence. Do not edit or copy the lossless SVGs directly. The IR is not a finished template directory and must be materialized into validated `<template_workspace>/templates/*.svg` before preview or export.
+@@ -198,11 +203,11 @@ Factor large decorative vector groups ou
+ 
+ ```bash
+ # layered view — primary read surface and canonical extracted-vector inventory
+-python3 skills/ppt-master/scripts/extract_svg_assets.py "<import_workspace>/authoring-svg" --icons-dir "<import_workspace>/icons" --icon-namespace imported --inplace --id-prefix layered --min-decoration-bytes 3000 --clean-stale
++uv run ${SKILL_DIR}/scripts/extract_svg_assets.py "<import_workspace>/authoring-svg" --icons-dir "<import_workspace>/icons" --icon-namespace imported --inplace --id-prefix layered --min-decoration-bytes 3000 --clean-stale
+ 
+ # optional flat verification view — run only when authoring-svg-flat/ exists;
+ # reuse matching layered assets so only genuinely flat-only vectors create files
+-python3 skills/ppt-master/scripts/extract_svg_assets.py "<import_workspace>/authoring-svg-flat" --icons-dir "<import_workspace>/icons" --icon-namespace imported --reuse-inventory "<import_workspace>/authoring-svg_vector_asset_inventory.json" --inplace --id-prefix flat --min-decoration-bytes 3000 --clean-stale
++uv run ${SKILL_DIR}/scripts/extract_svg_assets.py "<import_workspace>/authoring-svg-flat" --icons-dir "<import_workspace>/icons" --icon-namespace imported --reuse-inventory "<import_workspace>/authoring-svg_vector_asset_inventory.json" --inplace --id-prefix flat --min-decoration-bytes 3000 --clean-stale
+ ```
+ 
+ The authoring SVGs in `<import_workspace>/authoring-svg/` and, when requested, `<import_workspace>/authoring-svg-flat/` are rewritten in place with compact `<use data-icon="imported/..."/>` placeholders. Each in-place extraction refreshes that bundle's `authoring_summary.json` automatically. Extracted assets have one canonical copy under `<import_workspace>/icons/imported/`; never duplicate them under `templates/icons/`. The root `icons/` directory remains a namespace container and must not contain rewritten page SVGs or inventories. The inventory is written beside the processed IR directory and records every preserved `data-pptx-source-ref`; re-inlining an asset therefore re-establishes the referenced object mapping before materialization. The existing icon embedding path re-inlines the extracted assets before final export, preserving multi-color artwork and non-square viewBox geometry as native SVG shapes. Text-bearing groups are never extracted; text must stay readable/editable in the working SVG. Extraction triggers on either many drawable elements or a large pure-vector XML block, so long single-path illustrations are factored out too. Pure-vector decoration runs inside text-bearing groups use a lower size threshold, allowing card borders and decorative paths to be extracted without hiding text. Referenced defs (`gradient` / `pattern` / `filter` / `clipPath` / `marker`) are copied into each asset and namespaced so the asset is self-contained after re-inline. If both layered and flat views are processed into the same icon namespace, keep distinct `--id-prefix` values to avoid asset ID collisions. `--clean-stale` removes only stale generated assets for the current SVG filenames and prefix inside the selected namespace; it is safe in this import workspace but should not be used against a shared hand-curated icon directory without a specific prefix.
+@@ -216,7 +221,7 @@ SVG picture rather than rebuilt as edita
+ layered authoring IR and normalize it explicitly:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/extract_svg_pictures.py \
++uv run ${SKILL_DIR}/scripts/extract_svg_pictures.py \
+   "<import_workspace>/authoring-svg/<layered_svg_file>.svg" \
+   --select "<group_id>" \
+   --resource-root "<import_workspace>" \
+@@ -318,8 +323,8 @@ Do not treat authoring IR documents as f
+ First resolve the Type B source directory using the rule above. Create a non-destructive authoring IR bundle in a throwaway analysis workspace, then run the same vector readability pass only on that IR. Do **not** rewrite the user's original source directory in place.
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/svg_authoring_view.py "<normalized_svg_source>" -o "<svg_analysis_workspace>/authoring-svg" --projection-kind generic
+-python3 skills/ppt-master/scripts/extract_svg_assets.py "<svg_analysis_workspace>/authoring-svg" --icons-dir "<svg_analysis_workspace>/icons" --icon-namespace imported --inplace --id-prefix source --min-decoration-bytes 3000 --clean-stale
++uv run ${SKILL_DIR}/scripts/svg_authoring_view.py "<normalized_svg_source>" -o "<svg_analysis_workspace>/authoring-svg" --projection-kind generic
++uv run ${SKILL_DIR}/scripts/extract_svg_assets.py "<svg_analysis_workspace>/authoring-svg" --icons-dir "<svg_analysis_workspace>/icons" --icon-namespace imported --inplace --id-prefix source --min-decoration-bytes 3000 --clean-stale
+ ```
+ 
+ If the source contains one deliberately selected complex subtree that should
+@@ -363,7 +368,7 @@ Be explicit in Step 2 that exact HEX val
+ Direct text in the conversation is already a valid input; do not require the user to save it as a file. Read Markdown/TXT directly. Convert supported document or website inputs into a temporary analysis workspace so the reference file or final template workspace is not modified:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/source_to_md.py "<file_or_URL_or_dir>" -o "<text_analysis_workspace>"
++uv run ${SKILL_DIR}/scripts/source_to_md.py "<file_or_URL_or_dir>" -o "<text_analysis_workspace>"
+ ```
+ 
+ Inventory explicitly supplied logo, icon, font, and other brand/design assets. Raster assets also enter the Type C visual pass; readable SVG assets may additionally enter Type B when they are page/template SVGs. Do not infer asset licensing, official status, or native PowerPoint structure from filenames alone.
+@@ -491,7 +496,7 @@ Select the final target from the confirm
+ 
+ ```bash
+ # library scope (default)
+-template_workspace="skills/ppt-master/templates/<kind_dir>/<template_id>"
++template_workspace="${PPT_MASTER_TEMPLATES_DIR}/<kind_dir>/<template_id>"
+ 
+ # project scope
+ template_workspace="<target_project>"
+@@ -502,7 +507,7 @@ mkdir -p "$template_workspace/templates"
+ 
+ | Scope | Workspace target | Required action before generation |
+ |---|---|---|
+-| `library` | `skills/ppt-master/templates/<kind_dir>/<template_id>/` | Run the common workspace preflight; the directory name matches the final template ID used in the relevant index |
++| `library` | `${PPT_MASTER_TEMPLATES_DIR}/<kind_dir>/<template_id>/` | Run the common workspace preflight; the directory name matches the final template ID used in the relevant index |
+ | `project` | `<target_project>/` | Run the same workspace preflight against the initialized project root |
+ 
+ The preflight is atomic at the Create Template parent level: discover and settle every output filename first, check all destinations together, then begin generation. Do not partially write a workspace and discover a later collision.
+@@ -542,7 +547,7 @@ For Type A `mirror`, materialize the rev
+ workspace with the deterministic compiler:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/mirror_template_materialize.py \
++uv run ${SKILL_DIR}/scripts/mirror_template_materialize.py \
+   "<import_workspace>" "<template_workspace>"
+ ```
+ 
+@@ -666,16 +671,16 @@ becomes the prototype Slide placeholder,
+ 
+ ## Step 5: Validate Template Assets
+ 
+-**Create Brand branch**: run the child workflow's §4 checklist and the shared project-safe validator below in both scopes. It detects `kind: brand`, validates the identity-only frontmatter/sections/colors/provenance/asset references, and does not require an SVG roster or touch a global index. Any failure blocks completion.
++**Create Brand branch**: run the child workflow's §4 checklist and the shared project-safe validator below in both scopes. It detects `kind: brand`, validates the identity-only frontmatter/sections/colors/provenance/asset references, and does not require an SVG roster or touch a user-library index. Any failure blocks completion.
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/svg_quality_checker.py "<template_workspace>/templates" --template-mode
++uv run ${SKILL_DIR}/scripts/svg_quality_checker.py "<template_workspace>/templates" --template-mode
+ ```
+ 
+ In `library` scope, additionally run the registrar dry-run so `brand_id` is checked against the library directory/index key:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/register_template.py <brand_id> --kind brand --dry-run
++uv run ${SKILL_DIR}/scripts/register_template.py <brand_id> --kind brand --dry-run
+ ```
+ 
+ After Create Brand validation passes, skip the Create Layout/Create Deck-only remainder of this step and all of Step 6; continue at Step 7.
+@@ -687,14 +692,14 @@ and fallback values, portable ID, and on
+ The child checklist remains authoritative for semantic scope and provenance.
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/svg_quality_checker.py "<template_workspace>/templates" --template-mode
++uv run ${SKILL_DIR}/scripts/svg_quality_checker.py "<template_workspace>/templates" --template-mode
+ ```
+ 
+ In `library` scope, additionally run the registrar dry-run so `style_id` is
+ checked against the library directory/index key:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/register_template.py <style_id> --kind style --dry-run
++uv run ${SKILL_DIR}/scripts/register_template.py <style_id> --kind style --dry-run
+ ```
+ 
+ After Create Style validation passes, skip the Create Layout/Create Deck-only
+@@ -713,8 +718,8 @@ validation on the template directory. Ke
+ record frames unchanged:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/compact_svg_coordinates.py "<template_workspace>/templates" --inplace --keep-native-frames
+-python3 skills/ppt-master/scripts/svg_quality_checker.py "<template_workspace>/templates" --template-mode --format <canvas_format>
++uv run ${SKILL_DIR}/scripts/compact_svg_coordinates.py "<template_workspace>/templates" --inplace --keep-native-frames
++uv run ${SKILL_DIR}/scripts/svg_quality_checker.py "<template_workspace>/templates" --template-mode --format <canvas_format>
  ```
  
  `--template-mode` makes the checker:
-@@ -293,7 +295,7 @@ python3 skills/ppt-master/scripts/svg_qu
- - [ ] Placeholder names follow the canonical convention where applicable; templates with intentionally different vocabularies (e.g. `{{KEY_MESSAGE}}` instead of `{{PAGE_TITLE}}`) should declare a `placeholders:` frontmatter block to silence advisory warnings
- - [ ] Asset files referenced by SVGs actually exist in the template package
- - [ ] For `fidelity` mode: every sprite-sheet asset retains its nested `<svg viewBox=...>` crop wrapper; no image whose file aspect differs from its on-page aspect was flattened to a bare `<image>`
--- [ ] For `mirror` mode: file count equals source page count (type A: `ls templates/layouts/<id>/*_*.svg | wc -l` matches `<import_workspace>/svg-flat/slide_*.svg | wc -l`; type B: matches the source SVG count); filenames follow the `<NNN>_<page_type>.svg` convention; **no `{{...}}` placeholder strings appear in any copied SVG** (`grep -l "{{" templates/layouts/<id>/*.svg` should return nothing — if the type B source itself contains placeholders, the user should be in `standard` mode, not `mirror`); §V Page Roster in `design_spec.md` lists every emitted file with a one-line description of what the page contains and what content slot it suits
-+- [ ] For `mirror` mode: file count equals source page count (type A: `ls "$PPT_MASTER_TEMPLATES_DIR"/<kind_dir>/<id>/*_*.svg | wc -l` matches `<import_workspace>/svg-flat/slide_*.svg | wc -l`; type B: matches the source SVG count); filenames follow the `<NNN>_<page_type>.svg` convention; **no `{{...}}` placeholder strings appear in any copied SVG** (`grep -l "{{" "$PPT_MASTER_TEMPLATES_DIR"/<kind_dir>/<id>/*.svg` should return nothing — if the type B source itself contains placeholders, the user should be in `standard` mode, not `mirror`); §V Page Roster in `design_spec.md` lists every emitted file with a one-line description of what the page contains and what content slot it suits
- 
- This step is a **hard gate**. Do not register the template into the library index until validation passes.
- 
-@@ -305,19 +307,19 @@ Run the unified registrar with the kind
+@@ -769,7 +774,7 @@ This step is a **hard gate**. Do not gen
+ Export the complete SVG roster, one prototype per slide, from the workspace root:
  
  ```bash
- # For deck (default)
+-python3 skills/ppt-master/scripts/template_preview_pptx.py "<template_workspace>"
++uv run ${SKILL_DIR}/scripts/template_preview_pptx.py "<template_workspace>"
+ ```
+ 
+ The default output is `<template_workspace>/exports/<template_id>_template_preview.pptx`; the command creates `exports/` on demand. The script consumes `templates/*.svg` directly, compiles the declared structured Master/Layout contract, and reopens the result. For `standard` / `fidelity`, it uses ephemeral SVG copies with concise preview-only placeholder samples so long `{{...}}` markers stay readable; canonical source SVGs and placeholder semantics are not modified. It does not require a project `spec_lock.md`, does not create a persistent intermediate project, and does not infer or distill structure.
+@@ -777,7 +782,7 @@ The default output is `<template_workspa
+ The first export refuses an existing output. After intentionally fixing the template and replacing its prior review deck, rerun with `--force`; never rely on a silent overwrite:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/template_preview_pptx.py "<template_workspace>" --force
++uv run ${SKILL_DIR}/scripts/template_preview_pptx.py "<template_workspace>" --force
+ ```
+ 
+ **Validation**:
+@@ -804,32 +809,32 @@ Branch on the confirmed output scope:
+ | Scope | Action |
+ |---|---|
+ | `library` | Run the registrar below after Step 5 passes and Step 6 also passes whenever it was requested or required by a multi-Master roster |
+-| `project` | Skip the registrar entirely. Do not edit any global template index or library README; continue to Step 8 with index status `Not registered (project workspace)` |
++| `project` | Skip the registrar entirely. Do not edit any user-library index or bundled README; continue to Step 8 with index status `Not registered (project workspace)` |
+ 
+ Run the unified registrar with the kind flag; it derives the corresponding index entry from `templates/design_spec.md` (frontmatter when present, prose fallback otherwise) plus the actual `templates/*.svg` file list. The registrar retains read compatibility with old flat library packages; new creation never writes that shape:
+ 
+ ```bash
+ # For brand
+-python3 skills/ppt-master/scripts/register_template.py <template_id> --kind brand
++uv run ${SKILL_DIR}/scripts/register_template.py <template_id> --kind brand
+ 
+ # For style
+-python3 skills/ppt-master/scripts/register_template.py <template_id> --kind style
++uv run ${SKILL_DIR}/scripts/register_template.py <template_id> --kind style
+ 
+ # For deck
 -python3 skills/ppt-master/scripts/register_template.py <template_id> --kind deck
 +uv run ${SKILL_DIR}/scripts/register_template.py <template_id> --kind deck
  
@@ -758,29 +1390,686 @@ Index: ppt-master/workflows/create-template.md
 -| `deck` | `templates/decks/decks_index.json` |
 -| `layout` | `templates/layouts/layouts_index.json` |
 -| `brand` | `templates/brands/brands_index.json` |
-+| `deck` | `$PPT_MASTER_TEMPLATES_DIR/decks/decks_index.json` |
-+| `layout` | `$PPT_MASTER_TEMPLATES_DIR/layouts/layouts_index.json` |
-+| `brand` | `$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json` |
+-| `style` | `templates/styles/styles_index.json` |
++| `deck` | `${PPT_MASTER_TEMPLATES_DIR}/decks/decks_index.json` |
++| `layout` | `${PPT_MASTER_TEMPLATES_DIR}/layouts/layouts_index.json` |
++| `brand` | `${PPT_MASTER_TEMPLATES_DIR}/brands/brands_index.json` |
++| `style` | `${PPT_MASTER_TEMPLATES_DIR}/styles/styles_index.json` |
  
- The completion card's file roster is collected by globbing `*.svg` in the template directory.
- 
-@@ -350,8 +352,8 @@ The index file is a **discovery index**
+ The Layout/Deck completion card's file roster is collected by globbing
+ `templates/*.svg` in the workspace. Brand/Style cards are spec-only. Legacy
+@@ -906,9 +911,9 @@ resolved implicitly or used to preselect
  > To rebuild every entry at once (e.g. after editing many specs), run:
  >
  > ```bash
+-> python3 skills/ppt-master/scripts/register_template.py --kind style --rebuild-all
 -> python3 skills/ppt-master/scripts/register_template.py --kind deck --rebuild-all
 -> python3 skills/ppt-master/scripts/register_template.py --kind layout --rebuild-all
++> uv run ${SKILL_DIR}/scripts/register_template.py --kind style --rebuild-all
 +> uv run ${SKILL_DIR}/scripts/register_template.py --kind deck --rebuild-all
 +> uv run ${SKILL_DIR}/scripts/register_template.py --kind layout --rebuild-all
  > ```
  
- README files describe each kind in prose only — they do not list templates. Discovery happens against the JSON index file; the registrar does not touch READMEs.
-@@ -369,7 +371,7 @@ For a standard-mode template the card lo
+ README files describe each kind in prose only — they do not list templates.
+Index: ppt-master/workflows/create-template/create-brand.md
+===================================================================
+--- ppt-master.orig/workflows/create-template/create-brand.md
++++ ppt-master/workflows/create-template/create-brand.md
+@@ -143,19 +143,19 @@ Return these facts to Create Template:
+ For both scopes, Create Template Step 5 validates the portable Brand contract without registration:
  
- **Template Name**: <template_id> (<display_name>)
- **Kind**: deck | layout
--**Template Path**: `templates/<kind_dir>/<template_id>/`
-+**Template Path**: `$PPT_MASTER_TEMPLATES_DIR/<kind_dir>/<template_id>/`
- **Primary Color**: <hex>  ← deck only; omit for layout
- **Index Registration**: Done
+ ```bash
+-python3 skills/ppt-master/scripts/svg_quality_checker.py "<template_workspace>/templates" --template-mode
++uv run ${SKILL_DIR}/scripts/svg_quality_checker.py "<template_workspace>/templates" --template-mode
+ ```
  
+ For `library` scope, additionally validate the directory/index identity with:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/register_template.py <brand_id> --kind brand --dry-run
++uv run ${SKILL_DIR}/scripts/register_template.py <brand_id> --kind brand --dry-run
+ ```
+ 
+ After that gate passes, Create Template Step 7 registers with:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/register_template.py <brand_id> --kind brand
++uv run ${SKILL_DIR}/scripts/register_template.py <brand_id> --kind brand
+ ```
+ 
+ For `project` scope, run only the shared validator, skip both registrar commands, and report `Not registered (project workspace)`. Downstream consumption always uses the explicit workspace root through Generate PPTX Step 3; a bare brand name never activates it.
+Index: ppt-master/workflows/create-template/create-deck.md
+===================================================================
+--- ppt-master.orig/workflows/create-template/create-deck.md
++++ ppt-master/workflows/create-template/create-deck.md
+@@ -123,8 +123,8 @@ In addition to Create Template Steps 5�
+ For library scope, Create Template validates and registers with:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/register_template.py <deck_id> --kind deck --dry-run
+-python3 skills/ppt-master/scripts/register_template.py <deck_id> --kind deck
++uv run ${SKILL_DIR}/scripts/register_template.py <deck_id> --kind deck --dry-run
++uv run ${SKILL_DIR}/scripts/register_template.py <deck_id> --kind deck
+ ```
+ 
+ For project scope, skip both commands. The exact workspace root becomes the next Generate PPTX Step 3 input; any separately supplied Brand, Style, or Layout workspace overrides the corresponding complete segment downstream without mutating this deck workspace.
+Index: ppt-master/workflows/create-template/create-layout.md
+===================================================================
+--- ppt-master.orig/workflows/create-template/create-layout.md
++++ ppt-master/workflows/create-template/create-layout.md
+@@ -116,8 +116,8 @@ In addition to Create Template Steps 5�
+ For library scope, Create Template validates and registers with:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/register_template.py <layout_id> --kind layout --dry-run
+-python3 skills/ppt-master/scripts/register_template.py <layout_id> --kind layout
++uv run ${SKILL_DIR}/scripts/register_template.py <layout_id> --kind layout --dry-run
++uv run ${SKILL_DIR}/scripts/register_template.py <layout_id> --kind layout
+ ```
+ 
+ For project scope, skip both commands. The exact workspace root becomes the next Generate PPTX Step 3 input; downstream identity remains a Strategist decision unless an explicit Brand or Deck workspace is also supplied.
+Index: ppt-master/workflows/create-template/create-style.md
+===================================================================
+--- ppt-master.orig/workflows/create-template/create-style.md
++++ ppt-master/workflows/create-template/create-style.md
+@@ -167,19 +167,19 @@ Return these facts to Create Template:
+ For both scopes, Create Template Step 5 validates the portable Style contract without registration:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/svg_quality_checker.py "<template_workspace>/templates" --template-mode
++uv run ${SKILL_DIR}/scripts/svg_quality_checker.py "<template_workspace>/templates" --template-mode
+ ```
+ 
+ For `library` scope, additionally validate the directory/index identity with:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/register_template.py <style_id> --kind style --dry-run
++uv run ${SKILL_DIR}/scripts/register_template.py <style_id> --kind style --dry-run
+ ```
+ 
+ After that gate passes, Create Template Step 7 registers with:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/register_template.py <style_id> --kind style
++uv run ${SKILL_DIR}/scripts/register_template.py <style_id> --kind style
+ ```
+ 
+ For `project` scope, run only the shared validator, skip both registrar commands, and report `Not registered (project workspace)`. Downstream consumption always uses the explicit workspace root through Generate PPTX Step 3; a bare Style name or ordinary style description never activates it.
+Index: ppt-master/workflows/generate-pptx.md
+===================================================================
+--- ppt-master.orig/workflows/generate-pptx.md
++++ ppt-master/workflows/generate-pptx.md
+@@ -58,7 +58,7 @@ routes by source type, and writes the st
+ 
+ | User Provides | Action |
+ |---------------|--------|
+-| PDF / DOCX / Office document / XLSX / XLSM / PPTX / EPUB / HTML / LaTeX / RST / web URL | `python3 ${SKILL_DIR}/scripts/source_to_md.py <file_or_URL_or_dir> [<file_or_URL_or_dir> ...]` |
++| PDF / DOCX / Office document / XLSX / XLSM / PPTX / EPUB / HTML / LaTeX / RST / web URL | `uv run ${SKILL_DIR}/scripts/source_to_md.py <file_or_URL_or_dir> [<file_or_URL_or_dir> ...]` |
+ | CSV / TSV | Read directly as plain-text table source |
+ | Markdown | Read directly |
+ 
+@@ -103,7 +103,7 @@ After reading direct and converted conte
+ 🚧 **GATE**: Step 1 complete; source content is ready (Markdown file, user-provided text, or requirements described in conversation are all valid).
+ 
+ ```bash
+-python3 ${SKILL_DIR}/scripts/project_manager.py init <project_name> --format <format>
++uv run ${SKILL_DIR}/scripts/project_manager.py init <project_name> --format <format>
+ ```
+ 
+ Project initialization creates `<project_path>/validation/workflow.log` and
+@@ -119,7 +119,7 @@ working directory identifies the project
+ same command — still one Python process:
+ 
+ ```bash
+-PPT_MASTER_PROJECT_PATH="<project_path>" python3 ${SKILL_DIR}/scripts/<helper>.py <args...>
++PPT_MASTER_PROJECT_PATH="<project_path>" uv run ${SKILL_DIR}/scripts/<helper>.py <args...>
+ ```
+ 
+ When an important audit detail has no owning command output — for example a
+@@ -127,7 +127,7 @@ material stage handoff or rework reason,
+ recovery choice — the active role may append one concise note:
+ 
+ ```bash
+-python3 ${SKILL_DIR}/scripts/workflow_log.py <project_path> "<material audit detail>"
++uv run ${SKILL_DIR}/scripts/workflow_log.py <project_path> "<material audit detail>"
+ ```
+ 
+ Notes are selective and non-authoritative. Do not duplicate artifact contents,
+@@ -142,20 +142,27 @@ Import source content (choose based on t
+ 
+ | Situation | Action |
+ |-----------|--------|
+-| Has source files (PDF/MD/etc.) | `python3 ${SKILL_DIR}/scripts/project_manager.py import-sources <project_path> <source_files_or_dirs...>` |
++| Has source files (PDF/MD/etc.) | `uv run ${SKILL_DIR}/scripts/project_manager.py import-sources <project_path> <source_files_or_dirs...>` |
+ | User provided text directly in conversation | No import needed — content is already in conversation context; subsequent steps can reference it directly |
+ 
+ For PPTX sources, `import-sources` automatically runs the standard intake enrichment:
+ 
+ ```bash
+-python3 ${SKILL_DIR}/scripts/pptx_intake.py <project_path>/sources/<source.pptx> -o <project_path>/analysis
++uv run ${SKILL_DIR}/scripts/pptx_intake.py <project_path>/sources/<source.pptx> -o <project_path>/analysis
+ ```
+ 
+ For each PPTX it writes `<stem>.identity.json` (canvas, theme palette/fonts, observed usage) and `<stem>.slide_library.json` (text slots, geometry, native tables, native chart caches, SmartArt nodes/connections), and merges that deck's Strategist-facing digest into the single multi-deck index `analysis/source_profile.json` (`decks[]`, one self-contained entry per source deck, with prefixed artifact pointers). In the main generation path these are source facts and recommendation candidates, not replica constraints; the beautify profile and Fill Native PPTX route decide separately which fields become locked constraints.
+ 
+ Multi-deck: several PPTX files may be imported into one main-pipeline project — each gets its own `<stem>.*` artifacts and a deck entry in `source_profile.json`. `source_profile.json` stays the single must-read index (one entry for a one-deck project, several for a combined-source project). Stems must be distinct; re-importing the same stem replaces that deck's entry. The beautify profile and Fill Native PPTX route remain single-deck (1:1 to one chosen source deck) and read that deck's `<stem>.*` artifacts.
+ 
+-**Source ownership boundary**: Use the automatic import mode shown above. Only inputs already under the repository's `projects/` tree move into the target project's `sources/`; every other local path is copied and remains untouched, even if `--move` is supplied. Use `--copy` when a projects-local input must also remain in place. If Step 1 wrote Markdown beside the original sources, pass that source path/directory once. If Step 1 used `-o` to write Markdown elsewhere, pass both the original source path(s)/directory and the Markdown output path(s)/directory. Intermediate artifacts (e.g., `_files/`) are handled automatically.
++**Source ownership boundary**: Use the automatic import mode shown above. Only
++inputs already under `$PPT_MASTER_PROJECTS_DIR` move into the target project's
++`sources/`; every other local path is copied and remains untouched, even if
++`--move` is supplied. Use `--copy` when a projects-local input must also remain
++in place. If Step 1 wrote Markdown beside the original sources, pass that source
++path/directory once. If Step 1 used `-o` to write Markdown elsewhere, pass both
++the original source path(s)/directory and the Markdown output path(s)/directory.
++Intermediate artifacts (e.g., `_files/`) are handled automatically.
+ 
+ Direct supported bitmap inputs follow both boundaries: the original is archived under `sources/`, and a collision-safe basename is copied into `images/` for analysis and §VIII planning. SVG/EMF/WMF remain source assets unless they arrive through a converter companion manifest that supplies their display metadata. This does not classify an asset's role; Strategist still decides whether it is used.
+ 
+@@ -173,12 +180,13 @@ roots or free design inside its profile
+ Prepare the candidate boundary that Stage 1 will confirm. Registered candidates
+ come from exactly these discovery sources:
+ 
+-- `templates/brands/brands_index.json`
+-- `templates/styles/styles_index.json`
+-- `templates/layouts/layouts_index.json`
+-- `templates/decks/decks_index.json`
++- `$PPT_MASTER_TEMPLATES_DIR/brands/brands_index.json`
++- `$PPT_MASTER_TEMPLATES_DIR/styles/styles_index.json`
++- `$PPT_MASTER_TEMPLATES_DIR/layouts/layouts_index.json`
++- `$PPT_MASTER_TEMPLATES_DIR/decks/decks_index.json`
+ 
+-Derive each library root as `templates/<kind_dir>/<id>/` from its index entry.
++Derive each library root as
++`$PPT_MASTER_TEMPLATES_DIR/<kind_dir>/<id>/` from its index entry.
+ Never scan kind directories, infer unregistered entries, or resolve a bare name,
+ brand mention, or style phrase to a path. Preserve every exact root supplied for
+ this run. A registered-root equality match remains `library`; every other exact
+@@ -307,8 +315,8 @@ candidate content, then launch the combi
+ `confirm_ui.md`'s required communication + template-choice summary/fallback:
+ 
+ ```bash
+-python3 ${SKILL_DIR}/scripts/confirm_ui/server.py <project_path> --daemon
+-python3 ${SKILL_DIR}/scripts/confirm_ui/server.py <project_path> --wait-only --wait-stage stage1
++uv run ${SKILL_DIR}/scripts/confirm_ui/server.py <project_path> --daemon
++uv run ${SKILL_DIR}/scripts/confirm_ui/server.py <project_path> --wait-only --wait-stage stage1
+ ```
+ 
+ The single Stage-1 submission writes both `result.json` and
+@@ -323,7 +331,7 @@ or `templates` with at least one server-
+    For `free_design`, skip installation. Then bind the completed state:
+ 
+    ```bash
+-   python3 ${SKILL_DIR}/scripts/confirm_ui/server.py <project_path> --complete-template-selection
++   uv run ${SKILL_DIR}/scripts/confirm_ui/server.py <project_path> --complete-template-selection
+    ```
+ 
+    This agent-only command writes `template_handoff.json`; do not hand-author
+@@ -336,7 +344,7 @@ or `templates` with at least one server-
+    declare `stage: "stage2"`, then wait for the final confirmation:
+ 
+    ```bash
+-   python3 ${SKILL_DIR}/scripts/confirm_ui/server.py <project_path> --wait-only
++   uv run ${SKILL_DIR}/scripts/confirm_ui/server.py <project_path> --wait-only
+    ```
+ 
+ 3. After the final wait returns, read the complete `result.json` exactly once
+@@ -350,7 +358,7 @@ or `templates` with at least one server-
+ 4. After final confirmation or chat fallback, always release the server:
+ 
+    ```bash
+-   python3 ${SKILL_DIR}/scripts/confirm_ui/server.py <project_path> --shutdown
++   uv run ${SKILL_DIR}/scripts/confirm_ui/server.py <project_path> --shutdown
+    ```
+ 
+ If the user selects chat any time after the UI server launches, immediately
+@@ -382,8 +390,8 @@ After the review closes, author `spec_lo
+ 
+ | Signal read | Line content |
+ |---|---|
+-| Heavy (long page count / bulky sources / heavy retained research context) | State the applicable heavy signals; recommend switching to [split mode](stages/resume-execute.md) after Step 5 — stop this chat, open a fresh window and input `继续生成 projects/<project_name>` to enter the execution session (SVG generation + export); no response or "continue" = default continuous mode. |
+-| Explicit `split` selection | Confirm that planning will stop after Step 5 and give the `继续生成 projects/<project_name>` handoff command. |
++| Heavy (long page count / bulky sources / heavy retained research context) | State the applicable heavy signals; recommend switching to [split mode](stages/resume-execute.md) after Step 5 — stop this chat, open a fresh window and input `继续生成 <project_path>` to enter the execution session (SVG generation + export); no response or "continue" = default continuous mode. |
++| Explicit `split` selection | Confirm that planning will stop after Step 5 and give the `继续生成 <project_path>` handoff command. |
+ 
+ For the normal/default `continuous` path, print no split-mode reminder and proceed automatically. Confirm UI still exposes the generation-mode toggle and records it in `result.json`; a chat fallback captures the same choice in its confirmation summary without adding a separate reminder.
+ 
+@@ -413,7 +421,7 @@ when complete per-slide files are absent
+ 
+ If the user provided images or formula PNGs were rendered, run analysis **before outputting the design spec**. It writes `analysis/image_analysis.csv` — the authoritative regenerated image-fact view in the `analysis/` folder, which MUST be read before authoring §VIII:
+ ```bash
+-python3 ${SKILL_DIR}/scripts/analyze_images.py <project_path>/images
++uv run ${SKILL_DIR}/scripts/analyze_images.py <project_path>/images
+ ```
+ 
+ > 🔁 **Image facts are regenerated on change, never maintained as a second store.** `images/` is the live working folder and single source of truth; `analysis/image_analysis.csv` is its regenerated view. Run `analyze_images.py` before the first inventory read, then reuse that CSV while `images/` is unchanged. Re-run after import/acquisition or any user addition, removal, or replacement; an empty folder produces a fresh header-only CSV rather than leaving stale facts.
+@@ -430,7 +438,7 @@ For a new project, use the reference-fir
+ 2. Audit it field by field against retained confirmation; Gate 1 must pass.
+ 3. If enabled, run [`refine-spec`](stages/refine-spec.md) on that file until explicit approval; touch no lock.
+ 4. Read `${SKILL_DIR}/templates/spec_lock_reference.md`; create or resynchronize the lock once from approved Design Spec and context. Never reopen `result.json` or make a new design choice.
+-5. Compare lock anchors/routing to the Design Spec; run `python3 ${SKILL_DIR}/scripts/project_manager.py validate <project_path>`.
++5. Compare lock anchors/routing to the Design Spec; run `uv run ${SKILL_DIR}/scripts/project_manager.py validate <project_path>`.
+ 
+ Final state → initial Design Spec mismatch, approved Design Spec/context → lock mismatch, or an unapplied revision blocks despite schema validity. `validate` does not prove fidelity. Repair from retained confirmation before refinement; during it, preserve unaffected values and apply explicit revisions. After approval, derive the lock from that Design Spec/context. Resume/refine edits existing files, never scaffolds. Fresh recovery alone may reread persisted final evidence once.
+ 
+@@ -457,8 +465,8 @@ Then **lazy-load the path-specific refer
+ | Acquire Via | Load reference (only if any such row exists) | Run |
+ |---|---|---|
+ | `ai` | `references/image-generator.md` | write `<project_path>/images/image_prompts.json`, then follow `image-generator.md §7 Path Selection` (`image_gen.py --manifest` is **Path A only**) |
+-| `web` | `references/image-searcher.md` | `python3 ${SKILL_DIR}/scripts/image_search.py ...` (≥2 web rows → `--batch images/image_queries.json`) |
+-| `slice` | `references/image-generator.md` §4.3 | derived — **after** the parent `ai` sheet row is `Generated`, run `python3 ${SKILL_DIR}/scripts/slice_images.py <project_path>/images/<sheet>.png --grid RxC --names ... --trim --alpha` (see workflow step 2.5) |
++| `web` | `references/image-searcher.md` | `uv run ${SKILL_DIR}/scripts/image_search.py ...` (≥2 web rows → `--batch images/image_queries.json`) |
++| `slice` | `references/image-generator.md` §4.3 | derived — **after** the parent `ai` sheet row is `Generated`, run `uv run ${SKILL_DIR}/scripts/slice_images.py <project_path>/images/<sheet>.png --grid RxC --names ... --trim --alpha` (see workflow step 2.5) |
+ | `user` / `formula` / `placeholder` | (skip) | (skip) |
+ 
+ A deck with only `ai` rows never loads `image-searcher.md`; a deck with only `web` rows never loads `image-generator.md`. A mixed deck loads both, processes each row through its own path, and writes both `image_prompts.json` and `image_sources.json`.
+@@ -479,7 +487,7 @@ Workflow:
+ 2. Generate prompts (ai rows) and/or run search (web rows) per [image-base.md](../references/image-base.md) §3 dispatch table
+ 2.5. **Slice any spot-illustration sheets (only if `slice` rows exist).** For each generated `ai` **sheet** row, run `slice_images.py` (grid + the element `--names` matching the `slice` rows, `--trim --alpha`) so every element file lands in `images/`; mark each `slice` row `Generated`. A sheet still in `Needs-Manual` cannot be sliced — leave its `slice` rows `Needs-Manual` and surface them at the Step 7 readiness gate. Contract: [image-generator.md](../references/image-generator.md) §4.3.
+ 3. Verify every row reaches a terminal status: `Generated` (ai success / sliced element), `Sourced` (web success), or `Needs-Manual`. `Failed` is not a terminal status: it means the current run did not generate that item, but the item remains retryable. On `auto`, follow the owning fallback chain. On an explicitly confirmed `api` or `host-native` path, retry only that path; if it still fails, mark the row `Needs-Manual` without switching to another automated provider.
+-4. Re-derive image facts now that web / AI / sliced files are in the folder — `python3 ${SKILL_DIR}/scripts/analyze_images.py <project_path>/images` — so `analysis/image_analysis.csv` reflects every acquired image **including the sliced elements** (real measured sizes) before the Executor lays them out. Image facts are regenerated on use, never a stale store (see Step 4's image-facts note).
++4. Re-derive image facts now that web / AI / sliced files are in the folder — `uv run ${SKILL_DIR}/scripts/analyze_images.py <project_path>/images` — so `analysis/image_analysis.csv` reflects every acquired image **including the sliced elements** (real measured sizes) before the Executor lays them out. Image facts are regenerated on use, never a stale store (see Step 4's image-facts note).
+ 
+ **✅ Internal checkpoint — acquisition complete**: verify conditional AI/web sidecars, all required slice outputs, terminal status for every resource row, and a refreshed `image_analysis.csv`. Do not print this checklist. On success, auto-proceed under the compact status rule above.
+ 
+@@ -489,7 +497,7 @@ Workflow:
+   ## ✅ Planning Session Complete
+   - [x] Spec: `design_spec.md`, `spec_lock.md`
+   - [x] Resources: `sources/`, `images/`, `templates/`
+-  - [ ] **Next**: open a fresh chat window and input `继续生成 projects/<project_name>` to enter the execution session via the [`resume-execute`](stages/resume-execute.md) stage.
++  - [ ] **Next**: open a fresh chat window and input `继续生成 <project_path>` to enter the execution session via the [`resume-execute`](stages/resume-execute.md) stage.
+   ```
+ 
+ > On acquisition failure, follow [image-base.md](../references/image-base.md) §6 without halting. Web rows continue through materially different query/provider/license/URL strategies; after exhaustion, mark `Needs-Manual`, report, and continue.
+@@ -540,7 +548,7 @@ No branch is loaded by analogy. Evaluate
+ 
+ **Live Preview Auto-Startup (Mandatory)**: before the first SVG, automatically start the browser editor in live mode and keep it running continuously through Executor + Step 7 export:
+ ```bash
+-python3 ${SKILL_DIR}/scripts/svg_editor/server.py <project_path> --live --daemon
++uv run ${SKILL_DIR}/scripts/svg_editor/server.py <project_path> --live --daemon
+ ```
+ - Start when Executor begins; `svg_output/` may be empty. Default: first free port from `5050`; `--port N`: strict bind. Read the actual URL from output or `<project_path>/live_preview/lock.json`.
+ - Before the first SVG, report that URL or the launch failure; never claim an unavailable preview.
+@@ -551,7 +559,7 @@ python3 ${SKILL_DIR}/scripts/svg_editor/
+ 
+ **Conditional reference reads**: Follow `executor-structured.md` for template Design Spec/prototypes and `executor-chart.md` for chart SVGs. Read each selected full reference once per valid context; reread only after a known change or context invalidation. Flat routes skip template reads. Summaries and sidecars never replace full SVGs.
+ 
+-> Image facts: trust the latest `analysis/image_analysis.csv` from the Step 4 inventory read or the Step 5 post-acquisition refresh. If `images/` changed since, re-run `python3 ${SKILL_DIR}/scripts/analyze_images.py <project_path>/images` before layout; if the folder is empty, use no image inventory and ignore a stale CSV.
++> Image facts: trust the latest `analysis/image_analysis.csv` from the Step 4 inventory read or the Step 5 post-acquisition refresh. If `images/` changed since, re-run `uv run ${SKILL_DIR}/scripts/analyze_images.py <project_path>/images` before layout; if the folder is empty, use no image inventory and ignore a stale CSV.
+ 
+ **Page-context**: use the read-only projector only for the diagnostic/telemetry triggers in Executor §2.1, never as a routine pre-page load.
+ 
+@@ -587,7 +595,7 @@ Do not duplicate specialized identity wi
+ 
+ **First-page gate (Mandatory)** — after the **first** SVG page, before drawing page 2:
+ ```bash
+-python3 ${SKILL_DIR}/scripts/svg_quality_checker.py <project_path> --stage first-page --json
++uv run ${SKILL_DIR}/scripts/svg_quality_checker.py <project_path> --stage first-page --json
+ ```
+ Run the command unfiltered—do not pipe it through `tail`, `head`, `grep`, or another output truncator. Review the complete P01 issue set from that one run before editing. Select any advisory warnings worth addressing, fix all blocking errors and selected warnings in one consolidated edit pass, then perform one verification rerun. Do not rerun merely to reveal the next issue. If verification still fails, treat its complete output as the next batch and repeat the same review → consolidated edit → single verification cycle; never check between individual fixes. If the terminal output itself is truncated, read only the relevant issue arrays from `validation/svg_quality_first_page_report.json`; do not launch another checker run for discovery. After the gate passes, draw P02 through the final page without checker calls.
+ 
+@@ -609,7 +617,7 @@ gate-signal: method=<rule resolved, or n
+ 
+ **Quality Check Gate (Mandatory)** — only after every planned SVG exists, BEFORE annotation handling and speaker notes:
+ ```bash
+-python3 ${SKILL_DIR}/scripts/svg_quality_checker.py <project_path> --stage final --json
++uv run ${SKILL_DIR}/scripts/svg_quality_checker.py <project_path> --stage final --json
+ ```
+ - **MUST**: Before this gate, every chart/table whose Design Spec §IX page block says `Native-ready: yes` already has its own draw-time marker plus JSON metadata. Rows marked `no` and incidental microvisuals remain ordinary SVG. For legacy specs only, a matching §VII value may supply the decision when §IX has no field.
+ - Run the command unfiltered—do not pipe it through `tail`, `head`, `grep`, or another output truncator. One invocation already scans every page and reports the complete issue set.
+@@ -679,7 +687,7 @@ Run this sub-step only when the effectiv
+ `design_spec.md §I` is enabled:
+ 
+ ```bash
+-python3 ${SKILL_DIR}/scripts/total_md_split.py <project_path>
++uv run ${SKILL_DIR}/scripts/total_md_split.py <project_path>
+ ```
+ 
+ **Success criterion**: When enabled, per-slide Markdown files exist under
+@@ -689,7 +697,7 @@ command and proceed directly to Step 7.2
+ #### Step 7.2 — Build the Self-Contained SVG Preview
+ 
+ ```bash
+-python3 ${SKILL_DIR}/scripts/finalize_svg.py <project_path>
++uv run ${SKILL_DIR}/scripts/finalize_svg.py <project_path>
+ ```
+ 
+ **Success criterion**: `<project_path>/svg_final/` contains one self-contained preview SVG for every published slide. This mandatory derived preview does not replace `svg_output/` as the native-export source.
+@@ -700,8 +708,8 @@ Choose exactly one notes mode:
+ 
+ | Effective decision | Command |
+ |---|---|
+-| Speaker Notes `enabled` | `python3 ${SKILL_DIR}/scripts/svg_to_pptx.py <project_path>` |
+-| Speaker Notes `disabled` | `python3 ${SKILL_DIR}/scripts/svg_to_pptx.py <project_path> --no-notes` |
++| Speaker Notes `enabled` | `uv run ${SKILL_DIR}/scripts/svg_to_pptx.py <project_path>` |
++| Speaker Notes `disabled` | `uv run ${SKILL_DIR}/scripts/svg_to_pptx.py <project_path> --no-notes` |
+ 
+ For deck-wide motion settings, append the resolved flags from
+ [`animations.md`](../references/animations.md). When the conditional custom
+Index: ppt-master/workflows/native-enhance-pptx.md
+===================================================================
+--- ppt-master.orig/workflows/native-enhance-pptx.md
++++ ppt-master/workflows/native-enhance-pptx.md
+@@ -14,7 +14,7 @@ This route treats a `.pptx` as the artif
+ 
+ | Rule | Contract |
+ |---|---|
+-| Source file | If already under `projects/`, move it into the enhancement project; otherwise copy it |
++| Source file | If already under `$PPT_MASTER_PROJECTS_DIR`, move it into the enhancement project; otherwise copy it |
+ | Visible slides | Do not rewrite existing text, shapes, images, charts, tables, masters, or layouts |
+ | Route | Direct PPTX package patching; no SVG conversion |
+ | Output | A new `.pptx` under `<project>/exports/` |
+@@ -83,7 +83,7 @@ source.pptx
+ Run:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/native_enhance_pptx.py init "<source.pptx>" --name "<project_slug>"
++uv run ${SKILL_DIR}/scripts/native_enhance_pptx.py init "<source.pptx>" --name "<project_slug>"
+ ```
+ 
+ Project layout:
+@@ -103,7 +103,10 @@ Project layout:
+ 
+ `init` records the archived source SHA-256 and ordered slide-part roster, then writes the intake audit to `<project>/validation/report.json`. Package-integrity, OPC part/content-type/relationship, XML, slide-inventory, transition, or object-animation errors stop before a project-local source is moved. The only retained historical structural baseline is the narrowly recognized legacy notes-slide relationship to a missing notes master; it remains visible in the report and apply may not add any new structural error.
+ 
+-**Source import rule**: When `<source.pptx>` is inside the repo's `projects/` tree, `init` moves it into `<project>/sources/`. When it is outside `projects/`, `init` copies it into `<project>/sources/`. The mode is recorded in `project.json` as `source_import.mode`.
++**Source import rule**: When `<source.pptx>` is inside
++`$PPT_MASTER_PROJECTS_DIR`, `init` moves it into `<project>/sources/`. When it
++is outside that root, `init` copies it into `<project>/sources/`. The mode is
++recorded in `project.json` as `source_import.mode`.
+ 
+ The `init` command also writes:
+ 
+@@ -122,7 +125,7 @@ The `init` command also writes:
+ If the project already existed or notes/audio coverage changed, refresh the draft:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/native_enhance_pptx.py plan "<project>"
++uv run ${SKILL_DIR}/scripts/native_enhance_pptx.py plan "<project>"
+ ```
+ 
+ `plan` preserves module settings, refreshes coverage, and emits a
+@@ -252,7 +255,7 @@ Write:
+ Run coverage check:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/native_enhance_pptx.py validate "<project>" --materials notes
++uv run ${SKILL_DIR}/scripts/native_enhance_pptx.py validate "<project>" --materials notes
+ ```
+ 
+ > Note: This keeps source/plan/transition/carrier checks but does not require
+@@ -293,7 +296,7 @@ Run [`generate-audio`](./stages/generate
+ Validate:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/native_enhance_pptx.py validate "<project>"
++uv run ${SKILL_DIR}/scripts/native_enhance_pptx.py validate "<project>"
+ ```
+ 
+ ---
+@@ -305,13 +308,13 @@ python3 skills/ppt-master/scripts/native
+ Run:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/native_enhance_pptx.py apply "<project>"
++uv run ${SKILL_DIR}/scripts/native_enhance_pptx.py apply "<project>"
+ ```
+ 
+ Optional:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/native_enhance_pptx.py apply "<project>" \
++uv run ${SKILL_DIR}/scripts/native_enhance_pptx.py apply "<project>" \
+   --transition fade \
+   --transition-duration 0.5 \
+   --narration-padding 0.4 \
+@@ -363,7 +366,7 @@ introduced-error delta to `<project>/val
+ Run read-back:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/source_to_md/ppt_to_md.py \
++uv run ${SKILL_DIR}/scripts/source_to_md/ppt_to_md.py \
+   "<project>/exports/<source>_enhanced.pptx" \
+   -o "<project>/validation/readback.md"
+ ```
+Index: ppt-master/workflows/profiles/quick-generate.md
+===================================================================
+--- ppt-master.orig/workflows/profiles/quick-generate.md
++++ ppt-master/workflows/profiles/quick-generate.md
+@@ -78,7 +78,7 @@ Prepare source facts before initializati
+ | Input | Action |
+ |---|---|
+ | Topic or requirements without supporting facts | Run [`topic-research`](../stages/topic-research.md) immediately and retain its Markdown supplement plus fact-provenance JSON for import |
+-| PDF / DOCX / Office document / XLSX / XLSM / PPTX / EPUB / HTML / LaTeX / RST / web URL | Run `python3 ${SKILL_DIR}/scripts/source_to_md.py <file_or_URL_or_dir> [<file_or_URL_or_dir> ...]` |
++| PDF / DOCX / Office document / XLSX / XLSM / PPTX / EPUB / HTML / LaTeX / RST / web URL | Run `uv run ${SKILL_DIR}/scripts/source_to_md.py <file_or_URL_or_dir> [<file_or_URL_or_dir> ...]` |
+ | CSV / TSV | Read directly as a plain-text table source |
+ | Markdown or direct conversation text | Read directly |
+ 
+@@ -122,7 +122,7 @@ Neither branch creates anything under `c
+ `confirm_ui/server.py`. Initialize the minimal workspace with:
+ 
+ ```bash
+-python3 ${SKILL_DIR}/scripts/project_manager.py init <project_name> \
++uv run ${SKILL_DIR}/scripts/project_manager.py init <project_name> \
+   --format <format> --quick-generate
+ ```
+ 
+@@ -143,16 +143,16 @@ With file-based sources, import the orig
+ research pair together:
+ 
+ ```bash
+-python3 ${SKILL_DIR}/scripts/project_manager.py import-sources \
++uv run ${SKILL_DIR}/scripts/project_manager.py import-sources \
+   <project_path> <source_files_or_dirs...> [<converted_outputs...>] \
+-  [projects/<research_slug>.md projects/<research_slug>.facts.json]
++  [$PPT_MASTER_PROJECTS_DIR/<research_slug>.md $PPT_MASTER_PROJECTS_DIR/<research_slug>.facts.json]
+ ```
+ 
+-Only inputs already under the repository's `projects/` tree move into the
+-target project; every external path is copied and remains untouched. Use
+-`--copy` when a projects-local input must also remain in place. When conversion
+-wrote Markdown beside the original source, pass that source path or directory
+-once; when `-o` wrote it elsewhere, pass both locations. Direct supported bitmap
++Only inputs already under `$PPT_MASTER_PROJECTS_DIR` move into the target
++project; every external path is copied and remains untouched. Use `--copy` when
++a projects-local input must also remain in place. When conversion wrote
++Markdown beside the original source, pass that source path or directory once;
++when `-o` wrote it elsewhere, pass both locations. Direct supported bitmap
+ inputs are archived under `sources/` and copied collision-safely into `images/`.
+ 
+ For each imported PPTX, `import-sources` automatically writes
+@@ -351,14 +351,14 @@ authored. Complete all coordinate repair
+ SVG check:
+ 
+ ```bash
+-python3 ${SKILL_DIR}/scripts/svg_quality_checker.py <project_path> \
++uv run ${SKILL_DIR}/scripts/svg_quality_checker.py <project_path> \
+   --quick-generate --stage final --json
+ ```
+ 
+ Fix every blocking error and rerun the same command. Then export:
+ 
+ ```bash
+-python3 ${SKILL_DIR}/scripts/svg_to_pptx.py <project_path> --quick-generate
++uv run ${SKILL_DIR}/scripts/svg_to_pptx.py <project_path> --quick-generate
+ ```
+ 
+ `--quick-generate` reads `svg_output/` as the page source and resolves the
+Index: ppt-master/workflows/stages/apply-template-workspace.md
+===================================================================
+--- ppt-master.orig/workflows/stages/apply-template-workspace.md
++++ ppt-master/workflows/stages/apply-template-workspace.md
+@@ -27,7 +27,7 @@ The spec frontmatter MUST declare `kind:
+ 
+ | Source label | Resolution rule |
+ |---|---|
+-| `library` | The normalized root exactly equals `templates/<kind_dir>/<id>/` derived from an entry in that kind's `*_index.json` |
++| `library` | The normalized root exactly equals `$PPT_MASTER_TEMPLATES_DIR/<kind_dir>/<id>/` derived from an entry in that kind's `*_index.json` |
+ | `explicit` | The user or Create Template supplied an exact workspace root that is not registered at that canonical index-derived root |
+ 
+ Read library choices only from `brands_index.json`, `styles_index.json`,
+@@ -62,7 +62,7 @@ library registration; Brand/Style pass w
+ their roster and structure:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/svg_quality_checker.py "<workspace_root>/templates" --template-mode
++uv run ${SKILL_DIR}/scripts/svg_quality_checker.py "<workspace_root>/templates" --template-mode
+ ```
+ 
+ Any error blocks installation. A compatible legacy-flat root uses its own root
+@@ -97,7 +97,7 @@ Prepend exactly one provenance line unde
+ the rest of the document untouched:
+ 
+ ```markdown
+-> **Installed from**: `skills/ppt-master/templates/brands/mckinsey/` (library)
++> **Installed from**: `$PPT_MASTER_TEMPLATES_DIR/brands/mckinsey/` (library)
+ ```
+ 
+ | Kind | Install behavior |
+Index: ppt-master/workflows/stages/resume-execute.md
+===================================================================
+--- ppt-master.orig/workflows/stages/resume-execute.md
++++ ppt-master/workflows/stages/resume-execute.md
+@@ -21,9 +21,9 @@ The user opens a new chat and gives a ph
+ 
+ | Pattern | Example |
+ |---|---|
+-| "继续生成 projects/<project_name>" | "继续生成 projects/ppt169_joe_hisaishi" |
+-| "resume execution projects/<project_name>" | "resume execution projects/ppt169_joe_hisaishi" |
+-| Project path + any "继续 / 恢复 / 继续做 / 接着做" semantic | "把 projects/ppt169_joe_hisaishi 继续做完" |
++| "继续生成 <project_path>" | "继续生成 $PPT_MASTER_PROJECTS_DIR/ppt169_joe_hisaishi" |
++| "resume execution <project_path>" | "resume execution $PPT_MASTER_PROJECTS_DIR/ppt169_joe_hisaishi" |
++| Project path + any "继续 / 恢复 / 继续做 / 接着做" semantic | "把 $PPT_MASTER_PROJECTS_DIR/ppt169_joe_hisaishi 继续做完" |
+ 
+ **Prerequisite**: the planning session must have completed in the named project. Verified by file presence in Step 1; do NOT auto-trigger planning on missing state.
+ 
+Index: ppt-master/workflows/stages/topic-research.md
+===================================================================
+--- ppt-master.orig/workflows/stages/topic-research.md
++++ ppt-master/workflows/stages/topic-research.md
+@@ -80,7 +80,7 @@ confirmation stage.
+ Use the web search and fetch tools available in the active research context. An isolated worker without them returns `blocked: web-tools-unavailable`. If no usable research context has search/fetch tools, the main agent pauses and asks the user for authoritative URLs covering the declared gaps, then fetches each with:
+ 
+ ```bash
+-python3 ${SKILL_DIR}/scripts/source_to_md/web_to_md.py <URL>
++uv run ${SKILL_DIR}/scripts/source_to_md/web_to_md.py <URL>
+ ```
+ 
+ | Phase | Action |
+@@ -105,14 +105,17 @@ research look complete.
+ 
+ ## Step 3: Save the factual supplement
+ 
+-Write two artifacts under `projects/`:
++Write two artifacts under `$PPT_MASTER_PROJECTS_DIR`:
+ 
+ | Artifact | Path |
+ |---|---|
+-| Research supplement | `projects/<research_slug>.md` |
+-| Fact provenance | `projects/<research_slug>.facts.json` |
++| Research supplement | `$PPT_MASTER_PROJECTS_DIR/<research_slug>.md` |
++| Fact provenance | `$PPT_MASTER_PROJECTS_DIR/<research_slug>.facts.json` |
+ 
+-**Hard rule — location and preservation**: write both files under `projects/`, never the repository root. Do not overwrite an existing user file; choose a new research stem instead. This stage creates no image folder.
++**Hard rule — location and preservation**: write both files under
++`$PPT_MASTER_PROJECTS_DIR`, never the Skill or repository root. Do not overwrite
++an existing user file; choose a new research stem instead. This stage creates
++no image folder.
+ 
+ Begin the research Markdown with a compact `## Research Brief` containing the supplied-material baseline, declared gaps, audience / intent already known, and requested outcome. Organize the body by gap, include concrete facts only, flag material conflicts, and end with `## Sources` listing every URL used.
+ 
+@@ -145,7 +148,10 @@ Import the research supplement and prove
+ sources through the active profile's source intake:
+ 
+ ```bash
+-python3 ${SKILL_DIR}/scripts/project_manager.py import-sources projects/<project_name> [<source_paths...>] projects/<research_slug>.md projects/<research_slug>.facts.json
++uv run ${SKILL_DIR}/scripts/project_manager.py import-sources \
++  <project_path> [<source_paths...>] \
++  "$PPT_MASTER_PROJECTS_DIR/<research_slug>.md" \
++  "$PPT_MASTER_PROJECTS_DIR/<research_slug>.facts.json"
+ ```
+ 
+ The imported pair remains evidence-facing context, not a locked presentation
+@@ -157,8 +163,8 @@ active-context content, design, and reso
+ ```markdown
+ ## ✅ Topic Research Complete
+ - [x] Research execution: <isolated worker | main-context fallback>
+-- [x] Research supplement: `projects/<research_slug>.md` (N declared gaps covered)
+-- [x] Fact provenance: `projects/<research_slug>.facts.json` (N external facts)
++- [x] Research supplement: `$PPT_MASTER_PROJECTS_DIR/<research_slug>.md` (N declared gaps covered)
++- [x] Fact provenance: `$PPT_MASTER_PROJECTS_DIR/<research_slug>.facts.json` (N external facts)
+ - [x] Artifact contract validated: `## Research Brief`, `## Sources`, `ppt-master.fact-provenance.v1`, unique sequential IDs, and Markdown/JSON agreement
+ - [x] No images acquired inside this factual-research stage
+ - [ ] **Next**: Default returns to [`generate-pptx`](../generate-pptx.md) Step 2; Quick returns to [`quick-generate`](../profiles/quick-generate.md) §2. Import all source artifacts, then fully read the imported research pair before planning or direct SVG authoring
+Index: ppt-master/workflows/template-fill-pptx.md
+===================================================================
+--- ppt-master.orig/workflows/template-fill-pptx.md
++++ ppt-master/workflows/template-fill-pptx.md
+@@ -53,14 +53,18 @@ If the content material is only a topic
+ 
+ ## Step 2: Create the Project Workspace
+ 
+-Create a dedicated project directory under `projects/`. Do not write outputs directly into `projects/` root. Reuse the standard project manager so source import rules stay consistent with the rest of the repository:
++Create a dedicated project directory under `$PPT_MASTER_PROJECTS_DIR`. Do not
++write outputs directly into that root. Reuse the standard project manager so
++source import rules stay consistent with the rest of the workflow:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/project_manager.py init "<project_name>" --format ppt169
+-python3 skills/ppt-master/scripts/project_manager.py import-sources "<project_dir>" "<source.pptx>" "<material...>"
++uv run ${SKILL_DIR}/scripts/project_manager.py init "<project_name>" --format ppt169
++uv run ${SKILL_DIR}/scripts/project_manager.py import-sources "<project_dir>" "<source.pptx>" "<material...>"
+ ```
+ 
+-**Source import rule**: `project_manager.py import-sources` moves only sources under repository `projects/` and copies all others. `--copy` preserves a projects-local input; `--move` never widens that scope. Reuse this path.
++**Source import rule**: `project_manager.py import-sources` moves only sources
++under `$PPT_MASTER_PROJECTS_DIR` and copies all others. `--copy` preserves a
++projects-local input; `--move` never widens that scope. Reuse this path.
+ 
+ Use this fixed layout:
+ 
+@@ -80,7 +84,7 @@ Use this fixed layout:
+ `project_manager.py import-sources` automatically runs the standard PPTX intake for imported PowerPoint files and writes `<stem>.slide_library.json` into `<project_dir>/analysis/`. If you are working from a manually assembled project that does not have the intake artifact, run the template-fill analyzer directly:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/template_fill_pptx.py analyze "<project_dir>/sources/<source.pptx>" -o "<project_dir>/analysis/<stem>.slide_library.json"
++uv run ${SKILL_DIR}/scripts/template_fill_pptx.py analyze "<project_dir>/sources/<source.pptx>" -o "<project_dir>/analysis/<stem>.slide_library.json"
+ ```
+ 
+ Read `<project_dir>/analysis/<stem>.slide_library.json` (intake prefixes per-deck artifacts by the template deck's file stem) and identify:
+@@ -123,7 +127,7 @@ A page's layout already encodes a rhetor
+ Create a scaffold:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/template_fill_pptx.py scaffold "<project_dir>/analysis/<stem>.slide_library.json" -o "<project_dir>/analysis/fill_plan.json" --slides "1,3,4"
++uv run ${SKILL_DIR}/scripts/template_fill_pptx.py scaffold "<project_dir>/analysis/<stem>.slide_library.json" -o "<project_dir>/analysis/fill_plan.json" --slides "1,3,4"
+ ```
+ 
+ Then edit `<project_dir>/analysis/fill_plan.json` by hand from the source material. The plan is the single execution contract.
+@@ -243,7 +247,7 @@ Example `notes` value for a Chinese cont
+ Run the data-based capacity check before applying the plan:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/template_fill_pptx.py check-plan "<project_dir>/analysis/<stem>.slide_library.json" "<project_dir>/analysis/fill_plan.json" -o "<project_dir>/analysis/check_report.json"
++uv run ${SKILL_DIR}/scripts/template_fill_pptx.py check-plan "<project_dir>/analysis/<stem>.slide_library.json" "<project_dir>/analysis/fill_plan.json" -o "<project_dir>/analysis/check_report.json"
+ ```
+ 
+ Interpret the report:
+@@ -269,7 +273,7 @@ Interpret the report:
+ Run:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/template_fill_pptx.py apply "<project_dir>/sources/<source.pptx>" "<project_dir>/analysis/fill_plan.json" -o "<project_dir>/exports/<output.pptx>"
++uv run ${SKILL_DIR}/scripts/template_fill_pptx.py apply "<project_dir>/sources/<source.pptx>" "<project_dir>/analysis/fill_plan.json" -o "<project_dir>/exports/<output.pptx>"
+ ```
+ 
+ By default `apply` preserves every cloned slide's existing transition. Select
+@@ -315,7 +319,7 @@ effects, treat that as a separate direct
+ Run a lightweight readability check:
+ 
+ ```bash
+-python3 skills/ppt-master/scripts/template_fill_pptx.py validate "<project_dir>"
++uv run ${SKILL_DIR}/scripts/template_fill_pptx.py validate "<project_dir>"
+ ```
+ 
+ The validator finds the latest PPTX in `<project_dir>/exports/`, runs `ppt_to_md.py` into `<project_dir>/validation/readback.md`, and writes `<project_dir>/validation/validate_report.json`. `exports/` must contain only final deliverables.

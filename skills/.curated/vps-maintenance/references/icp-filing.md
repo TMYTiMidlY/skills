@@ -55,7 +55,7 @@
 
 结论：只要请求里不带域名就没事。浏览器用纯 IP 访问时默认不发 SNI，也没有域名可匹配，实测稳定可用，是目前在用的方案。
 
-一个服务一个端口，`https://<主 IP>` 走默认的 443 也能正常访问；其他服务用各自的端口。TLS 统一 `tls internal` 自签，客户端装 Caddy local root CA，见 [caddy.md](caddy.md) 的“导入 Caddy local root CA（仅 `tls internal` 场景）”小节。
+一个服务一个端口，`https://<主 IP>` 走默认的 443 也能正常访问；其他服务用各自的端口。TLS 统一使用 `tls internal` 自签；Caddy 的 IP 模式和 local root CA 导入由 `network` skill 覆盖。
 
 > 严格讲这是违规操作，V2EX 上有反馈过“一个星期后接到电话”的案例，共识是小规模用通常被容忍。长期要合规还是得备案或走海外前端反代。
 
@@ -75,7 +75,7 @@ https://ddns.shenjack.top:10003/dashboard
 
 ⚠️ **不要把这条经验外推到国内 ECS**——同样“未备案域名 + 非标端口”，放到阿里云大陆 ECS 上就会被中间设备 RST（见上文“SNI 封锁实测”）。**链路不同，机制不同**：家宽能用是因为家宽链路上不部署这条旁路检测，**不是因为“非标端口豁免 SNI 拦截”**。
 
-> 补充：“**有域名 + 非标端口正常签 Let's Encrypt**” 跟 [caddy.md](caddy.md) 的“IP 模式（无域名 / 未备案）”是互补关系：caddy.md 教的是“没有域名时用 `tls internal` + 客户端装 Caddy local root CA 凑合”；这里讲的是“有域名时用真实 CA 签发的非标端口 HTTPS”——后者**只对家宽/海外 VPS 适用**，对国内 ECS 仍要走 IP 模式或备案。两条路按 链路是否带 SNI 旁路检测 + 是否能接受导入 root CA 来选。
+> 补充：“**有域名 + 非标端口正常签 Let's Encrypt**” 跟 `network` skill 覆盖的 Caddy IP 模式互补：该模式讲的是“没有域名时用 `tls internal` + 客户端装 Caddy local root CA 凑合”；这里讲的是“有域名时用真实 CA 签发的非标端口 HTTPS”——后者**只对家宽/海外 VPS 适用**，对国内 ECS 仍要走 IP 模式或备案。两条路按 链路是否带 SNI 旁路检测 + 是否能接受导入 root CA 来选。
 
 ## 由备案约束衍生的部署模式
 
@@ -92,7 +92,7 @@ https://ddns.shenjack.top:10003/dashboard
   - **已备案域名**：拿任意一个已备案域名（备案挂谁名下都行，已在别处备案的走一遍接入备案即可）解析到这台国内 VPS，正常做 HTTPS——备案绑的是域名、不绑服务器账号（见“核心机制”）。
 - 国内 VPS 的好处是延迟低、对国内访问友好；缺点是受备案/审计约束更强，所以**只跑组网中转和反代落地，不做面向公众的服务**。
 
-EasyTier 的具体配置见 [easytier.md](easytier.md)；Caddy 反代见 [caddy.md](caddy.md)。
+EasyTier 的具体配置见 [easytier.md](easytier.md)；Caddy 反代由 `network` skill 覆盖。
 
 ## 关键词索引
 

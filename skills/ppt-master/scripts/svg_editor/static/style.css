@@ -229,9 +229,14 @@ html, body {
 
 #svg-content svg {
     display: block;
+    /* Both dimensions auto so the box hugs the slide at any aspect ratio: with
+       only height:auto, portrait formats (e.g. 1242x1660) keep their attribute
+       width while max-height shrinks the height, leaving large white bands
+       inside the white card. width:auto lets the element scale proportionally. */
+    width: auto;
+    height: auto;
     max-width: 100%;
     max-height: calc(100vh - 72px);
-    height: auto;
 }
 
 /* ---------- SVG element interaction states ---------- */
@@ -248,6 +253,14 @@ html, body {
 .svg-selected {
     outline: 2px solid #4a9eff !important;
     outline-offset: 2px;
+    cursor: move;
+}
+
+/* While a drag is in progress, keep the move cursor everywhere so it does not
+   flicker to the hovered element's cursor as the pointer crosses other shapes. */
+body.svg-dragging,
+body.svg-dragging * {
+    cursor: move !important;
 }
 
 .svg-annotated {
@@ -317,11 +330,62 @@ html, body {
     color: #a0a0c0;
 }
 
+/* --- Pending status --- */
+.pending-status {
+    margin: 0 16px 10px;
+    padding: 8px 10px;
+    border: 1px solid #2a2a4a;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.pending-status.empty {
+    color: #7a7a9a;
+    background: #18182a;
+}
+
+.pending-status.active {
+    color: #f8d46b;
+    background: rgba(245, 197, 66, 0.08);
+    border-color: rgba(245, 197, 66, 0.45);
+}
+
+.pending-pages {
+    margin-top: 3px;
+    color: #b8a866;
+    word-break: break-word;
+}
+
 /* --- Annotation input --- */
 #annotation-input {
     padding: 12px 16px;
     border-bottom: 1px solid #2a2a4a;
     flex-shrink: 0;
+}
+
+#annotation-quick-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.annotation-quick-chip {
+    padding: 4px 8px;
+    font-size: 11.5px;
+    color: #c0c0d8;
+    background: #1e1e36;
+    border: 1px solid #3a3a5a;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.annotation-quick-chip:hover {
+    color: #ffffff;
+    background: #2a2a4a;
+    border-color: #4a9eff;
 }
 
 #annotation-text {
@@ -464,28 +528,62 @@ html, body {
     flex-shrink: 0;
 }
 
-.btn-lang-toggle {
+.lang-select {
     position: absolute;
     top: 10px;
     right: 12px;
-    z-index: 2;
+    z-index: 5;
+}
+
+.lang-select-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
     min-width: 34px;
     padding: 3px 10px;
     font-size: 12px;
     font-weight: 600;
     color: #c0c0d8;
-    background: transparent;
+    background: #1e1e3a;
     border: 1px solid #3a3a5a;
     border-radius: 4px;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
-.btn-lang-toggle:hover {
+.lang-select-btn:hover {
     color: #ffffff;
     background: #2a2a4a;
     border-color: #5a5a7a;
 }
+
+.lang-caret { font-size: 9px; color: #8a8aa8; }
+
+.lang-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    min-width: 96px;
+    background: #1e1e3a;
+    border: 1px solid #3a3a5a;
+    border-radius: 6px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+
+.lang-menu li {
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #c0c0d8;
+    cursor: pointer;
+}
+
+.lang-menu li:hover,
+.lang-menu li:focus { background: #2a2a4a; color: #ffffff; }
+.lang-menu li.selected { color: #ffffff; font-weight: 600; }
 
 #btn-save {
     padding: 11px 0;
@@ -528,6 +626,29 @@ html, body {
 
 #btn-exit-preview:active {
     background: #1e1e36;
+}
+
+.btn-undo {
+    padding: 10px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #c0c0d8;
+    background: transparent;
+    border: 1px solid #3a3a5a;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn-undo:hover:not(:disabled) {
+    color: #ffffff;
+    background: #2a2a4a;
+    border-color: #5a5a7a;
+}
+
+.btn-undo:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 /* ======================== MODAL ======================== */
@@ -650,6 +771,133 @@ html, body {
     border: 1px solid #3a3a5a;
 }
 
+/* --- Direct-edit controls --- */
+.prop-caption {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #6a8ec0;
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.prop-section {
+    margin-top: 10px;
+    margin-bottom: 4px;
+    font-size: 10px;
+    color: #8a8aaa;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-weight: 600;
+}
+
+.prop-section:first-of-type {
+    margin-top: 0;
+}
+
+.prop-table .prop-ro {
+    color: #8a8aaa;
+}
+
+.prop-table .prop-note {
+    color: #8a8aaa;
+    font-family: inherit;
+    font-style: italic;
+}
+
+.prop-edit {
+    font-family: inherit;
+    color: #e0e0e0;
+    background: #1e1e36;
+    border: 1px solid #3a3a5a;
+    border-radius: 4px;
+    outline: none;
+    font-size: 12px;
+    transition: border-color 0.15s;
+}
+
+.prop-edit:focus {
+    border-color: #4a9eff;
+}
+
+textarea.prop-edit-content,
+textarea.prop-edit-attr-area {
+    width: 100%;
+    resize: vertical;
+    padding: 6px 8px;
+    line-height: 1.4;
+}
+
+input.prop-edit-attr {
+    width: 100%;
+    padding: 4px 6px;
+}
+
+input.prop-edit-number {
+    width: 72px;
+    padding: 4px 6px;
+}
+
+select.prop-edit-select {
+    width: 100%;
+    padding: 4px 6px;
+}
+
+input.prop-edit-color {
+    width: 30px;
+    height: 24px;
+    padding: 0;
+    vertical-align: middle;
+    cursor: pointer;
+    background: #1e1e36;
+}
+
+input.prop-edit-color-text {
+    width: calc(100% - 40px);
+    margin-left: 6px;
+    padding: 4px 6px;
+    vertical-align: middle;
+}
+
+input.prop-edit-batch,
+select.prop-edit-batch {
+    width: 100%;
+    padding: 4px 6px;
+}
+
+input.prop-edit-batch-color + input.prop-edit-batch {
+    width: calc(100% - 40px);
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+input.prop-edit-geo {
+    width: 56px;
+    padding: 4px 6px;
+    margin-right: 4px;
+}
+
+input.prop-edit-multi-geo {
+    width: 56px;
+    padding: 4px 6px;
+    margin-right: 4px;
+}
+
+.btn-select-group {
+    width: 100%;
+    padding: 5px 7px;
+    color: #d8e6ff;
+    background: #24365a;
+    border: 1px solid #3e5f98;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.btn-select-group:hover {
+    background: #2d4370;
+}
+
 .multi-el-list {
     margin-top: 6px;
     max-height: 100px;
@@ -699,6 +947,56 @@ html, body {
     background: rgba(74, 158, 255, 0.15);
     pointer-events: none;
     z-index: 11;
+}
+
+/* --- Overlap picker (right-click list of stacked elements) --- */
+#overlap-picker {
+    position: fixed;
+    z-index: 1100;
+    min-width: 180px;
+    max-width: 340px;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: #1f2430;
+    border: 1px solid #3a4252;
+    border-radius: 6px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+    padding: 4px;
+    font-size: 12px;
+}
+
+.overlap-caption {
+    padding: 4px 8px 6px;
+    color: #8b94a7;
+    font-size: 11px;
+}
+
+.overlap-item {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 5px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.overlap-item:hover {
+    background: #2d3545;
+}
+
+.overlap-tag { color: #4a9eff; }
+.overlap-id { color: #e6e9ef; }
+.overlap-txt {
+    color: #8b94a7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Element highlighted while hovering its row in the overlap picker. */
+.overlap-hover {
+    outline: 2px solid #f59e0b !important;
+    outline-offset: 2px;
 }
 
 /* ======================== UTILITY ======================== */

@@ -1,6 +1,6 @@
 ---
 name: manage-skills
-description: 安装、卸载、创建、拆分、重命名、审查或维护本地 skills 时使用；关注 skill 边界、触发描述、跨 skill 引用规范、渐进式披露三层结构（description → SKILL.md → references），以及个人配置与 skill 正文分离。
+description: 创建、安装、重构、审查或合并本地 skill 时使用。核心是维护清晰的能力边界、渐进式文档结构、可追踪的安装链接与一致的仓库规范。
 ---
 
 # Manage Skills
@@ -94,30 +94,27 @@ done
 
 找到断的 → 移回收站 → 按新源路径重链。
 
-## 引用
+## 写 / 改 skill 的规范
 
-**跨 skill 不写任何形式的文件路径**——包括相对路径（`../software/references/copilot.md`）、绝对路径、`~/...`，也不允许“迁移指引”式的链接（“详见 .../X.md”）。需要提示另一个 skill 的能力时，只写 skill 名加能力边界（例：“见 `software` skill 的 GitHub Copilot CLI 章节”）。
+写、改、审查、重构任何 skill 都按 [references/conventions.md](references/conventions.md) 的要求来——那是唯一出处，含完整理由与正反例。**别在这里或别的 skill 里重抄规则，要提就写条目名链过去。** 速览（点进 conventions 看细节）：
 
-理由：被引 skill 内部一旦拆分 / 合并 / 重命名 reference 文件，所有跨 skill 链接都断；只写 skill 名 + 主题名，读者用 grep / SKILL.md 自己定位，永不断链。这是硬规则，没有“对用户更友好就破例”的豁免——不要被“明示目标更顺手”的直觉劝退。
+- **内容**：像人类一样说话｜不说废话｜命令 / 配置简洁准确｜图形界面流程具体｜客观完整地讲述内容｜自然穿插踩坑 / 排障｜个人配置不入正文
+- **引用**：补充来源、限制和例外用 `>` 紧跟正文｜来源与置信度就近｜引用做成可点击 Markdown 链接｜同 skill 使用相对路径和显式 `<a id>` 锚点｜跨 skill 只写 skill 名 + 能力边界｜上游链接锁定版本
+- **标题**：命名"这节是什么"、不预告结论 / 计数 / 排名｜不编号、不用 §N 交叉引用｜并列小节靠客观属性区分｜改带 `<a id>` 的标题只改文字
+- **结构**：渐进式披露三层按需加载、分工清楚｜单文件长度不是拆分理由｜脚本用 `uv` + PEP 723 内联依赖｜不绑定特定 AI 工具名｜frontmatter `name` 与目录名一致｜README 与 skill 状态同步
 
-同一 skill 内部引用自己的 `references/`、`assets/`、`scripts/` 用相对路径（如 `references/foo.md`）；目标必须真实存在，重命名后同步更新。
+## 重构已有文档
 
-## 拆分与整理
-
-- 短小高频的规则直接放 `SKILL.md`；长流程、低频细节、可独立维护的主题放 `references/`。
-- 挪内容时先确认新位置覆盖完整原文，再删旧正文；别留重复。
-- 重命名 skill 后，同步更新 frontmatter `name`、标题、描述和其他 skill 里的纯文本提示。
+把一篇已成型的文档（SKILL.md 或 reference）做深度重构：核验事实，理顺标题树、章节归属和来源组织，做到语义不漏、重复不留。核心：**先分别提交标题方案和内容迁移表供审阅，两轮批准后才动手**，全程对照 [references/conventions.md](references/conventions.md) 逐条核对。完整流程与审阅格式见 [references/refactor.md](references/refactor.md)。
 
 ## 审查现有 skills
 
-用户让“审查 / 检查所有 skill 是否合规”时，先向用户确认审查范围（如原创、已适配嫁接、实验性、全部），然后按 [references/audit-checklist.md](references/audit-checklist.md) 执行。默认**只审不改**：先列出发现交给用户，明确同意后才动手改。
+用户让"审查 / 检查所有 skill 是否合规"时，走跨多 skill 的合规扫描：逐条核对 [references/conventions.md](references/conventions.md) 每项，核验文档内容正确性，再做跨 skill 专项检查（嫁接 LICENSE、是否落后上游、`name` 全局唯一）。默认**只审不改**。完整流程、输出格式与专项检查见 [references/review.md](references/review.md)。
 
-输出格式：按 skill 分段，每段列命中的检查项（带文件 / 行号）与建议；最后给“全部无问题的 skill 清单”，避免用户误以为全仓都有病。
+## 解决合并冲突
 
-批量修复前先跟用户敲定**改动策略**：统一用哪种新写法、原位置留空壳还是删、是否同步调其他 skill 的交叉引用。
+把两条分叉的 skill 文档分支合到一起（双向分叉、两边各自重构同一大文件、术语 / 定义分歧）时，别当成机械删冲突标记——核心是**理解两边意图后，重建一份一致、不丢信息、无重复的知识**。要点：动手前勘定环境 + 无损预演冲突清单；三方溯源看意图（别急着否掉一侧）；给冲突分类套手法（纯并集 / 干净超集 / 结构分叉选底本 splice / 术语分叉查一手来源）；通读结构抓自动合并在冲突标记之外制造的静默重复；splice 后修交叉引用；只收本次合并该带的、隔离并发 / 脏改动；reference 先于 SKILL.md；大改走重构流程；解决即验。完整方法见 [references/merge.md](references/merge.md)。
 
 ## Hermes
 
-Hermes 有独立的 skill 体系。涉及 `hermes skills install / uninstall / search / inspect / tap / external_dirs` 这类操作时，不要把长流程直接堆在这里，转去看 [references/hermes.md](references/hermes.md)。
-
-该 reference 只负责 Hermes 自己的安装与来源管理；如果是在**本仓**整理已有 skill 的边界、命名、引用和 README，同样还是回到本 skill。
+Hermes 的 skill 发现机制和本仓这套 `.agents/skills` 软链不一样（走它自己的 `hermes skills` CLI），给 Hermes 装 / 卸 skill 时去 `harness` skill 的 Hermes 运行时章节参考一下。

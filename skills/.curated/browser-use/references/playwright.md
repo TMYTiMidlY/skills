@@ -1,5 +1,5 @@
 ---
-description: Playwright 详解 —— uv/npm 安装差异、CLI/MCP/脚本三种入口、CLI vs MCP 选型
+description: Playwright 的运行架构、安装入口、CLI/MCP/库脚本差异，以及无头模式、浏览器选择和受限环境诊断
 ---
 
 # Playwright 详解
@@ -10,13 +10,13 @@ description: Playwright 详解 —— uv/npm 安装差异、CLI/MCP/脚本三种
 
 Playwright 的浏览器由一个 **Node driver**（`playwright-core` npm 包）驱动；各语言绑定（Python / .NET / Java）都只是这个 driver 的 **RPC 客户端**，本身不直接开浏览器。
 
-实测证据（microsoft/playwright-python）：
+从 Playwright Python 包的构建方式可以看到：
 
-- `pyproject.toml` 里 `[project.scripts] playwright = "playwright.__main__:main"` —— Python wheel 装上后会提供一个 `playwright` 命令。
-- 仓库根有 `NODE_VERSION`（实测 `24.17.0`）和 `DRIVER_VERSION`（实测 `1.61.1-beta-…`）。`setup.py` 注释写明："driver is assembled … from the playwright-core npm package … and the official Node.js binaries"。
+- [`pyproject.toml`](https://github.com/microsoft/playwright-python/blob/154f67ced51ada646b0fcf8574897d96c9712aa3/pyproject.toml#L39-L40) 以 `playwright.__main__:main` 暴露 `playwright` 命令。
+- 仓库根的 `NODE_VERSION`、`DRIVER_VERSION` 与 [`setup.py`](https://github.com/microsoft/playwright-python/blob/154f67ced51ada646b0fcf8574897d96c9712aa3/setup.py#L25-L32) 共同定义随 wheel 打包的 Node 运行时和 `playwright-core` driver；具体版本随发布变化。
 - 即：**Python wheel 里自带一份 Node.js 运行时 + playwright-core driver**，解包进 `playwright/driver/`。Python 调 `page.click()` 实际是把请求发给这个内置 Node driver。
 
-> 结论：用 Python 还是 Node，只决定你**写脚本 / 调命令的语言**；底层都是同一套 Node driver 开同一批浏览器（Chromium / Firefox / WebKit，版本随 Playwright 版本走，例如 Chromium 149 / Firefox 151 / WebKit 26.5）。**"用 uv 就能彻底摆脱 Node"是个误解**——Python wheel 内部照样捆了 Node，你只是不用自己管它。
+> 用 Python 还是 Node，主要决定脚本与命令入口；Python wheel 内仍携带 Node driver，并不等于浏览器驱动脱离了 Node。
 
 ## 安装：uv（Python）vs npm（Node）
 
@@ -28,14 +28,14 @@ Playwright 的浏览器由一个 **Node driver**（`playwright-core` npm 包）�
 | 你能拿到 | 库 + `playwright` CLI + **Test Runner**(`@playwright/test`) + **agent CLI**(`@playwright/cli`) + **MCP**(`@playwright/mcp`) | 库 + `playwright` 管理 CLI（`install` / `install-deps` / `codegen` / `open` / `screenshot` / `pdf` …）|
 | 你拿不到 | —— | **Test Runner、agent CLI、MCP 全都没有** |
 
-**关键差异**：`@playwright/test`、`@playwright/cli`、`@playwright/mcp` 是**三个独立的 npm 包，只能 npx/npm 跑**（实测 `@playwright/cli` v0.1.14、`@playwright/mcp` v0.0.76）。`pip/uv install playwright` 只给 Python 库 + 一个 `playwright` 管理 CLI，**不含**测试运行器 / agent CLI / MCP。
+**关键差异**：`@playwright/test`、`@playwright/cli`、`@playwright/mcp` 是三个独立 npm 包；`pip`/`uv` 安装的 `playwright` 提供 Python 库和浏览器管理 CLI，不包含这些 Node 入口。具体版本用各自的 `--version` 或包管理器查询，不在文档中维护“最新版”数字。
 
 ### 无 sudo 机器的系统依赖
 
 `install-deps` 要 root。无 sudo 的 headless / WSL 机器装不了系统库，浏览器起不来（缺 `libgtk` 等）。两条路：
 
 - 用官方 Docker 镜像 `mcr.microsoft.com/playwright`（自带浏览器 + 系统库），脚本/MCP 都能跑进去。
-- 或用与 Camoufox 相同的 pixi 用户态补库套路（`pixi` 装 `gtk3` 等 + `LD_LIBRARY_PATH`），见 [camoufox.md](camoufox.md) 的「补齐系统库 方案 A/B/C」——同样适用于 Playwright 的 Chromium/Firefox。
+- 或用与 Camoufox 相同的 pixi 用户态补库思路（`pixi` 提供 GTK/ALSA 等库，再设置动态库搜索路径），见 [Camoufox 的无管理员权限环境](camoufox.md#user-system-libs)。同样的分层诊断也适用于 Playwright 浏览器。
 
 ### 安装方式推荐
 
@@ -65,6 +65,18 @@ playwright-cli install --skills
 ```
 
 > 这会安装一个 `playwright-cli` skill（含 SKILL.md + 十个 references：playwright-tests / request-mocking / running-code / session-management / spec-driven-testing / storage-state / test-generation / tracing / video-recording / element-attributes）。需要 Playwright 完整命令面时**优先装它、读它**，不要在本 skill 里重抄。
+
+### 运行形态与诊断
+
+Playwright CLI 默认无头运行，不会出现用户可见窗口；需要观察或人工接管时，在 `open` 上加 `--headed`。`show` 打开的监控面板同样属于可见界面。Playwright MCP 则默认有头，需显式使用 `--headless`；库脚本由 `headless` launch option 决定。
+
+> 核验基线：[`@playwright/cli` v0.1.18 README](https://github.com/microsoft/playwright-cli/blob/v0.1.18/README.md#L47-L79)。
+
+启动前不要假定某个浏览器一定存在。先看 `playwright-cli --help open`、配置文件和已安装浏览器；默认 channel 缺失时，显式选择现有的 Firefox、WebKit、Chrome 或 Edge，或安装所需浏览器。浏览器进程在受限沙箱内还可能需要额外运行权限。
+
+CLI 的守护进程状态目录必须可写，浏览器二进制可能位于另一缓存。若把通用缓存改到临时目录，原有浏览器也可能随之“消失”；此时应分别确认守护进程缓存和浏览器安装路径，而不是反复重装。
+
+页面取证不只依赖无障碍快照。快照为空或地图、canvas、虚拟列表等组件难以读取时，继续检查 DOM、隐藏表单、内嵌脚本、console 和网络请求。定位到稳定的公开请求后，可以同时用直接 HTTP 复现和解析；二者不是互斥方案。验证码、账号权限以及源站根本没有提供的数据，则不是增加点击或换 locator 能解决的问题。
 
 ### ref 快照模型（核心交互范式）
 
@@ -130,9 +142,9 @@ playwright-cli detach                        # 脱离，外部浏览器继续跑
 
 MCP server，把 Playwright 暴露成 MCP 工具，基于**无障碍树**而非截图（不需要视觉模型、确定性高）。
 
-### 给 Copilot CLI 配置
+### MCP 客户端配置
 
-写 `~/.copilot/mcp-config.json`：
+不同 MCP 客户端的配置文件位置不同，核心都是声明本地命令和参数。例如：
 
 ```json
 {
@@ -147,7 +159,7 @@ MCP server，把 Playwright 暴露成 MCP 工具，基于**无障碍树**而非�
 }
 ```
 
-无显示器要跑 headed，或要长驻服务，改用 HTTP 传输：`npx @playwright/mcp@latest --port 8931`，客户端配 `"url": "http://localhost:8931/mcp"`。也有官方 Docker 镜像（仅 headless chromium）。
+无显示器时使用 headless；是否改用 HTTP 传输取决于 MCP 服务要不要长驻或跨进程连接，与浏览器是否显示窗口是两个独立选择：`npx @playwright/mcp@latest --headless --port 8931`，客户端连接 `http://localhost:8931/mcp`。官方 Docker 镜像也使用 headless Chromium。[参数与HTTP传输](https://github.com/microsoft/playwright-mcp/blob/7e0457a7cbf88823bf0146d12c46ae12c6818247/README.md#L420-L444)
 
 ### 关键工具与能力
 
@@ -215,9 +227,9 @@ asyncio.run(main())
 
 ## CLI vs MCP：到底用哪个
 
-官方 README（playwright-cli / playwright-mcp）给的原话结论：
+[`@playwright/cli` 的入口定位](https://github.com/microsoft/playwright-cli/blob/v0.1.18/README.md#L5-L19) 区分了两类工作：
 
 - **CLI（`@playwright/cli` + SKILLS）= coding agent 首选**。CLI 调用 **token 更省**：不往上下文里塞庞大的工具 schema 和冗长的无障碍树，agent 用简洁、专用命令直接动作 —— 适合要同时兼顾大代码库、测试、推理、还要省上下文窗口的高吞吐 agent。
 - **MCP** 适合需要**持久状态 + 富内省 + 对页面结构反复推理**的专门 agentic loop（探索式自动化、自愈测试、长程自治），此时"维持连续浏览器上下文"的价值盖过 token 成本。
 
-**对 Copilot CLI（本身就是 coding agent）→ 默认用 CLI**（`@playwright/cli` + `playwright-cli install --skills`）。只有当任务是"跨很多轮维持同一个浏览器上下文做探索 / 自愈"时，才考虑 MCP。
+命令式 coding agent 通常适合 CLI；跨多轮维持浏览器上下文、持续检查页面结构时，MCP 的状态和内省更有价值。它们也可以同时存在：CLI 做短操作，MCP 承担长会话。

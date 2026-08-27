@@ -3,8 +3,8 @@
     "repo": "slidevjs/slidev",
     "path": "skills/slidev",
     "branch": "main",
-    "synced_commit": "d76850d",
-    "synced_date": "2026-03-11T23:54:58Z",
+    "synced_commit": "1877b30",
+    "synced_date": "2026-08-14T07:37:40Z",
     "description": "Slidev 官方 skill"
   },
   "doc-coauthoring": {
@@ -211,9 +211,9 @@
     "repo": "hugohe3/ppt-master",
     "path": "skills/ppt-master",
     "branch": "main",
-    "synced_commit": "9c98a6e",
-    "synced_date": "2026-05-27T12:19:59Z",
-    "description": "AI 多角色协作把 PDF/DOCX/URL/Markdown 转成原生可编辑 PPTX（真 DrawingML 形状/文本框）"
+    "synced_commit": "4dcf3c9",
+    "synced_date": "2026-08-07T03:27:39Z",
+    "description": "AI 多角色协作生成原生可编辑 PPTX，并创建/复用 Brand、Style、Layout、Deck 模板或填充/增强现有 PPTX"
   },
   ".experimental/humanizer-zh": {
     "repo": "op7418/Humanizer-zh",
@@ -222,14 +222,6 @@
     "synced_commit": "91f3d39",
     "synced_date": "2026-01-19T07:45:46Z",
     "description": "去除中文文本中的 AI 生成痕迹（Humanizer 汉化版）"
-  },
-  "teacher": {
-    "repo": "JackyYang258/AgentTeacher",
-    "path": "",
-    "branch": "main",
-    "synced_commit": "8dde312",
-    "synced_date": "2026-05-29T01:04:44Z",
-    "description": "用六段式（直觉 → 可跑示例 / 伪代码 → 逐段讲解 → 陷阱 → 延伸 → 自测题）把一个技术概念讲清楚；DL/ML 概念默认 PyTorch 伪代码 + 张量形状标注"
   },
   "handoff": {
     "repo": "mattpocock/skills",
@@ -246,5 +238,189 @@
     "synced_commit": "f304057",
     "synced_date": "2026-05-12T07:36:19Z",
     "description": "构建可丢弃的原型快速打磨设计：分\"可运行 terminal app\"（验证状态/业务逻辑）与\"多套 UI 变体可切换路由\"两条路线"
+  },
+  ".experimental/ponytail/ponytail": {
+    "repo": "DietrichGebert/ponytail",
+    "path": "skills/ponytail",
+    "branch": "main",
+    "synced_commit": "0e3fd0c",
+    "synced_date": "2026-06-29T05:06:59Z",
+    "description": "让 agent 当“最懒的资深工程师”：写代码前过 YAGNI→复用→stdlib→原生→一行的阶梯，只写能跑的最少代码；支持 lite/full/ultra 强度"
+  },
+  ".experimental/ponytail/ponytail-review": {
+    "repo": "DietrichGebert/ponytail",
+    "path": "skills/ponytail-review",
+    "branch": "main",
+    "synced_commit": "bd6176a",
+    "synced_date": "2026-06-19T00:20:55Z",
+    "description": "只审过度工程的代码评审：对 diff 逐条标出可删/stdlib/原生/YAGNI/可缩短，结尾给可省行数"
+  },
+  ".experimental/ponytail/ponytail-audit": {
+    "repo": "DietrichGebert/ponytail",
+    "path": "skills/ponytail-audit",
+    "branch": "main",
+    "synced_commit": "bd6176a",
+    "synced_date": "2026-06-19T00:20:55Z",
+    "description": "整仓过度工程审计：同 review 的标签体系，扫全代码库而非 diff，按可删量排序"
+  },
+  ".experimental/ponytail/ponytail-debt": {
+    "repo": "DietrichGebert/ponytail",
+    "path": "skills/ponytail-debt",
+    "branch": "main",
+    "synced_commit": "ff5d093",
+    "synced_date": "2026-06-19T00:37:02Z",
+    "description": "把代码里的 ponytail: 注释汇成技术债台账，标出没写升级触发条件的条目"
+  },
+  ".experimental/ponytail/ponytail-gain": {
+    "repo": "DietrichGebert/ponytail",
+    "path": "skills/ponytail-gain",
+    "branch": "main",
+    "synced_commit": "15749f7",
+    "synced_date": "2026-06-18T22:24:37Z",
+    "description": "展示 ponytail 的 benchmark 中位数战绩（更少代码/成本、更快）的 ASCII 记分牌"
+  },
+  ".experimental/ponytail/ponytail-help": {
+    "repo": "DietrichGebert/ponytail",
+    "path": "skills/ponytail-help",
+    "branch": "main",
+    "synced_commit": "b8f20b8",
+    "synced_date": "2026-07-01T23:24:32Z",
+    "description": "ponytail 各模式/命令的速查卡"
+  },
+  ".experimental/superpowers/brainstorming": {
+    "repo": "obra/superpowers",
+    "path": "skills/brainstorming",
+    "branch": "main",
+    "synced_commit": "711d895",
+    "synced_date": "2026-06-25T02:23:23Z",
+    "description": "创造性工作前先对话式挖需求和设计，产出获批准的方案后再开始实现"
+  },
+  ".experimental/superpowers/dispatching-parallel-agents": {
+    "repo": "obra/superpowers",
+    "path": "skills/dispatching-parallel-agents",
+    "branch": "main",
+    "synced_commit": "f0e5117",
+    "synced_date": "2026-05-06T01:25:12Z",
+    "description": "把 2 个以上无共享状态、无顺序依赖的独立任务派发给隔离上下文的子 agent 并行执行"
+  },
+  ".experimental/superpowers/executing-plans": {
+    "repo": "obra/superpowers",
+    "path": "skills/executing-plans",
+    "branch": "main",
+    "synced_commit": "711d895",
+    "synced_date": "2026-06-25T02:23:23Z",
+    "description": "在独立会话中执行一份已写好的实施计划，含审阅检查点"
+  },
+  ".experimental/superpowers/finishing-a-development-branch": {
+    "repo": "obra/superpowers",
+    "path": "skills/finishing-a-development-branch",
+    "branch": "main",
+    "synced_commit": "4e3707f",
+    "synced_date": "2026-06-01T01:28:15Z",
+    "description": "开发完成、测试通过后，给出合并/PR/清理等收尾方式的结构化选项"
+  },
+  ".experimental/superpowers/receiving-code-review": {
+    "repo": "obra/superpowers",
+    "path": "skills/receiving-code-review",
+    "branch": "main",
+    "synced_commit": "6b9f1b2",
+    "synced_date": "2026-05-06T01:25:31Z",
+    "description": "收到代码评审意见时要求先做技术核实，不表演性认同或盲目照做"
+  },
+  ".experimental/superpowers/requesting-code-review": {
+    "repo": "obra/superpowers",
+    "path": "skills/requesting-code-review",
+    "branch": "main",
+    "synced_commit": "3cd2db9",
+    "synced_date": "2026-05-23T23:14:24Z",
+    "description": "派发代码评审子 agent，用精心构造的独立上下文评估工作产出而非过程"
+  },
+  ".experimental/superpowers/subagent-driven-development": {
+    "repo": "obra/superpowers",
+    "path": "skills/subagent-driven-development",
+    "branch": "main",
+    "synced_commit": "caf14aa",
+    "synced_date": "2026-06-18T21:46:21Z",
+    "description": "按实施计划逐任务派发全新实现子 agent，每个任务后接一次评审，分支收尾前再做一次整体评审"
+  },
+  ".experimental/superpowers/systematic-debugging": {
+    "repo": "obra/superpowers",
+    "path": "skills/systematic-debugging",
+    "branch": "main",
+    "synced_commit": "90e1721",
+    "synced_date": "2026-05-23T23:51:00Z",
+    "description": "遇到任何 bug/测试失败/异常行为时，先系统定位根因再提修复方案，不做随手补丁"
+  },
+  ".experimental/superpowers/test-driven-development": {
+    "repo": "obra/superpowers",
+    "path": "skills/test-driven-development",
+    "branch": "main",
+    "synced_commit": "9ea7e2b",
+    "synced_date": "2026-05-13T00:22:42Z",
+    "description": "先写测试、看它失败，再写能让测试通过的最少实现代码"
+  },
+  ".experimental/superpowers/using-git-worktrees": {
+    "repo": "obra/superpowers",
+    "path": "skills/using-git-worktrees",
+    "branch": "main",
+    "synced_commit": "d00f4ad",
+    "synced_date": "2026-05-12T17:24:45Z",
+    "description": "开始需要隔离的功能开发前，优先用平台原生 worktree 工具，没有时降级到手动 git worktree"
+  },
+  ".experimental/superpowers/using-superpowers": {
+    "repo": "obra/superpowers",
+    "path": "skills/using-superpowers",
+    "branch": "main",
+    "synced_commit": "777cc2f",
+    "synced_date": "2026-06-25T02:23:47Z",
+    "description": "对话开始时的强制入口：规定如何发现和调用 skill，要求任何回复（含澄清提问）前先完成 skill 调用"
+  },
+  ".experimental/superpowers/verification-before-completion": {
+    "repo": "obra/superpowers",
+    "path": "skills/verification-before-completion",
+    "branch": "main",
+    "synced_commit": "48410c7",
+    "synced_date": "2025-10-17T16:40:36Z",
+    "description": "声称工作完成/已修复/测试通过前，要求先跑验证命令并确认输出，证据先于断言"
+  },
+  ".experimental/superpowers/writing-plans": {
+    "repo": "obra/superpowers",
+    "path": "skills/writing-plans",
+    "branch": "main",
+    "synced_commit": "8e1262a",
+    "synced_date": "2026-06-11T03:44:48Z",
+    "description": "已有 spec 或需求、动手写代码前，写一份假设工程师零上下文的完整实施计划"
+  },
+  ".experimental/superpowers/writing-skills": {
+    "repo": "obra/superpowers",
+    "path": "skills/writing-skills",
+    "branch": "main",
+    "synced_commit": "711d895",
+    "synced_date": "2026-06-25T02:23:23Z",
+    "description": "编写/编辑/验证新 skill 的方法论：把写 skill 本身当作对流程文档做 TDD"
+  },
+  ".experimental/worktrunk/worktrunk": {
+    "repo": "max-sixty/worktrunk",
+    "path": "skills/worktrunk",
+    "branch": "main",
+    "synced_commit": "e1745db",
+    "synced_date": "2026-07-31T01:33:30Z",
+    "description": "worktrunk（`wt` CLI）的配置与排障：用户配置 vs 项目配置的权限边界、10 种 hook 选型、LLM commit message 接外部命令，reference/ 是 worktrunk.dev 文档的同步副本"
+  },
+  ".experimental/worktrunk/wt-switch-create": {
+    "repo": "max-sixty/worktrunk",
+    "path": "skills/wt-switch-create",
+    "branch": "main",
+    "synced_commit": "a27cbd4",
+    "synced_date": "2026-07-29T00:07:36Z",
+    "description": "以「建 worktree 并把本会话切进去」开启一次任务：分支名/仓库路径/任务三段参数的解析规则，以及宿主原生入口与 `wt` 命令两条创建路径的取舍"
+  },
+  ".experimental/ax": {
+    "repo": "yusukebe/ax",
+    "path": "skills/ax",
+    "branch": "main",
+    "synced_commit": "2d3afe1",
+    "synced_date": "2026-07-24T02:34:38Z",
+    "description": "ax CLI —— 抓取网页并抽取结构化数据，替代 curl + 一次性解析脚本"
   }
 }

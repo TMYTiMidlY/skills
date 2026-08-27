@@ -1,6 +1,6 @@
 ---
 name: dredge-up
-description: 会话收尾盘点——把你聊过/承诺过、却被后续任务压栈沉底的事，从上下文里逐条捞回来，核对到底做没做。不只回顾本 session 做过什么，更要揪出"说过却漏做"的遗漏项。当用户说"我要把你关掉了，还有没有什么没做的""总结一下本 session 做了什么还有什么没做""回顾本 session 我说过的话看看漏了什么""收尾/交接前盘点"之类时触发。
+description: 会话收尾、关停或交接前盘点时使用。通过回读原始对话并核对实际状态，区分已完成事项，找出被后续任务压栈遗漏的承诺和未尽工作。
 ---
 
 # dredge-up — 会话收尾盘点
@@ -14,7 +14,9 @@ description: 会话收尾盘点——把你聊过/承诺过、却被后续任务
 你当前的上下文是**有损**的：长会话早期对话被压缩，用户某句"顺便把 X 也改了"可能已经不在你视野里。所以单一信源都不够，必须**多源交叉**：
 
 1. **本 session 的原始 turns / 事件流**（最重要）——回读本机 session 状态目录里的存档，逐条看用户**实际说过的每一句话**，而不是你记得的版本。这是唯一能抓出"压栈遗忘"项的办法。
-   - 用 `scripts/` 里的 dump 脚本（按需 `--format text` 通读、`--format html` 留档）拉出全部条目。
+   - 通读用**本机** `asmgr`（= `agent-session-manager` 仓库的 CLI，见下「可选输出」）：先 `asmgr show <id> --format dialogue` 只看对话主干（用户消息 + 用户决策 + 压缩摘要 + 助手回复，**跳过工具调用**、省上下文）；要看某步工具细节再 `--format text`。
+   - **用户的选择/回答也算"说过的话"**：ask_user / 选择题的回答现在是一等 `user/decision` 条目（不再埋在成百上千条工具调用里），dialogue 视图会带上——别再只数 `user.message` 而漏掉选择型决策（这是高频盲区）。
+   - **只读本机、不碰云端**：一律读 `~/.copilot/session-state/<id>/events.jsonl` 或走 `asmgr`；不要用云端会话检索（会 `query timed out`，也违背"会话不出本机"）。跨会话检索用 `asmgr search`（本地），或 `session_store_sql` 只用 `source:"local"`。
    - **session id 永远用 system prompt 给的 session 文件夹名**（即 `~/.copilot/session-state/<id>/` 里的 `<id>`），**不要追着对话里出现的别的 id 跑**——对话里经常会出现历史会话 id、文件名里的 id 等，那些不是当前会话。这是高频踩坑点。
    - ⚠️ live store 滞后最近一两个 turn，最新一轮可能还没落库——这部分用你自己的上下文补。
 2. **plan.md 与 todos**——session 文件夹下的 plan.md、SQL `todos` 表里没标 done 的项。
@@ -25,11 +27,13 @@ description: 会话收尾盘点——把你聊过/承诺过、却被后续任务
 
 ## 工作流程
 
-1. **先 dump 原始对话**：跑 `scripts/` 里的 dump 脚本通读用户的每一条消息。逐条问自己："这件事最后做了吗？做完整了吗？还是被后面的任务压下去忘了？"
+1. **先 dump 原始对话**：跑 `asmgr show <id> --format dialogue` 通读对话主干（用户每条消息 + 用户决策 + 压缩摘要 + 助手回复，跳过工具噪音）。逐条问自己："这件事最后做了吗？做完整了吗？还是被后面的任务压下去忘了？"要看某步工具细节时再 `--format text`。
 2. **交叉核对状态**：对照 plan.md / todos / `git status` / 文件系统 / 远端，确认每件"自以为做完"的事**真的**落地了。
 3. **grep 验证关键承诺**：凡是"实现了某功能"的结论，回去 `grep` 确认代码/配置真的存在、真的生效，不要只凭你说过"我改好了"。
 4. **按下面的范式输出盘点报告**。
 5. **可选交付物**：用户要交接 / 要留档时，写 handoff 或导出 HTML（见下"可选输出"）。
+
+> **可定时化**：本盘点全程只读、`asmgr` 非交互，可用 scheduled prompt 周期触发（例如每次会话收尾自动盘点一次）；`--format dialogue` 让单次 token 足够低，适合无人值守跑。
 
 ## 输出范式
 
@@ -55,23 +59,27 @@ description: 会话收尾盘点——把你聊过/承诺过、却被后续任务
 ### 五、安全交代（涉敏时）
 若本 session 碰过密码 / secret / 凭据，简短说明你是否接触过明文、敏感文件落在哪、是否需要清理。
 
+### 六、会话改名建议（可选）
+盘点末尾给一个**会话名建议**，方便用户回头检索：**kebab-case、用 `-` 连接、3–10 个词、不必符合语法**，抓住这次会话干的主线即可（如 `asmgr-dialogue-view-askuser-decision-extract`）。⚠️ `asmgr` 只读、**不写**会话名——只给建议，由用户用 Copilot `/rename` 或改 `workspace.yaml` 落地。
+
 ## 可选输出
 
-- **报告式 HTML 存档**：用户想要可视化留档 / 把会话过程交给别人时，用 `scripts/` 里的 dump 脚本（自身用 `uv run` 跑、PEP723 内联依赖）生成单文件 HTML。
-  - 数据源是 `~/.copilot/session-state/<id>/events.jsonl`（缺失时回退到 `session-store.db` 的 `turns` 表，header 显示警告）——这就是 Copilot CLI 自带 `/share html`（别名 `/export`）消费的同一份事实。所以能还原**完整时间线**：用户消息 / 助手回答 / 推理（reasoning） / 工具调用（按 `callId` 合并 start+complete） / 通知 / 信息 / 错误等全部 entry 类型。
-  - 视觉**照搬 `/share html`**：暗色 GitHub(Primer) 主题、sticky header、按类型筛选 pill、搜索（`/` 聚焦）、折叠/展开、侧栏目录、上一条/下一条用户消息跳转。CSS/JS 来自从 `@github/copilot` 包里抽出的资产；标签汉化但 `data-type` 保持英文（JS 过滤靠它）。助手消息按 markdown 渲染、用户消息转义。
-  - **想在报告顶部钉 agent 总结**：把"做过的事 / 承诺未做"等盘点写成 HTML 片段文件（`<h3>`/`<ul>` 等简单标签即可，精炼别太详），用 `--summary <片段.html>` 注入。总结条目**钉在编号之外**（`data-index="summary"`），真实 #1 仍是真实第一条事件；同时多一个 `总结` 筛选 pill。
-  - **两条渲染路径并存**（视觉不同，按场景选）：
-    - **vanilla**（`scripts/dump_session.py <sid> --format html [--summary 片段.html] [--out out.html]`）：纯 Python 拼字符串、复刻 `/share html` 视觉、~1MB、**零构建**（只需 `uv`）。要快、要轻、要和 share 一致时用。⚠️ **脚本默认 `--format text`（纯文本通读用，给上面"先 dump 原始对话"读条目）；要 HTML 视觉必须显式 `--format html`**——只把输出名写成 `x.html`、不加 `--format html`，写出来的其实是纯文本（曾踩坑：产物几 KB、无内联 CSS/JS、筛选 pill 全无）。也可用 `--events <路径>` 指定任意 events.jsonl（如从备份 restore 出来的）。
-    - **React**（`scripts/build_react_report.sh <sid> [out.html] [--summary 片段.html]`）：Vite 打包成单文件、shadcn 风卡片 + lucide 图标 + Shiki 高亮，外加 vanilla 没有的三样：**紧凑密度切换**（header 按钮，状态存 localStorage）、**LaTeX**（KaTeX，行内 `$x$` + 块级 `$$…$$`，仅作用于助手 markdown 消息）、**summary 按 HTML 原样渲染**。代价：需 `pnpm build`（首次自动 `pnpm install`），产物 ~3MB / gzip ~1.4MB（KaTeX 字体 base64 内联占大头）。要精致视觉 / 会话里有数学公式时用。
-    - 两条**共用同一数据层**：React 端只消费 `export_session_json.py` 出的 agent-neutral JSON，**绝不**自己解析 events.jsonl（解析只在 `dump_session.py` 里做一次）。`--summary` 注入的总结条目两边都**钉在编号之外**（`data-index="summary"`），真实 #1 仍是真实事件。
-  - **离线注定补不到的几类**：mascot 启动 banner（`Tip: /cwd` 这类）、`/share` 命令自产回执（`Session shared successfully to: ...`）、ephemeral retry 提示——它们**只活在 live session 内存**里、从不写盘。share 在 live 时能有，离线 dump 没有，这是事实差。
-  - **维护责任**：`assets/share-export.{css,js}` 是从 `@github/copilot` 包里抽出来的资产，会随 Copilot CLI 升级**过期**（GitHub 团队加新 entry 类型 / 改 Primer 主题色 / 调按钮 ID 之类）。每次 Copilot CLI 出明显的视觉或 `/share html` 行为升级，要跑一次 `scripts/` 内的资产抽取脚本重抽，diff `assets/` 看变化——具体怎么用见 `assets/README.md`。
+- **报告式存档（导出 HTML / Markdown / 文本 / JSON）**：用户要可视化留档 / 把会话交给别人时，用 **`asmgr`**（`agent-session-manager` 仓库的 CLI）导出。本 skill **不再自带渲染器**——同一套解析+渲染逻辑只在 `asmgr` 里维护一份。
+  - 首次在本机准备（`asmgr` 是单一无 scope 的 npm 包，命令同名）：`npm i -g asmgr`。也可从 Releases 下零依赖原生二进制，但⚠️ 二进制基于 Bun、缺 `node:sqlite`，会**静默跳过 Copilot 的 SQLite 库**这一数据源（即下面的 `--copilot-db` 回退失效），要用该回退请走 Node 安装。
+  - **单文件 HTML**（复刻 Copilot `/share html`：暗色 Primer 主题、sticky header、按类型筛选 pill、搜索（`/` 聚焦）、折叠/展开、侧栏目录、上一条/下一条用户消息跳转，外加 Shiki 高亮、KaTeX 数学、紧凑密度切换、24h 时间戳）：
+    `asmgr html <session-id> -o out.html`
+    从任意 events.jsonl（如 restic 备份 restore 出来的）导：`asmgr html --file <路径> -o out.html`。
+  - **Markdown**（字节级复刻 `/share file`）：`asmgr md <session-id> -o out.md`。
+  - **对话主干通读（首选）**：`asmgr show <id> --format dialogue` — 只留 用户消息 / 用户决策（ask_user 回答）/ 压缩摘要 / 助手回复，跳过工具调用，是「先 dump 原始对话」的默认档（省上下文、prompt↔回复邻接一目了然）。
+  - **纯文本通读 / 结构化 JSON**：`asmgr show <id> --format text|json`。text 已含工具参数+结果、子代理/技能/计划/压缩统计，需要工具细节时用。
+  - **顶部钉 agent 总结**：把盘点写成片段文件用 `-s` 注入——`asmgr html <id> -s 总结.html`（HTML 片段）/ `asmgr md <id> -s 总结.md`（Markdown）。⚠️ 两种格式**不能混用同一文件**（html 要 HTML、md 要 Markdown），必要时看 `--summary-format`。总结条目钉在编号之外（`data-index="summary"`），真实 #1 仍是真实第一条事件。
+  - **覆盖的 entry 类型**：user（含 **`user/decision`** = ask_user 回答，从 `tool.execution_complete` 的 `User selected/responded:` 抽出）/ assistant / reasoning / tool（按 callId 合并 start+complete） / notification / info / warning / error / compaction（含注入摘要 + token/消息/耗时统计） / task_complete / **subagent / skill / plan**（后三类超出官方 `/share html`，是 asmgr 额外从 events.jsonl 补的）。`events.jsonl` 缺失（老会话被 prune、或**从别处迁移过来只带了 DB**）时用 `--copilot-db <session-store.db>` 从 `turns` 表回退——**lossy：只有 user/assistant 文本，用户决策与工具条目不可恢复**（header 标警告）。
+  - **为什么导出 = 离线复刻**：官方 `/share html` 渲染的是 live 会话的**内存 timeline**、不是 `events.jsonl`；离线只能从 `events.jsonl` 把 event→entry 映射**重跑一遍**——**漏一个映射分支＝那类条目被静默丢掉**。完整逆向笔记见 `agent-session-manager` 仓库 `docs/adr/0003-archive-reconstruction-fidelity.md`。**session-id 永远用 `~/.copilot/session-state/<id>/` 的文件夹名**，别追对话里出现的其它 id（高频踩坑）。
 - **正式交接文档**：若用户明确要"交接给下一个 agent / 写 handoff"，结合 `plan` skill（写给实施者的自包含正式文档）或仓库自带的 handoff 流程，不要在本 skill 里重造。
 
-## 待办（后续扩展）
+## 关于导出工具
 
-- **支持 Claude Code 和 Codex 的会话导出**：当前数据层硬绑 Copilot CLI（`~/.copilot/session-state/<id>/events.jsonl` 的 schema）。Claude Code 存档在 `~/.claude/projects/*.jsonl`、Codex 在 `~/.codex/sessions/` 各有各的格式。下一步是把 events.jsonl 解析抽象成"数据源接口"，再补两个 adapter（claude-code / codex），让 recap 三家通吃。**渲染层两条路都已 agent-neutral**：vanilla 的 CSS/JS + entry DOM + 筛选 pill、React 的组件层都只消费中间形态（events.jsonl 解析结果 / `export_session_json.py` 出的 JSON），所以做完数据源抽象后**两条渲染路径都不用动**。
+导出（HTML / Markdown / 文本 / JSON）已全部交给 `agent-session-manager` 仓库的 `asmgr` CLI，本 skill 只负责盘点方法论 + 调用它。多 agent 支持（Claude Code / Codex）、从 restic 备份缓存搜索等能力都在那个仓库里演进，见其 README 与 `docs/`。
 
 ## 边界
 

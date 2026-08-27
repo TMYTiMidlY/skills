@@ -3,7 +3,7 @@
 PPT 任务的**完整工程流**（SVG 模板 / python-pptx / 设计规范 / 配图重做 / 导出 pptx）由独立的 **`ppt-master` skill** 负责，本 skill **不规定 PPT 工程结构**。docs-writer 在演示文稿层面**只覆盖与论文/汇报共享的能力**，保证多 deliverable 一致：
 
 - **引用核查与文献规范** → 见 `SKILL.md`《引用核查与优化》《文献格式规范 GB/T 7714-2015》
-- **配图生成与 AI 标注 + 资产管理** → 见 `SKILL.md`《配图与 AI 标注》《项目资产管理》
+- **配图生成与 AI 标注** → 见 [figures.md](figures.md)；**项目资产管理** → 见 `SKILL.md`《项目资产管理》
 
 > 共享名词（一手来源、single source of truth、codex-image 等）定义见 `SKILL.md`《名词表》。
 
@@ -13,7 +13,7 @@ PPT 任务的**完整工程流**（SVG 模板 / python-pptx / 设计规范 / 配
 |------|------|
 | **python-pptx** | 原地修改现有 pptx（替换文本、替换图片、读写页面元素） |
 | **SVG 工程源 + 渲染脚本** | 从 SVG 模板批量出 pptx（保设计精度）—— 完整流程在 `ppt-master` |
-| **codex-image** | 重做配图（见 `SKILL.md`《配图与 AI 标注》） |
+| **codex-image** | 重做配图（见 [figures.md](figures.md#codex-image)） |
 
 ## 2. PPT 与本 skill 的关系（资产共享）
 

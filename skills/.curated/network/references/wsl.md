@@ -1,6 +1,6 @@
 # WSL ↔ Windows 网络管道
 
-WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT、WSL / Docker 入站 portproxy / wslrelay、组网、远程接入与对外服务的常驻。
+WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT 网络，以及 WSL/Docker 服务入站（portproxy + wslrelay）。远程桌面 / VS Code serve-web 等远程接入见 [remote.md](remote.md)。
 
 ## WSL Mirror 模式网络
 
@@ -45,7 +45,16 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 
 ## WSL / Docker 服务暴露（入站：portproxy + wslrelay）
 
-> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。
+> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。注意 **WSL 出站访问 mesh（`10.144.x`）本来就通、无需 portproxy**（NAT 下出站全交给宿主，宿主已有 mesh 路由）；portproxy 只解决**入站**（让 mesh / 远端访问 WSL 内服务）。要**少 / 免**逐服务配 portproxy，见下面[「少 / 免逐服务 portproxy 的两条路」](#少--免逐服务-portproxy-的两条路a-mirrored--b-单反代兜底)。
+
+### 少 / 免逐服务 portproxy 的两条路（A mirrored / B 单反代兜底）
+
+`netsh portproxy` 无端口段 / 通配，一端口一条规则——服务一多就是几十条 toil（本机实测曾积到 23 条）。比"每服务一条"更省的两条路：
+
+- **A. mirrored 网络模式**（`.wslconfig` 加 `networkingMode=mirrored`，Win11 22H2 / build 22621+）：WSL 共享宿主网络栈，WSL 服务监听 `0.0.0.0:N` 即被宿主各 IP（含 EasyTier mesh IP）的 `:N` 直达，**portproxy 一条不用、也没 wslrelay / #14154**。代价是一次性迁移：`wsl --shutdown`、删掉现有 portproxy、**重估 EasyTier wintun 路由优先级**（mirrored 最大的不确定点）、Docker Desktop 会重启一次。要"以后永久零转发配置"选这条。
+- **B. WSL 内单反代兜底 + 1 条 portproxy**（保持 NAT、不碰 EasyTier）：WSL 里跑一个反代（Caddy / nginx / Traefik）监听单个端口，**只配 1 条** portproxy（`宿主 mesh-IP:443 → 127.0.0.1:<反代端口>`），反代按 Host / 子域 / 路径分流到各 WSL 服务。**新增服务 = 加一段反代 site 配置 + reload，`netsh` 一条不加**；#14154 的纯 v4 坑只剩那 1 个端口要管。链路：远端 Caddy → 宿主 mesh IP:443 →（1 条 portproxy）→ WSL 反代 → 各服务。想保持 NAT 现状、避免动 EasyTier 选这条；**已在 WSL 跑反代（如 Caddy）时几乎零成本**。
+
+取舍：**A** 是终极零配置但要停机 + 担 EasyTier 重估风险；**B** 不停机、不碰 EasyTier，把 N 条 portproxy 收敛成 1 条、新服务只动反代配置。另有 **C**（定时脚本扫 `ss -tln` 自动同步 netsh 规则）只是把手动 toil 自动化、治标不治本，#14154 仍每服务要防，一般不推荐。
 
 WSL NAT 下，要把 WSL 内服务暴露给 Windows / EasyTier / 远端反代，需要 Windows `netsh interface portproxy` 做 TCP 转发：它把 Windows 宿主某个监听地址和端口转到 WSL 内服务。`portproxy` **不支持 UDP**，且 `netsh interface portproxy add/delete/set` 都**需要 Windows 管理员权限**——从 WSL 用 `Start-Process -Verb RunAs` 弹 UAC 提权即可（见 `software` skill 的 windows.md「从 WSL 弹 UAC 拿管理员权限」，那节正是拿 `portproxy add` 当例子）。实在拿不到 admin 时，退而沿用已有 portproxy 条目、在其后面的反代里按 path/Host 分流即可。
 
@@ -99,7 +108,7 @@ netsh interface portproxy show all
 
 - `netsh portproxy` 由 Windows `iphlpsvc` 承载，只是个通用 TCP 转发表，**不知道 WSL 存在**；它需要 connectaddress 那端有人接，正好 `127.0.0.1` 那端是 wslrelay 在 listen。
 - `wslrelay.exe` 是 WSL2 NAT 模式的 localhost forwarding 实现，**只在 Windows host 的 `127.0.0.1` / `[::1]` 上 listen**，不会 listen 任意 host IP（如 EasyTier 的 `<Windows机 mesh IP>`）。
-- `.wslconfig` 里 `hostAddressLoopback=true` 容易让人误以为是“让 host IP 也能 forward 进 WSL”——**不是**。它的方向是反的：让 WSL 进程能通过 host IP 访问 host loopback service。见下面实测。
+- `.wslconfig` 里 `hostAddressLoopback=true` 容易让人误以为是“让 host IP 也能 forward 进 WSL”——**不是**。它的方向是反的：让 WSL 进程能通过 host IP 访问 host loopback service。见下面[实测](#实测删掉-portproxy靠-wslrelay-单独扛行不行结论不行)。
 
 #### 实测：删掉 portproxy、靠 wslrelay 单独扛行不行（结论：不行）
 
@@ -148,14 +157,14 @@ curl.exe --noproxy * -v --max-time 5 "http://[::1]:<port>/"
 1. **显式 v4 监听地址**（首选，零代价）：
    - Docker / docker-compose：**推荐写 `ports: ["127.0.0.1:9000:9000"]`**，不要 bare `"9000:9000"`（bare 让 docker-proxy 选 dual-stack v6 socket，触发 #14154）。显式写 v4 host IP `127.0.0.1` 即纯 v4，不踩坑。
    - 服务直接 listen：**推荐 listen `127.0.0.1`**，不要用 `::`。Python `http.server` 默认 v4，Go `net.Listen("tcp", ":N")` 默认 dual-stack v6，要写 `net.Listen("tcp4", "127.0.0.1:N")`。
-   - **Caddy on WSL 实测**：Caddyfile 写 `bind 0.0.0.0`，adapt 后虽然也是 `"listen": ["0.0.0.0:N"]`，Go listener 仍可能落成 `ss -ltn6` 的 `*:N`，Windows 只补 `[::1]:N`，`portproxy connectaddress=127.0.0.1` 继续 RST。改成 `bind 127.0.0.1` 后，WSL 侧变成 `ss -ltn4` 的 `127.0.0.1:N`，Windows 才出现 `127.0.0.1:N` listener，portproxy 链路恢复。若站点用 IP + `tls internal`，Windows Schannel 对 IP 不发 SNI，还要按 `vps-maintenance` skill 的 Caddy IP 模式设置 `default_sni <主 IP>`，否则 TCP 通了仍会在 TLS 握手时报 fatal alert。
+   - **Caddy on WSL 实测**：Caddyfile 写 `bind 0.0.0.0`，adapt 后虽然也是 `"listen": ["0.0.0.0:N"]`，Go listener 仍可能落成 `ss -ltn6` 的 `*:N`，Windows 只补 `[::1]:N`，`portproxy connectaddress=127.0.0.1` 继续 RST。改成 `bind 127.0.0.1` 后，WSL 侧变成 `ss -ltn4` 的 `127.0.0.1:N`，Windows 才出现 `127.0.0.1:N` listener，portproxy 链路恢复。若站点用 IP + `tls internal`，Windows Schannel 对 IP 不发 SNI，还要按 [caddy.md](caddy.md) 的 Caddy IP 模式设置 `default_sni <主 IP>`，否则 TCP 通了仍会在 TLS 握手时报 fatal alert。
    - **Java / JVM 服务**（Neo4j / Elasticsearch / Kafka / Spark 等）：JVM 默认开 dual-stack v6，**即使配置文件写 `listen_address=0.0.0.0` 也会落到 `*:N` 形态**（socket 是 AF_INET6 + V6ONLY=0，恰好是 #14154 触发点）。fix 是加 JVM flag `-Djava.net.preferIPv4Stack=true` 强制纯 v4 socket。**Neo4j 5.x apt 包实测**：编辑 `/etc/neo4j/neo4j.conf`，把 `#server.bolt.listen_address=:7687` 取消注释改成 `server.bolt.listen_address=0.0.0.0:7687`，再追加一行 `server.jvm.additional=-Djava.net.preferIPv4Stack=true`，`systemctl restart neo4j` 之后 `ss -tlnp` 从 `*:7687` 变 `0.0.0.0:7687`，wslrelay 看到纯 v4 listener 才会在 Windows 端补 `127.0.0.1:7687` 的 v4 listener，portproxy `connectaddress=127.0.0.1` 这条才不会 RST。**单改 `listen_address=0.0.0.0` 一行不够**，必须同时给 JVM 加 preferIPv4Stack=true。（listen 用 `127.0.0.1` 或 `0.0.0.0` 都是纯 v4、等效；上面是当时实测的 `0.0.0.0` 原值，关键是 `preferIPv4Stack`。）
 2. **portproxy `connectaddress` 指 WSL eth0 IP**（跳过 wslrelay 走 NAT）——**不推荐**：eth0 IP 随 WSL 重启变化、不稳；优先第 1 条（服务监听 `127.0.0.1` + `connectaddress=127.0.0.1`）。
 3. **portproxy 改用 `v4tov6` 转 `::1`**：理论可行，但实测在不少 WSL 版本上 wslrelay 的 `[::1]` listener 也 RST，所以不一定通。作为快速试探可用，长期不推荐。
 4. **切 `networkingMode=mirrored`**（Win11 22H2+）：彻底没 wslrelay。代价是重排所有 portproxy + 评估对 EasyTier wintun 路由优先级的影响。
 5. **WSL 内补 socat v4 relay**：`socat TCP4-LISTEN:<port>,reuseaddr,fork,bind=0.0.0.0 TCP:[::1]:<port>`，让 wslrelay 看到的是纯 v4 listener。多一跳进程，仅作 fallback。
 
-#### 全双工大流量下 wslrelay 死锁（#10688）
+### 全双工大流量下 wslrelay 死锁（#10688）
 
 [microsoft/WSL#10688](https://github.com/microsoft/WSL/issues/10688)（open，与上面 #14154 不同）：WSL 本地转发（Linux 侧转发进程 + `wslrelay.exe`）用**单个阻塞线程同时拷贝一条连接的两个方向**（半双工逻辑）；双向同时大流量时两端缓冲填满、relay 卡在 `write()` 上不再读另一边 → 永久死锁。诊断特征（`ss -tn`，卡死的 socket 对收发队列堆住、流量永久冻结）：
 
@@ -182,7 +191,7 @@ ESTAB  3176712  0          127.0.0.1:<relay>      127.0.0.1:<svc>
 
 历史背景与 issue：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) (open)、[#10688](https://github.com/microsoft/WSL/issues/10688) (open，wslrelay 全双工 hang)；类似 v4/v6 困扰在 WSL repo 里有十几个独立 issue，labels 多数 `network`。
 
-#### EasyTier + 远端 Caddy 的入站稳定方案
+### EasyTier + 远端 Caddy 的入站稳定方案
 
 WSL NAT + Windows EasyTier + 远端 Caddy 的简单稳定方案：
 
