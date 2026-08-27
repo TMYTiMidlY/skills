@@ -1,6 +1,6 @@
 ---
 name: harness
-description: 设计、集成或排查 Copilot、Claude Code、Codex、DeepSeek Harness、Hermes、pi 等 coding agent runtime 时使用。核心是从工具注入、配置发现、会话存储和进程/SDK 接口理解并编排 agent。
+description: 设计、集成或排查 Copilot、Claude Code、Codex、DeepSeek Harness、Hermes、pi 等 coding agent runtime 时使用。核心是厘清 model、agent、harness、tool、skill 与外部系统的责任，并从配置发现、会话、权限、工具注入和进程/SDK 接口理解与编排整个 agent。
 ---
 
 # Harness
@@ -19,12 +19,42 @@ agent runtime / harness（运行壳）相关问题看这里：一个 coding agen
 - **为什么这层重要**：同一模型只换 ①义 harness，agent 实测能力能差出一大截——工具 schema、编辑工具、循环设计都影响成败（见上文 Armin 分析与 METR 的 elicitation 研究）。决定 agent 好不好用的，往往是这层壳而非模型本身。
 - **在本 skill 里**：讲各家 coding agent（Copilot / Claude Code / Codex / DeepSeek Harness）这层壳（①义）怎么运转、怎么被程序驱动、怎么调试；以及从外部接上 / 驱动它们时，在 CLI 子进程 / SDK client / extension host / JSON-RPC / HTTP 几种**接入形态**间怎么取舍。
 
+## Agent、harness、tool 与 skill
+
+上文①义的 agent harness 是整套执行框架。为了继续讨论工具注入、权限和程序化接入，本仓采用下面的工作边界：
+
+| 层 | 责任 |
+|---|---|
+| Model | 接收上下文并生成文本或结构化 tool call，本身不直接拥有文件、网络或账号权限 |
+| Agent | 围绕目标运行的决策循环：选择下一步，并根据 observation 继续或结束 |
+| Harness / runtime | 组装上下文、承载 agent loop、注册和执行 tools、应用权限与 sandbox、管理会话、取消和事件 |
+| Tool | harness 暴露给 agent 的有边界执行接口，拥有自己的输入、结果、错误和副作用语义 |
+| Skill / instructions | 告诉 agent 何时、为何、怎样使用能力；不自动安装执行器或生成外部授权 |
+| 外部系统 | 文件系统、shell、数据库、飞书等真实状态与最终授权来源 |
+
+MCP 2025-06-18 的架构也把 context aggregation、安全策略和授权决策放在 host，把专门能力放在 server；tool 则是 server 暴露、模型可以发现并请求调用的 primitive。[MCP Architecture](https://modelcontextprotocol.io/specification/2025-06-18/architecture) [MCP Tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
+
+```text
+用户 / 上层 orchestrator
+          │ goal
+          ▼
+Harness ──▶ Agent loop + Model ──提出 tool call──┐
+   ▲                                            │
+   │ observation                                ▼
+   └──────── policy / approval / sandbox ──── Tool ───▶ 外部系统
+```
+
+Agent 提出调用，harness 决定能否以及怎样执行，tool 完成单项能力，外部系统作最终权限与状态判定。角色取决于观察边界：coding-agent CLI 对直接用户是 harness；被上层 orchestrator 通过 subprocess 或 SDK 驱动时，整套 runtime 可以成为父 harness 的 agent-as-tool，接入形态见 [sdk.md](references/sdk.md)。
+
+单个 tool 的命名、schema、执行契约、错误、重试与 CLI/API/MCP adapter 归 `tool` skill；本 skill 保留整个 runtime、会话、工具注册表和编排关系。
+
 ## 范围
 
 - Copilot CLI 本体行为、SDK 入口、MCP 配置注入、会话 / 导出、逆向笔记。
 - 对照 Claude Code、Codex、DeepSeek Harness 的 runtime 模型，做 harness 取舍。
 - 设计一个用代码驱动 coding agent 的 daemon / orchestrator（编排器）。
 - 在 CLI 子进程、SDK client、extension host、JSON-RPC、HTTP/webhook 几种集成形态间选型。
+- 厘清 agent、harness、tool、skill 与外部授权的责任边界；单个 tool 的契约与 adapter 转用 `tool` skill。
 
 ## References
 
