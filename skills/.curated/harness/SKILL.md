@@ -1,6 +1,6 @@
 ---
 name: harness
-description: 设计、集成或排查 Copilot、Claude Code、Codex、DeepSeek Harness、Hermes、pi 等 coding agent runtime 时使用。核心是厘清 model、agent、harness、tool、skill 与外部系统的责任，并从配置发现、会话、权限、工具注入和进程/SDK 接口理解与编排整个 agent。
+description: 设计、集成或排查 Copilot、Claude Code、Codex、DeepSeek Harness、Hermes、pi 等 coding agent runtime 时使用。核心是通过工具注入、配置发现、会话、权限和进程/SDK 接口编排 agent；model、agent、harness、tool、skill 与外部系统的关系用于界定编排边界。
 ---
 
 # Harness
@@ -19,34 +19,49 @@ agent runtime / harness（运行壳）相关问题看这里：一个 coding agen
 - **为什么这层重要**：同一模型只换 ①义 harness，agent 实测能力能差出一大截——工具 schema、编辑工具、循环设计都影响成败（见上文 Armin 分析与 METR 的 elicitation 研究）。决定 agent 好不好用的，往往是这层壳而非模型本身。
 - **在本 skill 里**：讲各家 coding agent（Copilot / Claude Code / Codex / DeepSeek Harness）这层壳（①义）怎么运转、怎么被程序驱动、怎么调试；以及从外部接上 / 驱动它们时，在 CLI 子进程 / SDK client / extension host / JSON-RPC / HTTP 几种**接入形态**间怎么取舍。
 
-## Agent、harness、tool 与 skill
+## Agent 的运行原理
 
-上文①义的 agent harness 是整套执行框架。为了继续讨论工具注入、权限和程序化接入，本仓采用下面的工作边界：
-
-| 层 | 责任 |
-|---|---|
-| Model | 接收上下文并生成文本或结构化 tool call，本身不直接拥有文件、网络或账号权限 |
-| Agent | 围绕目标运行的决策循环：选择下一步，并根据 observation 继续或结束 |
-| Harness / runtime | 组装上下文、承载 agent loop、注册和执行 tools、应用权限与 sandbox、管理会话、取消和事件 |
-| Tool | harness 暴露给 agent 的有边界执行接口，拥有自己的输入、结果、错误和副作用语义 |
-| Skill / instructions | 告诉 agent 何时、为何、怎样使用能力；不自动安装执行器或生成外部授权 |
-| 外部系统 | 文件系统、shell、数据库、飞书等真实状态与最终授权来源 |
-
-MCP 2025-06-18 的架构也把 context aggregation、安全策略和授权决策放在 host，把专门能力放在 server；tool 则是 server 暴露、模型可以发现并请求调用的 primitive。[MCP Architecture](https://modelcontextprotocol.io/specification/2025-06-18/architecture) [MCP Tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
+Coding agent 不是一次模型请求，而是 harness 持续编排的多轮循环。每一轮都从当前状态构造上下文，让模型决定下一步；如果模型请求工具，harness 执行并把 observation 放回下一轮，直到任务完成或触发终止条件。
 
 ```text
-用户 / 上层 orchestrator
-          │ goal
+用户目标 / 上层事件
+          │
           ▼
-Harness ──▶ Agent loop + Model ──提出 tool call──┐
-   ▲                                            │
-   │ observation                                ▼
-   └──────── policy / approval / sandbox ──── Tool ───▶ 外部系统
+Harness 组装上下文
+  ├─ system / user instructions
+  ├─ conversation 与 session state
+  ├─ 按需加载的 skills
+  └─ 当前可用 tools 的 schema
+          │
+          ▼
+Model 生成回复或 tool call
+          │ tool call
+          ▼
+Harness 校验 schema / policy / approval / sandbox
+          │ dispatch
+          ▼
+Tool 执行 ──▶ 文件、shell、API、数据库等外部系统
+          │ result / error
+          ▼
+Harness 记录状态并把 observation 放回上下文
+          │
+          └──────────────▶ 下一轮或终止
 ```
 
-Agent 提出调用，harness 决定能否以及怎样执行，tool 完成单项能力，外部系统作最终权限与状态判定。角色取决于观察边界：coding-agent CLI 对直接用户是 harness；被上层 orchestrator 通过 subprocess 或 SDK 驱动时，整套 runtime 可以成为父 harness 的 agent-as-tool，接入形态见 [sdk.md](references/sdk.md)。
+每轮循环包含几类职责：
 
-单个 tool 的命名、schema、执行契约、错误、重试与 CLI/API/MCP adapter 归 `tool` skill；本 skill 保留整个 runtime、会话、工具注册表和编排关系。
+- **上下文组装**：harness 把目标、指令、历史、工作区状态、相关 Skill 和可用 tool schema 放进本轮输入；未加载的知识或未暴露的工具不会自动进入模型视野。
+- **模型决策**：model 生成直接回复或结构化 tool call。tool call 是执行请求，不代表已经通过权限检查。
+- **执行门禁**：harness 校验参数，应用身份、scope、sandbox、用户确认、超时、取消和并发策略，再决定是否 dispatch。
+- **工具执行**：tool 把一项有边界的操作映射到函数、CLI、HTTP API 或 MCP server；外部系统作最终权限与状态判定。
+- **结果回填**：harness 把成功结果或结构化错误记入 session，并作为 observation 交给模型继续判断。
+- **终止与恢复**：完成答复、用户取消、预算耗尽、不可恢复错误或 harness policy 都可以结束当前 turn；持久化 session 让后续 turn 从已有状态恢复。
+
+MCP 2025-06-18 的 host/client/server 架构同样把 context aggregation、安全策略和授权决策放在 host，把专门能力放在 server；tool 是 server 暴露、模型可请求调用的 primitive。[MCP Architecture](https://modelcontextprotocol.io/specification/2025-06-18/architecture) [MCP Tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
+
+在这条闭环里，model 负责生成下一步，agent 是围绕目标持续决策的整体行为，harness 拥有循环和生命周期，tool 提供单项执行能力，Skill 提供按需注入的操作知识，外部系统保存真实状态和授权。角色仍取决于观察边界：coding-agent CLI 对直接用户是 harness；被上层 orchestrator 通过 subprocess 或 SDK 驱动时，整套 runtime 可以成为父 harness 的 agent-as-tool，接入形态见 [sdk.md](references/sdk.md)。
+
+单个 tool 的命名、schema、执行契约、错误、重试与 CLI/API/MCP adapter 归 `tool` skill；本 skill 负责把这些能力编排进完整 agent runtime。
 
 ## 范围
 
@@ -54,7 +69,7 @@ Agent 提出调用，harness 决定能否以及怎样执行，tool 完成单项�
 - 对照 Claude Code、Codex、DeepSeek Harness 的 runtime 模型，做 harness 取舍。
 - 设计一个用代码驱动 coding agent 的 daemon / orchestrator（编排器）。
 - 在 CLI 子进程、SDK client、extension host、JSON-RPC、HTTP/webhook 几种集成形态间选型。
-- 厘清 agent、harness、tool、skill 与外部授权的责任边界；单个 tool 的契约与 adapter 转用 `tool` skill。
+- 理解并编排 agent 从上下文组装、模型决策、tool 执行、observation 回填到终止的运行闭环；单个 tool 的契约与 adapter 转用 `tool` skill。
 
 ## References
 
