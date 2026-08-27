@@ -13,7 +13,7 @@ Git 与 jj 的日常操作、隔离工作区、受限网络获取、发版 / 发
 
 ## SSH
 
-SSH 密钥 passphrase、ssh-agent、非交互环境（CI / `bash -c`）私钥带 passphrase 又无解锁 agent 导致 `Server accepts key` 却 `Permission denied` 的诊断与复用常驻 agent 解法、RemoteForward 代理转发、主机密钥校验（known_hosts、`CheckHostIP` 默认及 OpenSSH 与 asyncssh 等第三方库对 IP 的处理差异——同一主机换 IP 后 OpenSSH 沉默而第三方库报 `Host key is not trusted` 的根因与修复）、ControlMaster 连接复用、裸 ssh/scp 跑命令与交互式 sudo（`ssh -t`）及远端文件编辑等通用 SSH 用法见 [references/ssh.md](references/ssh.md)。
+SSH 客户端密钥认证与 agent、主机密钥校验、ControlMaster 连接复用与 RemoteForward 反向转发、远端命令和文件操作，以及 `sshd` 进程模型与配置重载见 [references/ssh.md](references/ssh.md)。
 
 ## 包管理器全景 / 分类对比（Nix vs apt、choco/winget/Scoop、npm/pnpm/bun、pip…）
 
