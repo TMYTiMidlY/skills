@@ -265,11 +265,11 @@ URL 输入走 `httpx.stream` 流式下载，本身就保证完整，不需要这
 export MINERU_TOKEN=...
 uv run scripts/mineru_large_pdf.py \
     --input 'https://example.com/big.pdf' \
-    --out-dir ./mineru_output/big \
+    --work-dir ./mineru_work/big \
     --pages-per-part 198 --overlap 2
 ```
 
-**拆分策略**：每卷主体 `pages-per-part` 页 + 末尾 `overlap` 页过渡，用于覆盖跨页表格/公式。**推荐 `overlap=2`**：一个表/公式最多跨一个页边界，后卷开头多带 2 页就能让接缝页在两卷里都被完整识别；`mineru_large_pdf.py` 原默认 5 偏大（现已改默认 2），大 overlap 只是徒增后面要去重的重复量（而 `overlap=0` 会让跨页内容在接缝被切坏）。相邻卷 overlap 区内容会重复，合并时按下节规则**去重**（JSON 程序化去重、md 由 agent 复核去重）。
+**拆分策略**：每卷主体 `pages-per-part` 页 + 末尾 `overlap` 页过渡，用于给接缝两侧提供重复上下文。**推荐 `overlap=2` 只是常见场景的折中，不是完整性保证**：普通跨页段落、公式或短表通常只跨一个页边界；长表、附录和连续图版可能跨更多页，需增大 overlap 或由 agent 逐接缝回查原 PDF。`overlap=0` 容易让接缝对象被切坏，过大则增加重复解析和后处理量。JSON 只能先按页做确定性的基线合并，Markdown 和跨页结构仍必须由 agent 复核。
 
 **自适应**：若某卷物理大小超 190MB，脚本自动减小 `pages-per-part` 后整体重拆。断点续跑：`--skip-split` 复用已拆分卷，`--resume-batch <id>` 复用已提交的 batch。
 
@@ -309,19 +309,82 @@ uv run scripts/mineru_large_pdf.py \
 
 - 官方 zip 的主要内容就是上表所列的 `full.md`、`images/`、`*_content_list*.json`、`*_model.json`、`layout.json`、`*_origin.pdf`；
 - `batch_id.txt`、辅助脚本写出的 `results.json`，以及 agent 自行保存的 `_result.json`，都不是官方 zip 文件；前导下划线也没有 MinerU 官方语义；
-- 若需保留这些任务状态，建议放进 `_meta/` 并写明由谁生成；只想保留官方解析树时，可在任务成功并核验后将它们移入回收站。
+- **辅助状态不得默认落进正式产物目录。** `mineru_large_pdf.py` 默认写到 `work-dir` 同级的隐藏目录 `.<work-dir-name>.mineru-state/`，也可用 `--state-dir` 显式指定；
+- 只有项目明确要把运行证据随产物归档时，才由用户选择放入产物内的 `_meta/` 并注明生成方。否则任务成功并核验后，应保留在外部状态目录或移入回收站。
 
-一个 PDF 因 >200MB / >200 页**物理拆成多卷分别转换**后，把各卷输出拼回一份，按**结构**（而非文件名）处理。拆分务必落在**整页边界**（别在页中切），每页完整属于某一卷。
+> `mineru_large_pdf.py` 的 `--work-dir`（旧名 `--out-dir`，仍作为兼容别名）是**任务工作目录**，不是最终产物目录。当前脚本只负责拆分、上传、下载各卷原始 zip，并写出带分卷标记的 `full.concat.md`；它**尚未合并 JSON / images，也没有删除 overlap，更没有完成 agent 接缝复核**。凡仍含 `partNN/`、`parts/` 或 `<!-- === part ... === -->` 的目录都只是中间态，不能交付。
 
-**先处理 overlap**：用了 `overlap≥1`（推荐 2）时相邻卷共享 `overlap` 页、内容重复，合并前必须**丢弃后一卷开头的 `overlap` 页**（它们与前卷末尾是同一批页）。记各卷"保留页数" K₀,K₁,…（首卷 K₀=全部页，其余 Kᵢ = 该卷页数 − overlap），累计基址 baseᵢ = K₀+…+Kᵢ₋₁。`overlap=0` 时无需丢弃，baseᵢ 即之前各卷页数之和。
+### 分卷结果必须经过三阶段合并
 
-- **`images/`**：取并集；文件名是内容哈希，跨卷天然唯一、不冲突。
-- **`content_list.json`（扁平块，带 `page_idx`）**：后卷丢弃 `page_idx < overlap` 的块，其余 `page_idx ← page_idx − overlap + baseᵢ`，顺序拼接。
-- **`layout.json` 的 `pdf_info`（每页一项，带 `page_idx`）**：同上——丢前 `overlap` 项、`page_idx` 偏移、再拼接；顶层元数据（`_backend`/`_ocr_enable` 等）取任一卷。
-- **`content_list_v2.json` / `model.json`（按页分组、靠位置，第 i 项 = 第 i 页）**：后卷切掉开头 `overlap` 项（`list[overlap:]`），首尾直接相接，内部不动。
-- **`full.md`（无显式分页标记）**：`mineru_large_pdf.py` 只做「顺序拼接 + 卷间插 `<!-- === part NN (pages S-E) === -->` 标记」，**不合并 JSON**；随后由 **agent 复核去重**——移除全部标记，并删掉后卷开头 `overlap` 页的重复段。
+推荐把流程状态显式记为 `raw_parts_only → structured_merged → agent_verified`；只有 `agent_verified` 才能进入最终 canonical 目录。
 
-**full.md 去重的定位技巧**（md 无分页标记，只能靠内容锚点切）：后卷要删开头 `overlap` 页 → 取该卷 `content_list.json` 里**第一个 `page_idx==overlap` 的文本块**的文本当锚点，在该卷 full.md 里定位它，从此处往后保留、之前丢弃。**坑**：锚点文本（如节标题）常在目录 + 正文各出现一次，单取「首个匹配」会误切；稳妥做法是**按 overlap 占比估预期字节位** `expected ≈ overlap ÷ 该卷页数 × len(md)`，在所有匹配里取**离 expected 最近**的那个。**验证**：去重后同一段 overlap 文本应从「出现 2 次」变「1 次」、图片引用仍全部命中、首页(标题)/尾页(索引)内容正确、`full.md` 与各 JSON 同为 N 页。（实测 Dalzell 416 页：拆 3 卷、两处接缝各删 5 页 overlap，md 与 JSON 均对齐到 416 页。）
+#### 阶段 A：保留各卷原始结果（脚本）
+
+工作目录保留不可变的分卷底稿，方便后续交叉核验：
+
+```text
+<work-dir>/
+├── parts/                 # 物理拆分 PDF
+├── parts_manifest.json    # 全局页范围、overlap 与基线保留范围
+├── part01/                # 第 1 卷官方 zip 原样解压
+├── part02/                # 第 2 卷官方 zip 原样解压
+└── full.concat.md         # 机械拼接 + part 标记；不是最终 full.md
+```
+
+拆分清单必须记录每卷的原 PDF 全局页范围 `start..end`、本卷页数和 overlap。原始 `partNN/` 在 agent 完成复核前不能修改；失败续跑、接缝对照和回查都以它们为准。
+
+#### 阶段 B：结构化基线合并（脚本先做）
+
+脚本应先把 JSON 和图片合并成 `merged-staging/`。这是**确定性的页级基线**，仍不是最终交付。各卷的 UUID 前缀不同，且旧版本可能直接叫 `content_list_v2.json`；merger 必须按“后缀 + JSON 结构”识别文件，并要求每卷每类恰好一份，不能靠固定 UUID 或完整文件名：
+
+1. **页归属基线**：第一卷保留全部页；后续每卷先丢弃本地 `page_idx < overlap` 的重复页。对保留页，最不易出错的换算是：
+
+   ```text
+   global_page_idx = part.start - 1 + local_page_idx   # part.start 为 1-based；local/global page_idx 为 0-based
+   ```
+
+   例如 `part02` 覆盖原 PDF 第 199–398 页、`overlap=2`，则丢本地页 0–1，保留本地页 2–199，并映射为全局 `page_idx=200..397`（原 PDF 第 201–398 页）。
+
+2. **`*_content_list.json`**：过滤被丢弃页的块，重写每个块的 `page_idx`，按全局页码和原块顺序拼接。
+3. **`*_content_list_v2.json` / `*_model.json`**：二者靠外层列表位置表示页；后卷先切掉 `list[:overlap]`，再顺序拼接。若内部未来出现显式 `page_idx`，也必须同步改写，不能只假设格式永远不变。
+4. **`layout.json`**：对 `pdf_info` 做同样的删页和全局 `page_idx` 改写；`_backend`、`_ocr_enable`、`_version_name` 等顶层元数据必须逐卷一致，不一致时停止合并而不是静默取第一卷。
+5. **`images/`**：按文件名合并，但同名文件仍要校验字节/哈希一致；冲突即报错。不能只依据 `full.md` 清理图片，因为部分图片只被 JSON 引用。最终引用集合要扫描合并后的 Markdown **和全部 JSON**。
+6. **`*_origin.pdf`**：各卷返回的是分卷副本，不进入最终目录；最终只保留用户的完整原始 PDF。
+7. **机器校验**：`content_list_v2`、`model`、`layout.pdf_info` 的最终页数都必须等于原 PDF 的 N 页；全局页码必须恰好覆盖 `0..N-1`，不得重复或跳号；所有图片引用必须存在。
+
+基线合并应生成明确标注为**合成文件**的名字（如 `merged_content_list.json`、`merged_content_list_v2.json`、`merged_model.json`），不要沿用某一卷的 UUID 冒充官方单卷原件。
+
+> **当前实现缺口**：现有 `mineru_large_pdf.py` 尚未实现本阶段，只生成原始 `partNN/`、`parts_manifest.json` 和 `full.concat.md`。因此旧文档里“JSON 程序化去重”容易让人误以为脚本已经完成，实际并没有；在结构化 merger 实现并通过测试前，大文件流程只能视为 staging。
+
+#### 阶段 C：接缝语义复核（agent）
+
+页级固定丢弃只是基线，不足以保证跨页对象正确。比如表格跨原 PDF 第 200–201 页时，前卷可能缺第 201 页上下文，而后卷虽然完整看到了两页，其第 200 页又处在待丢弃 overlap 中。agent 必须逐接缝同时查看：前卷末尾、后卷开头、两卷 JSON/图片，以及原 PDF 接缝前后页面；必要时用后卷的块替换基线中前卷对应块，并同步修正结构化 JSON。
+
+`full.concat.md` 没有可靠分页标记，不能简单按比例截断，也不能只取一个文本锚点——目录、页眉和重复节标题很容易误命中。定位时至少组合使用：
+
+- `content_list.json` 中第一保留页的连续 2–3 个文本块；
+- 该页附近的图片/表格引用；
+- overlap 占本卷页数的比例，只作为预期位置；
+- 原 PDF 接缝页的可视回查。
+
+若第一保留页没有文本，改用图片、表格或下一页的多块序列定位。agent 的最终职责是：删掉重复前缀和所有 part 标记，确认接缝无重复、无缺段、跨页表格/公式完整，并在有替换时同步复核 JSON，而不是只修 Markdown 表面。
+
+### 最终 canonical 产物
+
+只有完成阶段 B 与 C 并通过核验后，才把干净结果写入项目目录：
+
+```text
+<project>/mineru/<文献名>/
+├── <原始完整文件>.pdf
+├── full.md
+├── merged_content_list.json
+├── merged_content_list_v2.json
+├── merged_model.json
+├── layout.json
+└── images/
+```
+
+最终目录不应含 `parts/`、`partNN/`、分卷 `*_origin.pdf`、`full.concat.md`、part 标记、batch 状态或临时 merge manifest；这些只留在独立工作目录，确认无需回滚后再移入回收站。验收至少包括：N 页结构一致、页码连续、接缝抽查、首尾内容正确、Markdown/JSON 图片引用全命中，以及无未解释的孤儿图片。
 
 ## 本地上传方式（备用）
 
