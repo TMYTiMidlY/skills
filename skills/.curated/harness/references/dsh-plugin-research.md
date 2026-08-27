@@ -257,3 +257,30 @@ dsh-model-hub 的 record-key 绑定与 keyless profile 激活
 | 使用成熟终端产品与自有生态 | `dsh-TUI` |
 
 这仍是初步推荐，不是最终决定。进入实现前至少需要完成：官方六类 flow 的枚举测试、每种 prompt 的无凭据单元测试、少量非主账号真实登录与刷新 smoke test、登录后模型请求验证，以及供应商条款风险确认。
+
+## <a id="2026-08-27-installed-source-followup"></a>2026-08-27 · 安装后源码复核
+
+本轮在 DSH `0.1.1-rc.2` 的 Web Profile 中实际安装 `@fhxgs/dsh-model-hub@0.2.3`，并以仓库 commit `6897374e90b2f383a797e6597c011e076594f3e7` 复核 Host、Client、OAuth、record binding、Adapter 注册与 smoke checklist。安装、composition dump 和 Web 启动成功；没有使用真实订阅账号完成外部 OAuth 与模型请求，因此下面结论是运行时装载验证加源码归属判断，不是账号 E2E。
+
+### Model Hub 的两条 Codex 路由
+
+Model Hub 不是“Codex 一律复用官方 flow”。它有意让 DSH 官方 `openai-codex` 与插件内建 `codex` 同时存在，页面搜索 `codex` 会出现两行：
+
+| Provider key | OAuth 与 record 归属 | 模型请求归属 | 页面含义 |
+|---|---|---|---|
+| `openai-codex` | DSH 官方 `llm-pi-ai` 注册 flow，使用 `recordKeyFor()` 对应的官方 credential record | 官方 `PiAiAdapter` 与 Pi catalog | 宿主适配器的官方路由；Model Hub 只桥接 `authorization.begin()`、状态与 keyless profile 激活 |
+| `codex` | Model Hub 自己实现 authorization-code + PKCE，写入 `model-hub` scope 的独立 record | 插件自己的 `NativeOAuthAdapter` 与静态模型表 | 显示名为 **OpenAI Codex** 的内建路由；拥有自己的 grant、record、models 与错误行为 |
+
+内建 `codex` 的 client id、OpenAI OAuth endpoints、scope 和非标准参数取自同版本 pi-ai 的公开实现，但“常量来自官方依赖”不等于“运行官方 DSH flow”：它由插件自己的 OAuth skeleton 执行、由 `createNativeFlow()` 写插件 record，再由 `NativeOAuthAdapter` 消费。选择哪一行，决定 Token 生命周期和模型请求最终归谁维护。
+
+> 来源：[内建 `codex` 与官方 `openai-codex` 并存及独立归属](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/native/catalog.ts#L269-L410)、[官方与 Model Hub 两套 binding](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/bindings.ts#L69-L82)、[插件自建 flow 与 record scope](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/native/flows.ts#L43-L60)、[自建 Adapter 与 flow 注册](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/native/registration.ts#L69-L77)、[两行 Codex 的人工 smoke checklist](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/scripts/smoke-p1.zh.md#L55-L68)。
+
+### Web surface 的额外 loopback 边界
+
+Model Hub 的浏览器端在建立 handshake 之前读取 `ctx.connection.isLoopback`。页面 authority 不是 `localhost`、`127/8` 或 `[::1]` 时，它直接注册只读说明页并返回，不调用 `/model-hub`；因此反向代理只改变上游 HTTP headers，不能把浏览器地址栏中的公网 hostname 变成 loopback。这个限制属于 Model Hub Client 自己，和 DSH Host 对代理后的 Host/Origin 是否放行是两层判断。
+
+> 来源：[非 loopback Client 直接降级且不建立 handshake](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/client/index.ts#L334-L358)、[DSH Client 以页面 hostname 计算 `isLoopback`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/client/index.ts#L80-L89)。
+
+### 对原路线建议的修正
+
+若目标是“所有官方 OAuth Provider 共用官方 flow、record、刷新与 Adapter”，Model Hub 可借鉴的是 Provider directory、record-key binding、keyless activation 和 UI 组织；不能把它的内建 `codex` 当成官方链证据。实际选型必须按 provider key 判断所有权，而不是按显示名判断。
