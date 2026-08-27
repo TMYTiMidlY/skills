@@ -518,13 +518,97 @@ Skill 支持 `<name>/SKILL.md` 目录 bundle 和 `<name>.md` 平铺文件；发�
 
 ### MCP
 
-内置 MCP client 支持 `stdio` 和 `streamable-http`。每个 server 以独立 Plugin 连接并把远端工具注册进 `ctx.tools`，公开名称带 server namespace，避免不同 server 的同名工具冲突。
+内置 MCP client 支持 `stdio` 和 `streamable-http`。每个 server 以独立 Plugin 连接并把远端工具注册进 `ctx.tools`，公开名称中的 server namespace 区分不同 server 的同名工具。
 
-当前桥接面是 **Tools**；Resources 与 Prompts 尚无 Harness 消费接口。执行期规范值保留完整 JSON MCP blocks 和可选 `structuredContent`。进入模型历史时，文本与资源链接转成文本；挂载附件存储且调用模型明确声明图片输入能力时，PNG、JPEG、WebP 和 GIF 会成为持久图片块。音频、嵌入资源和不受支持的 block 会变成明确的诊断文本。
+当前 Harness 消费面覆盖 **Tools**；Resources 与 Prompts 等待相应的消费接口。执行期规范值保留完整 JSON MCP blocks 和可选 `structuredContent`。进入模型历史时，文本与资源链接转成文本；挂载附件存储且调用模型明确声明图片输入能力时，PNG、JPEG、WebP 和 GIF 会成为持久图片块。音频、嵌入资源和 Harness 当前范围之外的 block 会变成明确的诊断文本。
 
-默认 Profile 不启动任何 MCP server。`stdio` server 是 Host 直接启动的可执行程序，不受 Agent 工具沙箱约束。
+MCP server 采用显式启用方式：部署在 patch 中加入 server 对应的 MCP client Plugin 实例。`stdio` server 由 Host 直接启动并持有 Host 用户权限；Agent 工具沙箱与 server 进程构成两个独立的权限范围。
 
 > 来源：[MCP transport、工具命名、结果映射与图片准入](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/mcp/mcp-client/README.zh.md#L5-L32)，以及[工具结果与已知边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/mcp/mcp-client/README.zh.md#L62-L117)。
+
+#### <a id="mcp-persistent-configuration"></a>持久配置 MCP Server
+
+安装 dsh 时，npm 会同时安装 `@deepseek-ai/dsh-mcp-client`。这个 package 提供 MCP transport、工具发现和 `ctx.tools` 注册能力。部署者通过 Cordis patch 为每个 MCP server 创建一个 Plugin 实例；实例激活后建立连接、读取工具 schema，并把工具提供给 Agent。
+
+下面的 overlay 同时连接一个本地 stdio server 和一个远端 Streamable HTTP server，既可用于一次性测试，也可合并进持久 patch：
+
+```yaml
+- insert:
+    - id: mcp-local-tools
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: local-tools
+        transport: stdio
+        command: /absolute/path/to/local-mcp-server
+        args: []
+        cwd: !!js process.cwd()
+        env:
+          LOCAL_MCP_TOKEN: !!js process.env.LOCAL_MCP_TOKEN
+
+    - id: mcp-remote-tools
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: remote-tools
+        transport: streamable-http
+        url: 'https://mcp.example.com/mcp'
+        headers:
+          Authorization: !!js >-
+            process.env.REMOTE_MCP_TOKEN && `Bearer ${process.env.REMOTE_MCP_TOKEN}`
+```
+
+`id` 是 Cordis 配置行的稳定标识，只需在组合中保持唯一，不要求以 `mcp` 开头。为了让 MCP 行在 patch、日志和排障输出中容易识别，推荐使用 `mcp-<serverName>` 形式；`mcp-` 是配置可读性约定，模型工具名仍由 `serverName` 决定。`serverName` 对应模型所见的 `mcp__<serverName>__<rawName>` namespace；它匹配 `[A-Za-z0-9_-]{1,32}`，并在存活的 MCP client 实例中唯一。
+
+接入新 server 时，可以先把 overlay 保存为独立文件，例如 `./mcp-test.cordis.yml`，并在测试 shell 中导出 overlay 引用的环境变量。第一条命令验证配置层能否组合，第二条命令在备用端口启动一次真实 Web 进程，完成连接和工具发现测试：
+
+```sh
+dsh --profile web --patch ./mcp-test.cordis.yml --dump-config >/dev/null
+dsh --profile web --patch ./mcp-test.cordis.yml --no-open --port 3081
+```
+
+`--patch <path>` 的作用域是当前进程，测试进程结束时该 overlay 的运行生命周期随之结束。测试通过后，把同一 `insert` 合并进持久 patch：单个 Profile 使用 `$DSH_HOME/profiles/<profile>/cordis.patch.yml`，所有 Profile 共用则使用 `$DSH_HOME/cordis.patch.yml`。配置层按 bundle、Profile patch、home patch、各个 `--patch` 的顺序叠加，后面的同 id 修改优先。
+
+Web 部署通常把 server 定义写进 `$DSH_HOME/profiles/web/cordis.patch.yml`，并把该 Profile 使用的启动环境集中在相邻的 `$DSH_HOME/profiles/web/mcp.env`。编辑 patch 时保留现有顶层数组内容，把新的 `insert` 与已有条目合并。Profile 环境文件使用一行一个 `KEY=value` 的格式，YAML 通过 `process.env` 引用对应值：
+
+```dotenv
+LOCAL_MCP_TOKEN=<token>
+REMOTE_MCP_TOKEN=<token>
+```
+
+```sh
+chmod 600 "$DSH_HOME/profiles/web/mcp.env"
+```
+
+`mcp.env` 是部署约定的启动环境文件，加载责任属于启动方式。直接从 shell 启动 dsh 时，先把变量导入当前 shell，再启动目标 Profile：
+
+```sh
+set -a
+. "$DSH_HOME/profiles/web/mcp.env"
+set +a
+dsh --profile web
+```
+
+**systemd service 托管。** 下面的内容适用于由 systemd 启动 dsh 的部署。system service 的 drop-in 记录环境文件路径：
+
+```ini
+[Service]
+EnvironmentFile=<absolute-dsh-home>/profiles/web/mcp.env
+```
+
+system service 把 drop-in 保存到 `/etc/systemd/system/dsh.service.d/20-mcp-environment.conf`；user service 把它保存到 `~/.config/systemd/user/dsh.service.d/20-mcp-environment.conf`，并使用对应的 `systemctl --user` 命令。drop-in 变更通过 `daemon-reload` 和 restart 生效；`mcp.env` 值变更通过 restart 进入新进程：
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl restart dsh.service
+systemctl show dsh.service -p EnvironmentFiles -p ActiveState -p SubState
+```
+
+systemd 的 PATH 通常比交互 shell 短，systemd 部署中的 stdio `command` 使用绝对路径可获得一致的命令解析结果。
+
+无论采用 shell 还是 systemd 启动，运行中的 Host 都会监视 Profile patch，并通过 HMR 应用 patch 变更。进程环境在启动时形成快照，因此环境文件更新通过重新启动进入 Host。stdio transport 以清理后的父环境为基底，再合并 `config.env`；部署在 `config.env` 中显式转发各 server 所需的变量。HTTP header 由配置表达式从 Host 环境构造。
+
+环境变量是整个 Host 进程的共享状态，每个 Host Plugin 都具备读取能力。`0600` 把环境文件的磁盘读写权限授予文件所有者；Host Plugin 信任范围同时构成这些凭据的读取范围。完成持久配置后，通过服务状态和新 Session 的工具清单验收；新 Session 中应能看到 `mcp__<serverName>__...` 工具。
+
+> 来源：[Profile 配置层顺序、`--patch` 与 `--dump-config`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.zh.md#L7-L39)、[Profile 与 home patch 的监视和 MCP 启用方式](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.zh.md#L81-L93)、[MCP Plugin 配置、命名和环境字段](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/mcp/mcp-client/README.zh.md#L7-L60)，以及[stdio 环境构造和持久 patch 位置](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/examples/mcp-memory/README.zh.md#L9-L33)。systemd 的 `EnvironmentFile=` 解析与生效时机见 [`systemd.exec`](https://www.freedesktop.org/software/systemd/man/255/systemd.exec.html#EnvironmentFile=)。
 
 ### Subagent
 
