@@ -1,12 +1,12 @@
 # DeepSeek Harness（dsh）Plugin 开发
 
-本文面向 Plugin 作者，说明怎样选择开发入口，把临时原型整理成源码工程，实现模块与各类扩展接口，分层验证后打包、安装和维护。Plugin、Bundle、Profile、Agent preset、配置合成及完整权限模型见 [DeepSeek Harness 运行时](dsh.md)；现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-plugin-research.md)。
+本文面向 Plugin 作者，集中说明 DSH 插件系统的组成、配置合成和生命周期，再给出从临时原型到源码工程、分层验证、打包安装与版本维护的完整开发流程。运行 DSH、安装或卸载现成 Plugin、使用内置扩展以及判断完整权限边界见 [DeepSeek Harness 运行时](dsh.md)；现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-plugin-research.md)。
 
 > **来源口径：** 模块与生命周期的原有结论按 2026-08-16 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)保留；开发、安装和测试流程另按 2026-08-26 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e)复核。每条具体引用都链接到对应 commit。
 
 ## <a id="plugin-objects"></a>Plugin、配置与安装包的关系
 
-运行时篇已经定义 Plugin、Bundle 与 Profile；本节只区分开发者实际维护的 module、加载配置和安装产物。后续所说的“临时”“持久”和“已安装”，都取决于这些内容保存在哪里。
+本节先把运行代码、配置实例、安装包、Host 配置和 Agent 工作模式放进同一张关系图。后续所说的“临时”“持久”和“已安装”，都取决于开发者维护的是哪类对象，以及它保存在哪里。
 
 ### <a id="plugin-entry-package"></a>Plugin 开发中的基本概念
 
@@ -19,8 +19,9 @@
 | package（安装包） | module、浏览器代码、依赖、manifest 和构建产物 | 可通过 npm、Git、本地目录或 tarball 安装，也可以只提供普通库 |
 | Bundle | package manifest 中的 `dsh.bundle.patch` 与默认 patch | 安装后为目标 Profile 提供一层默认 Plugin 配置 |
 | Profile | 开发或验收环境中的依赖、lockfile、Bundle 列表和用户 patch | 固定这套部署实际安装并启用的 package 与配置 |
+| Agent preset | `agent.cordis.yml` 与可选的 `preset.yml` | 为新 Agent 选择 prompt、tools、策略和显示信息，不改变 Host 已安装的 package |
 
-各配置层怎样生成最终 Loader entry、后层怎样覆盖前层，统一见运行时篇的 [Profile 与组合包](dsh.md#runtime-composition)。开发篇从合成结果出发：Loader 根据 entry 的 `name` 导入 module，并为这次加载创建 Fiber。
+`cordis.patch.yml` 可以插入、修改或停用多条配置，每条最终配置都是一个 Loader entry。Loader 根据 entry 的 `name` 导入 module，并为这次加载创建 Fiber；配置怎样逐层形成这些 entry，见下一节的加载路径。
 
 开发验收时，官方 Web Settings 的“插件配置”标签页用于修改已运行 Host Plugin 主动开放的设置；“插件列表”标签页只读展示每条 Plugin 配置的启停状态和 Fiber 状态，点击卡片可以展开详情。package 的安装、删除和更新由 `dsh plugin` 负责；某条 Plugin 配置是否启用则写在 patch 中。社区 Settings 扩展可以增加其他操作入口，相关项目见调研篇的[插件市场与主题](dsh-plugin-research.md#plugin-market)。
 
@@ -30,7 +31,32 @@
 
 ### <a id="plugin-loading-paths"></a>Plugin 的加载方式、保存位置与生效时间
 
-同一段 Plugin 代码可以通过创造模式、`--patch`、Profile/Home 的 `cordis.patch.yml` 或已安装 Bundle 加载。这些方式都会指定要加载的 module、使用的配置以及是否停用；区别在于信息保存在哪里、什么时候生效。
+DSH 启动时先组成 Host Plugin 树，创建 Agent 时再把所选 preset 挂到 Agent 子 Context。Profile 负责 Host 已安装的 package、共享服务和部署覆盖；Agent preset 只从当前部署可解析的 module 中选择 prompt、tools 与策略，两者分别保存、分别生效。
+
+```mermaid
+flowchart TD
+  P[Profile] --> B1[基础组合包]
+  P --> B2[界面或运行形态组合包]
+  P --> U[Profile、Home 与 --patch 覆盖]
+  B1 --> H[Host Plugin 树]
+  B2 --> H
+  U --> H
+  H --> A[Agent 子 Context]
+  R[Agent preset] --> A
+```
+
+Profile 从空条目列表开始按顺序应用配置层：
+
+1. Profile manifest 中列出的各个 Bundle patch；
+2. Profile 自己的 `cordis.patch.yml`；
+3. Harness home 下的全局 `cordis.patch.yml`；
+4. 命令行通过 `--patch` 临时加载的 overlay。
+
+后层按 row id 覆盖前层，`config` 是整项替换；普通 dependency 只有在 package manifest 声明 `dsh.bundle` 后才会成为 Profile 的配置层。合成后的每条 Loader entry 在 Cordis Context 中启动为一个 Fiber；Plugin 通过它注册 service、event listener 和 effect，Fiber 卸载时再撤销这些注册。模块形式与完整清理规则见后文的[实现 Plugin 模块](#plugin-runtime)。
+
+Agent preset 存放为包含 `agent.cordis.yml` 的目录，可选的 `preset.yml` 提供显示名称与说明。用户自建 preset 通常放在 `$DSH_HOME/.agent-presets/<id>/`，由随附 preset 复制后修改；它只影响之后选择该 preset 的 Agent，不负责安装 Host package。
+
+同一段 Plugin 代码可以通过创造模式、`--patch`、Profile/Home 的 `cordis.patch.yml` 或已安装 Bundle 加载。这些入口都会指定要加载的 module、使用的配置以及是否停用；区别在于信息保存在哪里、什么时候生效。
 
 | 入口 | 代码来源 | 写入位置 | 何时生效 |
 |---|---|---|---|
@@ -40,9 +66,9 @@
 | `--patch <path>` | 参数指定的 patch 文件 | 本次命令参数；Profile 保持原样 | 当前启动期间有效，适合本地开发和临时覆盖 |
 | 创造模式 | 进程内的临时代码 | 当前 dsh 进程内存 | 运行后立即生效，停用、删除或重启后消失 |
 
-配置层的合成顺序、Host Profile 与 Agent preset 的职责边界统一见运行时篇的 [Cordis 插件框架](dsh.md#runtime-composition)。本表只用于选择开发入口；每项操作对源码、Profile 和当前进程的具体影响见后文的[操作影响表](#operation-effects)。
+上面的配置层次解释最终 Plugin 树从哪里形成；表格则用于选择开发入口。每项操作对源码、Profile 和当前进程的具体影响见后文的[操作影响表](#operation-effects)。
 
-> 来源：[Bundle 安装、Profile manifest 与配置层顺序](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L9-L128)；[Profile、`--patch` 与运行时重载](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L7-L84)。
+> 来源：[Cordis 的 Plugin、Context、Fiber 与可逆注册](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/cordis-primer.zh.md#L5-L13)；[Bundle、Profile 与配置层顺序](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/architecture.zh.md#L15-L37)；[Agent preset 的组成与保存位置](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/preset/agent-presets/README.zh.md#L5-L85)；[Bundle 安装与 Profile manifest](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L9-L128)；[Profile、`--patch` 与运行时重载](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L7-L84)。
 
 ## <a id="plugin-development-workflow"></a>Plugin 开发流程
 
@@ -712,7 +738,7 @@ Profile 清单保存按顺序应用的 Bundle 列表，由 `dsh plugin` 创建�
 
 #### Bundle 默认值与用户覆盖
 
-配置层顺序见运行时篇的 [Profile 与组合包](dsh.md#runtime-composition)。Bundle patch 只提供可直接使用的默认配置，并把某台部署的凭据、路径和偏好留给用户 patch；修改 `config` 时需要写出该 Plugin 所需的完整配置，因为后层的新值会整体替换旧值。
+完整配置层次见本篇的[加载方式、保存位置与生效时间](#plugin-loading-paths)。Bundle patch 只提供可直接使用的默认配置，并把某台部署的凭据、路径和偏好留给用户 patch；修改 `config` 时需要写出该 Plugin 所需的完整配置，因为后层的新值会整体替换旧值。
 
 #### 分发形式与安装期构建
 

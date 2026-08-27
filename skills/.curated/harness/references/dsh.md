@@ -1,10 +1,10 @@
 # DeepSeek Harness（dsh）运行时
 
-本文从使用者和集成者视角说明 DeepSeek Harness 的产品定位、安装与运行、插件框架、Agent 执行、内置扩展、程序化入口和权限边界。Plugin、Bundle、Profile、Agent preset 及配置合成的运行时含义以本文为准；编写、测试和分发 Plugin 的代码路径见 [DeepSeek Harness Plugin 开发](dsh-plugin.md)，现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-plugin-research.md)。
+本文从使用者和集成者视角说明 DeepSeek Harness 的产品定位、安装与运行、插件化思路、Agent 执行、内置扩展、程序化入口和权限边界。本文只给出安装、卸载和选择工作模式所需的插件概念；插件怎样组成运行环境、叠加配置、协作和清理，以及怎样开发和分发，见 [DeepSeek Harness Plugin 开发](dsh-plugin.md)。现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-plugin-research.md)。
 
 ## <a id="product-position"></a>产品定位
 
-DeepSeek Harness（`dsh`）是 DeepSeek 开源的 agent harness（把模型、工具调用、会话、权限和界面组织成可执行 Agent 的运行壳）。它建立在 Cordis 插件框架上：插件向共享 Context 注册服务、类型化事件和可逆的副作用，模型适配、system prompt、工具、agent loop、Session、持久化、沙箱、审批和界面都通过插件树组合。
+DeepSeek Harness（`dsh`）是 DeepSeek 开源的 agent harness（把模型、工具调用、会话、权限和界面组织成可执行 Agent 的运行壳）。它采用插件化架构：模型适配、system prompt、工具、agent loop、Session、持久化、沙箱、审批和界面可以独立组合，由不同运行配置选择实际启用的能力。
 
 项目处于 developer preview（开发者预览），会继续发生兼容性破坏；Session 格式也没有跨版本兼容承诺。仓库采用 MIT 许可，官方安装入口是 npm 包 [`@deepseek-ai/dsh`](https://registry.npmjs.org/%40deepseek-ai%2Fdsh)。
 
@@ -74,9 +74,9 @@ cd /path/to/project
 dsh web
 ```
 
-这里的 workspace 表示 Agent 操作的项目目录。Plugin 的运行实例、配置项和可安装 package 之间的关系见 Plugin 开发篇的 [Plugin、Loader entry 与 package](dsh-plugin.md#plugin-entry-package)。
+这里的 workspace 表示 Agent 操作的项目目录，与 Plugin 的安装位置相互独立。一个插件怎样从安装包进入指定运行配置、再形成最终启用的能力组合，见 Plugin 开发篇的[配置与安装包关系](dsh-plugin.md#plugin-objects)。
 
-Web 与 headless 是两个 Profile（启动时选用的具名插件组合）。两者加载共同的基础组合包；Web 再加入浏览器应用和 HTTP 服务，headless 再加入一次性 runner，并在 Agent idle 后输出结果。
+Web 与 headless 是两个 Profile（启动时选用的具名运行配置）。Web 提供浏览器应用和 HTTP 服务；headless 负责一次性运行任务，并在 Agent idle 后输出结果。
 
 > 来源：[npm 与源码启动命令](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/README.md#L13-L37)；[Profile boot、Web alias 与 headless 行为](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.zh.md#L7-L32)。
 
@@ -338,57 +338,24 @@ https://<public-host> {
 
 > 来源：[Web CLI 的默认监听、`--host 0.0.0.0` 限制与 `--trusted-host`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.zh.md#L67-L79)；[Host fence、cross-site fence 与 Origin/Host 精确相等检查](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/api-request-trust.ts#L90-L123)；[loopback 与 trusted-host RPC authority 的选择](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/rpc-host.ts#L74-L105)；[Client 从页面 hostname 派生 `isLoopback`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/client/index.ts#L80-L89)；[Web server 的 TLS 与认证边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/host/webserver/README.zh.md#L19-L22)。
 
-## <a id="runtime-composition"></a>Cordis 插件框架
+## <a id="runtime-composition"></a>插件系统
 
-Cordis 是 DeepSeek Harness 底层以 vendor 方式引入的插件框架。Plugin（插件）向 Context（共享服务容器）贡献服务、类型化事件和可逆注册；Fiber（生命周期单元）负责插件的加载与卸载。运行中的 dsh 是一棵插件树：Profile 与组合包在启动时组成 Host，Agent preset 再为具体 Agent 加入 prompt、tools 和策略。
+DSH 把模型、工具、策略、存储和界面等能力做成可以组合的 Plugin。Profile（具名运行配置）保存一套部署实际安装并启用的插件集合；不同 Profile 可以面向 Web、一次性任务或其他入口采用不同组合。
 
-```mermaid
-flowchart TD
-  P[Profile] --> B1[基础组合包]
-  P --> B2[界面或运行形态组合包]
-  P --> U[Profile、Home 与 --patch 覆盖]
-  B1 --> H[Host Plugin 树]
-  B2 --> H
-  U --> H
-  H --> A[Agent 子 Context]
-  R[Agent preset] --> A
-```
+### Plugin 的安装与卸载
 
-### Profile 与组合包
-
-| 对象 | 作用 | 载体 |
+| 目的 | 命令 | 生效方式 |
 |---|---|---|
-| Plugin | 提供服务、事件监听、工具、策略或 UI | TypeScript / JavaScript module |
-| 组合包（Bundle） | 分发一层可安装的 Plugin 配置 | 带 `dsh.bundle` manifest 的 package |
-| Profile | 选择组合包并保存部署覆盖 | `$DSH_HOME/profiles/<name>` |
-| Agent preset | 决定一个 Session 中的 Agent 使用哪些 prompt、tools 与策略 | preset 目录中的 Cordis composition |
+| 安装到指定 Profile | `dsh plugin --profile <profile> add <package-or-git-spec>` | 写入该 Profile；重启后使用新的插件集合 |
+| 从指定 Profile 卸载 | `dsh plugin --profile <profile> remove <package>` | 从该 Profile 移除；重启后不再加载 |
 
-Profile 从空条目列表开始按顺序应用配置层：
+安装和卸载改变的是指定 Profile，已经运行的进程继续使用本次启动时的插件集合，直到重启。一个插件怎样从安装包进入运行配置、怎样合并默认设置与部署覆盖，见开发篇的[加载方式、保存位置与生效时间](dsh-plugin.md#plugin-loading-paths)；插件怎样共享能力、响应运行事件，并在更新或卸载时清理自身影响，见开发篇的[模块与生命周期](dsh-plugin.md#plugin-runtime)。
 
-1. Profile manifest 中列出的各个组合包 patch；
-2. Profile 自己的 `cordis.patch.yml`；
-3. Harness home 下的全局 `cordis.patch.yml`；
-4. 命令行通过 `--patch` 临时加载的 overlay。
-
-后层按 row id 覆盖前层；`config` 是整项替换。普通 dependency 只有在 package manifest 声明 `dsh.bundle` 后才会成为 Profile 的配置层。
-
-```sh
-dsh plugin --profile web add <package-or-git-spec>
-dsh plugin --profile web remove <package>
-dsh --profile web --dump-config
-```
-
-### Plugin、Context 与 Fiber
-
-每个已加载 Plugin 都在一个 Cordis Context 中运行，并由 Fiber 管理生命周期。Plugin 通过 Context 注册 service、event listener 或 effect；Fiber 卸载时撤销这些注册。热替换实现以及叠加审批、重试、日志或压缩策略都沿用这套生命周期。
-
-本节集中解释这些运行时对象怎样配合，以及配置层按什么顺序形成最终 Plugin 树。Plugin 的模块形式、配置、依赖和热更新写法见 [模块、配置与生命周期](dsh-plugin.md#plugin-runtime)。
-
-> 来源：[Cordis 的插件、Context、依赖、事件与可逆注册](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/cordis-primer.zh.md#L5-L13)；[Profile 与组合包的加载顺序](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/architecture.zh.md#L15-L37)。
+> 来源：[Plugin package、Profile 与安装命令](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L9-L128)；[安装、移除与重启边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L41-L64)；[插件化组合的整体结构](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/architecture.zh.md#L15-L37)。
 
 ### <a id="agent-preset"></a>Agent preset
 
-Agent preset（智能体预设）是创建 Agent 时选用的一份 Cordis 组合配方，存放为一个包含 `agent.cordis.yml` 的目录；其中的 Plugin rows 决定 Agent 可见的工具、persona、system prompt、压缩策略、workflow 和 Subagent 入口，可选的 `preset.yml` 提供显示名称与说明。Profile 决定整个 dsh Host 进程及共享服务怎样启动；preset 决定选择它的 Agent 看到哪些工具和提示，以及挂载哪些 Agent 侧 Plugin。
+Agent preset（智能体预设）是创建 Agent 时选择的工作模式，决定该 Agent 可见的工具、角色说明、提示内容、压缩策略、workflow 和 Subagent 入口。Profile 决定整个 DSH 服务启用哪些共享能力，preset 决定单个 Agent 怎样使用这些能力。
 
 官方随附四种 preset：
 
@@ -399,7 +366,7 @@ Agent preset（智能体预设）是创建 Agent 时选用的一份 Cordis 组�
 | [`minimal`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/config/agent-presets/minimal/preset.yml#L1-L3) | 极简模式 | 固定 system prompt，只提供 persistent Bash 与 `str_replace_editor` |
 | [`cordis`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/config/agent-presets/cordis/preset.yml#L1-L3) | 创造模式 | 在标准能力上增加运行时检查、动态 Plugin 实验和自定义 preset 创作能力 |
 
-Session 创建时加入所选 preset 的组合。尚未产生内容的 Session 可以原子切换 preset；已经产生内容的 Session 保持原能力集合，使日志中的工具调用与恢复后的工具定义一致。preset 文件的新版本由之后创建或加入的新 Session 使用。用户自建 preset 通常放在 `$DSH_HOME/.agent-presets/<id>/`，由随附 preset 复制后修改。
+Session 创建时采用所选 preset。尚未产生内容的 Session 可以切换 preset；已经产生内容的 Session 保持原能力集合，使日志中的工具调用与恢复后的工具定义一致。preset 的后续修改由新建或新加入的 Session 使用。怎样组合和保存自定义工作模式，见开发篇的[运行配置与 Agent 工作模式](dsh-plugin.md#plugin-loading-paths)。
 
 #### <a id="creation-mode"></a>创造模式
 
@@ -412,7 +379,7 @@ Session 创建时加入所选 preset 的组合。尚未产生内容的 Session �
 | Agent 定制 | 复制已有 Agent preset，再调整工具、角色说明、提示内容、压缩策略或子智能体入口，并验证组合能否挂载 | 写入用户 preset，供之后创建的 Session 使用 |
 | Plugin 开发 | 先观察 DSH 的实际扩展位置，再快速制作临时原型 | 何时使用、何时不用及如何落成正式 Plugin，见开发篇的[创造模式中的 Plugin 开发](dsh-plugin.md#creation-mode-plugin-development) |
 
-创造模式主要调整当前 Agent 和临时扩展。跨 Session 共用的持久化、权限或模型路由由 Host 组合负责。动态 Plugin 会接触真实运行时，安全上按 shell 权限看待；需要长期维护、测试和发布的功能可以落成源码 Plugin。
+创造模式主要调整当前 Agent 和临时扩展。需要跨 Session 共用的持久能力、权限或模型路由，应整理成可以长期维护和测试的正式 Plugin；长期使用的 Agent 工作方式则保存为自定义 preset。动态 Plugin 会接触真实运行时，安全上按 shell 权限看待。
 
 > 来源：[Agent preset 的组成、挂载与切换](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/preset/agent-presets/README.zh.md#L5-L85)；[创造模式的定位](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/config/agent-presets/cordis/preset.yml#L1-L3)；[动态 Plugin 的运行、内存生命周期与信任立场](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/extensions/cordis-host-runner/README.zh.md#L7-L32)。
 
