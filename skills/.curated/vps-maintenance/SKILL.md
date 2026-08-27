@@ -1,18 +1,20 @@
 ---
 name: vps-maintenance
-description: 新服务器/VPS 初始化、服务器侧安全配置、网络质量检测、BBR/EasyTier/Caddy/caddy-security/error-pages 等服务安装配置时使用；远程执行规范由 remote 提供。
+description: 初始化或维护 VPS/服务器时使用，涵盖安全加固、网络与 IP 质量检查和基础服务部署。远程操作优先使用 portal；Caddy 与客户端网络转用 network，微信 Bot 操作转用 wechat-clawbot skill。
 ---
 
 # VPS Maintenance
 
 ## 使用范围
 
-当用户要配置新服务器或 VPS、做服务器侧安全配置、安装或调整服务器上的基础服务时使用本 skill。实际远程执行命令仍遵循 `remote` 的 SSH 操作规范。
+当用户要配置新服务器或 VPS、做服务器侧安全配置、安装或调整服务器上的基础服务时使用本 skill。实际远程操作优先使用 portal MCP server；当前环境未提供时，遵循 `software` skill 的 SSH 远程执行、sudo 与远端文件编辑规范。
+
+Caddy 反向代理、证书和 caddy-security 配置由 `network` skill 覆盖；本 skill 只保留服务器宿主、防火墙和质量检测侧的衔接。
 
 如果用户没有明确指定任务类型，先确认是：
 
 - **新服务器**：新购服务器的防火墙、用户、SSH 密钥部署与 SSH 服务端配置。
-- **服务安装**：按需配置 BBR、EasyTier、Caddy、caddy-security、error-pages。
+- **服务安装**：按需配置 BBR、EasyTier、error-pages；Caddy / caddy-security 转用 `network` skill。
 - **质量检测**：网络、IP、历史服务器质量评估。
 
 ## 新服务器
@@ -100,6 +102,17 @@ PubkeyAuthentication yes
 EOF
 ```
 
+模板里 `PermitRootLogin no` 是最严选择。该指令四个取值：`yes`（密码或密钥都可，最松）、`prohibit-password`（旧名 `without-password`，仅密钥、禁密码）、`forced-commands-only`（仅密钥且只能跑 `authorized_keys` 里 `command=` 指定的命令）、`no`（root 完全禁止 SSH 登录）。
+
+因为本流程已同时 `PasswordAuthentication no`（root 密码登录一并被堵），`no` 与 `prohibit-password` 的实际差别只在 **root 的密钥登录**：
+
+| 取值 | root 密码登录 | root 密钥登录 | 说明 |
+|---|---|---|---|
+| `no` | ❌ | ❌ | root 完全进不来，要 root 就普通账户登录后 `sudo`。最严、默认推荐 |
+| `prohibit-password` | ❌ | ✅（需 root 装了公钥） | 保留一条 root 密钥应急通道 |
+
+若机器有物理/控制台访问且普通账户 sudo 可靠，用 `no`；想留 SSH 应急入口则用 `prohibit-password`，并给 `/root/.ssh/authorized_keys` 放公钥。
+
 可选：如果需要通过远程端口转发将本地服务暴露到公网（`ssh -R`），在配置中加入 `GatewayPorts yes`。默认不开启。
 
 上面用 `sudo tee` 写入的文件默认已是 root 所有、644 权限。如果用其他方式写入，需要手动确保权限正确：
@@ -148,13 +161,9 @@ sudo sysctl -p
 
 ### Caddy 与 caddy-security
 
-Caddy 反向代理、域名/IP 模式、local root CA、Caddyfile 修改流程、caddy-security GitHub OAuth、cookie scope、环境变量见 [references/caddy.md](references/caddy.md)。
+Caddy 反向代理、域名/IP 模式、local root CA、Caddyfile 与 Admin API、caddy-security GitHub OAuth、cookie scope 和环境变量转用 `network` skill。docs-share 的 viewer 壳子由本 skill 的 [viewer 资产](assets/md-viewer.html) 提供。
 
 尤其是修改 Caddyfile、EasyTier、SSH 转发、systemd 单元、防火墙规则时，不要凭记忆改，先读对应 reference。
-
-### 代理服务
-
-3x-ui/Xray 面板的服务端配置（VLESS 主节点骨架、在 3x-ui 里加 Hysteria2 inbound）见 [references/proxy.md](references/proxy.md)；独立 systemd 版 Hysteria2 服务端搭建、Caddy 证书复用与 UDP 端口放行已移到 `network` skill。
 
 ### 微信 ClawBot Hub（OpeniLink Hub）
 
@@ -206,7 +215,7 @@ sudo systemctl enable --now error-pages
 
 ## 质量检测
 
-网络与 IP 质量评估、历史服务器配置价格对比见 [references/quality-check.md](references/quality-check.md)。
+网络与 IP 质量评估、历史服务器配置价格对比见 [references/vps-quality.md](references/vps-quality.md)。
 
 覆盖范围：
 
@@ -214,7 +223,7 @@ sudo systemctl enable --now error-pages
 - 延迟测试：mtr。
 - IP 风险评估、多节点延迟。
 - 大陆云服务器公网带宽限速丢包。
-- DigitalOcean、RackNerd、LisaHost、EdgeNAT、Alibaba Cloud 历史记录。
+- DigitalOcean、RackNerd、LisaHost、EdgeNAT、Alibaba Cloud 历史记录（含被墙 / 换 IP 经历与费用）。
 
 ## 用户名规则
 

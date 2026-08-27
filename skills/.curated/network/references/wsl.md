@@ -1,6 +1,6 @@
 # WSL ↔ Windows 网络管道
 
-WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT 网络、WSL 出站怎么进宿主 Mihomo、WSL/Docker 服务入站（portproxy + wslrelay）。Mihomo/Clash 内核本身的配置与泄漏控制见 [mihomo.md](mihomo.md)；远程桌面 / VS Code serve-web 等远程接入见 [remote.md](remote.md)；独立 systemd 版 Hysteria2 服务端见 [hysteria2.md](hysteria2.md)。
+WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT 网络、WSL 出站怎么进宿主 Mihomo、WSL/Docker 服务入站（portproxy + wslrelay）。**分工**：本文只管「WSL 流量怎么进出宿主那个 Mihomo」这条管道；**Mihomo 内核自己怎么跑**（DNS 语义 / `fake-ip-range` 取值 / TUN 路由规则 / REST / 协议选型）都在 [mihomo.md](mihomo.md)，下文引用会指到具体小节。远程桌面 / VS Code serve-web 等远程接入见 [remote.md](remote.md)；独立 systemd 版 Hysteria2 服务端见 [hysteria2.md](hysteria2.md)。
 
 ## WSL Mirror 模式网络
 
@@ -67,18 +67,19 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 - Docker Desktop WSL2 backend: Docker Desktop uses a `docker-desktop` WSL distribution for the Docker engine.
 - Docker Resource Saver on WSL: Resource Saver does not stop the whole WSL VM because it is shared by all WSL distributions.
 
-## WSL NAT 下出站走 Mihomo / fake-ip
+## WSL NAT 下出站走 Mihomo
 
-> Mihomo / Clash 本身的配置、REST API、节点/协议选型、TUN 路由规则见 [mihomo.md](mihomo.md)；本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。
+> 本节只讲 WSL NAT 流量怎么进 Windows 宿主的 Mihomo。**内核侧**：DNS 模式（fake-ip / redir-host / normal）见 [mihomo.md §10](mihomo.md#10-dns-泄漏原理与-mihomo-配置)、TUN 路由规则（IP-CIDR / route-exclude）见 [§7](mihomo.md#7-tun-路由的边界)、REST 控制见 [§6](mihomo.md#6-运行态控制rest-api-与-web-面板)、节点 / 协议选型见 [§3](mihomo.md#3-流量链路入口规则与节点组)·[§4](mihomo.md#4-协议性能与客户端配置)。
 
-在无法使用 WSL Mirror / mirrored networking、必须继续使用 WSL NAT 时，不要假设 Windows 宿主能走 Mihomo TUN 就等于 WSL 裸 TCP 也会被稳定接管。更稳的做法是：WSL 内的 HTTP 类工具显式走 Windows 宿主 `mixed-port`，SSH 等不读代理环境变量的工具单独配置 `ProxyCommand`。
+在无法使用 WSL Mirror / mirrored networking、必须继续用 WSL NAT 时：**宿主 mihomo TUN 开着且 `auto-route: true` 时，WSL NAT 的裸出站流量会被宿主 TUN 透明接管、经宿主 mihomo 代理出去（实测：tun2socks 停着时 WSL 裸连确实成功过、出口 IP=代理节点；fake-ip / redir-host / normal 三模式都通）——但（NAT 实测坑）这层接管不持久、分钟级就退化**：宿主 TUN 挂一小会儿就会**停止**接管 WSL 转发流量（路由还在、宿主自己上网正常，但 WSL 裸包进了 TUN 被黑洞丢弃、超时），得**重建宿主 TUN** 才恢复（机制与实测见 [mihomo.md §7](mihomo.md#7-tun-路由的边界)）。所以 **NAT 下想让 WSL 稳定走宿主，推荐自建 tun2socks（方案 B）**、别裸靠宿主 TUN 接管；下面几种"未接管"情形同样得靠方案 A/B。
 
-典型现象：
+**别被"WSL 里看不到宿主 TUN"误导**：NAT 模式下 WSL 是独立 VM，`ip addr` 只有自己的 `eth0`、`ip route` 里也没有宿主的 `198.18.x` 路由——但接管发生在**宿主侧**（WSL 裸包过宿主 NAT 后，被宿主路由表按 `auto-route` 装的路由劫进 TUN），不在 WSL 侧、所以 WSL 看不到很正常。**至于"凭什么是 `auto-route` 而非 `strict-route` 决定接管、strict-route 又只做什么、以及源码/实测证据"，属 mihomo 内核行为，见 [mihomo.md §7](mihomo.md#7-tun-路由的边界)**，本文不复述。
 
-- Windows PowerShell `Test-NetConnection <ip> -Port <port>` 成功，`InterfaceAlias` 显示 `Meta`。
-- WSL 里 `curl`、`ssh`、`nc` 对同一目标超时，卡在 TCP connect 阶段，还没到 TLS/SSH 握手。
-- WSL DNS 解析域名得到 `198.18.x.x`，说明 Mihomo `fake-ip` 已生效；但 WSL 到这些 fake-ip 的 TCP 流量可能没有稳定进入 TUN 映射。
-- 同一域名或目标有时成功、有时超时，通常是 fake-ip/TUN 映射链路不稳定，不要直接判断为远端服务故障。
+**什么时候 WSL 裸连才真不通、需要显式配代理（方案 A/B）**：宿主 TUN 没开、或 `auto-route` 关、或目标被 `route-exclude-address` 覆盖、或宿主 TUN 启动失败（`enable=false`，见 mihomo.md [§6.2](mihomo.md#62-tun-模式下别用-post-restartwindows-会静默丢-tun)）。只有这些"未接管"情形才会出现下面的现象。（旧版本文档曾把"WSL 裸连不通"一律归给 fake-ip 占位 IP 或"裸流量不经 mihomo"，已被推翻。）
+
+**现象**：Windows PowerShell `Test-NetConnection <ip> -Port <port>` 成功（`InterfaceAlias` 显示 `Meta`），但 WSL 里 `curl` / `ssh` / `nc` 对同一目标超时，卡在 TCP connect 阶段、还没到 TLS/SSH 握手。
+
+排障先分清是"宿主根本没接管这段流量"（上面那几种未接管条件）还是"远端节点 / DNS 出问题"——别一上来就归咎远端服务故障。DNS 模式取值见 [mihomo.md §10](mihomo.md#10-dns-泄漏原理与-mihomo-配置)。
 
 快速判断：
 
@@ -104,6 +105,8 @@ Test-NetConnection <target-ip> -Port <port>
 ```
 
 如果 Windows 成功、WSL 直连超时、WSL 走 `<wsl-gateway-ip>:7890` 成功，说明问题在 **WSL NAT 裸流量进入 Windows TUN 的透明接管路径**，不是远端目标或节点不可用。
+
+### 方案 A：逐工具显式设代理（`*_proxy` 环境变量 + ssh `ProxyCommand`）
 
 `<wsl-gateway-ip>` 通常是 WSL 默认路由的网关，例如：
 
@@ -137,9 +140,72 @@ Host <name>
   ProxyCommand nc -x <wsl-gateway-ip>:7890 -X 5 %h %p
 ```
 
+### 方案 B：WSL 内自建 TUN 透明代理（tun2socks）
+
+> **什么时候用方案 B。** **Mirror 模式**下 WSL 与宿主共栈、直接 `127.0.0.1:7890` 即可、用不上它。**NAT 模式则推荐用它**：宿主 TUN 虽能透明接管 WSL 裸出站，但（实测）这层接管**不持久、会随时间退化**——宿主 TUN 挂久了 WSL 转发流量被黑洞丢弃、要重建宿主 TUN 才恢复（见 [mihomo.md §7](mihomo.md#7-tun-路由的边界)）；而 tun2socks 走**显式 SOCKS 到 mixed-port**、根本不碰那条会退化的转发路径，因此稳。所以 NAT 下别裸靠宿主 `auto-route`，用方案 B 当稳定透明层。
+
+上面是**方案 A**：逐工具显式指代理（`*_proxy` 环境变量 + ssh `ProxyCommand`）。**方案 B** 用 [`xjasonlyu/tun2socks`](https://github.com/xjasonlyu/tun2socks)（开源 Go 单文件）在 WSL 内建一块 TUN 网卡，把**全部**出站裸流量透明导进宿主 mihomo，免逐工具设代理。它**只补“透明网卡”这一层**，分流 / 选节点仍交给宿主已有的 mihomo——所以 WSL 内**不必再开第二个完整 mihomo**（除非要 WSL 独立订阅 / 规则）。
+
+**为什么需要方案 B（初衷）**：方案 A 只覆盖**读 `*_proxy` 的工具**（curl / git / pip…）。有一类工具不读任何代理环境变量、自己解析 DNS、把解析到的 IP **钉死直连**——典型是 **agent 内置抓取工具（如 Copilot CLI 的 `web_fetch`）**，方案 A 对它无效。它在 `fake-ip` 下解析到 `198.18.x`、撞自身 SSRF 保留地址闸、连都不连（这是 **app 层**的事、与宿主 TUN 接不接管无关）——第一解法其实是让它拿**真实 IP**（宿主切 `redir-host` / `normal`）：按上节坐实，真实 IP 的 WSL 裸流量会被**宿主 TUN(`auto-route`) 接管、代理出去**，多数情况到这儿就通了。方案 B 的价值在**解耦兜底**——把 WSL 默认路由钉到自建 `tun0`→宿主 mixed-port，让可达性**不依赖**"宿主 TUN 恰好开着、`auto-route` 开着、目标又没被 `route-exclude`"这一串前提；也是那几种"未接管"情形（宿主 TUN 关 / `auto-route` 关 / 目标被 `route-exclude`）下唯一的透明兜底。
+
+**装（`/usr/local/bin`，要 sudo）**：取对应 arch 的二进制（`uname -m` → amd64 / arm64），`sudo install -m0755 <binary> /usr/local/bin/tun2socks` 装到 `/usr/local/bin/`，`tun2socks --version` 自检；GitHub 下载本身可先经宿主 `--proxy http://<gw>:7890`。选 `/usr/local/bin` 三重有据：① tun2socks **官方推荐位置**——官方 wiki *Install-from-Source* 的 Build 段原文即 `make tun2socks && sudo cp ./build/tun2socks /usr/local/bin`；② 下面 systemd unit 的 `ExecStart` **写死**了这个路径；③ 它在 root（`sudo` / 服务）默认 `PATH` 内。tun2socks 建 TUN + 改路由本就要 root，把二进制留在用户目录（`~/.local/bin` 等）对 root 服务没意义——直接装系统位置，别在用户目录中转。
+
+> ⚠️ **`go install github.com/xjasonlyu/tun2socks/v2@latest` 是另一条路、落点不同**：按 Go 工具链默认装到 `$(go env GOPATH)/bin`（默认 `~/go/bin`），既非系统级位置、也不是 unit 写死的 `/usr/local/bin`。走这条装完还得再 `sudo install ~/go/bin/tun2socks /usr/local/bin/tun2socks`（或建 symlink），否则 service 找不到二进制——**装 service 时这个落点差异务必核对**。
+
+**跑（要 root / `CAP_NET_ADMIN`——建 TUN + 改路由是特权操作；非免密 sudo 无法非交互代跑）**，核心三步：
+
+```bash
+GW=$(ip route show default | awk '{print $3}')                     # 宿主网关(NAT下会变,动态取)
+tun2socks -device tun0 -proxy socks5://$GW:7890 -interface eth0 &   # -interface eth0: 出站socket绑真实网卡,防绕回tun
+ip addr add 198.19.0.1/24 dev tun0; ip link set tun0 up
+ip route replace default dev tun0                                   # 默认路由改走tun → 全流量透明进mihomo
+```
+
+> **TUN 设备地址得自己 `ip addr add`（tun2socks 不给默认值）。** 官方 Examples 示例用的是 `198.18.0.1/15`——整个 RFC2544 基准段（`198.18.0.0/15`，含 `198.18.x` + `198.19.x`），选它是因为这段非真实互联网、不会撞公网目标。**本文故意偏离、改用 `198.19.0.1/24`**：官方那个 `/15` 把 `198.18.x` 也纳进来，而本机宿主已占用 `198.18.x`——mihomo 默认 `fake-ip-range: 198.18.0.1/16`（只含 198.18.x，定义见 [mihomo.md §10.2](mihomo.md#102-mihomo-配置防泄漏--分流准--防污染)）+ 官方 wiki 注明「tun 默认 IPv4 地址也取自此值」，即宿主 fake-ip 段与其 TUN 网关都落在 `198.18.x`，直接套官方 `/15` 会和宿主撞。改用 `198.19.0.1/24` 既仍在安全的 RFC2544 段内、又避开 `198.18.x`，也不撞 mesh `10.x` / WSL NAT `172.28.x` / docker `172.17–172.31`。它是**合理选择、非唯一解**（任何不与 fake-ip / mesh / docker 冲突的保留段都行）；`198.19` 在默认 `/16` 下**不是** fake-ip，⚠️ 仅当你手动把 `fake-ip-range` 改成 `/15`（才会含 198.19）时需另换。
+
+到宿主网关 `$GW` 本身仍走 eth0 的 `/20` 子网路由（比 `default` 更具体、不会被吞进 tun），加上 `-interface eth0` 绑定出站，两重保证 socks 连接不绕回 tun 死循环。首测务必包一层 `trap 'ip route del default dev tun0; ip link del tun0' EXIT INT TERM` 自动回滚——配错也不会把 WSL 网络卡死。验证：不带任何 `*_proxy` 跑 `curl https://www.google.com/generate_204` 得 `204` 即生效。
+
+**转 systemd 持久化**：unit `../assets/tun2socks.service` 随 skill 附带，**自包含**——`ExecStart`/`ExecStopPost` 直接内联 `/bin/sh -c '…'`，不依赖外部脚本（脚本不入 skill）。它做的事：
+
+- `ExecStart`（一条 sh）：从 `ip route show default` 取宿主网关（`via` IP，缓存到 `/run/tun2socks-gw`）→ 建 `tun0` + 地址 `198.19.0.1/24` + up → 私有/组网段 `10.0.0.0/8`+`172.16.0.0/12`+`192.168.0.0/16` 加 `via <网关> dev eth0` 排除路由（含 mesh、只代理公网）→ 默认路由改 `tun0` → `exec tun2socks -device tun0 -proxy socks5://<网关>:7890 -interface eth0`。
+- `ExecStopPost`（一条 sh）：读 `/run` 缓存网关 → 删默认路由、还原 `default via <网关> dev eth0`、删 `tun0`。
+- 网关**动态取、不写死**：`ip route show default` 的 `via` IP；若 default 已是 tun0（重启态）则读 `/run` 缓存兜底。`-interface eth0` + 网关命中 eth0 子网 on-link，双重防绕回 tun。systemd 里 shell 变量写 `$$VAR`（`$$`→`$`），`$(…)` 命令替换保持单 `$`。
+
+安装（`<skill>` = 本 skill 目录，如 `~/.agents/skills/network`；只需二进制 + unit，无脚本）：
+
+```bash
+# 二进制须已在 /usr/local/bin/tun2socks（见上「装」；unit ExecStart 写死此路径，go install 落 ~/go/bin 的先补装到位）
+sudo install -m0644 <skill>/assets/tun2socks.service /etc/systemd/system/tun2socks.service
+sudo systemctl daemon-reload && sudo systemctl enable --now tun2socks
+# 验证 systemctl status tun2socks；ip route show default(=tun0)；curl -so/dev/null -w '%{http_code}' https://www.google.com/generate_204(=204)
+```
+
+⚠️ 装前先停掉手动/测试脚本残留的 tun2socks——两个实例抢同一 tun0，且测试脚本退出时 `trap` 会 `ip link del tun0` 打断服务。
+
+**副作用 / 坑**：
+
+- 默认路由变成 `default dev tun0`（**无 `via`**）→ 任何 `ip route show default | awk '{print $3}'` 取网关的脚本会把 `tun0` 当成网关 IP 而坏（见下面 ssh）。健壮写法用 `ip route get 1.1.1.1`。
+- **mesh（`10.144.x` / `10.100.x`）出站不受影响**：包被 tun0 吞进 mihomo 后，靠宿主 mihomo 的 `IP-CIDR,10.x,DIRECT` 规则兜底仍直连可达（实测通）。想让 mesh 彻底不经 mihomo，加排除路由 `ip route add 10.0.0.0/8 via $GW dev eth0`。
+- 只治**出站**；入站（mesh → WSL 服务）的 portproxy 一条不少（见[下节](#wsl--docker-服务暴露入站portproxy--wslrelay)），要连入站一起免掉只有切 mirrored。
+
+**ssh 在两种方案下的差异**：
+
+- **方案 A（ProxyCommand）**：上面 sshconfig 里 `ProxyCommand nc -x <gw>:7890 ...` 让 ssh 走宿主 mihomo；动态取网关版常写 `gw=$(ip route show default | awk '{print $3}')`。
+- **方案 B（tun2socks）**：tun0 已透明接管，ssh 直连即被捞进宿主 mihomo，**必须删 / 注释掉 `ProxyCommand`**——两者并存会打架。
+- **典型翻车**：tun2socks 开着又留着动态取网关的 `ProxyCommand` → `ssh -T git@github.com` 报 `Connection closed by UNKNOWN port 65535`。根因：默认路由变 `default dev tun0`（无 `via`），`awk '{print $3}'` 取出 `tun0` 当网关，执行 `nc -x tun0:7890` 解析不了主机名秒退。`UNKNOWN port 65535` 是 ProxyCommand 管道拿不到对端 `getpeername` 的通用指纹，任何 ProxyCommand 子进程异常退出都长这样，不特指本 bug。修法：删 ProxyCommand（走方案 B），或把取网关改成 `ip route get 1.1.1.1`（走方案 A）。
+
 ## WSL / Docker 服务暴露（入站：portproxy + wslrelay）
 
-> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。WSL 出站流量走 Mihomo 的部分在上面的 [WSL NAT 下出站走 Mihomo / fake-ip](#wsl-nat-下出站走-mihomo--fake-ip)，两者互不相干。
+> 方向区分：本节是 **Windows / EasyTier / 远端入口 -> WSL 内服务**（入站）。反方向的 WSL 出站走 Mihomo 见上面的 [WSL NAT 下出站走 Mihomo](#wsl-nat-下出站走-mihomo)。注意 **WSL 出站访问 mesh（`10.144.x`）本来就通、无需 portproxy**（NAT 下出站全交给宿主，宿主已有 mesh 路由）；portproxy 只解决**入站**（让 mesh / 远端访问 WSL 内服务）。要**少 / 免**逐服务配 portproxy，见下面[「少 / 免逐服务 portproxy 的两条路」](#少--免逐服务-portproxy-的两条路a-mirrored--b-单反代兜底)。
+
+### 少 / 免逐服务 portproxy 的两条路（A mirrored / B 单反代兜底）
+
+`netsh portproxy` 无端口段 / 通配，一端口一条规则——服务一多就是几十条 toil（本机实测曾积到 23 条）。比"每服务一条"更省的两条路：
+
+- **A. mirrored 网络模式**（`.wslconfig` 加 `networkingMode=mirrored`，Win11 22H2 / build 22621+）：WSL 共享宿主网络栈，WSL 服务监听 `0.0.0.0:N` 即被宿主各 IP（含 EasyTier mesh IP）的 `:N` 直达，**portproxy 一条不用、也没 wslrelay / #14154**。代价是一次性迁移：`wsl --shutdown`、删掉现有 portproxy、**重估 EasyTier wintun 路由优先级**（mirrored 最大的不确定点）、Docker Desktop 会重启一次。要"以后永久零转发配置"选这条。
+- **B. WSL 内单反代兜底 + 1 条 portproxy**（保持 NAT、不碰 EasyTier）：WSL 里跑一个反代（Caddy / nginx / Traefik）监听单个端口，**只配 1 条** portproxy（`宿主 mesh-IP:443 → 127.0.0.1:<反代端口>`），反代按 Host / 子域 / 路径分流到各 WSL 服务。**新增服务 = 加一段反代 site 配置 + reload，`netsh` 一条不加**；#14154 的纯 v4 坑只剩那 1 个端口要管。链路：远端 Caddy → 宿主 mesh IP:443 →（1 条 portproxy）→ WSL 反代 → 各服务。想保持 NAT 现状、避免动 EasyTier 选这条；**已在 WSL 跑反代（如 Caddy）时几乎零成本**。
+
+取舍：**A** 是终极零配置但要停机 + 担 EasyTier 重估风险；**B** 不停机、不碰 EasyTier，把 N 条 portproxy 收敛成 1 条、新服务只动反代配置。另有 **C**（定时脚本扫 `ss -tln` 自动同步 netsh 规则）只是把手动 toil 自动化、治标不治本，#14154 仍每服务要防，一般不推荐。
 
 WSL NAT 下，要把 WSL 内服务暴露给 Windows / EasyTier / 远端反代，需要 Windows `netsh interface portproxy` 做 TCP 转发：它把 Windows 宿主某个监听地址和端口转到 WSL 内服务。`portproxy` 不负责让 WSL 出站走 Mihomo，也**不支持 UDP**，且 `netsh interface portproxy add/delete/set` 都**需要 Windows 管理员权限**——从 WSL 用 `Start-Process -Verb RunAs` 弹 UAC 提权即可（见 `software` skill 的 windows.md「从 WSL 弹 UAC 拿管理员权限」，那节正是拿 `portproxy add` 当例子）。实在拿不到 admin 时，退而沿用已有 portproxy 条目、在其后面的反代里按 path/Host 分流即可。
 
@@ -193,7 +259,7 @@ netsh interface portproxy show all
 
 - `netsh portproxy` 由 Windows `iphlpsvc` 承载，只是个通用 TCP 转发表，**不知道 WSL 存在**；它需要 connectaddress 那端有人接，正好 `127.0.0.1` 那端是 wslrelay 在 listen。
 - `wslrelay.exe` 是 WSL2 NAT 模式的 localhost forwarding 实现，**只在 Windows host 的 `127.0.0.1` / `[::1]` 上 listen**，不会 listen 任意 host IP（如 EasyTier 的 `<Windows机 mesh IP>`）。
-- `.wslconfig` 里 `hostAddressLoopback=true` 容易让人误以为是“让 host IP 也能 forward 进 WSL”——**不是**。它的方向是反的：让 WSL 进程能通过 host IP 访问 host loopback service。见下面实测。
+- `.wslconfig` 里 `hostAddressLoopback=true` 容易让人误以为是“让 host IP 也能 forward 进 WSL”——**不是**。它的方向是反的：让 WSL 进程能通过 host IP 访问 host loopback service。见下面[实测](#实测删掉-portproxy靠-wslrelay-单独扛行不行结论不行)。
 
 #### 实测：删掉 portproxy、靠 wslrelay 单独扛行不行（结论：不行）
 
@@ -242,14 +308,14 @@ curl.exe --noproxy * -v --max-time 5 "http://[::1]:<port>/"
 1. **显式 v4 监听地址**（首选，零代价）：
    - Docker / docker-compose：**推荐写 `ports: ["127.0.0.1:9000:9000"]`**，不要 bare `"9000:9000"`（bare 让 docker-proxy 选 dual-stack v6 socket，触发 #14154）。显式写 v4 host IP `127.0.0.1` 即纯 v4，不踩坑。
    - 服务直接 listen：**推荐 listen `127.0.0.1`**，不要用 `::`。Python `http.server` 默认 v4，Go `net.Listen("tcp", ":N")` 默认 dual-stack v6，要写 `net.Listen("tcp4", "127.0.0.1:N")`。
-   - **Caddy on WSL 实测**：Caddyfile 写 `bind 0.0.0.0`，adapt 后虽然也是 `"listen": ["0.0.0.0:N"]`，Go listener 仍可能落成 `ss -ltn6` 的 `*:N`，Windows 只补 `[::1]:N`，`portproxy connectaddress=127.0.0.1` 继续 RST。改成 `bind 127.0.0.1` 后，WSL 侧变成 `ss -ltn4` 的 `127.0.0.1:N`，Windows 才出现 `127.0.0.1:N` listener，portproxy 链路恢复。若站点用 IP + `tls internal`，Windows Schannel 对 IP 不发 SNI，还要按 `vps-maintenance` skill 的 Caddy IP 模式设置 `default_sni <主 IP>`，否则 TCP 通了仍会在 TLS 握手时报 fatal alert。
+   - **Caddy on WSL 实测**：Caddyfile 写 `bind 0.0.0.0`，adapt 后虽然也是 `"listen": ["0.0.0.0:N"]`，Go listener 仍可能落成 `ss -ltn6` 的 `*:N`，Windows 只补 `[::1]:N`，`portproxy connectaddress=127.0.0.1` 继续 RST。改成 `bind 127.0.0.1` 后，WSL 侧变成 `ss -ltn4` 的 `127.0.0.1:N`，Windows 才出现 `127.0.0.1:N` listener，portproxy 链路恢复。若站点用 IP + `tls internal`，Windows Schannel 对 IP 不发 SNI，还要按 [caddy.md](caddy.md) 的 Caddy IP 模式设置 `default_sni <主 IP>`，否则 TCP 通了仍会在 TLS 握手时报 fatal alert。
    - **Java / JVM 服务**（Neo4j / Elasticsearch / Kafka / Spark 等）：JVM 默认开 dual-stack v6，**即使配置文件写 `listen_address=0.0.0.0` 也会落到 `*:N` 形态**（socket 是 AF_INET6 + V6ONLY=0，恰好是 #14154 触发点）。fix 是加 JVM flag `-Djava.net.preferIPv4Stack=true` 强制纯 v4 socket。**Neo4j 5.x apt 包实测**：编辑 `/etc/neo4j/neo4j.conf`，把 `#server.bolt.listen_address=:7687` 取消注释改成 `server.bolt.listen_address=0.0.0.0:7687`，再追加一行 `server.jvm.additional=-Djava.net.preferIPv4Stack=true`，`systemctl restart neo4j` 之后 `ss -tlnp` 从 `*:7687` 变 `0.0.0.0:7687`，wslrelay 看到纯 v4 listener 才会在 Windows 端补 `127.0.0.1:7687` 的 v4 listener，portproxy `connectaddress=127.0.0.1` 这条才不会 RST。**单改 `listen_address=0.0.0.0` 一行不够**，必须同时给 JVM 加 preferIPv4Stack=true。（listen 用 `127.0.0.1` 或 `0.0.0.0` 都是纯 v4、等效；上面是当时实测的 `0.0.0.0` 原值，关键是 `preferIPv4Stack`。）
 2. **portproxy `connectaddress` 指 WSL eth0 IP**（跳过 wslrelay 走 NAT）——**不推荐**：eth0 IP 随 WSL 重启变化、不稳；优先第 1 条（服务监听 `127.0.0.1` + `connectaddress=127.0.0.1`）。
 3. **portproxy 改用 `v4tov6` 转 `::1`**：理论可行，但实测在不少 WSL 版本上 wslrelay 的 `[::1]` listener 也 RST，所以不一定通。作为快速试探可用，长期不推荐。
 4. **切 `networkingMode=mirrored`**（Win11 22H2+）：彻底没 wslrelay。代价是重排所有 portproxy + 评估对 EasyTier wintun 路由优先级的影响。
 5. **WSL 内补 socat v4 relay**：`socat TCP4-LISTEN:<port>,reuseaddr,fork,bind=0.0.0.0 TCP:[::1]:<port>`，让 wslrelay 看到的是纯 v4 listener。多一跳进程，仅作 fallback。
 
-#### 全双工大流量下 wslrelay 死锁（#10688）
+### 全双工大流量下 wslrelay 死锁（#10688）
 
 [microsoft/WSL#10688](https://github.com/microsoft/WSL/issues/10688)（open，与上面 #14154 不同）：WSL 本地转发（Linux 侧转发进程 + `wslrelay.exe`）用**单个阻塞线程同时拷贝一条连接的两个方向**（半双工逻辑）；双向同时大流量时两端缓冲填满、relay 卡在 `write()` 上不再读另一边 → 永久死锁。诊断特征（`ss -tn`，卡死的 socket 对收发队列堆住、流量永久冻结）：
 
@@ -276,7 +342,7 @@ ESTAB  3176712  0          127.0.0.1:<relay>      127.0.0.1:<svc>
 
 历史背景与 issue：[microsoft/WSL#14154](https://github.com/microsoft/WSL/issues/14154) (open)、[#10688](https://github.com/microsoft/WSL/issues/10688) (open，wslrelay 全双工 hang)；类似 v4/v6 困扰在 WSL repo 里有十几个独立 issue，labels 多数 `network`。
 
-#### EasyTier + 远端 Caddy 的入站稳定方案
+### EasyTier + 远端 Caddy 的入站稳定方案
 
 WSL NAT + Windows EasyTier + 远端 Caddy 的简单稳定方案：
 

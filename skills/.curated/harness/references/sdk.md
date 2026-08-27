@@ -1,118 +1,180 @@
 # Coding-agent SDK：Copilot / Claude / Codex 横向对照
 
-要用代码驱动一个 coding agent，先分清两类截然不同的 SDK——选错类型，再多语言也没用：
+要用代码驱动 coding agent，先分清接入的是**模型 API**，还是已经包含规划、工具调用、文件编辑、
+shell、权限与会话循环的 **agent runtime**（agent 运行时）。这不是语言覆盖问题：类型选错后，
+即使 SDK 支持再多语言，也仍要自己补齐缺失的 harness。
 
-- **agent SDK**：把"会自己 plan、调工具、改文件、跑 shell、带 session"的整个 **agent runtime**
-  封装成库。你给目标 + 权限，它跑完一轮一轮的循环。能直接替掉手搓 `copilot -p` 子进程。
-- **API SDK**：chat/completions 的 HTTP 客户端，给 model 一段输入拿一段输出；plan / 工具 /
-  文件编辑 / 循环全得自己搭。名字里也带 "sdk"，但低一层——用它做 agent 等于从头写 harness。
+本文把容易混在一起的三件事拆开：接入层级、运行时所有权、传输协议；再对照 Copilot、
+Claude、Codex 的官方 agent SDK。事实快照更新于 **2026-07-14**；上游源码链接锁到 tag 或 commit，
+滚动版本在写入产品文档前仍应重新核对。
 
-qatlas 这类 daemon 要的是 **agent SDK**；下面也列 API SDK 是为了讲清两者别混。矩阵 + 文档实测于
-2026-06-29，版本只佐证"有/无"，会动，写死前重核。
+## <a id="integration-layers"></a>接入层级
 
-## harness 形态先选
+### <a id="runtime-layers"></a>模型 API、编排框架与 agent runtime
 
-harness（运行壳）= 拥有 agent runtime 的那一层：它启动或接管 agent、注入上下文 / 工具、订阅事件、处理取消、持久化状态。选哪种形态看控制需求，不要按"哪种传输时髦"来选。
-
-### CLI 子进程一次性（CLI subprocess one-shot）
-
-例子：`subprocess.run(["copilot", "-p", ...])`，或为单条 prompt shell out 调 Codex / Claude / Copilot。
-
-- 优点：最好搭，直接复用现成 CLI，无需对接任何协议。
-- 失效模式：每次冷启动；streaming / abort（取消）语义弱；难以观察内部状态；多会话编排别扭。
-
-适合脚本和低频自动化，不适合常驻 orchestrator（编排器）。
-
-### SDK client / app-server 形态
-
-例子：Copilot 的 `CopilotClient` + `RuntimeConnection`，或一个 controller 接管的 app-server 式 runtime。
-
-- 优点：orchestrator 拥有 runtime 生命周期，能创建 / 恢复会话、订阅事件、切换模型、取消当前回合（turn）。
-- 失效模式：与 SDK 协议版本耦合更紧；auth、能力隔离、进程清理都要自己负责。
-
-当 harness 是产品的一个组件、而不是一个 shell 包装时用它。
-
-### Extension-host（扩展宿主）形态
-
-例子：VS Code 扩展、Copilot SDK 的 `joinSession()`、Zotero 插件。
-
-- 优点：宿主拥有生命周期与 UI；扩展在宿主的权限模型内贡献命令 / 工具 / hooks / 面板。
-- 失效模式：扩展不能假定自己掌握整个进程；API 面被宿主注入的那部分限定。
-
-当用户已经身处某个宿主应用、而这个功能应当"原生地"长在宿主里时用它。
-
-### JSON-RPC 单连接
-
-例子：LSP（Language Server Protocol，语言服务器协议），以及 Copilot SDK 内部经 `vscode-jsonrpc` 的实现。
-
-- 优点：一条双向通道同时承载请求、通知、事件、取消、能力协商（capability negotiation）和版本化。
-- 失效模式：schema / 版本兼容性要认真对待；长连接的健康度本身成了可靠性工程的一部分。
-
-当需要宿主 / 插件紧密协作、而"HTTP 端点 + webhook"会把控制流 / 数据流 / 事件流拆到太多机制里时，用它。
-
-### HTTP / webhook 微服务形态
-
-- 优点：好 curl、好部署、好横向扩、用通用工具就能调试。
-- 失效模式：对"宿主 / 插件深度协作"往往更差；取消、streaming、背压（backpressure）、能力协商通常都得额外加旁路通道。
-
-适合粗粒度的服务边界，不适合当一个本地 harness 的默认插件 ABI（应用二进制接口）。
-
-## 官方 agent SDK
-
-| agent SDK | 语言覆盖 | 开放度 | 官方文档 / 源码 |
+| 层 | 接到的对象 | 已提供 | 仍需调用方负责 |
 |---|---|---|---|
-| **GitHub Copilot SDK** | TS、Python、Go、.NET、Java、Rust（六语言对等，同一 Copilot CLI engine） | 闭源 engine，SDK / docs 公开；SDK 经 JSON-RPC 控制 CLI server | 总入口 [`github/copilot-sdk`](https://github.com/github/copilot-sdk)；README 明确 "same engine behind Copilot CLI"，支持 Python / TypeScript / Go / .NET / Java / Rust；Node 包 `@github/copilot-sdk` 依赖 `@github/copilot` + `vscode-jsonrpc`；会话在 `~/.copilot/session-state/<sessionId>/` |
-| **Claude Agent SDK** | TS、Python | SDK 源码公开；Claude Code runtime 闭源 / minified；使用受 Anthropic commercial terms 约束 | [`code.claude.com/docs/en/agent-sdk/overview`](https://code.claude.com/docs/en/agent-sdk/overview)；源码 [`anthropics/claude-agent-sdk-typescript`](https://github.com/anthropics/claude-agent-sdk-typescript)、[`anthropics/claude-agent-sdk-python`](https://github.com/anthropics/claude-agent-sdk-python)；会话存档通常在 `~/.claude/projects/*.jsonl`，也有 SDK session store 选项 |
-| **OpenAI Codex SDK** | TS、Python | 真开源 Apache-2.0；CLI / SDK / runtime 都在 `openai/codex` | [`openai/codex` `sdk/`](https://github.com/openai/codex/tree/main/sdk) = `typescript` + `python` + `python-runtime`；TS `Codex.startThread()` / `resumeThread()`；Python 包 `openai-codex` 依赖 `openai-codex-cli-bin`；会话存档 `~/.codex/sessions/` |
+| **API SDK** | 模型的 HTTP API | 鉴权、请求类型、流式 token、重试等客户端能力 | 规划循环、工具、文件系统、shell、权限、会话与 sandbox |
+| **编排框架** | 自定义 agent workflow | 状态机、handoff、guardrail、工具注册等编排原语 | coding-agent 工具集与具体 runtime；编排框架本身不等于某个 coding-agent CLI（具体产品见下方[相邻概念表](#adjacent-concepts)） |
+| **agent SDK** | 完整 coding-agent runtime | 多轮工具循环、文件与命令执行、结构化事件、会话控制 | runtime 生命周期、权限策略、隔离、持久化与产品 UI |
+| **托管 cloud agent API** | 厂商托管的远程任务 | 远程环境、branch / PR 级自动化 | 本机工作区、细粒度 tool event、本地 shell 控制 |
+| **扩展或工具协议** | 已存在宿主的扩展点 | 给宿主增加工具、命令、面板或外部服务 | 从外部拥有并驱动整个 agent runtime；MCP 属于工具协议，不是 agent SDK |
 
-Copilot 是唯一把 agent SDK 铺满六语言的，README 定位为 "the same engine behind Copilot CLI… no need
-to build your own orchestration"。Claude / Codex 只有 TS、Python；Codex 整仓 Apache-2.0，改 harness 直接读
-`sdk/` 源码不必逆向，Claude runtime 闭源行为靠逆向。包名：Copilot `@github/copilot-sdk`、`github-copilot-sdk`、
-`GitHub.Copilot.SDK`、`github.com/github/copilot-sdk/go`、`github-copilot-sdk` crate、`com.github:copilot-sdk-java`；
-Claude `@anthropic-ai/claude-agent-sdk`、`claude-agent-sdk`；Codex `@openai/codex-sdk`、`openai-codex`。
+Agent SDK 不是“API SDK 再加几个工具函数”。它绑定的是一套具体 harness：模型之外还有 loop、
+工具实现、权限模型、上下文管理和会话存储。
 
-### 关键 API 形状
+### <a id="adjacent-concepts"></a>相邻但不是本地 agent runtime 的东西
 
-| SDK | 最小可用 API | 证明它不是裸 chat SDK 的事件 / 能力 |
+上表是分层视角；下面把最常被误当成“本地 agent SDK”的具体产品点名，标清各自适合与不适合，选型时对号入座。
+
+| 名称 | 分类 | 适合 | 不适合 |
+|---|---|---|---|
+| OpenAI / Anthropic 官方 API SDK | API SDK（裸 HTTP client） | 完全自写工具、loop、history、session、权限与 sandbox | 直接替代 `copilot -p` / Claude Code / Codex CLI |
+| OpenAI Agents SDK / LangGraph / LangChain / Vercel AI SDK | 编排框架（orchestration SDK） | 自定义工具函数、状态机、handoff / guardrail | 需要现成 coding-agent 文件编辑 + shell runtime 时仍要另补 harness 与 toolset |
+| GitHub Copilot Cloud Agent API | 托管 cloud agent API | 让 GitHub 托管环境接 issue / prompt 后自动改 branch / PR | 本地 daemon 细粒度接管 tool event、改本机 checkout、跑本机 shell |
+| Copilot Extensions / MCP | 扩展 / 工具协议 | 让 Copilot 或别的 agent 调用你的服务 / 工具 | 从你的 daemon 内部驱动一个 coding-agent runtime |
+
+### <a id="runtime-ownership"></a>运行时所有权
+
+| 形态 | 谁拥有进程与会话 | 优点 | 主要代价 |
+|---|---|---|---|
+| **一次性 CLI 子进程** | 调用方为每次任务 spawn CLI，结束后回收 | 接入最快，直接复用现成 CLI | 冷启动；结构化 streaming、取消和多会话编排较弱 |
+| **SDK client / app-server** | 调用方长期持有 runtime client 与 session | 能订阅事件、恢复会话、切模型、取消 turn、管理多 session | 协议兼容、鉴权、能力隔离和进程清理由调用方承担 |
+| **扩展宿主** | 前台应用或 CLI 宿主拥有 runtime；扩展加入已有会话 | UI、生命周期和权限模型由宿主提供 | 扩展不能假定自己拥有整个进程，API 面受宿主注入能力限制 |
+
+一次性 CLI 适合脚本和低频自动化；常驻 daemon / orchestrator 通常需要 SDK client、
+app-server 或 ACP 这类可持续交互入口。扩展入口则适合“功能长在当前宿主里”，而不是另起一个 agent。
+
+### <a id="transport-protocols"></a>传输与协议
+
+运行时所有权与 wire protocol（线协议）是两个维度，不能把“SDK client”“扩展宿主”
+与“JSON-RPC”“HTTP”并列成互斥方案。
+
+| 传输 / 协议 | 典型形态 | 特点 |
 |---|---|---|
-| **Copilot** | `CopilotClient` 创建 / 恢复 session；`session.send()`、`sendAndWait()`、`abort()`、`disconnect()`；`RuntimeConnection.forStdio/forTcp/forUri` | agent loop 文档明确：SDK 只是 transport，Copilot CLI 执行多 turn tool-use loop；事件含 `assistant.turn_start/end`、`tool.execution_start/complete`、`session.idle`、`session.task_complete`；默认暴露 Copilot CLI first-party tools，permission handler 决定 approve / deny |
-| **Claude** | Python `query(prompt=..., options=ClaudeAgentOptions(...))`；`ClaudeSDKClient.connect/query/receive_response/interrupt`；TS `query({ prompt, options })` | `ClaudeAgentOptions` 有 `tools` / `allowed_tools` / `disallowed_tools`、`permission_mode`、`cwd`、`max_turns`、`mcp_servers`、`hooks`、`agents`、`skills`、`can_use_tool`、`session_store`；message stream 有 `AssistantMessage`、`ResultMessage.session_id`、tool-use / tool-result blocks |
-| **Codex** | TS `new Codex().startThread().runStreamed(input)` / `resumeThread(id)`；Python `Codex().thread_start()` / `thread_resume()` / `thread.run()` / `thread.turn().stream()` | TS `ThreadEvent` 含 `thread.started`、`turn.started/completed/failed`、`item.started/updated/completed`；`ThreadItem` 含 `command_execution`、`file_change`、`mcp_tool_call`、`web_search`、`todo_list`、`reasoning`、`agent_message` |
+| **stdio + JSONL** | Codex SDK、Pi RPC | 子进程可长期存活；逐行消息便于流式读取，不等于 one-shot |
+| **stdio / TCP + JSON-RPC** | Copilot SDK runtime connection | 一条双向连接承载请求、通知、事件和取消；schema 与版本协商是兼容性边界 |
+| **ACP** | `copilot --acp`、通用 ACP agent | 定义 client ↔ agent 的会话、prompt、权限和更新语义；通常仍需选定 stdio 等底层传输 |
+| **HTTP + SSE / WebSocket / webhook** | OpenCode helper server、远程 daemon | 易部署和横向扩展；取消、背压、双向权限交互通常要额外设计 |
 
-## Copilot SDK 详解：client vs extension
+HTTP 适合粗粒度服务边界；进程内扩展 ABI 或紧密的双向 agent 控制通常更适合长连接协议。
 
-下面这些来自公开仓 [`github/copilot-sdk`](https://github.com/github/copilot-sdk)、Copilot CLI `1.0.66-1` 打包 SDK 类型声明以及 npm registry 元数据，是上面"SDK client"与"extension host"两种形态的具体落地。
+### <a id="selection-guide"></a>选择依据
 
-`@github/copilot-sdk` 和 `@github/copilot-sdk/extension` 是两套不同的面：
+| 需求 | 优先选择 |
+|---|---|
+| 低频单次任务，能接受冷启动 | 一次性 CLI 子进程 |
+| 需要 tool / file / shell 事件、取消、恢复、模型切换 | agent SDK、app-server 或 ACP |
+| 给用户当前正在使用的 CLI / IDE 会话增加能力 | extension-host 入口 |
+| 只需文本或结构化模型输出，不允许碰文件和 shell | API SDK |
+| 把自有能力暴露给任意外部 agent | MCP / tool server |
+| 让 GitHub 托管环境围绕 issue / branch / PR 执行任务 | cloud agent API |
+
+协议选择随后再做：同一个 SDK client 可以经 stdio、TCP 或 URI 连接；同一个 stdio 子进程也可以
+说 JSONL、JSON-RPC 或 ACP。
+
+## <a id="official-sdks"></a>官方 SDK 对照
+
+### <a id="agent-sdk-matrix"></a>Agent SDK 的语言、开放度与运行时关系
+
+| Agent SDK | 语言覆盖 | 运行时关系 | 开放度 |
+|---|---|---|---|
+| **GitHub Copilot SDK** | TypeScript、Python、Go、.NET、Java、Rust | 六种 SDK 控制 “the same engine behind Copilot CLI”；Node / Python / .NET 默认带 runtime，Go / Java / Rust 默认从 PATH 找 CLI | SDK 仓库 MIT；Copilot CLI engine 不在该开源仓库中 |
+| **Claude Agent SDK** | TypeScript、Python | SDK 驱动 Claude Code runtime | Python SDK 源码 MIT；TypeScript SDK 为 All Rights Reserved；Claude Code runtime 闭源；两者使用受 Anthropic Commercial Terms 约束 |
+| **OpenAI Codex SDK** | TypeScript、Python | TypeScript SDK spawn `codex` CLI 并经 stdio 交换 JSONL；Python 包依赖 CLI binary 包 | CLI、SDK 与 Rust runtime 同仓，整仓 Apache-2.0 |
+
+包名：Copilot 为 `@github/copilot-sdk`、`github-copilot-sdk`、`GitHub.Copilot.SDK`、
+`github.com/github/copilot-sdk/go`、`com.github:copilot-sdk-java`、`github-copilot-sdk` crate；
+Claude 为 `@anthropic-ai/claude-agent-sdk`、`claude-agent-sdk`；Codex 为
+`@openai/codex-sdk`、`openai-codex`；Codex 仓库的 `sdk/` 同时包含 `typescript`、`python`
+与负责分发 CLI binary 的 `python-runtime`。
+
+> 来源：Copilot SDK [v1.0.6 README](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/README.md#L16-L40) 与 [MIT LICENSE](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/LICENSE)；Claude [Python LICENSE](https://github.com/anthropics/claude-agent-sdk-python/blob/528265fa09da954f0a0da1bf31e16db32b510138/LICENSE#L1) 与 [TypeScript LICENSE](https://github.com/anthropics/claude-agent-sdk-typescript/blob/79b6350e13cf24af94a8d2e696a0883fd8cc55fe/LICENSE.md#L1)；Codex [SDK README](https://github.com/openai/codex/blob/bc8222b8d9e44377a3d7c7b7970e32e7c29ec34f/sdk/typescript/README.md#L1-L40)、[Python 包声明](https://github.com/openai/codex/blob/bc8222b8d9e44377a3d7c7b7970e32e7c29ec34f/sdk/python/pyproject.toml#L1-L20) 与 [Apache-2.0 LICENSE](https://github.com/openai/codex/blob/bc8222b8d9e44377a3d7c7b7970e32e7c29ec34f/LICENSE#L1).
+
+### <a id="agent-sdk-apis"></a>Agent SDK 的核心 API 与事件模型
+
+| SDK | 最小可用 API | Agent 能力证据 |
+|---|---|---|
+| **Copilot** | `CopilotClient.start/createSession/resumeSession`；`session.send()`、`sendAndWait()`、`on()`、`abort()`、`disconnect()`、`setModel()` | `assistant.turn_start/end`、`tool.execution_start/complete`、`session.idle/task_complete` 等事件；内置 coding tools、permission handler 与可恢复 session |
+| **Claude** | Python `query()`；交互式 `ClaudeSDKClient.connect/query/receive_response/interrupt`；TypeScript `query({ prompt, options })` | `ClaudeAgentOptions` 覆盖工具、权限、`cwd`、`max_turns`、MCP、hooks、agents、skills、plugins、`can_use_tool` 与 `session_store`；`ResultMessage.session_id` 可恢复会话 |
+| **Codex** | TypeScript `startThread().run()` / `runStreamed()` / `resumeThread()`；Python `thread_start()` / `thread_resume()` / `thread.run()` / `thread.turn().stream()` | `ThreadEvent` 包含 thread / turn / item 生命周期与 fatal `error`；`ThreadItem` 包含命令执行、文件修改、MCP、Web 搜索、todo、reasoning、agent message 与 non-fatal `error` |
+
+> 来源：Copilot [Node quick start](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/README.md#L30-L61)、[session API](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/session.ts#L254-L337) 与 [session event types](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/generated/session-events.ts#L3054-L3081)；Claude [Python README](https://github.com/anthropics/claude-agent-sdk-python/blob/528265fa09da954f0a0da1bf31e16db32b510138/README.md#L33-L132) 与 [`ClaudeAgentOptions`](https://github.com/anthropics/claude-agent-sdk-python/blob/528265fa09da954f0a0da1bf31e16db32b510138/src/claude_agent_sdk/types.py#L1726-L2067)；Codex [`ThreadEvent`](https://github.com/openai/codex/blob/bc8222b8d9e44377a3d7c7b7970e32e7c29ec34f/sdk/typescript/src/events.ts#L68-L82)、[`ThreadItem`](https://github.com/openai/codex/blob/bc8222b8d9e44377a3d7c7b7970e32e7c29ec34f/sdk/typescript/src/items.ts#L97-L128) 与 [Python SDK README](https://github.com/openai/codex/blob/bc8222b8d9e44377a3d7c7b7970e32e7c29ec34f/sdk/python/README.md).
+
+会话持久化不是三家共享的统一接口：
+
+- Copilot runtime 的 `baseDirectory` 默认是 `~/.copilot`，包含 session state、配置等；精确磁盘布局属于 runtime 实现细节。
+- Claude 从 `ResultMessage.session_id` 恢复会话；底层 CLI 使用本地 JSONL，Python SDK 另有 `session_store` 协议可接外部存储。
+- Codex 明确把 thread 持久化到 `~/.codex/sessions`，通过 `resumeThread(id)` / `thread_resume(id)` 恢复。
+
+> 来源：Copilot [`baseDirectory`](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/types.ts#L214-L247)；Codex [thread persistence](https://github.com/openai/codex/blob/bc8222b8d9e44377a3d7c7b7970e32e7c29ec34f/sdk/typescript/README.md#L100-L104)；Claude `session_store` 见上方类型定义。
+
+### <a id="api-sdk-matrix"></a>API SDK 的语言覆盖
+
+API SDK 只负责模型请求，不携带 coding-agent runtime。官方语言覆盖比 agent SDK 更广：
+
+| 厂商 | 官方包与固定源码快照 |
+|---|---|
+| **OpenAI** | Node [`openai`](https://github.com/openai/openai-node/tree/1cdc0196b4341ee641ec6839e08744b2771250e4)、Python [`openai`](https://github.com/openai/openai-python/tree/v2.45.0)、Go [`github.com/openai/openai-go/v3`](https://github.com/openai/openai-go/tree/v3.42.0)、Java [`com.openai:openai-java`](https://github.com/openai/openai-java/tree/c28e73d4390d51626add76ff000984a4d46d6b0e)、.NET [`OpenAI`](https://github.com/openai/openai-dotnet/tree/319d66db3281309b2af9471d838865a0ee35a0a6) |
+| **Anthropic** | Node [`@anthropic-ai/sdk`](https://github.com/anthropics/anthropic-sdk-typescript/tree/9e46760688a2af71b50581a301b2819d29d28c66)、Python [`anthropic`](https://github.com/anthropics/anthropic-sdk-python/tree/d2f6543ee7995adcae74666a5d37b3d9743debfe)、Go [`anthropic-sdk-go`](https://github.com/anthropics/anthropic-sdk-go/tree/v1.57.0)、Java [`anthropic-java`](https://github.com/anthropics/anthropic-sdk-java/tree/db3e617c03e4e697a0508a352047aca1ef7da5f5)、.NET [`Anthropic`](https://github.com/anthropics/anthropic-sdk-csharp/tree/15116485ea585908a6e32aeba3a36497dbbb29a6)、Ruby [`anthropic`](https://github.com/anthropics/anthropic-sdk-ruby/tree/820c9c0d588d92b158430688175cf6027a5d5bc6)、PHP [`anthropic-ai/sdk`](https://github.com/anthropics/anthropic-sdk-php/tree/a731fd19d9a11e865cdad6363e8545ead1f0658d) |
+
+社区封装另算。例如 [`picatz/openai` 的 `codex` 包](https://github.com/picatz/openai/tree/02ace0a229c75a724ede668ab405ae71405e406d/codex)
+是 Codex CLI 的非官方 Go wrapper；采用前要单独判断维护状态、许可证与 API 稳定性。
+
+## <a id="copilot-sdk"></a>Copilot SDK
+
+以下以公开稳定版 **v1.0.6** 为基线；npm `latest` 在 2026-07-14 也是 `1.0.6`，不再沿用旧文的 `1.0.4`。
+
+> 来源：[v1.0.6 release](https://github.com/github/copilot-sdk/releases/tag/v1.0.6) 与 [`@github/copilot-sdk@1.0.6` manifest](https://registry.npmjs.org/@github/copilot-sdk/1.0.6).
+
+### <a id="copilot-entrypoints"></a>客户端入口与扩展入口
+
+`@github/copilot-sdk` 和 `@github/copilot-sdk/extension` 是两套不同的所有权模型：
 
 | 入口 | 主 API | 用途 | 拥有关系 |
 |---|---|---|---|
 | `@github/copilot-sdk` | `CopilotClient`、`RuntimeConnection`、`CopilotSession` | daemon / orchestrator 的程序化控制 | 你的进程拥有或连上一个 runtime，再创建 / 发送 / 恢复会话 |
 | `@github/copilot-sdk/extension` | `joinSession()` | 写 Copilot CLI 扩展 | 前台那个 Copilot CLI 会话拥有宿主进程，并注入 extension SDK |
 
-别把这俩混成一句"SDK 只能写扩展"。extension 入口才是写扩展用的；根包是程序化控制 runtime 的 API。
-
-### RuntimeConnection 的三种连接方式
-
-`copilot-sdk/types.d.ts` 里观察到的工厂：
+根包不是“只能写扩展”的 API。`joinSession()` 会读取宿主注入的 `SESSION_ID`，通过 parent-process
+连接加入当前会话；扩展进程不负责 spawn runtime。
 
 ```ts
-RuntimeConnection.forStdio({ path?: string, args?: readonly string[] })
-RuntimeConnection.forTcp({ port?: number, connectionToken?: string, path?: string, args?: readonly string[] })
-RuntimeConnection.forUri(url: string, { connectionToken?: string })
+import { CopilotClient, approveAll } from "@github/copilot-sdk";
+
+const client = new CopilotClient();
+await client.start();
+const session = await client.createSession({ onPermissionRequest: approveAll });
+const answer = await session.sendAndWait("检查当前仓库并解释失败的测试");
+console.log(answer?.data.content);
+await session.disconnect();
+await client.stop();
 ```
 
-设计含义：
+> 来源：根包 [quick start](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/README.md#L30-L61)；扩展入口 [`joinSession()`](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/extension.ts#L42-L60).
 
-- `forStdio`：最接近"spawn 一个子 runtime、走 stdio 说 JSON-RPC"。
-- `forTcp`：让 SDK spawn 一个监听 TCP socket 的 runtime 再连上去。
-- `forUri`：连一个**已经在跑**的 runtime，这种模式下 SDK 不 spawn 进程。
+### <a id="runtime-connections"></a>`RuntimeConnection` 的连接方式
 
-同一份声明里还警告：CLI 式的默认能力对"服务端多用户应用"是不安全的，除非应用显式只开一组很窄的能力。
+```ts
+RuntimeConnection.forStdio({ path?, args? })
+RuntimeConnection.forTcp({ port?, connectionToken?, path?, args? })
+RuntimeConnection.forUri(url, { connectionToken? })
+```
 
-### 会话控制面（session 方法）
+| 工厂 | 进程所有权 | 连接语义 |
+|---|---|---|
+| `forStdio` | SDK spawn runtime 子进程 | 通过 stdin/stdout 通信；未指定 `path` 时用 bundled runtime |
+| `forTcp` | SDK spawn runtime 子进程 | runtime 监听 TCP；端口与 token 可自动生成 |
+| `forUri` | 外部系统拥有已运行 runtime | SDK 只连接 URL，不 spawn 进程 |
 
-`copilot-sdk/session.d.ts` 暴露的核心编排方法：
+稳定版 v1.0.6 的公开 union 是上述三种。若采用 preview / unstable 版本，应重新检查是否出现
+`forInProcess()` 等实验入口，不要把预览 API 写成稳定契约。
+
+> 来源：[`RuntimeConnection` 类型与工厂](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/types.ts#L93-L186).
+
+### <a id="session-control"></a>会话生命周期与取消
+
+核心控制面：
 
 ```ts
 session.send(promptOrOptions)
@@ -123,95 +185,196 @@ session.abort()
 session.disconnect()
 ```
 
-声明注释里有一个重要行为点：`sendAndWait` 的 timeout 只控制"调用方等多久拿响应"，**不会**中止正在进行的 agent 工作。真要取消当前回合用 `abort()`。
+`sendAndWait()` 默认等待 60 秒；timeout 只结束调用方的等待，**不会**停止正在运行的 agent turn。
+取消当前 turn 要调用 `abort()`。`disconnect()` 释放内存中的 handler，但保留磁盘会话，之后仍可
+`resumeSession()`；若要永久删除会话数据，应使用 client 的删除 API。
 
-### 协议与实现事实
+> 来源：[`sendAndWait()` timeout 语义](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/session.ts#L254-L337) 与 [`disconnect()` / `abort()` / `setModel()`](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/session.ts#L1280-L1365).
 
-- `SDK_PROTOCOL_VERSION = 3`（见 `copilot-sdk/sdkProtocolVersion.d.ts` 与打包实现）。
-- 打包实现内含 `vscode-jsonrpc@8.2.1`，所以 SDK client 与 runtime 之间就是 JSON-RPC 单连接 + 强类型请求 / 事件。
-- `@github/copilot-sdk` 的 `nodejs/package.json` 描述是 "programmatic control of GitHub Copilot CLI via JSON-RPC"，并依赖 `@github/copilot` + `vscode-jsonrpc`。
-- Node / Python / .NET SDK 会自动带 Copilot CLI runtime；Go / Java / Rust 默认要求 PATH 里已有 `copilot`，或使用各自的 bundling 机制。
-- Python SDK 缓存 CLI binary 的默认 Linux 路径是 `~/.cache/github-copilot-sdk/cli/<version>/copilot`；不要把它误写成 `.d.ts` cache。
-- Copilot CLI help 暴露 `--acp`（"Start as Agent Client Protocol server"，作为 ACP server 启动）。
-- 打包 `app.js` 里有隐藏 / 内部的 server flag：`--server`、`--ui-server`、`--managed-server`；官方文档没说明前当成内部用法。
-- Copilot CLI help 暴露 `--extension-sdk-path <directory>`，可覆盖注入给扩展子进程的那份 `@github/copilot-sdk`。
-- 本次重构时核对的 npm registry `dist-tags`：`latest` 是 `1.0.4`，另有 `prerelease`、`unstable` 标签。要在面向用户的说明里写死版本前先重新核一次。
+### <a id="copilot-protocol"></a>协议与运行时分发
 
-### Copilot SDK 路径分清
+| 事实 | 边界 |
+|---|---|
+| `SDK_PROTOCOL_VERSION = 3` | 公开仓库中的协议版本常量 |
+| Node SDK 依赖 `vscode-jsonrpc@^8.2.1` 与 `@github/copilot@^1.0.69` | SDK client 经 JSON-RPC 控制 Copilot CLI runtime |
+| Node / Python / .NET 默认带 runtime | 无需另装 `copilot` |
+| Go / Java / Rust 默认从 PATH 找 runtime | Go / Rust 另有应用级 bundling 机制 |
+| `--acp`、`--extension-sdk-path` | 本地 Copilot CLI `1.0.71-0 --help` 可见，属于公开 CLI surface |
+| `--server`、`--ui-server`、`--managed-server` | 曾在 Copilot CLI `1.0.66-1` bundle 中观察到，但不在当前公开 help；只当内部实现细节 |
 
-之前容易把"本地类型声明"和"runtime cache"混在一起。当前可验证事实：
+多用户服务不要沿用 CLI 式 ambient defaults。v1.0.6 的公开类型明确提供
+`CopilotClient({ mode: "empty" })`，要求应用显式给出 session filesystem / base directory 与
+可用工具集合；这才是服务端 deny-by-default（默认拒绝）配置的起点。
 
-- **公开 SDK 源码 / 文档**：优先看 `github/copilot-sdk`，不要再只靠本地逆向。
-- **Node SDK 包类型声明**：`node_modules/@github/copilot-sdk/dist/index.d.ts`。
-- **Copilot CLI SEA 自解包 cache**：本机安装的 `copilot` 单文件 CLI 运行后，可能在 `~/.cache/copilot/pkg/<platform>/<version>/copilot-sdk/*.d.ts` 留下 CLI 注入给 extension 的 SDK 声明；这是 CLI cache，不是 SDK package 的安装位置。
-- **Python SDK runtime cache**：Python SDK 下载 / 缓存的是 **CLI binary**，默认 Linux 路径是 `~/.cache/github-copilot-sdk/cli/<version>/copilot`；这个 cache 里不是 `.d.ts`。
+> 来源：[`SDK_PROTOCOL_VERSION`](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/sdkProtocolVersion.ts#L5-L18)、[v1.0.6 npm manifest](https://registry.npmjs.org/@github/copilot-sdk/1.0.6)、[runtime bundling](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/README.md#L39-L40) 与 [`mode: "empty"`](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/types.ts#L205-L233).
 
-## 不是"本地 agent SDK"的相邻概念
+### <a id="copilot-files"></a>源码、类型声明与缓存位置
 
-这些名字里也常出现 "agent" 或 "sdk"，但边界不同：
-
-| 名称 | 分类 | 适合什么 | 不适合什么 |
-|---|---|---|---|
-| **OpenAI / Anthropic 官方 API SDK** | API SDK（裸 HTTP client） | 你要完全自写工具、loop、history、session、权限与 sandbox | 直接替代 `copilot -p` / Claude Code / Codex CLI |
-| **OpenAI Agents SDK / LangGraph / LangChain / Vercel AI SDK** | orchestration SDK（编排框架） | 你愿意自己定义工具函数、状态机、handoff / guardrail | 需要现成 coding-agent 文件编辑 + shell runtime 时仍要补 harness / toolset |
-| **GitHub Copilot Cloud Agent API** | cloud agent API | 让 GitHub 托管环境接 issue / prompt 后自己改 branch / PR | 本地 daemon 细粒度接管 tool events、改本机 checkout、跑本机 shell |
-| **Copilot Extensions / MCP** | extension / tool protocol | 让 Copilot 或别的 agent 调用你的服务 / 工具 | 从你的 daemon 内部"驱动一个 coding agent runtime" |
-
-## 官方 API SDK（裸调模型，不是 agent runtime）
-
-跨语言比 agent SDK 全得多，但只负责"发请求拿回复"；要 agent 行为得自己写编排，别误当 agent SDK 用。
-
-| 厂商 | 文档 | 主要语言 + 包 |
+| 位置 | 内容 | 稳定性 |
 |---|---|---|
-| **OpenAI** | [`platform.openai.com/docs/api-reference`](https://platform.openai.com/docs/api-reference) | Node [`openai`](https://github.com/openai/openai-node)、Python [`openai`](https://github.com/openai/openai-python)、Go [`openai/openai-go`](https://github.com/openai/openai-go)（主版本带 major：`/v3`）、Java [`openai-java`](https://github.com/openai/openai-java)、.NET [`openai-dotnet`](https://github.com/openai/openai-dotnet) |
-| **Anthropic** | [`docs.claude.com/en/api`](https://docs.claude.com/en/api) | Node `@anthropic-ai/sdk`、Python `anthropic`、Go [`anthropic-sdk-go`](https://github.com/anthropics/anthropic-sdk-go)；官方亦列 Java/Ruby/PHP |
+| [`github/copilot-sdk`](https://github.com/github/copilot-sdk/tree/7e2900416b1ac835785fa26e0eb5f634ff24adf9) | 公开 SDK 源码与文档 | 首选依据 |
+| `node_modules/@github/copilot-sdk/dist/index.d.ts` | Node 根包类型声明 | 随安装版本变化 |
+| `~/.cache/github-copilot-sdk/cli/<version>/copilot` | Python SDK 在 Linux 的 CLI binary cache | 公开源码可核；macOS / Windows 路径不同 |
+| `~/.cache/copilot/pkg/<platform>/<version>/copilot-sdk/*.d.ts` | 某些 Copilot CLI SEA 构建解包给 extension 的声明 | 本地实现 cache，不是 SDK 安装位置，也不是公开稳定契约 |
 
-社区非官方封装另算，例如 [`picatz/openai`](https://github.com/picatz/openai)（`codex/` 有 exec/events/items.go，
-包 Codex CLI 的 Go 壳）——用前确认维护状态与署名。
+> 来源：Python SDK 的跨平台 cache 规则见 [`_cli_download.py`](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/python/copilot/_cli_download.py#L1-L9).
 
-## 选 agent SDK 还是 API SDK
+## <a id="server-integration"></a>多用户服务化
 
-需要现成的 plan/工具/文件/会话循环、最少自写代码 → agent SDK（语言不限三家可选，TS/Py 以外只有 Copilot）。
-要完全自控编排、或目标语言无对应 agent SDK → API SDK 自搭 harness，或包对方 CLI 子进程。
-只想要一次性答案、能接受冷启动 → CLI 子进程最省事。
-需要 streaming 事件、取消、会话生命周期、切模型、多会话 → 用 `CopilotClient` + `RuntimeConnection`。
-是在给用户**当前活着**的 CLI 会话加能力 → 用 `joinSession()` 写扩展。
+SDK 已经解决“如何驱动一个 agent runtime”，但 Web 服务还要解决多用户、多标签页、长生命周期、
+可恢复与隔离。下面是服务层模式，不是三家 SDK 共享的 API。
 
-对 daemon / orchestrator 的经验法则：
+### <a id="session-ownership"></a>会话与连接所有权
 
-- 只要你想做自己的 TUI / Web UI / bot，但仍要拿到 tool-call、file-change、shell-output、permission-request、session-id 等结构化事件，就用 agent SDK。
-- 只需要"给模型一段文本，让它返回一段文本 / JSON"，不让它碰文件和 shell，用 API SDK。
-- 想把 qatlas 能力暴露给任意外部 agent，用 MCP / JSON-RPC tool server；想让 qatlas 自己驱动一个 agent，选 agent SDK。
-- Cloud Agent API 适合 GitHub PR 自动化，不适合本地 qatlasd 接管工作区，因为它运行在 GitHub infra 里，状态也粗到 task/PR 级。
+- **一个逻辑 session 只保留一个活跃 runtime session。** 多个 WebSocket / 标签页订阅同一对象，
+  事件向 `Set<Connection>` fan-out；不要让每个标签页各自 `resumeSession()` 后重复注册 tool /
+  permission handler。
+- **并发创建缓存 Promise。** 用 `Map<sessionId, Promise<Session>>`，而不是等创建完成后才写入
+  `Map<sessionId, Session>`；并发连接会共享同一个 in-flight 创建过程。
+- **浏览器连接与 agent 生命周期分离。** 最后一个标签页断开后，是立即回收、进入 grace period，
+  还是继续后台运行，应由 session policy 决定，不能把 socket 生命周期直接当成 turn 生命周期。
 
-## 服务端集成模式（把 agent SDK 包成多用户 web 服务）
+### <a id="state-lifecycle"></a>状态持久化与回收
 
-agent SDK 默认形态是"单进程、单会话、一次性"，而 web 服务要"多用户、多标签页、长生命周期、可恢复"。
-下面是几个官方 / 社区开源 demo 收敛出的服务端模式（2026-06 实测可跑），驱动任何 agent SDK 时通用：
+- 在 turn 完成事件后把工作目录、provider-native session state 与产品侧 transcript 同步到独立
+  filestore；连续事件用 debounce 合并，避免每个 token / tool event 都触发复制。
+- 负载均衡接管时同时恢复工作目录和 provider handle。只保存聊天文本，不足以恢复文件改动、
+  pending permission 与 runtime-native session。
+- 给 session 配 idle GC，并在回收前持久化 transcript 与 workspace。超时值是产品策略，不是 SDK 常量。
+- 存储接口按 provider 区分：Copilot 有 `sessionFs` / `baseDirectory`，Claude Python 有
+  `session_store`，Codex 当前主要依赖 `~/.codex/sessions`。
 
-- **一个 session 对应一个 runtime 实例，多个浏览器连接 fan-out**：每个 WebSocket（标签页）都去
-  `resumeSession` 会注册互相冲突的 tool handler。正确做法是维护 `sessionId → 单个 session` +
-  `session → Set<连接>`，事件来了向该集合广播；最后一个连接断开才 `disconnect` + 回收。
-- **并发去重存 Promise 而不是实例**：用 `Map<sessionId, Promise<Session>>` 而非 `Map<sessionId, Session>`，
-  两个标签页同时连同一个新 session 时，第二个拿到的是同一个 in-flight promise，不会创建两份。
-- **会话状态做成可迁移卷**：在 `assistant.turn_end`（或等价 turn 结束事件）时把 session 工作目录
-  rsync / 同步到独立 filestore，并 debounce 几秒避免连续 turn 重复同步。配合负载均衡，任一 app server
-  都能接管任一 session —— 把"本地 agent"变成可水平扩展的无状态服务。
-- **多租户隔离可用"软 bash + 软 FS"而非容器**：用纯软件实现的虚拟文件系统 + 虚拟 bash（如 `just-bash`），
-  每 session 独立挂载，再用 SDK 的 `defineTool(..., overridesBuiltInTool: true)` 把内置 bash 工具
-  偷换成虚拟版；权限按"减法"配（先只开不碰文件系统的安全工具子集，再单独把文件操作重定向到虚拟 FS）。
-  单进程多租户、无需每人一个容器。
-- **`canUseTool` / 权限回调可当成"向人类发起的阻塞 RPC"**：在回调里 `await` 一个 Promise，把 resolver
-  按请求 id 存进 pending map，经 WebSocket 把问题推给前端；用户在 UI 点选后回传、resolve 该 promise，
-  agent 循环才解冻继续。**务必在连接关闭时 reject 该连接名下所有挂起的 promise**，否则 agent 的 await
-  永久悬挂、循环泄漏。这是把"人"插进 agent 决策回路的通用手法（审批、澄清、HTML 选项卡）。
-- **把"一次性 query"骗成"长连接会话"**：当 SDK 的 `query()` 是一次性流式接口时，给它传一个永不结束的
-  async iterator 作为输入（一个单槽 async 队列：有消费者等待就直接投递、否则缓冲），输入流"永不说完"
-  就让 agent 循环一直活着，每 `push()` 一条用户消息就唤醒一轮。无需依赖 SDK 自带的 resume 机制。
-- **闲置回收**：长连接服务给每个 session 配 idle GC（如 30 分钟无活动回收），并把 transcript 持久化到
-  磁盘 / 外部 store，断连后可重连恢复。
-- **事件白名单转发**：只向前端转发需要的事件类型（user/assistant message、turn start/end、
-  tool execution start/complete、session idle/error 等），`session.error` 在生产要脱敏（会泄露内部信息）。
+### <a id="permission-isolation"></a>权限交互与租户隔离
 
-这些模式在 GitHub `copilot-sdk`、Claude Agent SDK、Codex SDK 上都适用，因为它们要解的是同一道
-"单会话 runtime ↔ 多用户长生命周期服务"的鸿沟，与具体哪家 SDK 无关。
+- permission callback 可以实现成阻塞 RPC：按 request id 保存 pending Promise，经 WebSocket 发给前端，
+  用户选择后 resolve。连接关闭、请求超时或 session 回收时必须 reject 对应 Promise，避免 agent
+  永久等待。
+- 服务端从最小能力开始。Copilot 使用 `mode: "empty"` + 明确 `availableTools`；需要替换内置工具时，
+  `overridesBuiltInTool: true` 可以注册同名实现。
+- 虚拟文件系统与用户态 shell（例如
+  [`just-bash`](https://github.com/vercel-labs/just-bash/tree/6130334f0ed013771bbe39f32a249bdaf762c488)）
+  能缩小可信应用的能力面，但**不等价于 OS / 容器 / VM 安全边界**。若 agent 可执行任意本机进程或面对
+  对抗性租户，仍需进程、容器或虚拟机隔离。
+
+> 来源：Copilot 的 [`mode: "empty"`](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/types.ts#L205-L233) 与 [built-in tool override](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/README.md#L461-L474).
+
+### <a id="streaming-events"></a>流式输入与事件转发
+
+- 优先用 SDK 原生的长期 session API。Claude `query()` 也接受 `AsyncIterable` prompt，可用持续输入流
+  维持双向会话；这是一项 provider-specific 能力，不应假定所有 `query()` 都可这样使用。当 SDK 只给一次性
+  流式 `query()` 时，可传一个永不结束的 async iterator 把它“骗”成长连接：用一个单槽 async 队列（有消费者
+  在等就直接投递、否则缓冲一条），输入流永不说完、agent 循环就一直活着，每 `push()` 一条用户消息唤醒
+  一轮，无需依赖 SDK 自带的 resume 机制。
+- 对前端只转发产品需要的事件：user / assistant message、turn start / end、tool start / complete、
+  permission、idle、error。原始 `session.error`、stack 与 tool output 可能泄露内部路径或凭据，
+  应在服务边界脱敏。
+- 给流式通道设计背压、断线重连和事件序号。只靠“不断推 WebSocket”会在慢客户端下积压内存，
+  也无法判断补发边界。
+
+> 来源：Claude Python `query()` 的 prompt 类型支持 `AsyncIterable`，见 [`query.py`](https://github.com/anthropics/claude-agent-sdk-python/blob/528265fa09da954f0a0da1bf31e16db32b510138/src/claude_agent_sdk/query.py).
+
+## <a id="paseo"></a>Paseo 的 provider 适配层
+
+Paseo `0.1.107`（源码快照
+[`b4ab0d9`](https://github.com/getpaseo/paseo/tree/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec)，
+`AGPL-3.0-or-later`）的 README 主推 Claude Code、Codex、Copilot、OpenCode、Pi 五个 provider。
+它是“统一产品接口覆盖异构 runtime”的案例，但不是“底层只有两种驱动”的案例。
+
+> 来源：[README 的 provider 与 daemon 定位](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/README.md#L42-L67) 与 [package license](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/package.json#L1-L15).
+
+### <a id="paseo-abstraction"></a>统一接口
+
+旧文所说的“同一套 `AgentProvider` 抽象”不准确：`AgentProvider` 在源码里只是 `string` type。
+真正统一 provider 的是 `AgentClient` + `AgentSession`：
+
+```ts
+interface AgentClient {
+  createSession(...)
+  resumeSession(...)
+  fetchCatalog(...)
+}
+
+interface AgentSession {
+  run(...)
+  startTurn(...)
+  subscribe(...)
+  interrupt()
+  close()
+}
+```
+
+各 adapter 把原生 runtime 的事件、权限、模式、模型和持久化 handle 归一到这两个接口，再交给
+`AgentManager`、WebSocket API、CLI 与 UI。当前 registry 还包含 Cursor、Pi-compatible OMP 和
+custom ACP provider 路径；“五家”是 README 的主推产品面，不是类型系统上限。
+
+> 来源：[`AgentProvider = string`](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/agent-sdk-types.ts#L1-L10)、[`AgentSession`](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/agent-sdk-types.ts#L612-L650)、[`AgentClient`](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/agent-sdk-types.ts#L671-L699) 与 [provider registry](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/provider-registry.ts#L114-L177).
+
+### <a id="paseo-adapters"></a>Provider 连接方式
+
+| Provider | Paseo adapter | 原生连接方式 |
+|---|---|---|
+| **Claude Code** | direct `AgentClient` | 调 `@anthropic-ai/claude-agent-sdk` 的 `query()`，并接管 Claude Code 子进程 spawn |
+| **Codex** | direct `AgentClient` | spawn `codex app-server`，经 stdio 交换 JSON-RPC request / notification |
+| **Copilot** | `ACPAgentClient` | spawn `copilot --acp`，通过 `@agentclientprotocol/sdk` 管 session、prompt、permission 与 update |
+| **OpenCode** | direct `AgentClient` | spawn `opencode serve --port ...`，再用 `@opencode-ai/sdk/v2/client` 连接本地 HTTP server 与事件流 |
+| **Pi** | direct `AgentClient` | spawn `pi --mode rpc`，stdin 写 JSONL request，stdout 逐行读 response / event |
+
+因此，Paseo 的共同点是**归一化接口**，不是共同 wire protocol。Claude SDK、Codex app-server、
+ACP、HTTP helper server、Pi JSONL RPC 都可以落到同一个 `AgentSession` surface。
+ACP adapter 还会把原生 `stopReason` 归一为 Paseo 的 `turn_completed` / `turn_canceled` 事件，
+例如 `end_turn`、`max_tokens` 与 `refusal` 都结束当前 turn。
+
+> 来源：Claude [SDK query adapter](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/providers/claude/query.ts#L1-L117)；Codex [app-server launch](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/providers/codex-app-server-agent.ts#L6199-L6239) 与 [stdio JSON-RPC transport](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/providers/codex/app-server-transport.ts#L218-L338)；Copilot [`defaultCommand`](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/providers/copilot-acp-agent.ts#L81-L90) 与 [ACP stop-reason mapping](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/providers/acp-agent.ts#L2633-L2657)；OpenCode [helper server](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/providers/opencode/server-manager.ts#L277-L301) 与 [SDK client](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/providers/opencode-agent.ts#L1266-L1274)；Pi [RPC launch](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/providers/pi/runtime.ts#L67-L116) 与 [JSONL request / event loop](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/src/server/agent/providers/pi/cli-runtime.ts#L136-L155).
+
+### <a id="paseo-orchestration"></a>编排策略的位置
+
+| 层 | 责任 |
+|---|---|
+| **daemon** | agent 进程、workspace、session、WebSocket API、MCP server 与 provider adapter |
+| **CLI** | `run`、`attach`、`send`，以及 `paseo loop run` 等可执行 primitive |
+| **skills** | 教当前调用 agent 如何组合 primitive：committee、handoff、advisor，以及 loop 的参数与验证策略 |
+
+所以“peer 逻辑全在 skills、不在 daemon”也过于绝对：
+
+- `/paseo-committee`、`/paseo-handoff`、`/paseo-advisor` 的**编排政策**主要在 skill；
+- `/paseo-loop` 明确把 loop 定义为 CLI primitive，skill 负责生成 worker / verifier prompt 与停止条件；
+- committee 里的 “You are the middleman” 指**调用该 skill 的 agent**，不是让人类逐条转发。只有重大分歧才交给用户决断。
+
+> 来源：[README 的 daemon / skills 分工](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/README.md#L126-L143)、[`paseo-committee`](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/skills/paseo-committee/SKILL.md#L33-L77) 与 [`paseo-loop`](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/skills/paseo-loop/SKILL.md#L13-L31).
+
+### <a id="copilot-pi-bridge"></a>Copilot 与 Pi 的桥接
+
+`copilot --acp` 暴露的是完整 Copilot agent：它仍由自己的 harness 规划、调工具、改文件和跑多轮。
+这与把 Copilot 模型接成 **model provider** 不同；后者只借模型，loop 与工具仍归调用方。
+
+本地 `pi 0.80.6 --help` 只列 `--mode text|json|rpc`，没有 ACP server 入口。若保留 Pi 为编排方、
+又要把 Copilot 当完整对等 agent，一条直接链路是：
+
+```text
+Pi extension / RPC / SDK
+        ↕
+      bridge
+        ↕ ACP client
+   copilot --acp
+```
+
+也可以跳过 ACP，在 bridge 内直接使用 [Copilot SDK client](#copilot-entrypoints)；
+选择取决于要对接标准 ACP agent，还是只对接 Copilot。这里的关键不是“必须用某一座桥”，而是
+不要把 full-agent route 与 model-provider route 混成一层。
+
+### <a id="bridge-implementations"></a>现成桥接实现
+
+| 项目 | 作用 | 2026-07 快照 |
+|---|---|---|
+| [`oijkn/copilot-acp-mcp-bridge`](https://github.com/oijkn/copilot-acp-mcp-bridge/blob/6868dedd7b2bc39696a9c61810b5630c273d6ff4/README.md) | 把 MCP tool call 转成对 `copilot --acp` 的请求 | Node、Apache-2.0 |
+| [`bsmi021/mcp-copilot-acp`](https://github.com/bsmi021/mcp-copilot-acp/blob/8207e04fa6acc489521fec54e8e2c84f05661d55/README.md) | MCP server 管理 Copilot ACP session | TypeScript、MIT |
+| [`huanyingtianhe/agents-chat`](https://github.com/huanyingtianhe/agents-chat/blob/43ac219dfb505805a18e7eddef05c7f33599867a/README.md) | 面向 ACP-compatible CLI 的多 agent chat UI | TypeScript |
+| [`ZebLawrence/agent-team`](https://github.com/ZebLawrence/agent-team/blob/df2f14b1bff74a50fc06bcf68a385c7c749e21f0/agent-team.md) | 基于 Copilot ACP 的 agent-team wrapper | TypeScript |
+| [`@buihongduc132/pi-acp-agents`](https://github.com/buihongduc132/pi-acp-agents/blob/f9fc0551d558de99938615f16de4602a1b28b8a0/README.md) | Pi extension，用 ACP spawn / message / status、fan-out、task 与 DAG 等工具控制外部 agent | npm `0.5.0`，依赖 ACP SDK `^0.21.0` |
+
+Paseo `0.1.107` 仍依赖 `@agentclientprotocol/sdk@^0.17.1`。ACP TypeScript SDK 的 app-builder
+迁移发生在 **0.26 → 0.27**：旧的 `ClientSideConnection` 转向
+`client({ name }).connectWith(...)`；不是“0.x → 1.x 才换 API”。当前 `1.2.1` 仍保留旧 class，
+但已标 deprecated compatibility wrapper。
+
+> 来源：Paseo [server dependencies](https://github.com/getpaseo/paseo/blob/b4ab0d9db6e5668218e5aaa34f15ef3dd133e3ec/packages/server/package.json#L66-L76)；ACP SDK [0.26 → 0.27 migration](https://github.com/agentclientprotocol/typescript-sdk/blob/26da1ae7ab66fae0f5e77272dee3e5d562d24aee/MIGRATION_0.26_0.27.md#L5-L42) 与 [`ClientSideConnection` deprecation](https://github.com/agentclientprotocol/typescript-sdk/blob/26da1ae7ab66fae0f5e77272dee3e5d562d24aee/src/acp.ts#L3053-L3075)；npm stable 为 [`1.2.1`](https://registry.npmjs.org/@agentclientprotocol/sdk/1.2.1).

@@ -8,7 +8,26 @@
 
 | 序号 | 文件 | 目的 |
 | ---- | ---- | ---- |
-| 0001 | `0001-decouple-templates-and-projects.patch` | 把模板库（含 `brands` / `layouts` / `decks` 三种 kind）与项目根目录从 `${SKILL_DIR}/{templates/{brands,layouts,decks},projects}` 解耦到环境变量 `PPT_MASTER_TEMPLATES_DIR` / `PPT_MASTER_PROJECTS_DIR`。脚本缺 env 时硬报错，文档要求 AI 先问用户。`templates/{charts,icons}/` 仍是 skill 自带只读资产，不动。 |
+| 0001 | `0001-decouple-templates-and-projects.patch` | 把可写模板库（`brands` / `styles` / `layouts` / `decks`）与项目根目录解耦到 `PPT_MASTER_TEMPLATES_DIR` / `PPT_MASTER_PROJECTS_DIR`。模板注册器和 Confirm UI 都读用户库；`project_manager` 与 Native Enhance 都读用户项目根。缺 env 时硬报错，但 `--help` 和显式项目目录仍可用。skill 内的模板、图标、图表、schema、scaffold 保持上游只读样例/资产。 |
+| 0002 | `0002-fix-grafted-doc-links.patch` | 把两处指向上游仓库级 `docs/rules/code-style.md` 的相对链接改为固定到同步 commit 的 GitHub 链接；只嫁接 `skills/ppt-master` 时仍可访问，而无需额外引入上游整仓文档。 |
+
+## 当前适配面
+
+- `scripts/config.py`：统一解析两个环境变量，并沿用上游
+  `~/.ppt-master/.env` 查找机制。
+- `scripts/register_template.py`：四种 kind 的目录与索引都延迟解析到用户模板库，
+  不在 import / `--help` 时要求环境变量。
+- `scripts/confirm_ui/server.py`：Stage-1 模板候选从用户库四个索引读取；
+  icon 预览继续读取 skill 自带只读资源。
+- `scripts/project_management/*`、`project_manager.py`：默认项目根和
+  `import-sources` 可移动边界使用 `PPT_MASTER_PROJECTS_DIR`；显式 `--dir`
+  优先。
+- `scripts/native_enhance_pptx_core.py`：独立的 Native Enhance `init`
+  同样使用用户项目根，避免绕回仓库内 `projects/`。
+- 相关 workflow / reference / README：写入路径改为用户目录，并把本次触及的
+  Python 命令统一为 `uv run`。
+- 例外：`SKILL.md` 的 `python3 scripts/attribution_guard.py` 是上游完整性检查
+  的精确 marker，必须原样保留，不能机械改成 `uv run`。
 
 ## 工作流
 
@@ -55,5 +74,9 @@ cd "$REPO/skills/ppt-master"
 
 ## 不动的边界
 
-- `templates/charts/`、`templates/icons/`、`templates/design_spec_reference.md`、`templates/spec_lock_reference.md` —— 上游只读资产，re-graft 后直接用上游版本，不进 patch。
-- `templates/brands/<sample>/`、`templates/layouts/<sample>/`、`templates/decks/<sample>/` —— 上游示例库，re-graft 后直接用上游版本。用户自己的 brands / layouts / decks 在 `$PPT_MASTER_TEMPLATES_DIR/{brands,layouts,decks}/`，不在本仓。
+- `templates/charts/`、`templates/icons/`、`templates/schemas/`、
+  `templates/scaffolds/`、`templates/design_spec_reference.md`、
+  `templates/spec_lock_reference.md` —— 上游只读资产，re-graft 后直接用上游版本。
+- `templates/{brands,styles,layouts,decks}/<sample>/` —— 上游示例 workspace，
+  可通过显式路径使用，但不作为可写用户库。用户自己的四种模板放在
+  `$PPT_MASTER_TEMPLATES_DIR/{brands,styles,layouts,decks}/`。

@@ -63,7 +63,7 @@ volumes:
 
 ## 反代（Caddy）+ 那个必踩的 Passkey 坑
 
-Hub 自己不做 TLS，前面挂 Caddy 反代到 `:9800`。Caddy 安装 / 域名 vs IP 模式 / `tls internal` 见 [caddy.md](caddy.md)。
+Hub 自己不做 TLS，前面挂 Caddy 反代到 `:9800`。Caddy 安装、域名/IP 模式和 `tls internal` 由 `network` skill 覆盖。
 
 ```caddyfile
 # 域名 VPS（真证书）

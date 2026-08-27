@@ -1,68 +1,144 @@
-# SSH 使用
+# SSH
 
-## 1. 密钥与 passphrase
+SSH 同时涉及客户端身份认证、服务端主机身份校验、连接管理、远端操作和 `sshd` 服务端。本文件按这几条边界组织通用配置与排障方法；服务端认证策略与公网加固由 `vps-maintenance` skill 处理。
 
-检查 / 创建 / 改 key：
+## 客户端密钥认证
+
+客户端用私钥证明自己的身份。passphrase 保护的是落盘私钥，agent 则提供一个可复用的签名入口；两者解决的问题不同。
+
+### 私钥与 passphrase
+
+下面依次展示查看密钥文件、创建密钥，以及修改私钥 passphrase 的命令；执行 `ssh-keygen -p -f` 时，`-f` 必须指向私钥文件（如 `~/.ssh/id_ed25519`），不要指向 `.pub` 公钥：
 
 ```bash
-ls ~/.ssh/id_*
-ssh-keygen -t ed25519 -C "<comment>"     # 没有就建一把，-C 填设备名/邮箱/用途
-ssh-keygen -p -f <key_path>              # 给已有 key 加 / 改 / 去 passphrase
+ls -l ~/.ssh/id_*
+ssh-keygen -t ed25519 -C "device-or-purpose"
+ssh-keygen -p -f /path/to/private_key
 ```
 
-- 这些命令要**交互式**执行（agent 替不了用户输 passphrase），让用户自己跑。
-- 判断一把私钥是否带 passphrase（不暴露私钥内容）：`ssh-keygen -y -f <key> -P ""`——成功打印公钥 = 无 passphrase；报 `incorrect passphrase` = 有。
+创建密钥和修改 passphrase 都需要用户交互输入。判断一把可读私钥是否接受空 passphrase 时，不必显示其派生公钥：
 
-> 给私钥设 passphrase 是好习惯（私钥文件泄露也不能直接用），代价是每次用都要解锁——这正是 ssh-agent 要解决的：解锁一次，缓存在内存里反复用。**注意**：带 passphrase 的私钥在**没有可用 agent 的环境**（非交互 shell / CI）里会让认证悄悄失败（详见 §2.5），所以 agent 不是可选项而是刚需。
+```bash
+ssh-keygen -y -P '' -f /path/to/private_key >/dev/null
+```
 
-## 2. ssh-agent：是什么、客户端怎么找到它、找不到怎么办
+返回 0 表示空 passphrase 可用；错误明确写着 passphrase 不正确，才说明私钥受 passphrase 保护。权限、格式或文件损坏也会让命令失败，不能一律归为“有 passphrase”。
 
-### 2.1 agent 是什么
+passphrase 能降低私钥文件泄漏后被直接使用的风险；代价是签名前需要解锁。无 passphrase 的私钥可以由 `ssh` 直接读取，因此 agent 是可选的。受保护私钥若要在无人交互环境中签名，则需要一个已能签名的 agent、硬件密钥或其他签名提供方。
 
-ssh-agent 是个**常驻进程**，内存里持有**已解密**的私钥。`ssh` / `git` 做公钥认证签名时**不自己读私钥文件**，而是通过一个 Unix domain socket 把待签数据发给 agent、让 agent 代签。好处：passphrase 只在 `ssh-add` 加载时输一次，之后私钥明文只在 agent 内存里（不落盘、不进子进程环境），多个调用复用同一把已解锁的 key。
+### ssh-agent 的职责
 
-### 2.2 客户端怎么定位 agent（核心，最容易踩坑）
+`ssh-agent` 实现一套本地签名协议。`ssh` 选中 agent 后，通过本地 socket 发送签名请求；没有可用 agent 时，`ssh` 仍可直接读取配置的私钥文件。原生 OpenSSH agent 启动时没有身份，密钥由 `ssh-add` 加入，或由 `ssh` 在启用 `AddKeysToAgent` 时加入。[OpenSSH `ssh-agent(1)`](https://man.openbsd.org/OpenBSD-7.5/ssh-agent.1)给出了这套生命周期。
 
-客户端找 agent 有两条路，**别只会硬编码 socket 路径**：
+agent 通常不允许客户端导出私钥，但能访问 socket 的同一用户进程可以请求 agent 代签；root 也能绕过普通文件权限。保护 agent socket 等同于保护密钥的签名能力，转发 agent 时也适用这一边界。
 
-| 方式 | 怎么用 | 备注 |
+### <a id="systemd-agent"></a>Linux systemd user agent
+
+Linux 上容易混淆“软件装在哪里”“unit 由谁提供”和“进程以谁的身份运行”。GCR 与 OpenSSH 都通常由系统软件包安装，但它们提供的是 systemd user unit：每个用户由自己的 `systemd --user` 启动独立 agent，socket 位于各自的 `/run/user/<UID>/`，不会共享私钥或进程。
+
+#### 软件包、user unit 与运行实例
+
+Debian/Ubuntu 上的两个实现如下：
+
+| 实现 | 软件包与程序 | 软件包提供的 user unit | Ubuntu 常见默认行为 |
+|---|---|---|---|
+| GCR | `gcr4`；`gcr-ssh-agent` | `gcr-ssh-agent.service`、`gcr-ssh-agent.socket` | 桌面安装可能在 `/etc/systemd/user/` 为所有用户全局 enable |
+| OpenSSH | `openssh-client`；`/usr/bin/ssh-agent` | `ssh-agent.service` | Ubuntu 24.04 为 static 图形会话 unit；其他发行版可能提供可直接 enable 的 service/socket |
+
+`openssh-client` 在许多系统中已经预装。先检查，再决定是否安装：
+
+```bash
+command -v ssh-agent
+dpkg-query -W openssh-client
+```
+
+只有软件包缺失时才需要系统权限：
+
+```bash
+sudo apt install openssh-client
+```
+
+sudo 用于把程序和 vendor unit 安装到 `/usr`；启动 agent、创建当前用户 override、加载私钥都使用 `systemctl --user` 和用户目录，不需要 sudo。
+
+检查生效 unit 时同时看来源、状态和 enable 类型：
+
+```bash
+systemctl --user show gcr-ssh-agent.socket \
+  -p LoadState -p FragmentPath -p UnitFileState -p ActiveState
+systemctl --user show ssh-agent.service \
+  -p LoadState -p FragmentPath -p UnitFileState -p ActiveState
+```
+
+`FragmentPath` 指向 `/usr/lib/systemd/user/` 表示软件包原件，指向 `~/.config/systemd/user/` 表示当前用户的同名覆盖。这里的全局 enable 只是“对所有用户采用同一启动策略”，每个用户仍启动自己的实例。
+
+多个 provider 可以监听不同 socket；客户端最终通过 `IdentityAgent`、`SSH_AUTH_SOCK` 或各库的显式参数选择一个：
+
+| 行为 | GCR | 原生 OpenSSH agent |
 |---|---|---|
-| 环境变量 `SSH_AUTH_SOCK` | 指向 agent 的 socket | 最常见；登录 session / `.bashrc` 设好后子进程继承 |
-| ssh_config `IdentityAgent` | `~/.ssh/config` 里写、可按 Host 配 | 优先级高于环境变量、更稳；支持 `%i`（本地 UID）token 和 `${ENV}` |
+| 桌面集成 | GNOME Secret Service 和图形提示 | 取决于 TTY、`SSH_ASKPASS` 与会话环境 |
+| 身份发现 | 可枚举 `~/.ssh` 中的身份并按需解锁 | 初始为空，需 `ssh-add` 或 `AddKeysToAgent` |
+| 常见入口 | `%t/gcr/ssh` | 由 unit 决定，如 `%t/openssh_agent` 或 `%t/ssh-agent.socket` |
+| 重启后的状态 | 可再次从 keyring 取已保存秘密 | 内存身份消失，需要重新加入 |
 
-（还有 `SSH_AGENT_PID`，只给 `ssh-agent -k`（杀 agent）用，定位 socket 不靠它。）
+#### GCR `gcr-ssh-agent`
 
-**socket 路径没有统一标准**——取决于是谁、怎么起的 agent。所以 `export SSH_AUTH_SOCK=/run/user/1000/ssh-agent.socket` 这种写法不可靠：UID 不一定是 1000、agent 也不一定是 systemd 那套。常见实现与位置：
+GNOME 的 `gcr4` 包提供 `gcr-ssh-agent.service` 和 `gcr-ssh-agent.socket`。[Ubuntu 24.04 `gcr4` 文件清单](https://packages.ubuntu.com/noble/amd64/gcr4/filelist)列出了这两个 systemd user unit。若发行版没有替所有用户全局 enable，单个用户可以启用 socket：
 
-| 谁起的 agent | socket 典型位置 |
-|---|---|
-| `eval "$(ssh-agent -s)"` | `/tmp/ssh-XXXXXX/agent.<pid>`（每次随机） |
-| systemd user service（下面 §2.4 那套） | `/run/user/<UID>/ssh-agent.socket` |
-| GNOME Keyring | `/run/user/<UID>/keyring/ssh` |
-| 新版 gcr-ssh-agent（GNOME 42+） | `/run/user/<UID>/gcr/ssh` |
-| macOS（launchd 托管） | 登录时已设好 `SSH_AUTH_SOCK`，形如 `/private/tmp/com.apple.launchd.*/Listeners` |
-| Windows OpenSSH | 命名管道 `\\.\pipe\openssh-ssh-agent`，**不是 socket、不读 `SSH_AUTH_SOCK`**（见 §3） |
-| 1Password / KeePassXC / yubikey-agent 等 | 各自路径，查其文档 |
+```bash
+systemctl --user enable --now gcr-ssh-agent.socket
+systemctl --user status gcr-ssh-agent.socket gcr-ssh-agent.service
+```
 
-> 上表的具体路径**当线索用、不当真理**——拿不准就用 §2.3 的 `ssh-add -l` 逐个验。
+GCR 使用 socket activation；socket 已存在而 service 进程尚未运行是正常状态。它可以先列出 `~/.ssh` 中已知身份，并在签名时从 GNOME Secret Service 取已保存的 passphrase，或启动图形提示，再交给内部 OpenSSH agent 完成签名。[GNOME 维护者对加载流程的说明](https://discourse.gnome.org/t/gdm-gnome-keyring-and-gcr-ssh-agent-service/23498/3)记录了这一行为。
 
-### 2.3 `ssh-add -l` 的三个退出码（诊断神器）
+无图形界面时，GCR 的按需解锁可能失败：若私钥需要 passphrase、Secret Service 没有已保存秘密，`org.gnome.keyring.SystemPrompter` 又无法启动，签名请求会返回 `agent refused operation`，journal 常见：
 
-| exit | 含义 |
-|---|---|
-| `0` | agent 连上了、**有 key**（会列出指纹）——可用 |
-| `1` | agent 连上了、但**没加载任何 key** |
-| `2` | **连不上 agent**（`SSH_AUTH_SOCK` 没设 / 指错 / agent 没跑） |
+```text
+couldn't prompt for password: ... SystemPrompter exited with status 1
+the /usr/bin/ssh-add command failed
+```
 
-定位 socket 时就靠它：`SSH_AUTH_SOCK=<候选> ssh-add -l`，exit 0 即命中。
+此时 `ssh-add -l` 仍可能列出身份，因为它只查询 GCR 广告的公钥；签名探针才能验证真实可用性：
 
-### 2.4 Linux/WSL 常驻 agent：systemd user service（推荐）
+```bash
+agent_socket=/run/user/"$(id -u)"/gcr/ssh
+SSH_AUTH_SOCK="$agent_socket" ssh-add -T ~/.ssh/id_ed25519.pub
+journalctl --user -u gcr-ssh-agent.service -n 50 --no-pager
+```
 
-密钥缓存在 agent 进程内存，生命周期跟用户登录绑定，不注销 / 不重启就一直可用。`~/.config/systemd/user/ssh-agent.service`：
+GCR 已声明拥有该身份后，OpenSSH 会走 agent 签名分支；agent 拒绝时不会进入“直接读取 `IdentityFile`、从终端解锁、再执行 `AddKeysToAgent`”的路径。无图形环境仍可从 TTY 手动加入私钥：
+
+```bash
+SSH_AUTH_SOCK="$agent_socket" ssh-add ~/.ssh/id_ed25519
+```
+
+该身份只缓存到 agent 生命周期结束。若期望第一次交互式 SSH 从终端解锁、随后自动缓存，原生 OpenSSH agent 的调用链更直接。
+
+#### OpenSSH `ssh-agent`
+
+OpenSSH 的 agent 程序来自 `openssh-client`，不少发行版也随包提供 systemd user unit。[Ubuntu 24.04 `openssh-client` 文件清单](https://packages.ubuntu.com/noble-updates/amd64/openssh-client/filelist)包含 `/usr/bin/ssh-agent`、`ssh-agent.service` 和 `/usr/lib/openssh/agent-launch`。
+
+不能仅凭“unit 文件存在”就执行 enable，先看 unit 内容和状态：
+
+```bash
+systemctl --user cat ssh-agent.service
+systemctl --user is-enabled ssh-agent.service
+```
+
+带 `[Install]` 且状态为 `disabled` 的发行版 unit，可以由用户直接启用：
+
+```bash
+systemctl --user enable --now ssh-agent.service
+```
+
+Ubuntu 24.04 的 vendor unit 是 `static`，由系统提供的 `graphical-session-pre.target.wants/ssh-agent.service` 拉起；`agent-launch` 还要求图形/XSession 条件，不适合无图形 user manager，也不能直接 enable。
+
+这类环境可在当前用户目录放同名 override，使它优先于 vendor unit，并补上适合 headless 的固定 socket 与 `[Install]`：
 
 ```ini
 [Unit]
-Description=SSH key agent
+Description=OpenSSH authentication agent
+Documentation=man:ssh-agent(1)
 
 [Service]
 Type=simple
@@ -73,167 +149,452 @@ ExecStart=/usr/bin/ssh-agent -D -a $SSH_AUTH_SOCK
 WantedBy=default.target
 ```
 
-（`%t` = `$XDG_RUNTIME_DIR` = `/run/user/<UID>`，所以 socket 落在 `/run/user/<UID>/ssh-agent.socket`。）
-
-启用，并让 shell / ssh 找到它——**两种写法，UID 都不写死**：
-
 ```bash
-systemctl --user enable --now ssh-agent
-
-# 法一：环境变量写进 ~/.bashrc（$(id -u) 自动取当前 UID）
-echo 'export SSH_AUTH_SOCK=/run/user/$(id -u)/ssh-agent.socket' >> ~/.bashrc
+systemctl --user daemon-reload
+systemctl --user enable --now ssh-agent.service
 ```
 
+同名 override 只影响该用户；其他用户仍加载 `/usr/lib/systemd/user/ssh-agent.service`。这里不应 mask `ssh-agent.service`：mask 按 unit 名生效，会同时挡住 vendor 定义和当前用户想运行的 override。
+
+原生 agent 初始为空。第一次交互式 SSH 可以从 `IdentityFile` 读取私钥并在终端询问 passphrase；`AddKeysToAgent yes` 随后将身份缓存。之后非交互连接可复用，直到 agent/service 或系统重启。`loginctl enable-linger` 可以让 user manager 在无登录会话时继续运行，但不改变“agent 重启后内存身份消失”的事实。
+
+#### 保留全局 GCR，只切换当前用户
+
+这里的目标是：保留 `/etc/systemd/user/*target.wants/` 中的全局 GCR 策略和其他用户行为，只让当前用户使用 OpenSSH agent。
+
+`systemctl --user disable` 只能删除当前用户自己创建的 enable symlink，不能删除 `/etc/systemd/user/` 中面向所有用户的全局链接；systemd 也没有一个“当前用户 disabled”的负向标记去抵消全局 enable，所以 GCR 仍会被拉起。[systemctl 对 `--user` / `--global` 与 `disable` 的定义](https://github.com/systemd/systemd/blob/v255/man/systemctl.xml)明确记录了这个边界。
+
+为单个用户建立例外，应在该用户范围 mask GCR：
+
+```bash
+systemctl --user mask --now \
+  gcr-ssh-agent.service \
+  gcr-ssh-agent.socket
+```
+
+mask 会在当前用户的高优先级 unit 目录建立指向 `/dev/null` 的同名链接。该用户的手动启动、依赖拉起和 socket activation 都会被拒绝；全局 enable 链接和其他用户不受影响。[systemd.unit 对 masked load state 的定义](https://github.com/systemd/systemd/blob/v255/man/systemd.unit.xml)说明了这一覆盖机制。
+
+恢复该用户继承全局设置时：
+
+```bash
+systemctl --user unmask \
+  gcr-ssh-agent.service \
+  gcr-ssh-agent.socket
+```
+
+> 只有目标变成“整台机器上的所有用户都不再自动启用 GCR”时，才使用 `sudo systemctl --global disable gcr-ssh-agent.service gcr-ssh-agent.socket`。这是修改全局策略，不是建立单用户例外；它不会自动停止已运行的用户实例。
+
+#### `systemctl --user` 的控制总线
+
+`systemctl --user` 通过用户 D-Bus 控制 user manager，它不通过 agent socket。由非登录 shell、远端执行器或某些终端启动的进程可能没有 `XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS`，此时会报 `Failed to connect to bus: No medium found`（本地化后也可能显示“找不到介质”）。
+
+先区分“环境没有指向 bus”和“user manager 根本不存在”：
+
+```bash
+runtime_dir=/run/user/"$(id -u)"
+test -S "$runtime_dir/bus"
+pgrep -a -u "$(id -u)" -x systemd
+```
+
+若 bus socket 和 `systemd --user` 都存在，可以只给当前命令显式指定入口：
+
+```bash
+XDG_RUNTIME_DIR="$runtime_dir" \
+DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus" \
+systemctl --user status ssh-agent.service
+```
+
+这种前缀赋值只对该命令生效；同一 shell 需要连续管理 user unit 时可以 export。它们只帮助 `systemctl` 找到控制总线，不会设置 `SSH_AUTH_SOCK`、不会选择 agent，也不会解锁私钥。若 bus socket 或 user manager 不存在，单纯补变量无效，应检查登录会话、PAM/systemd 集成或 linger 状态。
+
+### <a id="locate-agent"></a>客户端定位 agent 与选择身份
+
+OpenSSH 可以从环境变量或 `ssh_config` 取得 agent socket；`ssh_config` 里的其他字段再决定尝试哪些身份、是否把刚解锁的私钥加入 agent。只有 `SSH_AUTH_SOCK` 和 `IdentityAgent` 负责定位 agent：
+
+| 入口或字段 | 谁读取 | 作用 |
+|---|---|---|
+| `SSH_AUTH_SOCK` | OpenSSH、`ssh-add` 及许多兼容库 | 从进程环境取得 agent socket |
+| `IdentityAgent` | OpenSSH 客户端 | 在 `ssh_config` 中指定 socket；设置后覆盖 `SSH_AUTH_SOCK` |
+| `IdentityFile` | OpenSSH 客户端 | 指定可直接读取的身份文件，也可用于筛选 agent 中的对应身份 |
+| `AddKeysToAgent` | OpenSSH 客户端 | 从文件成功解锁私钥后，把它加入已经找到的 agent |
+| `IdentitiesOnly` | OpenSSH 客户端 | 限制实际尝试的文件身份和对应 agent 身份 |
+
+`AddKeysToAgent` 不会启动或定位 agent，也不能替用户解锁私钥；它只是在“socket 已找到、私钥已成功读取”之后增加缓存这一步。agent 已经提供匹配身份时，`ssh` 会直接请求 agent 签名，不需要再次从文件加载。
+
+OpenSSH 的选择过程可以概括为：
+
+```text
+ssh 启动
+  ↓
+读取命令行、用户 ssh_config、系统 ssh_config
+  ↓
+IdentityAgent 已配置？── 是 → 使用该 socket
+          │
+          否
+          ↓
+读取 SSH_AUTH_SOCK
+  ↓
+agent 提供允许使用的身份？── 是 → 请求 agent 签名
+          │
+          否
+          ↓
+读取 IdentityFile → 必要时提示解锁
+          ↓
+AddKeysToAgent 启用且 agent 可达？── 是 → 把已解锁身份加入 agent
+```
+
+交互式和非交互式 OpenSSH 都读取 `ssh_config`。因此配置了有效的 `IdentityAgent` 后，即使进程没有 `SSH_AUTH_SOCK`，`ssh`、`scp` 及通常由 Git 调用的 OpenSSH 仍能找到 agent。Unix 下的 `ssh-add` 不读取 `ssh_config`，它仍依赖 `SSH_AUTH_SOCK`；这解释了为什么 `ssh` 可以成功，而同一环境里的 `ssh-add -l` 可能返回 2。
+
+`SSH_AGENT_PID` 记录部分原生 agent 的 PID，供 `ssh-agent -k` 等管理操作使用；客户端通信只需要 socket。
+
+`IdentityAgent` 支持 OpenSSH token，`%i` 表示本地 UID；systemd 的 `%t` 不能写进 `ssh_config`。例如：
+
 ```sshconfig
-# 法二（更稳，推荐）：~/.ssh/config 里钉死，%i = 本地 UID，不依赖 shell 环境
-Host *
-    IdentityAgent /run/user/%i/ssh-agent.socket
-    AddKeysToAgent yes
+Host host.example
+    IdentityAgent /run/user/%i/gcr/ssh
     IdentityFile ~/.ssh/id_ed25519
+    AddKeysToAgent yes
 ```
 
-- `IdentityAgent` 比环境变量稳：**非交互 / 没 source `.bashrc` 的 shell** 里 `ssh` 也能找到 agent（环境变量法在那种 shell 里会丢，正是 §2.5 那个坑）。
-- `AddKeysToAgent yes`：首次输 passphrase 后自动缓存进 agent；`IdentityFile`：默认用哪把 key。
-- WSL 下可能还要确保 `XDG_RUNTIME_DIR` 有值（pam_systemd 没设时 `%t` 会空）。
+使用 Ubuntu/Debian 的 OpenSSH vendor agent 时，路径可能改为 `/run/user/%i/openssh_agent`；自建固定 socket unit 则可能是 `/run/user/%i/ssh-agent.socket`。先从 unit 和实际 socket 确认，不能凭实现名称猜路径。[`IdentityAgent`、`IdentityFile` 与 `AddKeysToAgent`](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5)的含义由 OpenSSH 配置手册定义。
 
-### 2.5 非交互 shell 里找不到 agent：发现并复用它
+其他常见入口只作为排查线索：
 
-**非交互 / 非登录 shell（CI、`bash -c`、各类 agent 远程执行）默认 `SSH_AUTH_SOCK` 为空、不读 `.bashrc`**。典型症状：`git push` / `ssh` 一直 `Permission denied (publickey)`，但人在交互终端连同一台是好的。`ssh -vv` 里会看到迷惑性的 `Server accepts key`（服务器认这把公钥）紧接着 `Permission denied`——**这不是公钥的问题**：公钥不需解密能“亮出来”过预检，但带 passphrase 的私钥在没有已解锁 agent 时**签不了名**。`ssh-add -l` 此时 exit 2（连不上 agent，见 §2.3）。
+| 实现 | 常见入口 |
+|---|---|
+| 直接运行 `ssh-agent` | 读取它输出的 `SSH_AUTH_SOCK`；默认路径随 OpenSSH 版本变化 |
+| 旧版 GNOME Keyring | `/run/user/<UID>/keyring/ssh` |
+| macOS launchd | 登录环境提供的 `/private/tmp/com.apple.launchd.<random>/Listeners` |
+| Windows OpenSSH | `\\.\pipe\openssh-ssh-agent`，不是 Unix socket |
+| 1Password、KeePassXC、硬件 agent | 以相应产品文档和实际配置为准 |
 
-解决 = 复用宿主上那个用户登录时早已解锁好的常驻 agent，**别猜 socket 路径**（UID 未必 1000、实现也不一定，见 §2.2），而是先看用户自己怎么配的、再逐个候选用 `ssh-add -l` 验：
+### <a id="ssh-add-l"></a>Agent 状态与密钥加载
+
+`ssh-add -l` 的退出状态能区分“socket 不通”和“agent 没身份”：
+
+| exit | 含义 |
+|---|---|
+| `0` | agent 可达，并广告至少一个身份 |
+| `1` | agent 可达，但没有身份，或查询命令失败 |
+| `2` | 无法联系 agent |
+
+这是 [`ssh-add(1)` 定义的退出状态](https://man.openbsd.org/OpenBSD-7.5/ssh-add.1)。显式验证某个 socket：
 
 ```bash
-# 1. 优先：用户交互 shell 用的就是这个，直接抄
-grep -hoP 'SSH_AUTH_SOCK=\K\S+' ~/.bashrc ~/.profile ~/.zshrc 2>/dev/null   # 可能含 $(id -u) 待展开
-systemctl --user show-environment 2>/dev/null | sed -n 's/^SSH_AUTH_SOCK=//p'
-
-# 2. 或自动探测：第一个能被 ssh-add 认（exit 0）的 socket 就用它
-uid=$(id -u)
-for sock in \
-    "$SSH_AUTH_SOCK" \
-    "/run/user/$uid/ssh-agent.socket" \
-    "/run/user/$uid/keyring/ssh" \
-    "/run/user/$uid/gcr/ssh" \
-    /tmp/ssh-*/agent.* ; do
-  [ -S "$sock" ] && SSH_AUTH_SOCK="$sock" ssh-add -l >/dev/null 2>&1 \
-    && { export SSH_AUTH_SOCK="$sock"; break; }
-done
-ssh-add -l        # 列出 key = 成功；passphrase 全程不经过你 / 不进对话
+agent_socket=/run/user/"$(id -u)"/gcr/ssh
+SSH_AUTH_SOCK="$agent_socket" ssh-add -l
 ```
 
-兜底：从运行中的进程扒 socket——`ps -u "$(id -u)" -o args= | grep '[s]sh-agent'` 看有没有 `-a <socket>`。根治：给 `~/.ssh/config` 配 `IdentityAgent`（§2.4），非交互 shell 也能命中，从此不用每次找。
+比较公钥指纹可以确认 agent 广告的是否为目标身份：
 
-> 排错口诀：`Server accepts key` + `Permission denied` = 公钥没问题、私钥签名出了问题，往 passphrase / agent 方向查，别反复重加公钥。`git ls-remote <url>` 是“网络+认证+仓库存在”三合一的最快只读探针。
+```bash
+ssh-keygen -lf ~/.ssh/id_ed25519.pub
+SSH_AUTH_SOCK="$agent_socket" ssh-add -l
+```
 
-## 3. Windows：Git Bash 与 PowerShell 的 ssh-agent 差异
+`ssh-add -T` 会执行一次签名与验签，比“列得出来”更接近可用性验证；GCR 可能在此时提示解锁：
 
-Windows 上最容易踩的是 Git Bash 和 PowerShell 可能调用不同的 `ssh.exe`，因此连到不同的 agent。Windows OpenSSH 的 agent 是**命名管道** `\\.\pipe\openssh-ssh-agent`，不用 `SSH_AUTH_SOCK`。
+```bash
+SSH_AUTH_SOCK="$agent_socket" ssh-add -T ~/.ssh/id_ed25519.pub
+```
 
-- Git Bash 常见写法 `eval "$(ssh-agent -s)"`：启动/复用 Git for Windows/MSYS 环境里的 `ssh-agent`，并注入 `SSH_AUTH_SOCK`、`SSH_AGENT_PID`。Git Bash 里的 `ssh-add` 和 Git for Windows 自带 `ssh.exe` 依赖这两个变量找 agent。
-- PowerShell 用 Windows OpenSSH 时通常不需要设 `SSH_AUTH_SOCK`/`SSH_AGENT_PID`。启动 Windows 的 `ssh-agent` 服务后，`C:\Windows\System32\OpenSSH\ssh.exe` 通过命名管道访问已缓存的 key。
-- Git for Windows 自带 `usr/bin/ssh.exe` / `ssh-agent.exe` / `ssh-add.exe`；`eval "$(ssh-agent -s)"` 起的是这套 MSYS agent。想让 Git 明确走 Windows OpenSSH service：
+进程列表用于追查 provider，而不是判定 socket 是否可用：
 
-  ```powershell
-  git config --global core.sshCommand "C:/Windows/System32/OpenSSH/ssh.exe"
-  ```
+```bash
+systemctl --user status gcr-ssh-agent.socket gcr-ssh-agent.service
+ps -u "$(id -u)" -o pid,comm,args | grep -E '[s]sh-agent|[g]cr-ssh-agent'
+```
 
-  这能让 PowerShell、Git、Git Bash 里的 Git 命令尽量统一到 Windows OpenSSH，避免 `ssh` 不问 passphrase、`git pull` 却反复询问。
+### <a id="agent-noninteractive"></a>非交互 shell 的 agent
 
-- **不要**把 Git Bash 的 `SSH_AUTH_SOCK`/`SSH_AGENT_PID` 直接搬进 PowerShell——Windows OpenSSH 不靠这俩变量定位 agent，设错了反而让不同客户端混用失败。
-- Windows PowerShell 下也别依赖 `ControlMaster`/`ControlPath`/`ControlPersist`（面向 Unix socket，Windows OpenSSH 组合下通常不可用）；免重复输 passphrase 优先靠 `ssh-agent`。
-- 自动启动参考 [Auto-launching ssh-agent on Git for Windows](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/working-with-ssh-key-passphrases#auto-launching-ssh-agent-on-git-for-windows)。
+非交互模式不会让 OpenSSH 跳过 `ssh_config`。差异通常来自进程环境和解锁通道：非交互 shell 会继承父进程已有环境，但可能不执行负责 export 的交互式启动文件；CI、systemd service 或 `BatchMode=yes` 也往往没有可用的 TTY/askpass 来输入 passphrase。
 
-## 4. SSH RemoteForward 代理转发
+只要 `IdentityAgent` 指向可达 socket，且该 agent 已能用目标身份签名，非交互 OpenSSH 即使没有 `SSH_AUTH_SOCK` 也能认证。失败通常发生在以下链路：
 
-把本地代理端口通过 SSH 反向隧道提供给远程机器。先在本地 `~/.ssh/config` 对应 Host 下添加：
+```text
+没有 IdentityAgent
+  + 父进程没有 SSH_AUTH_SOCK
+  → ssh 找不到 agent
+
+或
+
+agent 可达但没有目标身份
+  + IdentityFile 受 passphrase 保护
+  + 当前环境不能交互解锁
+  → 公钥可能被服务器接受，但客户端无法完成签名
+```
+
+`AddKeysToAgent yes` 不能修复这两种失败：前一种没有可加入的 agent，后一种尚未成功解锁私钥。
+
+先看 OpenSSH 的生效配置和当前环境，不根据“交互终端能连”推断自动化环境也能连：
+
+```bash
+ssh -G host.example |
+  awk '$1 ~ /^(identityagent|identityfile|addkeystoagent|identitiesonly|batchmode)$/'
+printf 'SSH_AUTH_SOCK=%s\n' "${SSH_AUTH_SOCK:-<absent>}"
+ssh-add -l
+```
+
+这里 `ssh-add -l` 只验证环境变量指向的默认入口；它失败不等于配置了 `IdentityAgent` 的 OpenSSH 也找不到 agent。需要验证某个显式 socket 时：
+
+```bash
+agent_socket=/path/to/agent.socket
+SSH_AUTH_SOCK="$agent_socket" ssh-add -l
+```
+
+若 `ssh -vv` 显示服务器接受了某个公钥，随后仍然 `Permission denied (publickey)`，说明服务器认可该公钥，但客户端没有完成签名。受保护私钥找不到已解锁 agent 是常见原因；私钥权限、文件格式、签名算法和 provider 选择也可能导致同样现象。
+
+排查顺序如下：
+
+1. 查 `ssh -G` 的 `IdentityAgent`、`IdentityFile`、`AddKeysToAgent`、`IdentitiesOnly` 和 `BatchMode`。
+2. 查当前进程实际继承的 `SSH_AUTH_SOCK`。
+3. 分别验证 `IdentityAgent` 指向的 socket 和环境变量指向的默认 socket。
+4. 从 `systemctl --user show ... -p FragmentPath -p Environment` 和 unit 内容确认 socket 来源。
+5. 最后看进程参数和 journal，确认是谁创建或接管了 socket。
+
+只读取 `SSH_AUTH_SOCK`、要求显式 `agent_path` 或不完整实现 OpenSSH 配置的库，需要按各自接口传入 agent。无 passphrase 的私钥可以直接读取，因此没有 agent 不必然导致认证失败。
+
+只读端到端探针应禁用交互提示：
+
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=10 host.example true
+GIT_SSH_COMMAND='ssh -o BatchMode=yes' git ls-remote git@host.example:owner/repo.git
+```
+
+### <a id="windows-agent"></a>Windows agent
+
+Windows OpenSSH 使用 Windows service 和命名管道 `\\.\pipe\openssh-ssh-agent`，不依赖 Unix 的 `SSH_AUTH_SOCK`。管理员 PowerShell 可以启用并启动系统自带服务：
+
+```powershell
+Get-Service ssh-agent | Set-Service -StartupType Automatic
+Start-Service ssh-agent
+Get-Service ssh-agent
+ssh-add $env:USERPROFILE\.ssh\id_ed25519
+```
+
+这是 [Microsoft 的 OpenSSH 密钥管理流程](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_keymanagement)。
+
+Git Bash 的 `eval "$(ssh-agent -s)"` 启动的是 Git for Windows/MSYS agent，并设置该 Bash 进程树使用的 `SSH_AUTH_SOCK`。PowerShell、Windows OpenSSH 和 Git Bash 可能调用不同的 `ssh.exe`，所以“终端里的 ssh 不再询问，Git 却仍询问”通常是客户端实现没有统一。
+
+分别确认实际二进制和 Git 配置：
+
+```powershell
+Get-Command ssh
+git config --show-origin --get core.sshCommand
+```
+
+```bash
+type -a ssh
+git config --show-origin --get core.sshCommand
+```
+
+需要让 Git 明确使用 Windows OpenSSH 时，可以设置：
+
+```powershell
+git config --global core.sshCommand "C:/Windows/System32/OpenSSH/ssh.exe"
+```
+
+这只改变 Git 的 SSH 客户端选择，不会改变独立运行的 `ssh.exe`。不要把 Git Bash 的 `SSH_AUTH_SOCK` 或 `SSH_AGENT_PID` 复制到 PowerShell。Windows OpenSSH 的连接复用限制见 [ControlMaster 连接复用](#controlmaster)。
+
+## 主机密钥校验
+
+用户私钥证明“客户端是谁”，服务器 host key 则证明“连到的是哪台服务器”。`known_hosts` 保存后者；修改记录前必须先建立对新 host key 的独立信任。
+
+### `known_hosts` 与 `CheckHostIP`
+
+host key 的查找对象不仅是裸域名，还可能包含连接使用的 hostname、地址、端口和 `HostKeyAlias`。先查看 OpenSSH 的生效配置与已有记录：
+
+```bash
+ssh -G host.example | awk '$1 ~ /^(hostname|port|hostkeyalias|checkhostip|userknownhostsfile)$/'
+ssh-keygen -F host.example
+ssh-keygen -F '[host.example]:2222'
+```
+
+`CheckHostIP yes` 会额外按目标 IP 检查和记录 host key；当前 OpenSSH 默认是 `no`，因此默认只按连接使用的主机标识完成校验。[`CheckHostIP`](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5)的定义以客户端版本为准。
+
+第三方客户端未必完整实现 OpenSSH 配置，但不能据此推断它们都要求 hostname 和 IP 同时命中。AsyncSSH 2.24.0 会把目标 hostname 和 address 的匹配结果合并，任一匹配即可；见[版本锁定源码](https://github.com/ronf/asyncssh/blob/v2.24.0/asyncssh/known_hosts.py#L181-L199)。出现 `Host key is not trusted` 时，应核对该客户端实际传入的 hostname、address、port、known_hosts 文件和别名支持情况。
+
+### 服务器地址变化
+
+域名解析到新地址而 host key 不变时，`CheckHostIP no` 的 OpenSSH 客户端若仍由 hostname 条目命中，通常不需要补 IP 记录。只有实际按地址查找的客户端，才需要相应的地址条目。
+
+`ssh-keyscan` 可以采集网络端当前提供的公钥和指纹：
+
+```bash
+ssh-keyscan -t ed25519 host.example 2>/dev/null | ssh-keygen -lf -
+```
+
+它不能证明该 key 真实属于目标服务器；能截获网络的攻击者也能替换扫描结果。通过云控制台、服务器本地控制台或另一条可信渠道核对指纹后，才能把这次采集到的同一 key 写入 `known_hosts`。[`ssh-keyscan(1)`](https://man.openbsd.org/OpenBSD-7.5/ssh-keyscan.1)明确要求带外核验，或仅在已信任网络中直接使用其输出。
+
+### 主机密钥变化
+
+`REMOTE HOST IDENTIFICATION HAS CHANGED` 表示现有记录与本次服务器 key 不同。服务器重装、主动轮换 host key、域名切到另一台机器都可能触发；中间人攻击产生相同现象。
+
+处理顺序是：
+
+1. 从可信带外渠道取得新 key 指纹并核对变更原因。
+2. 删除确认已失效的 hostname 条目；只有确实存在地址条目时才一并删除。
+3. 重新连接并接受已核验的新 key。
+
+```bash
+ssh-keygen -R host.example
+ssh-keygen -R 192.0.2.10
+ssh -o StrictHostKeyChecking=accept-new host.example
+```
+
+`accept-new` 只自动接受首次出现的 key，仍会拒绝已存在但不匹配的 key。重新信任后，再用 `ssh-keygen -F` 和带外指纹核对最终记录。
+
+## 连接复用与转发
+
+连接复用减少重复握手，端口转发则在一条 SSH 连接上承载额外流量。两者共享连接生命周期；已有 master 不会自动吸收后来修改的配置。
+
+### <a id="controlmaster"></a>ControlMaster 连接复用
+
+ControlMaster 让多个会话共享同一条已认证的网络连接。`ControlPersist` 可以在初始会话退出后保留 master 一段时间。
+
+控制 socket 的目录应只允许当前用户写入，路径用 `%C` 避免不同目标冲突并缩短文件名：
+
+```bash
+mkdir -p -m 700 ~/.ssh/control
+```
 
 ```sshconfig
-Host <远程机器名>
-  RemoteForward 127.0.0.1:10131 127.0.0.1:7890
-```
-
-在远程机器的 `~/.bashrc` 中添加：
-
-```bash
-export http_proxy=http://<用户名>:<密码>@127.0.0.1:10131
-export https_proxy=http://<用户名>:<密码>@127.0.0.1:10131
-```
-
-如果本地代理不需要认证，去掉 `<用户名>:<密码>@`。认证凭据需要和本地代理配置一致。
-
-注意事项：
-
-- 隧道依赖 SSH 连接；SSH 断开后隧道自动关闭。配合 `ControlPersist` 可以保持连接。
-- 如果远程机器上 10131 已被占用，SSH 会报 `bind: Address already in use`，转发不生效但连接本身可能仍然建立。换端口，或检查 `ss -tlnp | grep 10131`。
-- 修改 SSH config 添加 RemoteForward 后，已有 ControlMaster 连接不含新配置，需要先执行 `ssh -O exit <远程机器名>`，重新连接才会生效。
-- 两边都显式写 `127.0.0.1` 更清晰；本地端写 `127.0.0.1` 比 `localhost` 可靠，可避免 `localhost` 解析到 IPv6 `::1` 而代理只听 IPv4。
-
-## 5. 主机密钥校验：known_hosts、CheckHostIP 与不同 SSH 实现的差异
-
-SSH 连接时验证的是服务器的**主机密钥**（host key），不是 IP，也不是域名。`known_hosts` 记录“某主机名 / IP → 哪把 host key”。只有服务器重装、换了密钥才算“key 变了”；**只换 IP、host key 不变，从密码学角度还是同一台机器**。
-
-不同 SSH 实现对“IP”的态度不一样，这会造成同一台主机用一个客户端连得上、换一个客户端却报错：
-
-- **OpenSSH 默认 `CheckHostIP no`**（`man ssh_config`：默认不检查 IP；这是 OpenSSH 8.5 改的默认值，未逐版核证）。它**只按连接用的主机名**去 `known_hosts` 找 key 比对，完全不看 IP。后果：服务器 IP 变了（换 VPS、DNS 改解析），只要 host key 没变、主机名条目命中，OpenSSH 一声不吭就放行；副作用是它**从不写 IP→key 条目**，`known_hosts` 里往往只有主机名的明文条目。
-- **纯第三方 SSH 库**（如 [asyncssh](https://github.com/ronf/asyncssh)，纯 Python 实现，被一些 MCP / 自动化工具当底层引擎）没有 `CheckHostIP no` 这种放宽，校验时**把连接解析到的 IP 也纳入 `known_hosts` 匹配**（≈ `CheckHostIP yes` 的行为）。
-
-**典型症状**：同一台主机，`ssh <host>`（OpenSSH）正常，但走 asyncssh 之类的客户端报 `Host key is not trusted for host <host>`。**几乎总是**：主机 host key 没变、但解析 IP 变了，而 `known_hosts` 里只有主机名的明文条目、缺新 IP 的条目——不是真的 key 被篡改。
-
-诊断（确认“是 IP 变了”而非“key 变了”）：
-
-```bash
-# 存的 key 和服务器实时 key 是否一致（一致 = 不是 key 变了）
-diff <(ssh-keygen -F <host> | awk '/ssh-ed25519/{print $3}') \
-     <(ssh-keyscan -t ed25519 <host> 2>/dev/null | awk '{print $3}')
-ssh-keygen -F <新IP>     # 输出为空 = known_hosts 缺这个 IP 的条目
-```
-
-修复——补上“主机名 + IP”的条目（`-H` 顺带哈希，避免明文主机名/IP 落盘）：
-
-```bash
-ssh-keyscan -H <host> <新IP> >> ~/.ssh/known_hosts
-```
-
-追加不删旧条目，对 OpenSSH（只看主机名）无影响，同时补齐检查 IP 的客户端所需的 IP→key 映射。
-
-## 6. ControlMaster 连接复用
-
-裸 `ssh` / `scp` 每次调用都新建 TCP 并重新认证（百毫秒级开销）。`ControlMaster` 让多次 ssh 复用同一条已认证的**主连接**（经一个 Unix domain socket），后续调用只开 channel，省掉重复握手；`ControlPersist` 让主连接在空闲后再保留一段时间。
-
-在 `~/.ssh/config` 的 `Host *` 下：
-
-```sshconfig
-Host *
+Host host.example
     ControlMaster auto
-    ControlPath ~/.ssh/sockets/%r@%h-%p
+    ControlPath ~/.ssh/control/%C
     ControlPersist 10m
 ```
 
-- **Windows OpenSSH 不支持** `ControlMaster`（依赖 Unix domain socket，Windows 默认编译不带），复用不可靠；Win 上免重复输 passphrase 优先靠 `ssh-agent`（见 §3）。
-- 改了 config（如新增 `RemoteForward`）后，**已存在的主连接不含新配置**，需 `ssh -O exit <host>` 关掉主连接、重连才生效。
+[`ControlMaster`、`ControlPath` 和 `ControlPersist`](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5)的完整语义由 OpenSSH 定义。查看或关闭现有 master：
 
-## 7. 在远端连续跑命令 / sudo / 拉日志
+```bash
+ssh -O check host.example
+ssh -O exit host.example
+```
 
-没有 hash 校验的远端编辑/执行工具（如 portal MCP）时，纯 OpenSSH 也能干活。前提：agent 起的非交互 shell 里 `SSH_AUTH_SOCK` 可能没设——先按 §2.5 找到并复用 agent，否则带 passphrase 的 key 会让下面这些 ssh/scp 全 `Permission denied`。
+master 建立时已经固化了认证、转发和 agent forwarding 等连接级配置。修改 `RemoteForward` 或其他连接级选项后，应关闭旧 master 再重新连接。
 
-### 单条 / 连续多条命令
+Windows OpenSSH 当前没有实现 ControlMaster；相关功能请求仍在 [Win32-OpenSSH #1328](https://github.com/PowerShell/Win32-OpenSSH/issues/1328)。在 Windows 上不应照搬依赖 Unix control socket 的配置。
 
-- 单条：`ssh <host> "<command>"`。
-- 连续多条：配好 §6 的 `ControlMaster` 后，多次 `ssh <host> "..."` 复用同一条已认证主连接（省握手）；或把多步合进**一个脚本**一次跑（尤其要 sudo 时，避免反复输密码，见下）。
+### RemoteForward 反向转发
 
-### 交互式 sudo：让用户只敲一行 `ssh -t`
+`RemoteForward` 在远端创建监听入口，并把收到的连接通过 SSH 隧道送到本地目标。例如把本地代理只暴露给远端回环地址：
 
-`sudo` 从 TTY 读密码，普通 `ssh <host> "sudo ..."` 没分配 TTY、读不到密码（或直接报错）。把“用户负责的事”压到极小——只敲一行 `ssh -t`，其余 agent 在本地做：
+```sshconfig
+Host host.example
+    RemoteForward 127.0.0.1:<remote-port> 127.0.0.1:<local-proxy-port>
+    ExitOnForwardFailure yes
+```
 
-1. **agent 在本地** `/tmp/` 用编辑器写脚本（不在远端 `cat <<EOF` 手敲）。脚本开头固化 `exec > >(tee /tmp/<name>.log) 2>&1`——日志路径写死在脚本里，别拼到 ssh 命令行的 `>` 重定向上（那是**本地**重定向、不是远端）。
-2. **agent 自己 `scp`** 推到远端 `/tmp/`；不要让用户 scp、也不要让用户手敲建脚本。
-3. 给用户**唯一一条命令**：`ssh -t <host> "sudo bash /tmp/<name>.sh"`（`-t` 强制分配 TTY，让 sudo 能弹密码）。多步操作合进一个脚本，别拆成多次 `ssh -t` 让用户反复输密码。
-4. 用户跑完通知 agent，**agent 自己 `scp` 拉** `/tmp/<name>.log` 回来解读，别让用户复制粘贴终端输出。
+`ExitOnForwardFailure yes` 让初始监听建立失败直接导致 SSH 连接失败，避免隧道失效而主连接仍表面成功。远端交互 shell 可以指向该入口：
 
-### 看 log / 拉文件回本地
+```bash
+export http_proxy=http://127.0.0.1:<remote-port>
+export https_proxy=http://127.0.0.1:<remote-port>
+```
 
-远端日志、产物一律 `scp <host>:/tmp/<name>.log /tmp/` 拉回本地读，不要让用户贴终端。
+systemd service 和其他非交互进程不读取交互式 `.bashrc`，应从自己的 unit 或受控环境来源取得代理变量。代理需要凭据时，凭据应来自受限的 secret/environment 机制，不能写进共享文档、仓库或命令输出。
 
-### 非平凡编辑
+隧道随承载它的 SSH 连接结束；ControlPersist 可以延长 master 的存活时间。修改转发配置后，先按 [ControlMaster 连接复用](#controlmaster)关闭旧 master。远端端口占用会导致 bind 失败，可用 `ss -ltnp` 查监听者。
 
-别用 ssh 内联 `sed`/`awk`（易错、不可审查）：`scp` 拉到本地用编辑器改、再 `scp` 传回；只有简单的单行追加 / 替换才直接 ssh 执行。
+两端监听地址需要与实际地址族一致。显式写 `127.0.0.1` 可避免 `localhost` 解析为 `::1`、而目标服务只监听 IPv4 时的歧义。
+
+## 远端命令与文件操作
+
+普通 SSH 足以完成命令执行和文件传输。若环境已有带哈希冲突检测的远端编辑能力，直接使用该能力；否则用 SSH/SFTP 拉取、修改和回传，保持每一步可检查。
+
+### 命令执行
+
+单条命令可以直接执行：
+
+```bash
+ssh host.example '<command>'
+```
+
+多个彼此独立、需要逐步判断结果的命令应分开运行；固定且不可分割的多步流程可写成本地脚本后一次传入远端。频繁调用可以复用 [ControlMaster](#controlmaster)，无人值守探针则配合 `BatchMode=yes`，避免卡在密码、passphrase 或 host key 提示上。
+
+### 需要 TTY 的 sudo
+
+`sudo` 常从 TTY 读取密码，普通非交互 SSH 命令无法完成这类提示。简单操作可以分配伪终端：
+
+```bash
+ssh -t host.example 'sudo <command>'
+```
+
+复杂操作可在本地准备一份可审阅脚本，并让脚本把输出写入固定日志：
+
+```bash
+exec > >(tee /tmp/remote-job.log) 2>&1
+```
+
+随后传输、用一次 TTY 执行，并拉回日志：
+
+```bash
+scp /tmp/remote-job.sh host.example:/tmp/
+ssh -t host.example 'sudo bash /tmp/remote-job.sh'
+scp host.example:/tmp/remote-job.log /tmp/
+```
+
+密码和 passphrase 不应放进命令参数、脚本正文或对话日志；需要自动化提权时，应使用环境已有的受控凭据通道。
+
+### 日志与文件传输
+
+日志和产物可以用 `scp` 或 SFTP 拉回本地分析：
+
+```bash
+scp host.example:/var/log/example.log /tmp/
+```
+
+大文件或易中断链路使用支持断点续传、校验或增量同步的传输方式，并在传输后核对大小或哈希。
+
+### 复杂文件编辑
+
+远端已有哈希保护的 patch 能力时，用它检测并发修改。否则先下载文件，在本地用可审查的编辑工具修改，再上传回原位置；上传前后核对权限、所有者和内容哈希。简单且明确的单行追加或替换才适合直接通过 SSH 执行，复杂变换不要埋进难以审查的内联 `sed`/`awk`。
+
+## sshd 服务端
+
+这一部分只解释 `sshd` 的进程模型和配置生效方式。`PasswordAuthentication`、`PermitRootLogin`、`PubkeyAuthentication` 等服务端加固策略由 `vps-maintenance` skill 处理。
+
+### <a id="sshd-privsep"></a>进程模型与特权分离
+
+普通系统服务形态下，主监听 `sshd` 通常以 root 运行，以便读取 host key、认证并切换到登录用户。每条连接会派生独立进程，认证前后的高风险网络处理和特权操作被拆到不同权限边界；登录会话最终以目标用户运行。[OpenSSH `sshd(8)`](https://man.openbsd.org/OpenBSD-7.5/sshd.8)说明了每连接派生进程及 SIGHUP 重载行为。
+
+```bash
+ps -eo user,pid,ppid,args | grep '[s]shd'
+```
+
+常见进程树形态如下，具体标签随版本变化：
+
+```text
+root    sshd: /usr/sbin/sshd -D [listener]
+root    sshd: <user> [priv]
+<user>  sshd: <user>@pts/0
+```
+
+systemd socket activation 会把监听 socket 的创建交给 systemd，调试模式或特定单用户部署也可能改变树形；是否正常应结合 unit、启动参数和实际权限判断，不能只套进程名模板。
+
+### <a id="sshd-reload"></a>配置重载与服务重启
+
+改配置前先确认发行版服务名、reload 实现和进程杀伤范围：
+
+```bash
+systemctl show ssh -p ExecReload -p KillMode -p MainPID
+systemctl is-active ssh.socket
+```
+
+Debian/Ubuntu 常用服务名 `ssh`，RHEL 系常用 `sshd`。较新系统可能启用 `ssh.socket`；此时监听 socket 的生命周期还涉及 socket unit。
+
+| 操作 | 常见行为 | 需要核对 |
+|---|---|---|
+| `reload` | 校验配置后向主进程发送 SIGHUP；新连接读取新配置 | `ExecReload` 是否包含 `sshd -t` |
+| `restart` | 停止并重新启动 service | `KillMode`、socket activation 以及是否保留已派生会话 |
+
+OpenSSH 收到 SIGHUP 会重新执行主 daemon 并重读配置，已建立连接由各自进程继续处理。认证选项在新连接的认证阶段生效，不会回溯改变已建立会话。
+
+先校验再 reload：
+
+```bash
+sudo sshd -t
+sudo systemctl reload ssh
+```
+
+> 实测 Ubuntu 24.04 / OpenSSH 9.6 的 `ssh.service`，`ExecReload` 会先运行 `sshd -t` 再发送 HUP，`KillMode=process`。这只是该发行版 unit 的行为；其他系统以 `systemctl show` 输出为准。

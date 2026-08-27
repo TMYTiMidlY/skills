@@ -1,6 +1,6 @@
 # Copilot CLI 运行时笔记
 
-Copilot CLI 本体行为的逆向与排障笔记：进程模型、bash 工具的环境变量处理、权限与目录信任、TUI 与终端、Git 认证、重试策略 patch、运行中插话（steer），以及会话存储与 `/share html` 导出。
+Copilot CLI 本体行为的逆向与排障笔记：进程模型、bash 工具的环境变量处理、权限与目录信任、TUI 与终端、Git 认证、运行中插话（steer），以及会话存储与 `/share html` 导出。**改 bundle 的补丁（重试 / 默认档位 / web_fetch）连同一键脚本独立成篇见 [copilot-patch.md](copilot-patch.md)。**
 
 大部分章节附 `app.js` 源码摘录与字节偏移；偏移**仅供参考**，混淆后的符号（`xj` / `_R` / `Nhe` / `bBt` / `sN` / `cKr` …）是 esbuild 产物的稳定特征，会随版本变化但用关键字面量（`COPILOT_RUN_APP` / `COPILOT_ALLOW_ALL` / `GITHUB_PERSONAL_ACCESS_TOKEN` / `safe.bareRepository` / `AGENTS.md` / `.mcp.json` …）能在新版本里重新定位。源码定位基线为 `@github/copilot@1.0.41` 的 `app.js`（esbuild 混淆产物）；部分较新章节用 1.0.64-1 / 1.0.66-1 复核。
 
@@ -43,7 +43,7 @@ $ which copilot
     └── app.js          (主逻辑，esbuild bundle)
 ```
 
-直接 `view` / 字符串切片 `node_modules/@github/copilot/app.js` 即可，没有解包步骤。
+直接 `view` / 字符串切片 `node_modules/@github/copilot/app.js` 即可读到一份源码，没有解包步骤。**但这份是 npm 包自带的「种子」版本、往往是旧版**（实测 AgWorkstation 这里 `package.json` 写 `1.0.41`，而 `copilot --version` 却报 `1.0.69-2`）——**它不是运行时真正跑的那份，更不是打补丁该改的那份**（改了没用）。运行时/打补丁到底改哪份，见下面「运行时到底跑哪份 app.js」。
 
 ### 二进制发行版（SEA）：读自解包的 cache
 
@@ -65,6 +65,17 @@ wc -l "$D/app.js"   # 1.0.64-1 是 6403 行
 ```
 
 > macOS 走 `~/Library/Caches/copilot/pkg/...`；也可被 `COPILOT_CACHE_HOME` / `XDG_CACHE_HOME` / `COPILOT_HOME` 改写。
+
+### 运行时到底跑哪份 app.js（打补丁改这份）
+
+**不管 npm 还是 SEA 安装，运行时最终跑的都是 `~/.cache/copilot/pkg/<platform>/<version>/app.js`，`<version>` = 盘上最高版本。所有 bundle 补丁（见 [copilot-patch.md](copilot-patch.md)）都改这一份。** 上面 npm 的 `node_modules/.../app.js` 只是 npm 发的种子、SEA 的 ELF 只是内嵌资源载体——真正执行的都是 loader 自更新后解包/下载进 pkg cache 的那份。两台实测佐证（同一 session 里做的）：
+
+- **SEA 装**（本机）：`file ~/.local/bin/copilot` 是 ELF 二进制、**没有** `node_modules/@github/copilot`；跑 pkg cache 最高版。
+- **npm 装**（AgWorkstation）：launcher symlink→`npm-loader.js`，`node_modules` 里 app.js 是 `1.0.41`（**未打补丁**），但 `copilot --version`=`1.0.69-2`、且 `/model` 长上下文修复**只有在 pkg cache 的 `app.js` 打补丁后才生效** → 证明跑的不是 node_modules 那份。（`index.js` loader 里能看到 `pkg` / `prefer-version` 版本选择逻辑。）
+
+所以打这些补丁一律只扫 pkg cache 根（`$COPILOT_CACHE_HOME/pkg`、`$XDG_CACHE_HOME/copilot/pkg`、`~/Library/Caches/copilot/pkg`、`$COPILOT_HOME/pkg`、`~/.copilot/pkg`）、**不碰 node_modules**。
+
+**版本选择的时机（`copilot --version` 与 live 会话对不上就是这个原因）**：`<最高版本>` 只在**新进程 spawn 时**定；**已经在跑的会话停在它启动时那一版**，auto-update 只是把新版本下到 pkg cache 并弹 `Update available / 运行 /update`，**不热切**当前进程。实测表明：运行中会话与同机新起进程可以停在不同版本（一个已打补丁、一个干净未打）。=> auto-update 后要对**新版本目录**重跑补丁；但**当前会话不受影响**，得等 `/update` 或重开才落到新版本。
 
 ### 按字面量抠源码片段
 
@@ -524,6 +535,42 @@ alias copilot='copilot --allow-all-paths'   # 或 --yolo
 
 ---
 
+### 按 tool 授权/禁用：`--allow-tool` / `--deny-tool` / `--available-tools` / `--excluded-tools`
+
+Copilot CLI 能「直接开关某个 tool」，官方分**两层**（[allowing-tools](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/allowing-tools)）：
+
+- **第一层 · 限制模型能看到哪些 tool**（值逗号分隔）：`--available-tools='a,b'` 白名单（其余全禁）、`--excluded-tools='a,b'` 黑名单（只禁列出的）；两者同给时 available 生效、excluded 被忽略。不在 available 里的 tool 模型压根看不到，`--allow-tool` 也救不回。
+- **第二层 · 给具体 tool 批/拒权限**：`--allow-tool='shell(git:*)'` 预批准（不再弹权限）、`--deny-tool='shell(git push)'` / `--deny-tool=write` 直接拒。**deny 压过 allow，连 `--allow-all` / `--yolo`、连 `permissions-config.json` 存过的放行都压得住**；`--allow-tool` / `--deny-tool` 只作用当前 session、不写盘。
+
+#### ⚠️ 两层用的是两套 tool 名，写错只 warn 不报错
+
+官方一条示例点破：`--available-tools='bash,edit,view,grep,glob' --allow-tool='shell(git:*)' --deny-tool='shell(git push)'`。
+
+- **第一层（available / excluded）吃 runtime tool `.name`**：`bash`、`powershell`、`view`、`edit`、`create`、`grep`、`glob`、`web_fetch`、`web_search`、`task`、`ask_user`、`update_todo`……**本机命令执行工具在这层叫 `bash`（不是 `shell`）**。
+- **第二层（allow / deny-tool）吃权限 kind**：`shell`（可 `shell(git:*)` / `shell(git push)` 细分）、`read`、`write`（可 `write(<path>)`）、MCP 的 `<server>` / `<server>(tool)`。命令执行在这层叫 `shell`。
+- 第三处又不同：preToolUse hook 的 payload `toolName` 用 `bash` / `powershell`（Claude runtime 名，和第一层一致、和第二层的 `shell` 不同）。
+- **写错是静默的**：`--available-tools` / `--excluded-tools` 给了未知名字，只 emit 一条 `session.info`「Unknown tool name in the tool {allow,excluded}list: "x"」**警告后照跑（fail-open，等于没排除）**，不报错、不退出。实测（`--log-level debug`）：`--excluded-tools bash` → `● Disabled tools: bash`（真生效）；`--excluded-tools shell` → `● Unknown tool name in the tool excludedlist: "shell"`（无效）。**关本机命令执行 = `--excluded-tools='bash'` 或 `--deny-tool='shell'`，别写 `--excluded-tools=shell`；务必看 `Disabled tools:` 那行确认。**
+
+#### 这四个 flag 都无 env、也不是 settings.json 的合法键
+
+- 全 bundle 只有 `--allow-all-tools` 挂了 `.env("COPILOT_ALLOW_ALL")`（`grep '.env(' app.js` 仅此一条）；四个 tool flag 都是纯 `.option("--excluded-tools [tools...]", …)`，无 env fallback；全量 `process.env.COPILOT_*` 里也没有任何 tool / deny / exclude / available 项。
+- 合法 settings 键表（[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)）里 user 级与 repo 级 `.github/copilot/settings.json` 都**不含**按 tool 授权/禁用的键（repo 级只认 `deniedUrls` / `disabledMcpServers` / `disabledSkills` / `hooks` / `model` 等固定子集）；`permissions-config.json` 官方明说「不支持 deny 规则」，让你改用 `--deny-tool` / `--excluded-tools`。
+- **推论**：想「进某目录就自动禁掉某个本机 tool」，env 与 committed settings 都做不到，只能启动带 flag（PATH-shim wrapper / `-p` 脚本；官方明确反对用 alias 常开 `--yolo`），或改用 preToolUse hook（在权限系统之前跑、不吃 env 也不吃 flag、任何启动方式都拦，见 [copilot-discovery.md](copilot-discovery.md) 的 Hooks 节）。
+
+#### 源码 / 文档锚点（基线 `@github/copilot` 1.0.73 `app.js`）
+
+- 注册：`.option("--available-tools [tools...]","Only these tools will be available to the model").option("--excluded-tools [tools...]","These tools will not be available to the model")`；`--allow-tool` / `--deny-tool` 同为纯 `.option()`。唯一 env 绑定：`.env("COPILOT_ALLOW_ALL")`。
+- 匹配：`function Wfr(t,e,r){return e?e.includes(t):r?!r.includes(t):!0}`（available 优先、其次 excluded、按 `.name` 精确匹配，非 glob）。
+- 校验警告：`Unknown tool name in the tool {allow,excluded}list: "${n}"`（`emitEphemeral("session.info", …)`，非致命）。
+- 官方 [allowing-tools](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/allowing-tools)（两层控制、`shell(git:*)` / `write(<path>)` / `MyMCP(tool)` 示例、deny 优先级）、[cli-command-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference)（tool kind 列表）、[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference)（settings 键表、`permissions-config.json` 不支持 deny）。
+
+#### 教训
+
+- **「直接关 tool」有两套名字**：available / excluded 用 runtime `.name`（命令执行＝`bash`）；allow / deny 用权限 kind（命令执行＝`shell`，可 `shell(cmd:*)` 细分）。写错只 warn 不报错、静默 fail-open，务必 `--log-level debug` 看 `Disabled tools:` 那行确认真生效。
+- **这层控制无 env、无 settings 键**：唯一权限类 env 是 `COPILOT_ALLOW_ALL`（只能开 allow-all，方向相反）。要「按目录禁某个 tool」只能靠启动 flag 或 preToolUse hook。
+
+---
+
 ### `/rewind` 在非 git cwd 直接拒绝
 
 #### 症状
@@ -715,70 +762,12 @@ ssh -T git@github.com                       # → "Hi <wrong-account>!" 一目�
 - **"能 clone 就以为身份对了"是错觉**：如果你的 SSH 默认账号被对方加为 collaborator，clone 完全 OK，但 push 到 `<别人>/...` 还是会因为没写权限被拒。GitHub 对**完全没访问权限**的私有仓回 `Repository not found`（不告诉你仓存在不存在），对**只读 collaborator** 回真实数据，对**没写权限的 push** 回 `Permission denied`。三种回复对应三种状态，看响应内容能反推自己的身份关系。
 
 ---
-## 重试策略 patch（transient API error）
+## app.js 运行时补丁（bundle patch）
 
-### 症状与根因
+「重试太少 / 默认档位（effort ＋ context tier）回落 / `web_fetch` 拦 fake-ip」这几处 **stock 无配置可改、只能改 minified bundle** 的行为，连同**一键补丁脚本** `scripts/patch-copilot-cli.py`（幂等、自动备份、`node --check` 失败回滚、逐 patch 独立），已独立成篇 → **[copilot-patch.md](copilot-patch.md)**。先跑脚本 `dry-run`，全绿就不用手改；某个 patch 失效会单独报出，再按该文对应节手动逆向。
 
-Copilot CLI 在网络抖动 / HTTP/2 GOAWAY / 模型上游瞬时不可用时，会以以下错误中断当前 turn：
+---
 
-```
-✗ Execution failed: Error: Failed to get response from the AI model;
-  retried 5 times (total retry wait time: 6.00 seconds)
-  Last error: CAPIError: Connection error.
-```
-
-5 次重试一共才等了 6 秒，对真实的网络问题完全不够 —— 跟 [github/copilot-cli#2421](https://github.com/github/copilot-cli/issues/2421) 等一堆 issue 是同一类。CLI 内部默认（`app.js` 里的 `initDefaultOptions`）：
-
-- `retryPolicy.maxRetries = 5`
-- 非-API 错误（连接挂、HTTP/2 GOAWAY 这类拿不到 HTTP 响应的）每次重试间隔 = `Ke.retryAfter * (0.8 + Math.random() * 0.4)`，retryAfter 可能不到 1 秒。
-
-并且**没有任何 `settings.json` / CLI flag / 环境变量**能改这两个值 —— 实测过完整的 `cli-config-dir-reference` 和 `cli-command-reference`，只有 `--timeout`（作用于工具调用，不是模型 API 请求）和 `continueOnAutoMode`（rate-limit 时切 auto 模式，跟连接错误无关）。要改只能 patch 二进制。
-
-### 应用 patch
-
-脚本：`software/scripts/patch-copilot-cli-retry.sh`
-
-```bash
-~/TiMidlY-projects/skills/skills/.curated/software/scripts/patch-copilot-cli-retry.sh
-```
-
-它做两件事：
-
-1. `maxRetries: 5 → 10`（重试次数翻倍）。
-2. 给非-API 错误的每次等待加一个 4 秒下限（`_t = Math.max(_e * jitter, 4)`）。
-
-综合效果：原来 ~6 秒就放弃，patch 后 ≥40 秒后才放弃。够吃掉大多数瞬态抖动，又不会卡到夸张。
-
-**实现细节**：
-
-- 只 patch `app.js`（CLI 实际跑的那份），不动 `sdk/index.js`（programmatic SDK，CLI 不走它）。
-- 用 `node -e` 做正则替换，比 sed 处理 minified JS 安全（变量名跨版本会变，例如 `let Xe=...,ut=Ne*Xe` vs `let It=...,_t=_e*It`，脚本里的正则用反向引用 `\1` 适配）。
-- 幂等：每个 patch 点带 `/*tmy-retry-patch*/` marker，已 patch 的文件会跳过。
-- 备份：每个 `app.js` 同目录留 `app.js.orig.timidly-bak`，回滚直接 `cp ...bak app.js`。
-- 覆盖范围：扫描所有可能的 pkg cache 根（`$COPILOT_CACHE_HOME/pkg` / `$XDG_CACHE_HOME/copilot/pkg` / `~/Library/Caches/copilot/pkg`（macOS）/ `$COPILOT_HOME/pkg` / `~/.copilot/pkg`），把每个版本目录下的 `app.js` 都 patch 掉。
-
-**验证 patch 已生效**：
-
-```bash
-grep -oE 'maxRetries:e\?\.retryPolicy\?\.maxRetries\?\?[0-9]+[^,]{0,30}' \
-  ~/.cache/copilot/pkg/linux-x64/*/app.js
-# 期望看到：??10/*tmy-retry-patch*/  而不是 ??5
-```
-
-### Auto-update 后需要重跑
-
-CLI 默认 `autoUpdate: true`（`~/.copilot/settings.json`），后台拉新版本到一个新的 `~/.cache/copilot/pkg/linux-x64/<new-version>/`，loader 自动切到最高版本。**新版本目录里的 `app.js` 是干净的**，需要再跑一次脚本。
-
-判断要不要重跑：
-
-```bash
-grep -L 'tmy-retry-patch' ~/.cache/copilot/pkg/linux-x64/*/app.js
-# 列出来的就是还没 patch 的版本，列空就说明都 patch 过了
-```
-
-可选：把脚本接到一个定时任务 / shell startup hook 里。但因为 patch 是幂等的、且 auto-update 不频繁（基本 days 级），手动跑也够。
-
-> 同款思路适用于任何想调 Copilot CLI 内部常量的场景（比如改 `defaultRetryAfterSeconds` / `maxRetryAfterSeconds` 之类的 rate-limit 配置）。锚点选**字面量唯一的 minified 片段**（带 `e?.retryPolicy?.` 这种独特路径），不要选纯数字（容易撞）。
 ## 运行中发消息：steer（即时插话）vs queue（排队）
 
 > 源码偏移基线 `@github/copilot@1.0.62` 的 `app.js`（与本文件其余章节的 1.0.41 基线不同，偏移仅供参考）。
@@ -790,7 +779,7 @@ Copilot CLI **有**「Copilot 还在跑的时候继续发消息，自己选是�
 | **即时插话**（steer，注入正在跑的 turn） | **普通 `Enter`** | `immediate` |
 | **排队**，等当前 turn 结束再发（FIFO） | **`Ctrl+Q`**（kitty keyboard protocol 下提示/用 `Ctrl+Enter`） | `enqueue` |
 | 插入换行（多行编辑，**不提交**） | `Shift+Enter`（含 `Alt`/`Super`+`Enter`、`Ctrl+J`） | —— |
-| **硬停**当前 turn（真正打断） | `Esc` | —— |
+| **硬停**当前 turn（真正打断，双击 `Esc`）；**1.0.69-1 起中断会保留排队消息并接着跑**，见下方「双击 Esc 中断语义变更」 | `Esc`×2 | —— |
 
 ⚠️ 关键差异：Copilot 里区分「插话 / 排队」的是 **`Enter` vs `Ctrl+Q`**，不是 Codex 的 `Enter` / `Shift+Enter`。在 Copilot 里 `Shift+Enter` 被占用为换行。
 
@@ -849,6 +838,56 @@ this.enqueueUserMessage(e, e.prepend);              // 否则进 FIFO 队列
 - `shift+enter - insert newline` ← 佐证 `Shift+Enter` 不参与提交分流，只换行
 
 > 注：官方在线文档（docs.github.com 的 use-copilot-cli 页）只提了 `Esc` 停止、`Shift+Tab` plan mode，**没有**明文写 steer/queue 的 `Enter`/`Ctrl+Q` 语义；该语义由 `/help` 键位 + changelog + 源码三方印证。
+
+### 双击 Esc 中断语义变更：1.0.69-1 起「中断后接着跑排队消息」
+
+**现象**：主 turn 在跑、且你已排队一条 prompt，双击 `Esc` 不再是「停掉并丢弃队列」，而是**停掉当前 turn、然后自动把排队的 prompt 接着跑**。
+
+**变更历史**（对比缓存里 6 个版本 `~/.cache/copilot/pkg/linux-x64/*/app.js`，边界干净）：
+
+| 符号 | ≤1.0.68 | 1.0.69-0 | **1.0.69-1** |
+|---|---|---|---|
+| `interruptMainTurn` | 无 | 无 | **有** |
+| `flushQueuedAfterAbort` | 无 | 无 | **有** |
+| `"interrupt-main"`（键位 action） | 无 | 无 | **有** |
+
+- **旧行为（≤1.0.69-0）**：双击 `Esc`（这套「首击置 pending、再击才执行」的双击门早在 `≤1.0.68` 就有，提示即 `press esc again to interrupt`）**只走 abort**——agent 循环尾部判定 `if((!e||…)&&itemQueue.length>0)` 里 `e`（aborted）为 true ⇒ 不进 `processQueuedItems` ⇒ turn 直接 idle、排队消息被丢。
+- **新行为（1.0.69-1）**：**同一个**双击 `Esc`，中断**之后**改为保留并接着跑排队消息——官方 changelog（包内 `changelog.json`）原话 **"Double-press Esc now interrupts the running main turn (flushing queued messages), or stops background agents when the main agent is idle"**（PR `github/copilot-agent-runtime#11859`），"flushing" 不是丢弃、是**冲出去执行**；同版还多出「主 agent 空闲时双击 Esc → 停后台 agent」一路（`stop-agents`/`cancelAllBackgroundAgents`，旧版无此符号）。
+
+**源码链（`app.js` v1.0.69-1）**：
+
+1. 键位分发把「主 turn 在跑时的双击 Esc」映射到新 action `"interrupt-main"`，写死带 `flushQueued`：
+   ```js
+   // 键名表：MKr={…,"interrupt-main":"interrupt",…}
+   case"interrupt-main":{ he.isRemote
+     ? he.abort({reason:nT.UserInitiated})            // 远程 session 仍是纯 abort（可能丢队列）
+     : he.interruptMainTurn({flushQueued:!0}) }       // 本地走新逻辑
+   ```
+2. 新方法 `interruptMainTurn` —— 差异总开关：`flushQueued` 分支只清「系统」待发项、**保留用户排队消息**，并置标志 `flushQueuedAfterAbort`；否则才是老式全清 `clearPendingItems()`（此分支当前无键位触达）：
+   ```js
+   async interruptMainTurn(e){ return this.isProcessing ? (
+     e?.flushQueued
+       ? this.flushQueuedAfterAbort = this.clearSystemPendingItems()   // 保留用户队列
+       : (this.flushQueuedAfterAbort=!1, this.clearPendingItems()),    // 全丢（未接键位）
+     this.cancelProcessing("Session interrupted",…,{preserveBackgroundWork:!0}),
+     {interrupted:!0}) : {interrupted:!1} }
+   ```
+3. abort 收尾时消费该标志，把 `(!e||r)` 从 false 翻成 true，于是队列被跑起来：
+   ```js
+   let e=…signal.aborted, r=e&&this.flushQueuedAfterAbort; this.flushQueuedAfterAbort=!1;
+   if((!e||r)&&this.itemQueue.length>0&&…){ await this.processQueuedItems(); return }
+   ```
+
+**社区讨论**：[github/copilot-cli#3692](https://github.com/github/copilot-cli/issues/3692) *"Escape should cancel the current task and focus the pending queued prompt (not discard it)"*（open，`area:input-keyboard`，报告于 v1.0.60-0）——正是这次改动落地的诉求。注意评论里有**反对声**（`@IanGraingerGMSL`：按 Esc 就该全停、别烧 token，"interrupt and send" 应绑到别的键）；另有人（`@jphreid`）抱怨双击 Esc 不灵、常要狂按。
+
+**当前（1.0.69-1）中断/清队列方案速查**：
+
+| 想要的效果 | 操作 |
+|---|---|
+| 中断当前 turn，**并接着跑**排队的 prompt | **双击 `Esc`**（本地 session；这是新默认，无开关可关） |
+| 只清排队消息、**不停**当前 turn | `Ctrl+C`（一次弹一条 `removeMostRecentPendingItem()`，FIFO 逐条删） |
+| 中断当前 turn 且**丢弃**队列 | 无直接键位（`clearPendingItems()` 全清分支存在但未接键位）；远程 session 的双击 Esc 走纯 `abort` 仍近似此效果 |
+| 主 agent 空闲时双击 Esc | 转为 `stop-agents`：停后台 agent，而非中断主 turn |
 
 ## Chronicle 搜索给 resume ID：必须给本地 ID
 
@@ -930,6 +969,6 @@ CSS 和 JS 在 bundle 里都是模板字符串字面量。源码层每个反斜�
 
 正确做法：把模板字符串体当作 JS 模板字面量**求值一次**再落盘——拿任何 JS 运行时跑 `\`...\`` 就行，让引擎自己折叠转义。另一个细节：`pFs` 自身的 mini-highlighter 包含一个**字面反引号**（源码里用反斜杠转义），所以"下一个反引号定界"会切错——边界要靠下一个相邻函数（不是下一个反引号）。
 
-### 离线复刻参考实现
+### 离线导出实现
 
-`dredge-up` skill（`skills/.curated/dredge-up/`）已经基于上述逆向做了一份**离线**复刻——从 `events.jsonl` 重建时间线、复刻同款 entry DOM、复用 share 抽出的 CSS/JS，并加了 agent 总结注入。要做"离线把会话存档成 HTML"这件事直接用它，不要重新逆向。
+`chronicle` CLI 已基于上述逆向实现离线导出：从 `events.jsonl` 重建规范化时间线，再输出 Markdown 或单文件 HTML。当前 HTML 渲染器使用 React，抽取的官方 CSS/JS 只作为 bundle 漂移探针，不作为运行时资产。要离线存档会话直接用 `chronicle html` / `chronicle md`，不要在其它工具里重复维护 event→entry 映射。

@@ -37,7 +37,7 @@
 
 走 rclone v1.69+ 内置的 `iclouddrive` backend 直连 iCloud 时，以下问题需要预期。**Mac 中转方案下这些都不存在。**
 
-### R1 ⚠️ 中国区 Apple ID（@icloud.com.cn）完全连不上
+### R1 ⚠️ 中国区 Apple ID（`@icloud.com.cn`）完全连不上
 
 rclone 把 API 端点硬编码（`backend/iclouddrive/api/client.go`）：
 

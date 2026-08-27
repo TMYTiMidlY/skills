@@ -8,23 +8,29 @@
 
 | Skill | 说明 |
 | --- | --- |
-| `manage-skills` | 创建、拆分、审查、维护本仓库里 skill 的规范与工作流 |
-| `harness` | Agent harness / runtime 架构知识库：Copilot CLI / SDK / MCP / session export、Claude Code / Codex 对照、Agent Skills 规范与各 harness skills 加载对照（`has-sub-skill` 系 Kimi Code 私有扩展）、CLI subprocess / SDK client / extension host / JSON-RPC 取舍 |
-| `software` | SSH、systemd、格式转换（pandoc / feishu2md / MinerU）、自托管 Markdown 分享客户端、Windows/macOS 操作与激活、远程桌面 / WSL 网络、EasyTier 客户端、Hermes systemd / terminal backend |
-| `vps-maintenance` | VPS 初始化、Caddy（含 caddy-security）、EasyTier、网络质量检测 |
-| `docker-maintenance` | Hermes Docker 后端等受限容器内的环境探测、只读挂载识别、受限 CLI 安装、OAuth device flow、SSH key 生成 |
-| `docs-writer` | 三类中文文档产出（论文 / docx 小汇报 / PPT）：python-docx cookbook、二次核验、AI 标注、引用核查、GB/T 7714、占位符工作流 |
-| `worktree` | 为实验性改动创建隔离 git worktree（含 submodule 同步）；项目特定构建由上层接管 |
-| `mess` | 记录排查过的疑难杂症和踩坑经历 |
-| `plan` | 先规划再实施：产出面向另一 AI 的分步可验证实施文档，含设计考量与注意事项 |
-| `autopilot` | 自动推进式任务系统：cron 触发 Hermes session 在容器内自主推进任务、开 PR、汇报进度（规划侧默认 Claude Code） |
-| `browser-use` | 浏览器自动化：MCP 控制浏览器、绕过下载限制、提取 pdf.js 等嵌入数据 |
+| `manage-skills` | 创建、安装、重构、审查和合并本地 skill 的规范与工作流 |
+| `harness` | Coding agent 编排框架（harness）知识库：介绍 agent loop、工具注入、配置发现、权限、会话与进程/SDK 接口，以及 model / tool / skill 在 runtime 中的位置；含 Agent Skills 官方规范、跨 harness 加载差异与 Kimi Code `has-sub-skill` 私有扩展 |
+| `tool` | Agent tool 的能力边界与执行契约：schema、权限与副作用、错误/重试/取消、CLI / API / MCP adapter；含 Lark CLI 实例 |
+| `git` | Git/jj 提交与历史、隔离工作区、受限网络获取、发版 CI 与 forge/静态站 |
+| `software` | 本地软件、CLI 与自托管服务：终端和包管理工具、数据库、对象存储、Docker/PaaS、Overleaf、文档处理与桌面系统排障 |
+| `io` | 沿内存、文件系统、挂载、介质和网络块存储定位 I/O 与换页瓶颈 |
+| `network` | OpenWrt 设备、外部 Wi-Fi 接入本地网络、客户端代理、泄漏防护、远程接入及 WSL/远端网络管道 |
+| `vps-maintenance` | VPS 初始化、安全加固、网络质量检查、反向代理与基础服务部署 |
+| `docker-maintenance` | 受限 Docker 容器的环境探测、只读挂载处理、工具安装与无浏览器认证 |
+| `docs-writer` | 中文论文、docx 汇报和演示文稿的写作修订、引用核查与配图管理 |
+| `mess` | 按症状检索并沉淀疑难杂症的复现、根因与可靠解法 |
+| `plan` | 面向其他智能体或执行者的自包含、分步可验证正式实施方案 |
+| `dredge-up` | 会话收尾与交接盘点，核对状态并找回压栈遗漏的承诺 |
+| `browser-use` | 网页自动化、登录态复用及嵌入数据提取，按任务组合浏览器、直接 HTTP 与文件格式解析工具 |
+| `reversing` | 移动端 App/游戏的静态逆向、规则还原与设备侧数据取证 |
+| `wechat-clawbot` | OpeniLink Hub 微信消息、事件接收及 Bot/App 权限管理 |
 
 ### 嫁接自其他仓库
 
 | Skill | 来源 | 说明 |
 | --- | --- | --- |
-| `qiuzhi-skill-creator` | [秋芝2046](https://space.bilibili.com/385670211) | 交互式引导创建新的 skill |<!-- skills-table:begin -->
+| `qiuzhi-skill-creator` | [秋芝2046](https://space.bilibili.com/385670211) | 交互式引导创建新的 skill |
+| `upstream` | [NightGlow0826](https://github.com/NightGlow0826) | 把本地取证压缩成 handoff 交给网页版 Pro 模型做深度规划 / 架构评审，回来后本地继续执行与验证 |<!-- skills-table:begin -->
 | `slidev` | [slidevjs/slidev](https://github.com/slidevjs/slidev) | Slidev 官方 skill |
 | `doc-coauthoring` | [anthropics/skills](https://github.com/anthropics/skills) | 文档协作工作流 |
 | `docx` | [anthropics/skills](https://github.com/anthropics/skills) | Word 文档操作 |
@@ -35,10 +41,9 @@
 | `frontend-skill` | [openai/skills](https://github.com/openai/skills) | 高质量前端页面构建 |
 | `grill-with-docs` | [mattpocock/skills](https://github.com/mattpocock/skills) | 结合项目文档压力测试计划 |
 | `grill-me` | [mattpocock/skills](https://github.com/mattpocock/skills) | 通过连续追问压力测试方案 |
-| `ppt-master` | [hugohe3/ppt-master](https://github.com/hugohe3/ppt-master) | AI 多角色协作把 PDF/DOCX/URL/Markdown 转成原生可编辑 PPTX（真 DrawingML 形状/文本框） |
-| `teacher` | [JackyYang258/AgentTeacher](https://github.com/JackyYang258/AgentTeacher) | 用六段式（直觉 → 可跑示例 / 伪代码 → 逐段讲解 → 陷阱 → 延伸 → 自测题）把一个技术概念讲清楚；DL/ML 概念默认 PyTorch 伪代码 + 张量形状标注 |
+| `ppt-master` | [hugohe3/ppt-master](https://github.com/hugohe3/ppt-master) | AI 多角色协作生成原生可编辑 PPTX，并创建/复用 Brand、Style、Layout、Deck 模板或填充/增强现有 PPTX |
 | `handoff` | [mattpocock/skills](https://github.com/mattpocock/skills) | 把当前对话压缩成 handoff 文档，便于另一个 agent 接手；自动建议下一步可用 skill、去除敏感信息、保存到临时目录 |
-| `prototype` | [mattpocock/skills](https://github.com/mattpocock/skills) | 构建可丢弃的原型快速打磨设计：分“可运行 terminal app”（验证状态/业务逻辑）与“多套 UI 变体可切换路由”两条路线 |
+| `prototype` | [mattpocock/skills](https://github.com/mattpocock/skills) | 构建可丢弃的原型快速打磨设计：分"可运行 terminal app"（验证状态/业务逻辑）与"多套 UI 变体可切换路由"两条路线 |
 
 以下 skill 从外部仓库下载，尚未经过适配和验证，放在 `.experimental/` 目录下：
 
@@ -60,7 +65,32 @@
 | `zoom-out` | [mattpocock/skills](https://github.com/mattpocock/skills) | 从更高层次理解代码上下文 |
 | `caveman` | [mattpocock/skills](https://github.com/mattpocock/skills) | 超压缩沟通模式 |
 | `write-a-skill` | [mattpocock/skills](https://github.com/mattpocock/skills) | 创建结构化 agent skill |
-| `humanizer-zh` | [op7418/Humanizer-zh](https://github.com/op7418/Humanizer-zh) | 去除中文文本中的 AI 生成痕迹（Humanizer 汉化版） |<!-- skills-table:end -->
+| `humanizer-zh` | [op7418/Humanizer-zh](https://github.com/op7418/Humanizer-zh) | 去除中文文本中的 AI 生成痕迹（Humanizer 汉化版） |
+| `ponytail/ponytail` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | 让 agent 当“最懒的资深工程师”：写代码前过 YAGNI→复用→stdlib→原生→一行的阶梯，只写能跑的最少代码；支持 lite/full/ultra 强度 |
+| `ponytail/ponytail-review` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | 只审过度工程的代码评审：对 diff 逐条标出可删/stdlib/原生/YAGNI/可缩短，结尾给可省行数 |
+| `ponytail/ponytail-audit` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | 整仓过度工程审计：同 review 的标签体系，扫全代码库而非 diff，按可删量排序 |
+| `ponytail/ponytail-debt` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | 把代码里的 ponytail: 注释汇成技术债台账，标出没写升级触发条件的条目 |
+| `ponytail/ponytail-gain` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | 展示 ponytail 的 benchmark 中位数战绩（更少代码/成本、更快）的 ASCII 记分牌 |
+| `ponytail/ponytail-help` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | ponytail 各模式/命令的速查卡 |
+| `superpowers/brainstorming` | [obra/superpowers](https://github.com/obra/superpowers) | 创造性工作前先对话式挖需求和设计，产出获批准的方案后再开始实现 |
+| `superpowers/dispatching-parallel-agents` | [obra/superpowers](https://github.com/obra/superpowers) | 把 2 个以上无共享状态、无顺序依赖的独立任务派发给隔离上下文的子 agent 并行执行 |
+| `superpowers/executing-plans` | [obra/superpowers](https://github.com/obra/superpowers) | 在独立会话中执行一份已写好的实施计划，含审阅检查点 |
+| `superpowers/finishing-a-development-branch` | [obra/superpowers](https://github.com/obra/superpowers) | 开发完成、测试通过后，给出合并/PR/清理等收尾方式的结构化选项 |
+| `superpowers/receiving-code-review` | [obra/superpowers](https://github.com/obra/superpowers) | 收到代码评审意见时要求先做技术核实，不表演性认同或盲目照做 |
+| `superpowers/requesting-code-review` | [obra/superpowers](https://github.com/obra/superpowers) | 派发代码评审子 agent，用精心构造的独立上下文评估工作产出而非过程 |
+| `superpowers/subagent-driven-development` | [obra/superpowers](https://github.com/obra/superpowers) | 按实施计划逐任务派发全新实现子 agent，每个任务后接一次评审，分支收尾前再做一次整体评审 |
+| `superpowers/systematic-debugging` | [obra/superpowers](https://github.com/obra/superpowers) | 遇到任何 bug/测试失败/异常行为时，先系统定位根因再提修复方案，不做随手补丁 |
+| `superpowers/test-driven-development` | [obra/superpowers](https://github.com/obra/superpowers) | 先写测试、看它失败，再写能让测试通过的最少实现代码 |
+| `superpowers/using-git-worktrees` | [obra/superpowers](https://github.com/obra/superpowers) | 开始需要隔离的功能开发前，优先用平台原生 worktree 工具，没有时降级到手动 git worktree |
+| `superpowers/using-superpowers` | [obra/superpowers](https://github.com/obra/superpowers) | 对话开始时的强制入口：规定如何发现和调用 skill，要求任何回复（含澄清提问）前先完成 skill 调用 |
+| `superpowers/verification-before-completion` | [obra/superpowers](https://github.com/obra/superpowers) | 声称工作完成/已修复/测试通过前，要求先跑验证命令并确认输出，证据先于断言 |
+| `superpowers/writing-plans` | [obra/superpowers](https://github.com/obra/superpowers) | 已有 spec 或需求、动手写代码前，写一份假设工程师零上下文的完整实施计划 |
+| `superpowers/writing-skills` | [obra/superpowers](https://github.com/obra/superpowers) | 编写/编辑/验证新 skill 的方法论：把写 skill 本身当作对流程文档做 TDD |
+| `worktrunk/worktrunk` | [max-sixty/worktrunk](https://github.com/max-sixty/worktrunk) | worktrunk（`wt` CLI）的配置与排障：用户配置 vs 项目配置的权限边界、10 种 hook 选型、LLM commit message 接外部命令，reference/ 是 worktrunk.dev 文档的同步副本 |
+| `worktrunk/wt-switch-create` | [max-sixty/worktrunk](https://github.com/max-sixty/worktrunk) | 以「建 worktree 并把本会话切进去」开启一次任务：分支名/仓库路径/任务三段参数的解析规则，以及宿主原生入口与 `wt` 命令两条创建路径的取舍 |
+| `ax` | [yusukebe/ax](https://github.com/yusukebe/ax) | ax CLI —— 抓取网页并抽取结构化数据，替代 curl + 一次性解析脚本 |<!-- skills-table:end -->
+
+`ponytail/`、`superpowers/` 和 `worktrunk/` 与上面其他条目不同：上游本身是一个打包了多个 skill 的仓库（分别是 6 个、14 个和 2 个），不是单一能力，所以嫁接时多套了一层以仓库名命名的目录，保留归属、也不与本仓已有的同类 skill（如 `tdd`、`git`、`diagnose`）合并或去重。前两者还有一点相似：都不满足于"等用户调用"，而是各自想办法让自己在没人主动喊它时也生效——`ponytail` 靠 Claude Code/Codex 等宿主的生命周期 hook 在每次会话/每条消息注入规则；`superpowers` 的 `using-superpowers` 则是在 skill 正文里直接写死"对话开始时必须先调用本 skill，包括在回答任何澄清性提问之前"。两种"强迫生效"的实现层级不同（前者是宿主机制，后者是文档层面的自我指令），但目的一致。`worktrunk/` 则是另一类：它是某个 CLI 工具（`wt`）随仓库分发的官方配套 skill，正文假定该二进制已装好，`reference/` 直接同步自其文档站。
 
 此外，`skills/.legacy/` 目录下存放已弃用的 skill，仅作归档保留。
 
@@ -143,6 +173,31 @@ bunx skills update                             # 更新已安装 skills
 部分 skill 附带 `scripts/` 目录，包含可直接运行的辅助脚本。
 
 想创建自己的 skill？使用 `qiuzhi-skill-creator` 即可通过交互式引导完成。
+
+## 链接检查（pre-commit + lychee）
+
+仓库里的 skill 文档含大量外链，用 [pre-commit](https://pre-commit.com) 框架挂了一个 [lychee](https://github.com/lycheeverse/lychee)（Rust 写的异步链接检查器）hook，在提交前自动检查改动到的 markdown 里链接是否失效。配置见根目录 `.pre-commit-config.yaml`。
+
+pre-commit 是一个管理 git hook 的框架：按 `.pre-commit-config.yaml` 把每个 hook 克隆进隔离缓存（`~/.cache/pre-commit/`）、各自建运行环境、版本锁定在 `rev`，不污染项目与系统。lychee 这个 hook 跑的是自动下载的预编译二进制，无需 Node / cargo / Docker。
+
+启用（一次性）：
+
+```bash
+uv tool install pre-commit   # 或 pixi global install pre-commit / brew install pre-commit
+pre-commit install           # 写入 .git/hooks/pre-commit
+```
+
+装好后每次 `git commit` 会自动对暂存的 markdown 跑 lychee，发现失效链接就阻止提交。手动全量检查：
+
+```bash
+pre-commit run lychee --all-files
+```
+
+几点提醒：
+
+- lychee 默认排除 `example.com` 等示例域名与保留 TLD（如 `.invalid`），这是特性不是漏检。
+- 文档里 github.com 链接多时，`export GITHUB_TOKEN=<无权限 PAT>` 可抬高限额、避免限流。
+- 升级 hook 版本用 `pre-commit autoupdate`（会改写 `.pre-commit-config.yaml` 里的 `rev`）。
 
 ## AGENTS.md
 

@@ -11,7 +11,7 @@
     ./mineru_large_pdf.py \\
         --input 'https://47.102.36.175/share/mineru-upload/foo.pdf' \\
         --out-dir mineru_output/foo \\
-        --pages-per-part 500 --overlap 5
+        --pages-per-part 500 --overlap 2
 """
 from __future__ import annotations
 
@@ -262,7 +262,7 @@ def main() -> None:
     ap.add_argument("--input", required=True, help="PDF URL 或本地路径")
     ap.add_argument("--out-dir", required=True, help="输出根目录（存放 part PDF + 解压结果 + 合并 md）")
     ap.add_argument("--pages-per-part", type=int, default=500)
-    ap.add_argument("--overlap", type=int, default=5)
+    ap.add_argument("--overlap", type=int, default=2)
     ap.add_argument("--language", default="ch")
     ap.add_argument("--token", default=os.environ.get("MINERU_TOKEN", ""), help="默认读 $MINERU_TOKEN")
     ap.add_argument("--skip-download", action="store_true", help="如 --input 已是本地文件，跳过下载")

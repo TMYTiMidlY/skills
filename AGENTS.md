@@ -13,9 +13,11 @@
 - Python 依赖优先写进脚本的 PEP 723 元数据；临时依赖用 `uv run --with <pkg> <script>`，项目级依赖用 `uv add`。**禁止任何写入系统 Python 的方式**（`uv pip install --system` / `pip install` / `pip install --break-system-packages` 等）——Ubuntu/Debian 的 PEP 668 标记会让这些操作静默失败或与 apt 包打架；需要隔离环境就 `uv venv` 起一个，绝不污染系统解释器。
 - 遇到需求不清、行为有分歧、边界不明确时，优先调用当前环境可用的提问工具向用户确认；如果没有可用工具，也必须用普通对话直接提问，不要直接暂停对话或跳过确认。
 - 未经用户明确指令，严禁自动执行 `git add` 或 `git commit`。
+- 用户允许提交时，只 commit 本会话产生的改动。仓库里可能还有并非本会话产生的改动（会话开始前就已存在的 dirty / staged 内容，或并发会话正在修改的内容），这些绝不能一并吞进本次 commit。
 - 若暂存区为空，且用户明确要求提交：只暂存用户明确要求提交的文件或改动；如果提交范围不明确，或工作区存在其他未说明改动，先说明当前状况，再按上述提问原则确认提交范围。
 - 若暂存区非空，且用户明确要求提交：先说明当前状况，再按上述提问原则确认提交范围。
 - 需要修正刚提交的内容时，优先用 `git commit --fixup=<commit>`（叠加一条 fixup 提交）而不是 `git commit --amend` 改写原提交，以保留清晰、可追踪、可审计的历史；要不要折叠（`git rebase -i --autosquash`）交由用户决定。
+- 提交信息里**不要添加任何**署名 / 追踪类 trailer 或页脚（如 `Co-authored-by:`、`Copilot-Session:`、`🤖 Generated with Claude Code`、`Co-Authored-By: Claude <noreply@anthropic.com>` 等）——Copilot CLI 与 Claude Code 会默认主动加，必须显式抑制。
 - 未经用户**对发布动作本身**显式同意，严禁自动执行任何“对外发布 / 版本化”动作：`cz bump` / `git tag` / `git push --tags` / `git push --follow-tags` / `twine upload` / `npm publish` / `cargo publish` / `uv publish` / GitHub release 创建 / pypi 等任何注册仓库上传等。`--dry-run` / `--check` 之类只读探查可以做。**即使用户已经同意本轮的代码 commit，也要单独再确认一次发布动作**，不要把“commit + bump + push --follow-tags”打包成一步执行。
 - 删除文件时**强制使用 `trash-put` 代替 `rm`，无任何例外**，跨 filesystem（NTFS / drvfs / CIFS / FUSE / overlay 等）同样如此。
   - 唯一允许用 `rm` 的情形：**用户在本轮对话中显式批准**（“用 rm”/“直接 rm 删”/“不用 trash”等明确措辞）；“删掉”/“清理”/“remove”等中性措辞不构成授权。
@@ -26,6 +28,7 @@
 - 修改任何文本文件时，能用内置工具完成就必须用内置工具，不要用 shell 命令替代；改动必须清晰、可审查、可回滚，不要用不透明的原地批量改写绕过审查。任务量大时先问用户。
 - 如果目标文件权限或沙箱限制导致不能直接修改，应申请权限或准备临时文件让用户安装，不要为了绕过权限而改用难以审查的方式。
 - 查询 DNS / 解析域名时始终走 DoH（DNS-over-HTTPS，例 `curl -s "https://223.5.5.5/resolve?name=<域名>&type=A"`），不要用 `dig` / `nslookup` / `getent` / `host` 这类普通 :53 查询。原因（本机及部分远端如 Alibaba 跑 mihomo/clash TUN，两个机制叠加）：① `dns-hijack any:53` 把发往任意 DNS 的 :53 查询全拦给 mihomo 自己的 DNS（换别的 DNS 服务器也跑不掉）；② `enhanced-mode: fake-ip` 让 mihomo 的 DNS 回 `198.18.x` 占位 IP 而非真解析。所以普通查询拿到假 IP——"假记录"是 fake-ip 造成、"逃不掉"是 dns-hijack 造成。DoH 走 :443 不碰 :53，绕开 dns-hijack、压根不进 mihomo DNS，直达真 DNS。若只是想连某个已知后端、不关心解析，用 `curl --resolve <域名>:<端口>:<IP>` 直接钉 IP、跳过 DNS。
+- 不要使用记忆功能（不调用 `store_memory`/`vote_memory` 等记忆工具，也不主动把用户偏好写入记忆系统）。需要长期保留的规则或偏好，一律写入本指令文件或对应的项目指令文件，不走记忆系统。
 
 ## 工具与 Skills
 
