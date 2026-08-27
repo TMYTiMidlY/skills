@@ -3,15 +3,18 @@
 # requires-python = ">=3.10"
 # dependencies = ["pypdf>=4.0", "httpx>=0.27", "cryptography>=3.1"]
 # ///
-"""处理超过 MinerU 单次限制 (200MB / 600 页) 的大 PDF：
+"""处理超过 MinerU 当前单次限制 (200MB / 200 页) 的大 PDF：
 下载（可选） → 拆分（页数 + 大小双约束，含 overlap）→ batch 上传 MinerU
 → 轮询 → 下载 zip 结果 → 合并 full.md。
+
+过去 URL 单任务曾按 600 页上限设计，旧默认值是 500；当前官方限制已经统一为
+200 页，因此默认使用 198 页主体 + 2 页 overlap，保证每卷总页数不超过 200。
 
 示例：
     ./mineru_large_pdf.py \\
         --input 'https://47.102.36.175/share/mineru-upload/foo.pdf' \\
         --out-dir mineru_output/foo \\
-        --pages-per-part 500 --overlap 2
+        --pages-per-part 198 --overlap 2
 """
 from __future__ import annotations
 
@@ -34,7 +37,7 @@ from pypdf import PdfReader, PdfWriter
 
 MINERU_API = "https://mineru.net/api/v4"
 MAX_SIZE_MB = 190  # 留余量，MinerU 限制 200MB
-MAX_PAGES = 590    # 留余量，MinerU 限制 600 页
+MAX_PAGES = 200    # 当前官方精准解析单文件上限 200 页
 
 
 def log(msg: str) -> None:
@@ -261,7 +264,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--input", required=True, help="PDF URL 或本地路径")
     ap.add_argument("--out-dir", required=True, help="输出根目录（存放 part PDF + 解压结果 + 合并 md）")
-    ap.add_argument("--pages-per-part", type=int, default=500)
+    ap.add_argument("--pages-per-part", type=int, default=198)
     ap.add_argument("--overlap", type=int, default=2)
     ap.add_argument("--language", default="ch")
     ap.add_argument("--token", default=os.environ.get("MINERU_TOKEN", ""), help="默认读 $MINERU_TOKEN")

@@ -12,7 +12,112 @@ MinerU（mineru.net）提供 VLM 模型将 PDF 转为 Markdown/JSON，支持公�
 
 原因：MinerU 本地部署依赖很重，可能拉取数 GB 的 Python、torch、CUDA、vLLM 等组件，耗时、占空间，也可能污染用户环境。若确实需要本地部署，先说明预计影响（下载量、磁盘、是否需要 GPU/CPU、输出目录、如何清理），并等待用户确认。
 
-如果只需要快速预览，优先考虑 flash 模式；如果文件超出 flash 限制或需要完整图片/表格/公式资产，再走 token 认证的精度解析。
+如果只需要快速预览，优先考虑 flash 模式；如果文件超出 flash 限制或需要完整图片/表格/公式资产，再走 token 认证的精度解析。`mineru-open-sdk` 和 `mineru-open-mcp` 都只是连接云端 API 的轻量客户端，不等于安装本地 MinerU 模型。
+
+## 接入方式选择：REST API、Python SDK、MCP
+
+三者最终都调用 MinerU 云端服务，**解析模型和结果质量不会因为套了 MCP 而提高**；区别在调用契约、暴露能力和运维成本。当前 `software` skill 的默认顺序是：
+
+1. **普通脚本与一次性转换：优先 Python SDK。** 它代办本地文件上传、轮询和结果 ZIP 解析，又保留图片、JSON、额外格式与任务状态。
+2. **需要 callback、`no_cache`、自定义调度或精确观察 HTTP 响应：直接 REST API。**
+3. **只有目标客户端按 MCP 协议接工具，且主要需求是“文件/URL 转 Markdown”时才选 MCP。** MCP 是 SDK 上的一层 Agent 适配，不是 API 的全功能替代品。
+
+| 能力 | REST API | Python SDK `mineru-open-sdk` | MCP `mineru-open-mcp` |
+|---|---|---|---|
+| 本质 | 最底层 HTTP 接口 | REST API 的 Python 封装 | 基于 Python SDK 的 MCP Server |
+| 安装/进程 | 无 SDK 依赖；自行发 HTTP 请求 | 安装 Python 包；无需常驻服务 | 安装或 `uvx` 临时运行；需要 stdio/HTTP MCP 进程 |
+| URL 输入 | 直接提交 | 自动提交 | 支持 |
+| 本地文件 | 先申请签名 URL，再 `PUT` | 自动申请并上传 | 自动上传，但 MCP 进程必须能看见该路径 |
+| Flash / 精准解析 | 都支持 | 都支持 | 无 MCP token 时自动 Flash，有 token 时精准解析 |
+| 参数覆盖 | 最完整，包括 callback、`no_cache`、`page_ranges`、额外格式等 | 模型、OCR、公式、表格、语言、页码、额外格式、超时；当前未直接暴露 callback / `no_cache` | 当前工具主要暴露文件、页码、OCR、语言、模型和输出目录 |
+| 异步控制 | 手动提交、轮询或 callback | 阻塞式 `extract*`，也有 `submit*` / `get_*` | 一次工具调用内等待；通常不暴露任务控制原语 |
+| 结果 | 原始 JSON、task/batch ID、完整 ZIP | `ExtractResult`、Markdown、`content_list`、图片、DOCX/HTML/LaTeX、`save_all()` | 当前公开工具以 Markdown 为主；见下节的源码边界 |
+| 最适合 | 生产编排、回调、特殊参数、排障 | 本 skill 的默认自动化路径 | Claude Desktop、Cursor、Windsurf 等 MCP 客户端的轻量接入 |
+
+### Python SDK
+
+官方仓库：[MinerU-Ecosystem / sdk/python](https://github.com/opendatalab/MinerU-Ecosystem/tree/5733c03b3d53cb01c0361bb6acecda3f554c8c12/sdk/python)。安装：
+
+```bash
+# 项目内二选一
+uv add mineru-open-sdk
+# 或在已激活的 Python 环境中
+pip install mineru-open-sdk
+```
+
+认证变量用 `MINERU_TOKEN`，值只放 token 本体，不包含 `Bearer `：
+
+```bash
+export MINERU_TOKEN="<token>"
+```
+
+精准解析示例：
+
+```python
+from mineru import MinerU
+
+with MinerU() as client:  # 自动读取 MINERU_TOKEN
+    result = client.extract(
+        "https://example.com/file.pdf",  # 也可传本地路径
+        model="vlm",
+        ocr=False,
+        formula=True,
+        table=True,
+        language="ch",
+    )
+    result.save_all("./mineru_output/file")
+```
+
+`extract()` / `extract_batch()` 会阻塞并轮询到结束；长流程可改用 `submit()` / `submit_batch()` 后配合 `get_batch()`。没有 `MINERU_TOKEN` 时 client 仍可调用 `flash_extract()`，但其他需要认证的方法会报 `NoAuthClientError`。
+
+## MinerU Open MCP：简介与安装
+
+官方项目：[MinerU-Ecosystem / mcp](https://github.com/opendatalab/MinerU-Ecosystem/tree/5733c03b3d53cb01c0361bb6acecda3f554c8c12/mcp)，PyPI 包名为 [`mineru-open-mcp`](https://pypi.org/project/mineru-open-mcp/)。它把 MinerU 云端解析包装成两个 MCP 工具：`parse_documents`（文件/URL 转 Markdown）与 `get_ocr_languages`（列 OCR 语言）。它适合 MCP 客户端开箱即用，但不是本地解析服务；文档仍会上传至 `mineru.net`。
+
+### stdio：客户端自动启动
+
+有 `uv` 时无需预装，在 MCP 客户端配置中使用 `uvx`：
+
+```json
+{
+  "mcpServers": {
+    "mineru": {
+      "command": "uvx",
+      "args": ["mineru-open-mcp"],
+      "env": {
+        "MINERU_API_TOKEN": "<token>",
+        "OUTPUT_DIR": "/absolute/path/to/mineru-downloads"
+      }
+    }
+  }
+}
+```
+
+也可先固定安装再让客户端执行二进制：
+
+```bash
+uv tool install mineru-open-mcp
+```
+
+不设置 `MINERU_API_TOKEN` 时 MCP 自动使用 Flash 模式。token 不要提交进 Git；客户端支持 secret/env 注入时优先走注入。带沙箱的客户端必须把 MCP 进程可见的**绝对文件路径**传给工具，否则它找不到拖入聊天框后被隔离的临时文件。
+
+### Streamable HTTP：手动启动
+
+只在确实需要多个 Web/MCP 客户端共享时使用，并默认只监听回环地址：
+
+```bash
+MINERU_API_TOKEN="<token>" \
+uvx mineru-open-mcp --transport streamable-http --host 127.0.0.1 --port 8001
+```
+
+客户端连接 `http://127.0.0.1:8001/mcp`。若要跨主机暴露，另行配置 TLS、认证和网络边界，不要直接把默认无保护端口暴露到公网。
+
+> **环境**：以下边界核对自本地完整 clone `MinerU-Ecosystem` 的 commit [`5733c03b3d53cb01c0361bb6acecda3f554c8c12`](https://github.com/opendatalab/MinerU-Ecosystem/commit/5733c03b3d53cb01c0361bb6acecda3f554c8c12)，是该版本的实现行为，不是 MinerU API 的永久契约。
+>
+> - MCP 的 [`pyproject.toml`](https://github.com/opendatalab/MinerU-Ecosystem/blob/5733c03b3d53cb01c0361bb6acecda3f554c8c12/mcp/pyproject.toml#L15-L23) 直接依赖 `mineru-open-sdk`，所以它与 SDK/API 使用同一云端后端。
+> - 有 token 时 `parse_documents` 调用 SDK 的 [`extract_batch()`](https://github.com/opendatalab/MinerU-Ecosystem/blob/5733c03b3d53cb01c0361bb6acecda3f554c8c12/mcp/src/mineru_open_mcp/tools/extract.py#L158-L220)；公开参数没有覆盖 SDK 的公式、表格、额外格式、callback、`no_cache` 和轮询控制。
+> - [`tools.py`](https://github.com/opendatalab/MinerU-Ecosystem/blob/5733c03b3d53cb01c0361bb6acecda3f554c8c12/mcp/src/mineru_open_mcp/tools/tools.py#L47-L139) 将单文件 Markdown 内联限制为 20,000 字符、总内联限制为 60,000 字符；超出部分写到 `OUTPUT_DIR`。多文件调用直接把 Markdown 写到输出目录。
+> - 当前实现先取得 `result.zip_url`，但最终响应会[主动移除 `zip_url`](https://github.com/opendatalab/MinerU-Ecosystem/blob/5733c03b3d53cb01c0361bb6acecda3f554c8c12/mcp/src/mineru_open_mcp/tools/tools.py#L127-L160)；`task_id` 也只在 debug 日志级别下附带。因此 README 中“返回 ZIP 链接/更多输出格式”的表述不能当作当前工具契约。需要完整 ZIP、图片、JSON 或额外格式时用 Python SDK / REST API。
 
 ## Flash 模式（无需 token，适合快速预览）
 
@@ -33,11 +138,11 @@ print(result.markdown)
 - 默认中文语言，公式和表格识别默认开启，OCR 默认关闭。
 - 只适合快速预览 Markdown；需要完整 assets、JSON、DOCX/HTML/LaTeX 等，使用精度解析。
 
-## 认证
+## REST API 认证
 
-Bearer token 认证。token 存放在环境变量 `MINERU_TOKEN` 中，使用前先确认已设置。
+REST API 使用 Bearer token。本文的 curl/脚本把 token 存放在 `MINERU_TOKEN` 中，再发送 `Authorization: Bearer $MINERU_TOKEN`；环境变量里只放 token 本体。官方 Python SDK 也读取 `MINERU_TOKEN`，而官方 MCP 另用 `MINERU_API_TOKEN`。
 
-## 提交任务（URL 方式，推荐）
+## REST API：URL 提交示例
 
 ```bash
 curl -s -X POST "https://mineru.net/api/v4/extract/task" \
@@ -82,12 +187,11 @@ curl -s -X POST "https://mineru.net/api/v4/extract/task" \
 - 扫描+已 OCR 双层 PDF：两版都跑做对比；OCR 版为底、no-OCR 补字号/公式。
 - 纯扫描未 OCR：只能 `is_ocr=true`。
 
-**额度**：
+**额度（过去与现在）**：
 
-- 每日解析总上限 **10000 页**，其中前 **2000 页**高优先级，超出部分降级。
-- 按**实际处理页数**扣，`is_ocr` 开不开不影响扣页数。
-- 失败任务（`state=failed`）**不扣**额度，可放心重试。
-- 相同 URL 重复提交走**缓存**直接返回已有结果，也不重复扣。
+- **过去**本地实测记录曾写成“每日总上限 10000 页、前 2000 页高优先级”。**现在**[官方 API 文档](https://mineru.net/apiManage/docs) 写的是：每个账号每天享有 **1000 页最高优先级解析额度**，超过 1000 页的部分降低优先级；当前文档没有继续承诺“每日总上限 10000 页”，不要再依赖旧数字。
+- 页数按实际处理范围理解；`is_ocr` 只改变解析方式，不应用来规避页数额度。
+- **过去**实测中，失败任务和命中相同 URL 缓存的重复任务没有重复扣额。**现在**公开文档提供 `no_cache` 开关，但没有把失败/缓存的计费行为写成稳定契约；批量生产前应以 API 管理页的当日额度显示和一次小样验证为准。
 
 ## 加密 PDF（owner-password 限制型）
 
@@ -129,28 +233,17 @@ curl -s "https://mineru.net/api/v4/extract/task/<task_id>" \
 
 `state` 为 `done` 时，`full_zip_url` 即结果下载地址（含 full.md、JSON、images/）。
 
-## 超过 600 页的文件
+## 超过 200 页的文件：限制已经变化
 
-API 限制单次最多 600 页。用 `page_ranges` 参数拆分提交同一个 URL：
+- **过去**精准解析的实测规则是：URL 单任务（`/api/v4/extract/task`）可到 600 页，而 batch 上传单文件只有 200 页；旧脚本因此按 500 页主体 + overlap 拆卷。
+- **现在**[官方 API 文档](https://mineru.net/apiManage/docs)和 [`MinerU-Ecosystem`](https://github.com/opendatalab/MinerU-Ecosystem/blob/5733c03b3d53cb01c0361bb6acecda3f554c8c12/README.zh-CN.md#L52-L64) 都把精准解析上限统一写为 **单文件 200MB / 200 页**，Flash 为 **10MB / 20 页**。URL 方式不再按“600 页特例”设计；旧的 500/600 页参数已经过时。
 
-```bash
-# 第一部分
--d '{"url": "...", "page_ranges": "1-500", ...}'
-# 第二部分
--d '{"url": "...", "page_ranges": "501-697", ...}'
-```
+当前实操规则：
 
-转换完成后将两部分的 `full.md` 拼接即可。注意：`page_ranges` 仅在 URL 提交方式（`/api/v4/extract/task`）下生效，batch 上传方式不支持。
-
-## batch 上传单文件 200 页限制
-
-**batch 上传方式（`/api/v4/file-urls/batch`）的隐藏硬上限是单文件 200 页**，超过会返回 `state=failed` + `err_msg='number of pages exceeds limit (200 pages), please split the file and try again'`。MinerU 文档没明示这条，但实测确认。
-
-实操要点：
-
-- 走 batch 时，`mineru_large_pdf.py` 的 `--pages-per-part` 必须 ≤ `200 - overlap`（overlap 默认 2 → 用 198；`--pages-per-part` 默认 500 是按 URL 方式 600 页设的，走 batch 会全卷 fail）。
-- 200 页限制只针对 **batch 上传**；URL 提交（`/api/v4/extract/task`）仍是 600 页/次，可继续用 `page_ranges` 拆 500/卷。
-- 没有公网直链或不想折腾反代时，batch + ~198 页/卷（`--overlap 2`）是最省心的兜底方案，不依赖任何 EasyTier/Caddy 路径暴露。
+- 大于 200 页的 PDF 先做**物理分卷**，每卷总页数必须 ≤200。推荐主体 `198` 页 + `overlap=2`，即每卷最多正好 200 页。
+- `page_ranges` 用来选择当前任务要解析的页，支持如 `"2,4-6"` 的范围；它不是绕过单文件页数/大小限制的可靠手段。对源文件本身已经超过 200 页的情况，默认仍按物理分卷处理，除非用小样重新验证服务端允许只读取指定范围。
+- URL 提交和 batch 上传都能处理已经拆好的分卷。没有公网直链时，batch + 198 页主体 + 2 页 overlap 最省心，也不依赖 EasyTier/Caddy 暴露路径。
+- 当前 `mineru_large_pdf.py` 已同步改为 200 页总上限和 `--pages-per-part 198` 默认值；旧命令里的 `500` 不再使用。
 
 ## 本地输入文件正在传输的坑
 
@@ -166,14 +259,14 @@ URL 输入走 `httpx.stream` 流式下载，本身就保证完整，不需要这
 
 ## 超过 200MB 的文件（需物理拆分）
 
-`page_ranges` 只解决页数上限，**大小限制 200MB 必须物理拆分 PDF**。用同 skill 自带的 `scripts/mineru_large_pdf.py`：
+`page_ranges` 只能选择解析范围，不会缩小源文件本身；**超过 200MB 必须物理拆分 PDF**，而当前规则下超过 200 页也默认物理拆分。用同 skill 自带的 `scripts/mineru_large_pdf.py`：
 
 ```bash
 export MINERU_TOKEN=...
 uv run scripts/mineru_large_pdf.py \
     --input 'https://example.com/big.pdf' \
     --out-dir ./mineru_output/big \
-    --pages-per-part 500 --overlap 2
+    --pages-per-part 198 --overlap 2
 ```
 
 **拆分策略**：每卷主体 `pages-per-part` 页 + 末尾 `overlap` 页过渡，用于覆盖跨页表格/公式。**推荐 `overlap=2`**：一个表/公式最多跨一个页边界，后卷开头多带 2 页就能让接缝页在两卷里都被完整识别；`mineru_large_pdf.py` 原默认 5 偏大（现已改默认 2），大 overlap 只是徒增后面要去重的重复量（而 `overlap=0` 会让跨页内容在接缝被切坏）。相邻卷 overlap 区内容会重复，合并时按下节规则**去重**（JSON 程序化去重、md 由 agent 复核去重）。
@@ -200,9 +293,25 @@ uv run scripts/mineru_large_pdf.py \
 | `*_content_list_v2.json` | **按页分组**：外层每元素 = 该页块列表 | **位置**（外层下标 = 页） |
 | `*_model.json` | 按页分组：每元素 = 该页检测框列表 | **位置** |
 | `layout.json` | dict `{pdf_info:[每页一项], _backend, _ocr_enable, …}`，每页项含 `page_idx` | **每页项显式 `page_idx`** |
-| `*_origin.pdf` | 原始输入副本（归档时通常可剔除） | — |
+| `*_origin.pdf` | MinerU 返回的输入副本；实测可能经 PDFium 重新封装，不保证与上传 PDF 字节级一致 | — |
 
-一个 PDF 因 >200MB / >600 页**物理拆成多卷分别转换**后，把各卷输出拼回一份，按**结构**（而非文件名）处理。拆分务必落在**整页边界**（别在页中切），每页完整属于某一卷。
+### `*_origin.pdf` 的“原始”语义与任务元数据边界
+
+`*_origin.pdf` 应理解为 **MinerU 随结果返回的输入文档副本/规范化副本**，不能直接当作上传文件的 byte-for-byte 归档原件。实测一份 163 页、960×540 pt 的 LibreOffice PDF：
+
+- 上传文件：Creator=`Impress`、Producer=`LibreOffice 24.2`、Tagged=`yes`，保留标题和作者，7,795,965 bytes；
+- 返回的 `*_origin.pdf`：Creator/Producer 均为 `PDFium`、Tagged=`no`，标题和作者被移除，7,431,988 bytes；
+- 两者 SHA-256 不同，但字体集合、1,014 个嵌入图像对象和页数一致；`pdftotext` 普通/`-layout` 输出逐字节一致；以 36 dpi 渲染全部 163 页后像素完全一致。
+
+结论：服务端可能经 PDFium 重写对象、压缩并剥离 metadata/tagging；**视觉和文本等价不代表文件字节相同**。需要保存原始证据链时，另留用户上传的 PDF；确认内容一致后，`*_origin.pdf` 可作为冗余副本剔除。
+
+还要区分 **官方 zip 产物** 与 **本地编排元数据**：
+
+- 官方 zip 的主要内容就是上表所列的 `full.md`、`images/`、`*_content_list*.json`、`*_model.json`、`layout.json`、`*_origin.pdf`；
+- `batch_id.txt`、辅助脚本写出的 `results.json`，以及 agent 自行保存的 `_result.json`，都不是官方 zip 文件；前导下划线也没有 MinerU 官方语义；
+- 若需保留这些任务状态，建议放进 `_meta/` 并写明由谁生成；只想保留官方解析树时，可在任务成功并核验后将它们移入回收站。
+
+一个 PDF 因 >200MB / >200 页**物理拆成多卷分别转换**后，把各卷输出拼回一份，按**结构**（而非文件名）处理。拆分务必落在**整页边界**（别在页中切），每页完整属于某一卷。
 
 **先处理 overlap**：用了 `overlap≥1`（推荐 2）时相邻卷共享 `overlap` 页、内容重复，合并前必须**丢弃后一卷开头的 `overlap` 页**（它们与前卷末尾是同一批页）。记各卷"保留页数" K₀,K₁,…（首卷 K₀=全部页，其余 Kᵢ = 该卷页数 − overlap），累计基址 baseᵢ = K₀+…+Kᵢ₋₁。`overlap=0` 时无需丢弃，baseᵢ 即之前各卷页数之和。
 
@@ -237,8 +346,8 @@ curl -s "https://mineru.net/api/v4/extract-results/batch/<batch_id>" \
 
 MinerU 服务器支持 HTTPS 直链，但**不接受自签名证书**（如 IP + tls internal 的 Caddy）。解决方案：在 Caddy 中为同一后端额外开一个 HTTP 端口供 MinerU 拉取。
 
-## 性能参考（实测，697 页 165MB 扫描版 PDF）
+## 历史性能参考（697 页、165MB 扫描版 PDF）
 
-NAS → Caddy :80 直链提供 URL：拉取 ~30s + 转换 ~120s = **~153s（约 2.5 分钟）**。
+**过去**在 URL 单任务允许更大页数时，NAS → Caddy `:80` 直链实测拉取约 30s、转换约 120s，总计 **约 153s（2.5 分钟）**。**现在**需要按 200 页上限拆成更多任务，这个总耗时只能当历史量级，不能直接外推。
 
-推荐将 PDF 放到 VPS 的 `share/MinerU-upload/` 目录，通过 HTTP 直链提交。相同文件重复提交会命中缓存直接返回结果。
+仍可把 PDF 分卷放到 VPS 的 `share/MinerU-upload/` 目录，通过 HTTP 直链逐卷提交。服务默认可能命中缓存，REST API 也提供 `no_cache`；缓存时延和额度效果应按当前账号与小样实测，不作为稳定保证。
