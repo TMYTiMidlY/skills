@@ -11,7 +11,7 @@
 **调研目标：**
 
 - 核对官方 topic、社区目录和插件市场等项目发现入口。
-- 汇总桌面应用、终端界面、市场主题、Tool、Provider 与业务扩展的现有形态。
+- 汇总桌面应用、终端界面和插件市场，并区分插件为模型增加的操作、替换的底层服务以及新增的界面与协作流程。
 - 记录各项目的安装方式、宿主范围和权限边界，为后续专题调研建立候选集合。
 
 > **证据边界：** 社区仓库以 2026-08-17 的快照为基线，后续复核项在对应来源旁标明日期。项目链接固定到相应 commit；目录收录和市场热度只作为发现与维护信号，不代替源码审查或真实验收。
@@ -49,26 +49,35 @@ dsh plugin --profile web add dshmarket
 
 > 来源：[主题即时切换、热开关与必要时重启](https://github.com/dsh-market/dsh-market/blob/1696a52ed291b97048112c802d547599de9a5547/README.md#L12-L50)。
 
-### Tool、Provider 与业务扩展
+### 社区插件增加或替换的功能
 
-下表按开发篇定义的 [Tool 与可替换能力](dsh-dev.md#tool-and-providers)标记各项目的扩展位置，并另外记录宿主范围、用途和安装入口。
+一个社区 Plugin 可能同时改动 DSH 的多个位置：给模型增加可主动请求执行的操作，替换文件读写、命令执行或记忆等底层服务，也可以增加 Web 界面与协作流程。这些位置不互斥，下表因此分别记录用户得到的功能和插件实际改动的部分；同一项目的“改动位置”可以包含多项。
 
-| Plugin | 开发形态 | 宿主范围 | 用途 | 安装 |
+DSH 源码把“模型可以主动请求执行的单项操作”称为 Tool，把“在同一调用接口后提供某种具体实现”的组件称为 Provider。这两个名称用于对应源码接口；它们的实现关系见开发篇的[模型可调用操作与底层服务](dsh-dev.md#tool-and-providers)。
+
+| Plugin | 用户得到的功能 | 在 DSH 中改动的位置 | 适配范围 | 安装 |
 |---|---|---|---|---|
-| [`dsh-agent-teams`](https://github.com/NanmiCoder/dsh-agent-teams/tree/2b1141248f34ee28870d2e39462c0dbefaa5ffdb) | Subagent / workflow | DSH | 多 Agent team 与 workflow | `dsh plugin --profile web add @nanmicoder/dsh-agent-teams` |
-| [`dsh-openpencil`](https://github.com/ZSeven-W/dsh-openpencil/tree/49b0417a6d6fe7a55056bb1a82d4c348a21a6ca6) | 业务 UI / 设计文档 | DSH | 在对话中预览和编辑 `.op` 画布 | `dsh plugin --profile web add @zseven-w/dsh-openpencil` |
-| [`hindsight`](https://github.com/vectorize-io/hindsight/tree/396f63aafc9b618f04d446e2465cac95aa1cb426/hindsight-integrations/coding-agents) | 记忆 Provider | 多宿主 | 长期项目记忆、自动 recall / retain | `dsh plugin --profile web add @vectorize-io/hindsight-coding-agents` |
-| [`mirage`](https://github.com/strukto-ai/mirage/tree/14f83208abb2b92d9341a10dbaa4cb4786fe7eb2/typescript/packages/dsh) | Filesystem Provider | 多宿主 | 用统一虚拟 filesystem 替换本地 FS / Bash provider | `dsh plugin --profile web add @struktoai/mirage-dsh` |
-| [`modlens`](https://github.com/liustack/modlens/tree/2b71582435ff34a548efbefb74178ed133659ccb) | 视觉 Tool / Provider | 多宿主 | 直接粘贴图片，取得 OCR、布局和视觉语义证据 | `dsh plugin --profile web add @liustack/modlens` |
-| [`modsearch`](https://github.com/liustack/modsearch/tree/e1dba224b72651dfe7891990dcaf674098100df2) | Web Tool | 多宿主 | Web / X 搜索与结构化引用 | `dsh plugin --profile web add @liustack/modsearch` |
+| [`dsh-agent-teams`](https://github.com/NanmiCoder/dsh-agent-teams/tree/2b1141248f34ee28870d2e39462c0dbefaa5ffdb) | 在当前会话组建子 Agent 团队，按角色和任务依赖分工，再汇总成员结果 | 子 Agent 协作、任务状态和 Web 管理界面 | 仅 DSH | `dsh plugin --profile web add @nanmicoder/dsh-agent-teams` |
+| [`dsh-openpencil`](https://github.com/ZSeven-W/dsh-openpencil/tree/49b0417a6d6fe7a55056bb1a82d4c348a21a6ca6) | 在对话中创建、预览和编辑 `.op` 设计画布 | 模型可调用的设计操作、对话预览和 Web 编辑器 | 仅 DSH | `dsh plugin --profile web add @zseven-w/dsh-openpencil` |
+| [`hindsight`](https://github.com/vectorize-io/hindsight/tree/396f63aafc9b618f04d446e2465cac95aa1cb426/hindsight-integrations/coding-agents) | 跨会话保留项目记忆，并在后续任务中自动召回和追加内容 | 会话前后的记忆读写流程 | DSH 及其他 coding agent | `dsh plugin --profile web add @vectorize-io/hindsight-coding-agents` |
+| [`mirage`](https://github.com/strukto-ai/mirage/tree/14f83208abb2b92d9341a10dbaa4cb4786fe7eb2/typescript/packages/dsh) | 通过统一虚拟工作区访问挂载的数据源，不再局限于宿主机本地文件 | 替换文件读写和命令执行的底层实现 | DSH 及其他 agent 运行环境 | `dsh plugin --profile web add @struktoai/mirage-dsh` |
+| [`modlens`](https://github.com/liustack/modlens/tree/2b71582435ff34a548efbefb74178ed133659ccb) | 粘贴或提供图片后，取得 OCR、布局和视觉语义证据 | 读图操作、Web 粘贴处理和纯文本模型的视觉包装 | DSH 及其他 agent 运行环境 | `dsh plugin --profile web add @liustack/modlens` |
+| [`modsearch`](https://github.com/liustack/modsearch/tree/e1dba224b72651dfe7891990dcaf674098100df2) | Web / X 搜索与带来源的结构化结果 | 模型可调用的联网搜索操作 | DSH 及其他 agent 运行环境 | `dsh plugin --profile web add @liustack/modsearch` |
 
-ModLens 在 DSH 中既可以注册 `modlens_read_image` Tool，也可以为已确认的纯文本模型生成视觉包装条目；这项实现同时占据 Tool 与 Provider 两种分类，因此在表中并列标记，也说明视觉能力可以作为扩展接入而不必修改模型核心。
+ModLens 展示了同一个 Plugin 为什么会出现在多个位置：它注册 `modlens_read_image` 读图操作，处理 Web 界面粘贴的图片，还可以为已确认的纯文本模型生成视觉包装条目。这些改动都通过 Plugin 接入，不需要修改模型本身。
 
 > 来源：[ModLens 的 DSH 安装、粘贴识图和模型包装](https://github.com/liustack/modlens/blob/2b71582435ff34a548efbefb74178ed133659ccb/README.zh-CN.md#L29-L76)。
 
-### 扩展形态与权限边界
+### 社区插件改变的范围与运行权限
 
-阅读上面的生态项目时，按四个维度比较即可：交互入口是桌面、TUI、Web 还是外部协议；能力落在 Tool、Provider 还是业务 UI；package 只服务 DSH 还是同时适配多个宿主；安装内容是否带 Host 入口、构建脚本或子进程。前三项的实现边界见 [DeepSeek Harness Plugin 开发](dsh-dev.md)，最后一项的完整权限模型见运行时篇的[信任边界](dsh.md#trust-boundaries)。目录热度和安装成功都不能替代这些检查。
+评估上面的生态项目时，核对四个方面：
+
+- 用户从桌面应用、终端界面、Web 页面还是外部协议进入该功能。
+- 插件增加了模型可调用的操作，替换了底层服务，还是增加了界面或协作流程。
+- 安装包只用于 DSH，还是同时适配其他 agent 运行环境。
+- 安装内容是否包含在 DSH 主进程中运行的 Node 入口、构建脚本或额外子进程。
+
+模型可调用操作和底层服务的实现见开发篇的[模型可调用操作与底层服务](dsh-dev.md#tool-and-providers)，外部协议和 Web 界面见[协议与界面 Plugin](dsh-dev.md#protocol-and-ui-plugins)，完整权限模型见运行时篇的[信任边界](dsh.md#trust-boundaries)。目录热度和安装成功都不能替代这些检查。
 
 Plugin 卸载、热替换和失败状态的语义见开发篇的[实现 Plugin 模块](dsh-dev.md#plugin-runtime)。
 

@@ -416,17 +416,17 @@ Cordis event 与写入 Session 日志的事件不同。`agent/*`、`tools/*` 等
 
 > 来源：[Event 模式、typed events 与 effect 清理](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/framework/events.md#L23-L138)；[运行时扩展点地图](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L53-L129)。
 
-### <a id="tool-and-providers"></a>实现工具与可替换能力
+### <a id="tool-and-providers"></a>实现模型可调用操作与底层服务
 
-直接供模型调用的功能实现为 Tool。需要支持多种底层实现时，把稳定接口、Provider 和使用方分开；单一实现的简单功能保留在一个 package 中。
+Plugin 可以把新操作直接提供给模型，也可以保持上层调用方式不变、只替换真正执行工作的底层实现。DSH API 把前者称为 Tool，把后者的某种具体实现称为 Provider：Tool 决定模型“能请求做什么”，Provider 决定这项请求最终“由谁、在哪里执行”。
 
-#### 工具 Plugin
+#### 模型可调用操作（Tool）
 
-Tool 同时定义模型参数、程序化返回值、模型可见内容和界面呈现，四者保持分层才能稳定测试和回放。
+模型在对话中可以主动请求执行的单项功能，在 DSH 中称为 Tool。一个 Tool 定义输入参数、程序可读的返回值和模型看到的内容；浏览器如何呈现结果属于独立的界面层。这些部分保持分层，才能分别测试并在恢复会话时重现同样的结果。
 
-##### 参数、结构化结果与显示方式
+##### 输入、结构化结果与显示方式
 
-Tool Plugin 注入 `ctx.tools`，用 `defineTool()` 声明模型看到的参数和程序化返回值：
+实现这类操作的 Plugin 注入 `ctx.tools`，用 `defineTool()` 声明模型看到的参数和程序化返回值：
 
 ```ts
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -471,37 +471,37 @@ export function apply(ctx: Context): void {
 
 > 来源：[Tool 最小形态与 execute contract](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-tool.md#L7-L56)；[执行策略、Code Mode 与 UI presentation](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cookbook/adding-a-tool.md#L57-L94)。
 
-#### 可替换能力接口
+#### 可以替换实现的底层服务
 
-可替换能力把稳定调用契约与具体实现分开，使不同 Provider 能在相同使用方下切换。
+同一项功能需要在多种执行方式之间切换时，先定义稳定接口，再把每种具体实现注册到这个接口下。DSH 把这种具体实现称为 Provider。例如，模型看到的 shell 操作可以保持不变，底层则切换为本地 Bash 或本地 PowerShell。
 
-##### 接口定义、Provider 与使用方
+##### 稳定接口、具体实现与使用方
 
-需要替换实现而不改变调用方式时，把能力拆成三个角色：
+为了在替换底层实现时保持上层调用方式不变，把这项能力拆成三个角色：
 
 | 角色 | 负责什么 | shell 示例 |
 |---|---|---|
-| 接口定义 | 定义稳定接口和请求 / 返回类型 | `dsh-shell` |
-| Provider | 提供一种具体实现 | `dsh-bash-local`、`dsh-pwsh-local` |
-| 使用方 | 把能力暴露给模型或其他调用者 | `dsh-tool-bash` |
+| 稳定接口 | 定义请求和返回类型，不决定在哪里执行 | `dsh-shell` |
+| 具体实现（Provider） | 用某种执行环境完成接口约定的工作 | `dsh-bash-local`、`dsh-pwsh-local` |
+| 使用方（此例为 Tool） | 把底层服务包装成模型或其他组件可以调用的功能 | `dsh-tool-bash` |
 
-Provider 和使用方都依赖接口定义，但彼此不直接依赖。替换 Provider 时，Tool schema 和调用方式可以保持不变；修改使用方呈现给模型的内容时，也不要求改执行器。
+Provider 和使用方都依赖稳定接口，但彼此不直接依赖。替换 Provider 时，模型看到的 Tool 参数和调用方式可以保持不变；只修改 Tool 呈现给模型的内容时，也不需要改底层执行器。
 
-##### 能力实现的 package 拆分
+##### 何时拆分 package
 
 只有角色确实需要独立演进或替换时才拆成多个 package。一个简单 Tool 同时拥有输入校验和执行逻辑并不违规；过早拆分会增加 manifest、project reference、tests 和版本协调成本。
 
-公共接口应满足所有现有使用方，不把某个 Tool、UI 或传输协议的私有字段塞进 service。Provider 负责把调用请求整理成完整参数，并在入口处应用默认值与上限；不要把默认行为零散地藏在执行函数中。
+公共接口应满足所有现有使用方，不把某个 Tool、UI 或传输协议的私有字段塞进 service。具体实现负责把调用请求整理成完整参数，并在入口处应用默认值与上限；不要把默认行为零散地藏在执行函数中。
 
 > 来源：[三角色能力设计与 Bash 示例](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/practice/index.md#L7-L155)；[仓库中的 capability seam 清单](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/capability-seams.md#L1-L40)。
 
 #### 模型适配器
 
-模型适配器是 LLM 能力的一种 Provider，重点是协议转换、流式顺序、取消、凭据和 provider 路由，而不是重新实现 Agent loop。
+模型适配器把某家模型服务的 API 转换成 DSH 统一的模型调用接口。它是 LLM 底层服务的一种 Provider，负责协议转换、流式顺序、取消、凭据和模型供应方路由，不接管 Agent 的多轮运行循环。
 
 ##### 流式协议与错误处理
 
-模型适配器是 `ctx.llm` 的 Provider，负责把某家模型服务的协议转换成 dsh 的统一接口：
+模型适配器作为 `ctx.llm` 下的一种具体实现，把供应方的请求和响应转换成 DSH 的统一格式：
 
 ```ts
 class MyAdapter extends LlmAdapter {
