@@ -2,6 +2,11 @@
 
 这个文件包含对 AI 智能体的行为指令和最佳实践指南。
 
+## 本机补充规则
+
+- 读取本文件后，若加载入口 `AGENTS.md` 的同目录下存在 `AGENTS.local.md`，必须继续读取并遵循。若本文件通过全局软链接 `~/AGENTS.md` 加载，这个文件就是 `~/AGENTS.local.md`。
+- `AGENTS.local.md` 只存放本机补充规则；通用规则继续维护在本文件中。该文件不存在时直接忽略。
+
 ## 核心规则
 
 - Python 环境优先级：Pixi > uv > python/python3。
