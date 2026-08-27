@@ -8,7 +8,7 @@ SSH 同时涉及客户端身份认证、服务端主机身份校验、连接管�
 
 ### 私钥与 passphrase
 
-列出、创建和修改密钥时，只对私钥路径执行 `ssh-keygen -p`：
+下面依次展示查看密钥文件、创建密钥，以及修改私钥 passphrase 的命令；执行 `ssh-keygen -p -f` 时，`-f` 必须指向私钥文件（如 `~/.ssh/id_ed25519`），不要指向 `.pub` 公钥：
 
 ```bash
 ls -l ~/.ssh/id_*
@@ -112,14 +112,43 @@ systemctl --user enable --now ssh-agent.service
 
 `loginctl enable-linger` 会让 user manager 在没有登录会话时仍可运行，并可能在开机时启动；没有 linger 时，生命周期通常跟用户会话走。是否启用 linger 是独立的常驻策略，不是 agent 本身的要求。
 
-### <a id="locate-agent"></a>客户端定位 agent
+### <a id="locate-agent"></a>客户端定位 agent 与选择身份
 
-客户端定位 agent 有两条主要路径：
+OpenSSH 可以从环境变量或 `ssh_config` 取得 agent socket；`ssh_config` 里的其他字段再决定尝试哪些身份、是否把刚解锁的私钥加入 agent。只有 `SSH_AUTH_SOCK` 和 `IdentityAgent` 负责定位 agent：
 
-| 入口 | 作用范围 | 特点 |
+| 入口或字段 | 谁读取 | 作用 |
 |---|---|---|
-| `SSH_AUTH_SOCK` | OpenSSH、`ssh-add` 及许多兼容库 | 必须由父进程继承或在当前环境显式设置 |
-| `IdentityAgent` | OpenSSH 客户端配置 | 覆盖 `SSH_AUTH_SOCK`，可按 `Host` 选择 provider |
+| `SSH_AUTH_SOCK` | OpenSSH、`ssh-add` 及许多兼容库 | 从进程环境取得 agent socket |
+| `IdentityAgent` | OpenSSH 客户端 | 在 `ssh_config` 中指定 socket；设置后覆盖 `SSH_AUTH_SOCK` |
+| `IdentityFile` | OpenSSH 客户端 | 指定可直接读取的身份文件，也可用于筛选 agent 中的对应身份 |
+| `AddKeysToAgent` | OpenSSH 客户端 | 从文件成功解锁私钥后，把它加入已经找到的 agent |
+| `IdentitiesOnly` | OpenSSH 客户端 | 限制实际尝试的文件身份和对应 agent 身份 |
+
+`AddKeysToAgent` 不会启动或定位 agent，也不能替用户解锁私钥；它只是在“socket 已找到、私钥已成功读取”之后增加缓存这一步。agent 已经提供匹配身份时，`ssh` 会直接请求 agent 签名，不需要再次从文件加载。
+
+OpenSSH 的选择过程可以概括为：
+
+```text
+ssh 启动
+  ↓
+读取命令行、用户 ssh_config、系统 ssh_config
+  ↓
+IdentityAgent 已配置？── 是 → 使用该 socket
+          │
+          否
+          ↓
+读取 SSH_AUTH_SOCK
+  ↓
+agent 提供允许使用的身份？── 是 → 请求 agent 签名
+          │
+          否
+          ↓
+读取 IdentityFile → 必要时提示解锁
+          ↓
+AddKeysToAgent 启用且 agent 可达？── 是 → 把已解锁身份加入 agent
+```
+
+交互式和非交互式 OpenSSH 都读取 `ssh_config`。因此配置了有效的 `IdentityAgent` 后，即使进程没有 `SSH_AUTH_SOCK`，`ssh`、`scp` 及通常由 Git 调用的 OpenSSH 仍能找到 agent。Unix 下的 `ssh-add` 不读取 `ssh_config`，它仍依赖 `SSH_AUTH_SOCK`；这解释了为什么 `ssh` 可以成功，而同一环境里的 `ssh-add -l` 可能返回 2。
 
 `SSH_AGENT_PID` 记录部分原生 agent 的 PID，供 `ssh-agent -k` 等管理操作使用；客户端通信只需要 socket。
 
@@ -132,7 +161,7 @@ Host host.example
     AddKeysToAgent yes
 ```
 
-使用 Ubuntu/Debian 的 OpenSSH vendor agent 时，路径可能改为 `/run/user/%i/openssh_agent`；自建固定 socket unit 则可能是 `/run/user/%i/ssh-agent.socket`。先从 unit 和实际 socket 确认，不能凭实现名称猜路径。[`IdentityAgent` 与 `%i`](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5)的含义由 OpenSSH 配置手册定义。
+使用 Ubuntu/Debian 的 OpenSSH vendor agent 时，路径可能改为 `/run/user/%i/openssh_agent`；自建固定 socket unit 则可能是 `/run/user/%i/ssh-agent.socket`。先从 unit 和实际 socket 确认，不能凭实现名称猜路径。[`IdentityAgent`、`IdentityFile` 与 `AddKeysToAgent`](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5)的含义由 OpenSSH 配置手册定义。
 
 其他常见入口只作为排查线索：
 
@@ -183,27 +212,52 @@ ps -u "$(id -u)" -o pid,comm,args | grep -E '[s]sh-agent|[g]cr-ssh-agent'
 
 ### <a id="agent-noninteractive"></a>非交互 shell 的 agent
 
-非交互 shell 会继承父进程已有环境，但通常不会执行交互式启动文件中负责设置 `SSH_AUTH_SOCK` 的部分。典型例子是 `.bashrc` 在文件开头对非交互 shell `return`，而 export 写在它之后；systemd user service 也不会读取 shell rc 文件。
+非交互模式不会让 OpenSSH 跳过 `ssh_config`。差异通常来自进程环境和解锁通道：非交互 shell 会继承父进程已有环境，但可能不执行负责 export 的交互式启动文件；CI、systemd service 或 `BatchMode=yes` 也往往没有可用的 TTY/askpass 来输入 passphrase。
 
-先看实际状态，不根据“交互终端能连”推断自动化环境也能连：
+只要 `IdentityAgent` 指向可达 socket，且该 agent 已能用目标身份签名，非交互 OpenSSH 即使没有 `SSH_AUTH_SOCK` 也能认证。失败通常发生在以下链路：
+
+```text
+没有 IdentityAgent
+  + 父进程没有 SSH_AUTH_SOCK
+  → ssh 找不到 agent
+
+或
+
+agent 可达但没有目标身份
+  + IdentityFile 受 passphrase 保护
+  + 当前环境不能交互解锁
+  → 公钥可能被服务器接受，但客户端无法完成签名
+```
+
+`AddKeysToAgent yes` 不能修复这两种失败：前一种没有可加入的 agent，后一种尚未成功解锁私钥。
+
+先看 OpenSSH 的生效配置和当前环境，不根据“交互终端能连”推断自动化环境也能连：
 
 ```bash
+ssh -G host.example |
+  awk '$1 ~ /^(identityagent|identityfile|addkeystoagent|identitiesonly|batchmode)$/'
 printf 'SSH_AUTH_SOCK=%s\n' "${SSH_AUTH_SOCK:-<absent>}"
-ssh -G host.example | awk '$1 ~ /^(identityagent|identityfile|addkeystoagent)$/'
 ssh-add -l
+```
+
+这里 `ssh-add -l` 只验证环境变量指向的默认入口；它失败不等于配置了 `IdentityAgent` 的 OpenSSH 也找不到 agent。需要验证某个显式 socket 时：
+
+```bash
+agent_socket=/path/to/agent.socket
+SSH_AUTH_SOCK="$agent_socket" ssh-add -l
 ```
 
 若 `ssh -vv` 显示服务器接受了某个公钥，随后仍然 `Permission denied (publickey)`，说明服务器认可该公钥，但客户端没有完成签名。受保护私钥找不到已解锁 agent 是常见原因；私钥权限、文件格式、签名算法和 provider 选择也可能导致同样现象。
 
 排查顺序如下：
 
-1. 查 `ssh -G` 的 `IdentityAgent`、`IdentityFile` 和 `AddKeysToAgent`。
+1. 查 `ssh -G` 的 `IdentityAgent`、`IdentityFile`、`AddKeysToAgent`、`IdentitiesOnly` 和 `BatchMode`。
 2. 查当前进程实际继承的 `SSH_AUTH_SOCK`。
-3. 用 `ssh-add -l` 验证默认入口；exit 1 表示入口可达但为空。
-4. 从 `systemctl --user show ... -p FragmentPath -p Environment` 和 unit 内容取得候选 socket，再显式验证。
+3. 分别验证 `IdentityAgent` 指向的 socket 和环境变量指向的默认 socket。
+4. 从 `systemctl --user show ... -p FragmentPath -p Environment` 和 unit 内容确认 socket 来源。
 5. 最后看进程参数和 journal，确认是谁创建或接管了 socket。
 
-对 OpenSSH，`IdentityAgent` 能绕开 shell 环境缺失；对只读取 `SSH_AUTH_SOCK` 或要求显式 `agent_path` 的库，仍需传入对应入口。无 passphrase 的私钥可以直接读取，因此没有 agent 不必然导致认证失败。
+只读取 `SSH_AUTH_SOCK`、要求显式 `agent_path` 或不完整实现 OpenSSH 配置的库，需要按各自接口传入 agent。无 passphrase 的私钥可以直接读取，因此没有 agent 不必然导致认证失败。
 
 只读端到端探针应禁用交互提示：
 
