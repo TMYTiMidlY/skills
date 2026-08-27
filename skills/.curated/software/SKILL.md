@@ -105,7 +105,7 @@ OpenList（AList 的活跃 fork）的 **REST API 编程接入**（两种 token�
 
 ## MinerU PDF→Markdown 转换
 
-MinerU（mineru.net）提供 VLM 模型将 PDF 转为 Markdown/JSON，支持公式和表格识别。默认使用云端 API / Open API；未经用户明确允许，不要在本机安装或部署 MinerU。详细流程见 [references/mineru.md](references/mineru.md)。
+MinerU（mineru.net）提供 VLM/pipeline 云端模型将 PDF、Office、图片和网页转为 Markdown/JSON，支持公式和表格识别。普通自动化默认用官方 Python SDK，需要 callback/`no_cache`/完整 HTTP 控制时用 REST API；官方 MCP 是 SDK 上的 Markdown 导向适配层，适合 MCP 客户端但不是全功能替代。当前精准解析按 200MB/200 页设计，旧的 URL 600 页规则只保留为历史说明。未经用户明确允许，不要在本机安装或部署 MinerU 模型；SDK/MCP 轻量云客户端不属于本地模型部署。安装、能力对比、分卷与结果合并见 [references/mineru.md](references/mineru.md)。
 
 ## OpenAlex 数据访问与全文下载
 
