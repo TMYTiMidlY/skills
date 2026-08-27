@@ -475,25 +475,39 @@ export function apply(ctx: Context): void {
 
 同一项功能需要在多种执行方式之间切换时，先定义稳定接口，再把每种具体实现注册到这个接口下。DSH 把这种具体实现称为 Provider。例如，模型看到的 shell 操作可以保持不变，底层则切换为本地 Bash 或本地 PowerShell。
 
-##### 稳定接口、具体实现与使用方
+##### Shell 命令的调用链
 
-为了在替换底层实现时保持上层调用方式不变，把这项能力拆成三个角色：
+Shell 命令在 DSH 中经过模型入口、统一接口和底层执行器三个位置，不同 package 按这三个位置分工：
 
-| 角色 | 负责什么 | shell 示例 |
+```text
+模型请求执行 bash
+        ↓
+dsh-tool-bash
+定义模型看到的参数与返回内容
+        ↓ 通过 dsh-shell 统一接口调用
+dsh-bash-local / dsh-pwsh-local
+在本地 Bash 或 PowerShell 中执行命令
+```
+
+| Package | 在调用链中的位置 | 实际职责 |
 |---|---|---|
-| 稳定接口 | 定义请求和返回类型，不决定在哪里执行 | `dsh-shell` |
-| 具体实现（Provider） | 用某种执行环境完成接口约定的工作 | `dsh-bash-local`、`dsh-pwsh-local` |
-| 使用方（此例为 Tool） | 把底层服务包装成模型或其他组件可以调用的功能 | `dsh-tool-bash` |
+| `dsh-tool-bash` | 模型入口 | 注册 bash Tool，定义参数、输出和模型可见内容 |
+| `dsh-shell` | 统一接口 | 定义命令请求和返回类型，不选择执行环境 |
+| `dsh-bash-local`、`dsh-pwsh-local` | 底层执行器（Provider） | 在具体 shell 环境中完成 `dsh-shell` 约定的工作 |
 
-Provider 和使用方都依赖稳定接口，但彼此不直接依赖。替换 Provider 时，模型看到的 Tool 参数和调用方式可以保持不变；只修改 Tool 呈现给模型的内容时，也不需要改底层执行器。
+在这条调用链中，`dsh-tool-bash` 是 `dsh-shell` 的使用方，它同时也是 Tool Plugin。其他 Plugin 也可以注入 `ctx.shell` 并在内部调用；只有注册 Tool 的 Plugin 才会把这项功能提供给模型。
 
-##### 何时拆分 package
+`dsh-tool-bash` 和底层执行器都依赖 `dsh-shell`，但彼此不直接依赖。替换执行器时，模型看到的参数和调用方式可以保持不变；只修改 Tool 呈现给模型的内容时，也不需要改底层执行器。
 
-只有角色确实需要独立演进或替换时才拆成多个 package。一个简单 Tool 同时拥有输入校验和执行逻辑并不违规；过早拆分会增加 manifest、project reference、tests 和版本协调成本。
+##### Shell 各部分的 package 边界
 
-公共接口应满足所有现有使用方，不把某个 Tool、UI 或传输协议的私有字段塞进 service。具体实现负责把调用请求整理成完整参数，并在入口处应用默认值与上限；不要把默认行为零散地藏在执行函数中。
+`dsh-shell` 独立保存共同接口，因为 Bash 和 PowerShell 都要实现它；两个本地执行器分开，才能在配置中切换；`dsh-tool-bash` 独立，使模型参数和结果呈现可以不随执行器一起变化。
 
-> 来源：[三角色能力设计与 Bash 示例](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/practice/index.md#L7-L155)；[仓库中的 capability seam 清单](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/capability-seams.md#L1-L40)。
+这种拆分只在各部分确实需要独立替换或演进时有意义。如果一个简单 Tool 只有一种执行方式，输入校验和执行逻辑可以留在同一 package；额外拆分只会增加 manifest、project reference、tests 和版本协调工作。
+
+`dsh-shell` 只保留所有执行器都需要的请求和返回字段，不放入 `dsh-tool-bash`、UI 或传输协议的私有数据。每个执行器在入口处补齐默认值、应用上限，再进入真正的命令执行逻辑。
+
+> 来源：[Shell 的统一接口、模型入口与执行器](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/user/develop/practice/index.md#L7-L155)；[仓库中可替换底层服务的清单](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/capability-seams.md#L1-L40)。
 
 #### 模型适配器
 

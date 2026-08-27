@@ -49,7 +49,7 @@ dsh plugin --profile web add dshmarket
 
 > 来源：[主题即时切换、热开关与必要时重启](https://github.com/dsh-market/dsh-market/blob/1696a52ed291b97048112c802d547599de9a5547/README.md#L12-L50)。
 
-### 社区插件增加或替换的功能
+### 社区插件的功能与接入位置
 
 一个社区 Plugin 可能同时改动 DSH 的多个位置：给模型增加可主动请求执行的操作，替换文件读写、命令执行或记忆等底层服务，也可以增加 Web 界面与协作流程。这些位置不互斥，下表因此分别记录用户得到的功能和插件实际改动的部分；同一项目的“改动位置”可以包含多项。
 
@@ -68,7 +68,7 @@ ModLens 展示了同一个 Plugin 为什么会出现在多个位置：它注册 
 
 > 来源：[ModLens 的 DSH 安装、粘贴识图和模型包装](https://github.com/liustack/modlens/blob/2b71582435ff34a548efbefb74178ed133659ccb/README.zh-CN.md#L29-L76)。
 
-### 社区插件改变的范围与运行权限
+### 社区插件的使用入口、适配范围与运行权限
 
 评估上面的生态项目时，核对四个方面：
 
@@ -91,38 +91,40 @@ Plugin 卸载、热替换和失败状态的语义见开发篇的[实现 Plugin �
 
 - 核对 DSH 官方 Authorization、Credentials 与 `llm-pi-ai` 的现有边界。
 - 搜索能让 DSH 使用 Codex、Claude、Copilot、Kimi、OpenRouter、xAI 等订阅或 OAuth 凭据的社区 Plugin。
-- 解释 Web 与 TUI 登录入口、Provider 激活、Token 保存与刷新、Adapter 复用和模型目录之间的关系。
+- 解释 Web 与 TUI 登录入口、模型服务激活、凭据保存与刷新、模型适配器复用和模型目录之间的关系。
 - 找到一条尽量复用官方后端、避免重复维护各家 OAuth 的 Web 实现路线。
 
-### <a id="2026-08-26-official-chain"></a>官方登录链路
+下文保留三个源码名称便于对照实现：“登录流程”对应 flow，“凭据记录”对应 credential record，“模型适配器”对应 Adapter。交互界面只负责向人展示 URL、device code 或输入框；登录、凭据和模型请求分别由后面三层处理。
 
-DSH `0.1.1-rc.2` 已经把 Pi 的 Provider 登录接进官方后端，组件分工如下：
+### <a id="2026-08-26-official-chain"></a>DSH 官方 OAuth 登录链路
+
+DSH `0.1.1-rc.2` 已经把 Pi 的模型服务登录接进官方后端，组件分工如下：
 
 ```text
-Web / TUI 交互界面
+Web / TUI 登录界面
         ↓
 @deepseek-ai/dsh-authorization
-通用 flow 状态机：list / describe / begin / cancel / prompt
+通用登录流程：列出、说明、开始、取消、等待输入
         ↓
 @deepseek-ai/dsh-llm-pi-ai
-按 Pi catalog 注册 Provider flow，调用 Models.login()
+按 Pi 模型目录注册各服务的登录流程，调用 Models.login()
         ↓
 Pi OAuth / device-code
         ↓
-DSH credential records
-保存 grant、串行修改、刷新 Token
+DSH 凭据记录
+保存 OAuth 授权结果（grant）、串行修改、刷新 Token
         ↓
-官方 PiAiAdapter
+官方 PiAiAdapter 模型适配器
 把凭据用于模型请求
 ```
 
-官方已经实现通用 Authorization flow、Pi `Models.login()` 调用、OAuth grant 到 credential record 的映射、并发刷新锁，以及凭据到 `PiAiAdapter` 请求路径的衔接。当前固定的 Pi catalog 可注册 `openai-codex`、`anthropic`、`github-copilot`、`kimi-coding`、`openrouter`、`xai` 六类 OAuth flow。
+官方已经实现通用登录流程、Pi `Models.login()` 调用、OAuth 授权结果到凭据记录的映射、并发刷新锁，以及凭据到 `PiAiAdapter` 模型请求的衔接。当时固定的 Pi 模型目录可为 `openai-codex`、`anthropic`、`github-copilot`、`kimi-coding`、`openrouter`、`xai` 注册 OAuth 登录流程。
 
-默认 Web 产品缺少最后的交互层：基础 composition 没有完整挂载这套服务，浏览器没有承载 notice、URL、device code、文本、secret、select 和取消的 wire/UI，官方 Models 页面也没有登录按钮与登录后自动激活 keyless profile 的流程。因此“官方只支持 API Key”只适用于默认界面，不适用于已经存在的后端能力。
+默认 Web 产品缺少最后的交互层：基础配置组合（composition）没有完整挂载这套服务，浏览器也没有用于展示提示、URL、device code、文本、敏感信息输入、选项和取消状态的通信协议与界面。官方 Models 页面同样没有登录按钮，也不会在登录后自动激活不含 API Key 的模型服务配置。因此“官方只支持 API Key”只适用于当时的默认界面，不适用于已经存在的后端能力。
 
-> 来源：[Pi flow 注册与 `Models.login()`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/login.ts#L120-L159)、[credential record 与刷新](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/auth.ts#L117-L160)、[`llm-pi-ai` 对 Authorization 的可选注入](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/index.ts#L205-L214)、[官方记录的浏览器 surface 边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/.agents/notes/implemented/architecture/2026-08-13-credential-records-and-authorization-flows.md#L52-L60)。
+> 来源：[Pi 登录流程注册与 `Models.login()`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/login.ts#L120-L159)、[凭据记录与刷新](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/auth.ts#L117-L160)、[`llm-pi-ai` 对 Authorization 的可选注入](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/index.ts#L205-L214)、[官方记录的浏览器交互边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/.agents/notes/implemented/architecture/2026-08-13-credential-records-and-authorization-flows.md#L52-L60)。
 
-> Radius 属于动态 Provider，不在 DSH 当时遍历的静态 builtin catalog 中，因此不能只补前端就自动出现；这和上述六类静态 Provider 是不同边界。
+> Radius 属于动态模型服务，不在 DSH 当时遍历的内置静态目录中，因此不能只补前端就自动出现；这和上述六类静态模型服务是不同边界。
 
 ### <a id="2026-08-26-repository-snapshot"></a>仓库活跃度快照
 
@@ -136,131 +138,137 @@ DSH credential records
 | [Yan-Zero/dsh-codex](https://github.com/Yan-Zero/dsh-codex/tree/e3e54e206f7c829503c7e6eed378643ba0416792) | `0.2.5` | 48 | Codex 专用 Plugin | `Publish to npm` success |
 | [WSL043/dsh-codex-subscription](https://github.com/WSL043/dsh-codex-subscription/tree/c8899beac69c40bcfc850c9dc497fd042806f879) | `1.8.0` | 23 | Codex 产品化 Plugin | `Release` success |
 | [XMoon/dsh-pi-tui](https://github.com/XMoon/dsh-pi-tui/tree/76c8c96df3457720f59a9e450687f280d875e9f5) | `0.3.4` | 13 | 基于 Pi TUI 的终端界面 | `CI` success |
-| [ziyou979/dsh-llm-oauth](https://github.com/ziyou979/dsh-llm-oauth/tree/362312e5d01cccb5fc74fda130875d500dbaf78c) | `0.2.0` | 7 | 多 Provider OAuth Plugin | 无 Actions |
-| [edge-sky/dsh-oauth-adapter](https://github.com/edge-sky/dsh-oauth-adapter/tree/559a757351093b42b695c36f77d81f8cbfe05a03) | `0.1.1-rc.11` | 3 | 官方 flow 的 Web 交互层 | `Running Copilot cloud agent` success |
-| [yhyfhgs/dsh-model-hub](https://github.com/yhyfhgs/dsh-model-hub/tree/f55ac188ef24f9604e77ed127a025962c8a37c2f) | `0.2.2` | 1 | Provider 与模型管理套件 | 无 Actions |
+| [ziyou979/dsh-llm-oauth](https://github.com/ziyou979/dsh-llm-oauth/tree/362312e5d01cccb5fc74fda130875d500dbaf78c) | `0.2.0` | 7 | 多模型服务 OAuth Plugin | 无 Actions |
+| [edge-sky/dsh-oauth-adapter](https://github.com/edge-sky/dsh-oauth-adapter/tree/559a757351093b42b695c36f77d81f8cbfe05a03) | `0.1.1-rc.11` | 3 | 官方登录流程的 Web 交互层 | `Running Copilot cloud agent` success |
+| [yhyfhgs/dsh-model-hub](https://github.com/yhyfhgs/dsh-model-hub/tree/f55ac188ef24f9604e77ed127a025962c8a37c2f) | `0.2.2` | 1 | 模型服务与模型管理套件 | 无 Actions |
 | [ccch1mneyyy/dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI/tree/5f7d2fb9974d4575953795ced9e7feae2b241d0e) | `0.9.3` | 2573 | 基于 Ink / React 的终端界面与生态 | `Star History` success |
 | [ccch1mneyyy/dsh-auth](https://github.com/ccch1mneyyy/dsh-auth/tree/fba02bcf7fb57e3d9885f73882d5835ccdf526c4) | `0.1.0` | 1 | `dsh-TUI` 携带的订阅认证 Plugin | 无 Actions |
 
 > `pi2dsh` 的“最新 CI failure”只记录 GitHub 当时最后一条 workflow 结果，不能单独推导整个项目不可用；`dsh-TUI` 的最新成功任务名是 `Star History`，同样不构成构建与测试通过的证据。
 
-### <a id="2026-08-26-auth-matrix"></a>认证与请求链路
+### <a id="2026-08-26-auth-matrix"></a>社区 Plugin 的凭据与模型请求归属
 
-Plugin 之间最重要的差别不是“有没有登录按钮”，而是登录、凭据和模型请求分别由谁维护。下表把这三层拆开：
+比较登录类 Plugin 时，需要分别确认交互界面、登录流程、凭据保存与刷新、模型请求适配由谁维护。一个项目有登录按钮，不代表它复用了官方的后续链路。
 
-| 项目 | 交互入口 | OAuth flow | Token 与刷新 | 模型请求 | 与官方链路的关系 |
+| 项目 | 交互入口 | 登录流程 | 凭据保存与刷新 | 模型请求适配 | 与官方链路的关系 |
 |---|---|---|---|---|---|
-| `dsh-plugin-subscriptions` | 自建 Web Settings | 自行实现 Codex、Claude、Grok、Copilot | 独立 `auth.json`，原子写入并设为 `0600` | 四套自建 Adapter 与协议转换 | 只使用 DSH Plugin 接口 |
-| `pi2dsh` | 自带 `/login`，也把登录投影到 Authorization seam | Pi Provider / Extension 自己的 OAuth | pi2dsh 自有 store；DSH record 只写 `managedBy: pi2dsh` 标记 | pi2dsh ABI 兼容层 | 使用官方 Authorization 协议，不使用官方 Token 与 Adapter 链 |
+| `dsh-plugin-subscriptions` | 自建 Web Settings | 自行实现 Codex、Claude、Grok、Copilot | 独立 `auth.json`，原子写入并设为 `0600` | 四套自建模型适配器与协议转换 | 只使用 DSH Plugin 接口 |
+| `pi2dsh` | 自带 `/login`，也把登录接入官方 Authorization 接口 | Pi 模型服务 / Extension 自己的 OAuth | pi2dsh 自有存储；DSH 凭据记录只写 `managedBy: pi2dsh` 标记 | pi2dsh 的 Pi Plugin 兼容层 | 使用官方 Authorization 协议，凭据和模型请求仍归 pi2dsh |
 | `dsh-codex` | 自建 Web、CLI、TUI | 直接调用 Pi `Models.login()` | 独立文件，跨进程锁与原子写 | 复用官方 `PiAiAdapter` | 复用请求适配层 |
-| `dsh-codex-subscription` | 自建 Web RPC 与 login coordinator | 直接调用 Pi OAuth | 使用 DSH credentials service 的自定义 credential reference | 复用官方 `PiAiAdapter` | 复用凭据服务和请求适配层，不使用官方 flow/record |
-| `dsh-llm-oauth` | 自建 Web、HTTP API、`/oauth` | 直接调用 Pi OAuth | 独立 `pi-ai-oauth.json` | 自建 `OAuthPiAiAdapter` | 复用 Pi catalog/OAuth，不使用官方 DSH 登录后端 |
-| `dsh-model-hub` | 自建并替换整套 Models UI | 官方 Provider 调用官方 flow；另写 `qwen-code`、`codex` flow | 官方 Provider 用官方 record；自建 Provider 用独立 record scope | 官方 Provider 用官方 Adapter；自建 Provider 用自己的 Adapter | 混合实现 |
-| `dsh-oauth-adapter` | 独立 Web Settings 页面与 WebSocket bridge | 直接调用官方 flow | 官方 credential record | 官方 `PiAiAdapter` | 最接近“只补 Web surface” |
-| `dsh-pi-tui` | TUI `/login` | 动态读取并调用全部已注册官方 flow | 官方 credential record | 对应 Provider 的官方 Adapter | 通用的官方 TUI surface |
-| `dsh-TUI` + `dsh-auth` | Ink TUI `/auth` 与 Provider 向导 | `dsh-auth` 自行提供订阅登录 | 由 `dsh-auth` 管理 | `dsh-auth` 注册自己的 Provider 路由 | 默认不走官方 `dsh-authorization` 登录链 |
+| `dsh-codex-subscription` | 自建 Web RPC 与登录协调器 | 直接调用 Pi OAuth | 使用 DSH 凭据服务的自定义凭据引用 | 复用官方 `PiAiAdapter` | 复用凭据服务和请求适配层，不使用官方登录流程与凭据记录 |
+| `dsh-llm-oauth` | 自建 Web、HTTP API、`/oauth` | 直接调用 Pi OAuth | 独立 `pi-ai-oauth.json` | 自建 `OAuthPiAiAdapter` | 复用 Pi 模型目录与 OAuth，不使用 DSH 官方登录后端 |
+| `dsh-model-hub` | 自建并替换整套 Models UI | 官方模型服务调用官方流程；另写 `qwen-code`、`codex` 流程 | 官方路由使用官方凭据记录；自建路由使用独立记录范围 | 官方路由使用官方适配器；自建路由使用插件适配器 | 混合使用官方与自建链路 |
+| `dsh-oauth-adapter` | 独立 Web Settings 页面与 WebSocket 桥接 | 直接调用官方登录流程 | 官方凭据记录 | 官方 `PiAiAdapter` | 官方链路保持完整，Plugin 只增加 Web 交互界面 |
+| `dsh-pi-tui` | TUI `/login` | 动态读取并调用全部已注册官方登录流程 | 官方凭据记录 | 对应模型服务的官方适配器 | 官方链路保持完整，Plugin 只增加 TUI 交互界面 |
+| `dsh-TUI` + `dsh-auth` | Ink TUI `/auth` 与模型服务向导 | `dsh-auth` 自行提供订阅登录 | 由 `dsh-auth` 管理 | `dsh-auth` 注册自己的模型路由 | 默认不走官方 `dsh-authorization` 登录链 |
 
 从复用深度看，可以分成以下几组：
 
 | 复用层级 | 项目 | 含义 |
 |---|---|---|
-| 官方全链路，只补交互 | `dsh-oauth-adapter`、`dsh-pi-tui` | Flow、record、刷新和 Adapter 均归官方；Plugin 负责与人交互 |
-| 官方与自建混合 | `dsh-model-hub` | 官方 Provider 复用全链路，自带 Provider 另写全链路 |
-| 只借官方 Authorization seam | `pi2dsh` | 官方 surface 可以启动它的 flow，但实际 Token 和请求仍归 pi2dsh |
-| 复用 Pi 或官方 Adapter | `dsh-codex`、`dsh-codex-subscription`、`dsh-llm-oauth` | 省下一部分协议实现，但登录、存储或 Adapter 仍由 Plugin 自己维护 |
-| 自建订阅栈 | `dsh-plugin-subscriptions`、`dsh-TUI` / `dsh-auth` | Provider 登录和产品能力均由社区项目维护 |
+| 官方全链路，只增加交互界面 | `dsh-oauth-adapter`、`dsh-pi-tui` | 登录流程、凭据记录、刷新和模型适配器均归官方 |
+| 官方与自建链路并存 | `dsh-model-hub` | 官方模型路由复用全链路，插件自带路由另写全链路 |
+| 只接入官方 Authorization 接口 | `pi2dsh` | 官方界面可以启动它的登录流程，凭据和模型请求仍归 pi2dsh |
+| 只复用 Pi 登录或官方模型适配器 | `dsh-codex`、`dsh-codex-subscription`、`dsh-llm-oauth` | 登录、存储或模型适配仍有部分由 Plugin 自己维护 |
+| 自行维护完整订阅链路 | `dsh-plugin-subscriptions`、`dsh-TUI` / `dsh-auth` | 模型服务登录、凭据和请求适配均由社区项目维护 |
 
-### <a id="2026-08-26-plugin-details"></a>社区实现的差异
+### <a id="2026-08-26-plugin-details"></a>社区 OAuth Plugin 的实现方式
 
-#### <a id="2026-08-26-multi-provider-web"></a>多订阅 Web Plugin
+下面按具体项目展开上表，重点记录它们复用或自建了哪一层，以及由此产生的凭据存储、路由冲突与维护范围。
 
-`dsh-plugin-subscriptions` 覆盖 Codex、Claude、Grok 和 GitHub Copilot，带独立设置页、实时模型目录、额度展示、代理、reasoning effort、Fast Mode、Vision、X Search、图片和视频生成。它的完成度和开箱能力较高，但 OAuth、Token refresh、四套 Adapter 和协议翻译全部由项目自行维护；上游协议变化不会自动由官方 DSH 修复。
+#### <a id="2026-08-26-multi-provider-web"></a>`dsh-plugin-subscriptions` 与 `dsh-llm-oauth`
 
-`dsh-llm-oauth` 覆盖 `xai`、`github-copilot`、`openai-codex`、`anthropic`、`openrouter`、`kimi-coding`，直接复用 Pi 的 catalog 和 OAuth。它仍然自建 store、HTTP/UI 和 LLM Adapter，并会在与官方 `llm-pi-ai` 同时启用相同 Provider id 时触发重复 Adapter 冲突。其 README 所述“官方只支持 API Key”已经落后于 DSH `0.1.1-rc.2`；源码中的普通 `writeFile` 也没有显式 `0600` 与原子替换，暂不适合作为主账号 Token 的默认存储。
+`dsh-plugin-subscriptions` 覆盖 Codex、Claude、Grok 和 GitHub Copilot，带独立设置页、实时模型目录、额度展示、代理、reasoning effort、Fast Mode、Vision、X Search、图片和视频生成。OAuth、Token 刷新、四套模型适配器和协议转换全部由项目自行维护，因此上游协议变化需要社区项目自行跟进。
 
-#### <a id="2026-08-26-codex-plugins"></a>Codex 专用 Plugin
+`dsh-llm-oauth` 覆盖 `xai`、`github-copilot`、`openai-codex`、`anthropic`、`openrouter`、`kimi-coding`，直接复用 Pi 的模型目录和 OAuth。它仍然自建凭据存储、HTTP/UI 和 LLM 适配器；与官方 `llm-pi-ai` 同时启用相同模型服务 id 时，会触发重复适配器冲突。其 README 所述“官方只支持 API Key”已经落后于 DSH `0.1.1-rc.2`；源码使用普通 `writeFile`，没有显式设置 `0600` 权限或原子替换，主账号 Token 会因此面临文件权限与写入中断风险。
+
+#### <a id="2026-08-26-codex-plugins"></a>`dsh-codex` 与 `dsh-codex-subscription`
 
 `dsh-codex` 与 `dsh-codex-subscription` 都直接调用 Pi OAuth，并复用官方 `PiAiAdapter`，但各自维护登录入口和凭据格式。
 
 | 项目 | 凭据 | 产品能力 |
 |---|---|---|
-| `dsh-codex` | 独立 `$DSH_HOME/.openai-codex-auth.json`，带锁、原子写和权限检查 | Web / CLI / TUI 登录、模型筛选、Search、Vision、`gpt-image-2`、Fast Mode、额度、Responses compaction、WebSocket context reuse |
-| `dsh-codex-subscription` | DSH credential reference，自定义序列化格式与 login coordinator | 浏览器/device-code 登录、额度分类与安全 reset、Search、图片生成/编辑、Fast Mode、模型级上下文、诊断与 Windows 安装流程 |
+| `dsh-codex` | 独立 `$DSH_HOME/.openai-codex-auth.json`，带锁、原子写和权限检查 | Web / CLI / TUI 登录、模型筛选、Search、Vision、`gpt-image-2`、Fast Mode、额度、Responses 上下文压缩、WebSocket 上下文复用 |
+| `dsh-codex-subscription` | DSH 凭据引用，自定义序列化格式与登录协调器 | 浏览器/device-code 登录、额度分类与安全重置、Search、图片生成/编辑、Fast Mode、模型级上下文、诊断与 Windows 安装流程 |
 
-这两个项目解决的是“Codex 产品体验”，并非“为官方六类 OAuth 补一个通用 surface”。只需要 Codex 时可以单独评估；拿它们扩展到六类 Provider 会把单 Provider 的产品逻辑带进通用层。
+这两个项目都围绕 Codex 提供完整产品功能，范围不是为官方全部 OAuth 服务提供通用交互界面。如果扩展到其他模型服务，需要同时扩展凭据格式、模型元数据、额度显示和 Codex 专属功能中与供应方耦合的部分。
 
-#### <a id="2026-08-26-bridges-and-model-hub"></a>Pi 兼容层与模型管理
+#### <a id="2026-08-26-bridges-and-model-hub"></a>`pi2dsh` 与 `dsh-model-hub`
 
-`pi2dsh` 是 Pi Plugin ABI 到 DSH 的通用兼容层，不只是登录 Plugin。它能运行未修改的 Pi Plugin，并把 Pi Provider 登录注册到 DSH Authorization seam；真实 Token 仍由 pi2dsh 自己的 store 保存，DSH record 只承担“由 pi2dsh 管理”的状态标记。因此它证明官方 surface 可以承载第三方 flow，但不能证明官方 `llm-pi-ai` 的 Token/Adapter 被复用。
+`pi2dsh` 是 Pi Plugin ABI 到 DSH 的通用兼容层，不只是登录 Plugin。它能运行未修改的 Pi Plugin，并把 Pi 模型服务的登录流程注册到 DSH Authorization 接口；真实 Token 仍由 pi2dsh 自己保存，DSH 凭据记录只承担“由 pi2dsh 管理”的状态标记。这说明官方交互界面可以启动第三方登录流程，但登录后的凭据和模型请求并未交给官方 `llm-pi-ai`。
 
-`dsh-model-hub` 会对官方 Provider 调用 `authorization.begin()`，使用官方 record key，并写入空的 keyless profile 激活官方路由；同时它替换官方 Models 页面、模型选择器和目录管理，还自建 `qwen-code` 与 `codex` Provider。
+`dsh-model-hub` 会对官方模型服务调用 `authorization.begin()`，使用官方凭据记录 key，并写入空的无 API Key 配置来激活官方路由；同时它替换官方 Models 页面、模型选择器和目录管理，还自建 `qwen-code` 与 `codex` 模型路由。
 
-`qwen-code` 当时不在 Pi builtin catalog 中，手工 Provider 又只能使用 API Key，因此自建 flow、record 和 Adapter 有明确用途。自建 `codex` 则与官方 `openai-codex` 重复，主要为了自行控制 Fast Mode、模型元数据和 OAuth 错误行为；代价是重复维护 OAuth 常量、刷新、模型表和 Adapter，而且其自建 route 当时只声明文本输入。
+`qwen-code` 当时不在 Pi 内置模型目录中，手工添加的模型服务又只能使用 API Key，因此需要自建登录流程、凭据记录和模型适配器。自建 `codex` 则与官方 `openai-codex` 重复，用于自行控制 Fast Mode、模型元数据和 OAuth 错误行为；这条路由需要重复维护 OAuth 常量、Token 刷新、模型表和适配器，而且当时只声明文本输入。
 
-> 来源：[Model Hub 为非 catalog OAuth Provider 自建 Adapter 的原因](https://github.com/yhyfhgs/dsh-model-hub/blob/f55ac188ef24f9604e77ed127a025962c8a37c2f/src/provider/native/catalog.ts#L1-L16)、[自建 `codex` 与官方 `openai-codex` 并存](https://github.com/yhyfhgs/dsh-model-hub/blob/f55ac188ef24f9604e77ed127a025962c8a37c2f/src/provider/native/catalog.ts#L220-L280)、[官方 Provider 的 Authorization bridge](https://github.com/yhyfhgs/dsh-model-hub/blob/f55ac188ef24f9604e77ed127a025962c8a37c2f/src/auth/bridge.ts#L337-L366)。
+> 来源：[Model Hub 为目录外 OAuth 模型服务自建适配器的原因](https://github.com/yhyfhgs/dsh-model-hub/blob/f55ac188ef24f9604e77ed127a025962c8a37c2f/src/provider/native/catalog.ts#L1-L16)、[自建 `codex` 与官方 `openai-codex` 并存](https://github.com/yhyfhgs/dsh-model-hub/blob/f55ac188ef24f9604e77ed127a025962c8a37c2f/src/provider/native/catalog.ts#L220-L280)、[官方模型服务的 Authorization 桥接](https://github.com/yhyfhgs/dsh-model-hub/blob/f55ac188ef24f9604e77ed127a025962c8a37c2f/src/auth/bridge.ts#L337-L366)。
 
-#### <a id="2026-08-26-official-surfaces"></a>官方 flow 的交互界面
+#### <a id="2026-08-26-official-surfaces"></a>`dsh-oauth-adapter` 与 `dsh-pi-tui`
 
-`dsh-oauth-adapter` 不保存 Token、不实现刷新，也不注册自己的 LLM Adapter。它挂载缺失的 Authorization 服务，通过 WebSocket 把官方 prompt 搬到独立的 Web Settings 页面，调用 `authorization.begin()`，成功后写入 keyless profile。当前服务端和客户端都只列出 `openai-codex`、`github-copilot`，尚未动态展示官方其余 flow。
+`dsh-oauth-adapter` 不保存 Token、不实现刷新，也不注册自己的 LLM 适配器。它挂载缺失的 Authorization 服务，通过 WebSocket 把官方登录提示传到独立的 Web Settings 页面，调用 `authorization.begin()`，成功后写入不含 API Key 的模型服务配置。当时服务端和客户端都只列出 `openai-codex`、`github-copilot`，尚未动态展示官方其余登录流程。
 
-> 来源：[Web bridge 调用官方 flow](https://github.com/edge-sky/dsh-oauth-adapter/blob/559a757351093b42b695c36f77d81f8cbfe05a03/src/index.ts#L323-L438)、[缺失服务时挂载官方 Authorization](https://github.com/edge-sky/dsh-oauth-adapter/blob/559a757351093b42b695c36f77d81f8cbfe05a03/src/authorization-fallback.ts#L13-L26)、[硬编码 Provider 表](https://github.com/edge-sky/dsh-oauth-adapter/blob/559a757351093b42b695c36f77d81f8cbfe05a03/src/protocol.ts#L8-L17)。
+> 来源：[Web 桥接调用官方登录流程](https://github.com/edge-sky/dsh-oauth-adapter/blob/559a757351093b42b695c36f77d81f8cbfe05a03/src/index.ts#L323-L438)、[缺失服务时挂载官方 Authorization](https://github.com/edge-sky/dsh-oauth-adapter/blob/559a757351093b42b695c36f77d81f8cbfe05a03/src/authorization-fallback.ts#L13-L26)、[硬编码模型服务表](https://github.com/edge-sky/dsh-oauth-adapter/blob/559a757351093b42b695c36f77d81f8cbfe05a03/src/protocol.ts#L8-L17)。
 
-`dsh-pi-tui` 在终端中动态读取官方 flow，把 reference credential 与 Provider-native OAuth 合并进 `/login`，处理 notice、URL、device code、文本、secret、select、取消和失败，登录成功后创建最小 keyless profile。它不实现任何 Provider OAuth、Token store 或 LLM Adapter，是官方后端可被通用 surface 消费的直接样本。
+`dsh-pi-tui` 在终端中动态读取官方登录流程，把引用凭据和模型服务原生 OAuth 合并进 `/login`，处理提示、URL、device code、文本、敏感信息输入、选项、取消和失败，登录成功后创建最小的无 API Key 配置。它不实现任何模型服务 OAuth、Token 存储或 LLM 适配器，因此可以直接观察通用交互界面如何复用官方后端。
 
-### <a id="2026-08-26-tui"></a>终端界面
+### <a id="2026-08-26-tui"></a>`dsh-pi-tui` 与 `dsh-TUI`
 
-`dsh-pi-tui` 与 `dsh-TUI` 都是 DSH 的第三方终端界面，不是新的 Agent Harness，也不存在 GitHub fork 或共同 commit 历史。两者共用 DSH 的模型、工具和 Session 能力，但 UI 内核、扩展体系和认证路线不同：
+`dsh-pi-tui` 与 `dsh-TUI` 都是运行在 DSH 之上的第三方终端界面，共用 DSH 的模型、模型可调用操作和 Session 能力。两者是相互独立的社区项目，没有 GitHub fork 或共同 commit 历史；UI 内核、扩展体系和登录路线也不同：
 
 | 属性 | `dsh-pi-tui` | `dsh-TUI` |
 |---|---|---|
-| UI 内核 | vendored Moonshot/Kimi Code `pi-tui` | 自行移植的 Ink / React reconciler |
+| UI 内核 | 内置并修改 Moonshot/Kimi Code 的 `pi-tui` 源码 | 自行移植的 Ink / React 界面渲染引擎 |
 | npm 包 | `@xmoon76/dsh-pi-tui` | `@deepseek-harness-tui/dsh-tui` |
 | Profile | `pi-tui` | `dsh-tui` |
 | 登录路线 | DSH 官方 `dsh-authorization` | 捆绑社区 `@deepseek-harness-tui/dsh-auth` |
-| Provider 范围 | 随已注册的官方 flow 动态变化 | 由 `dsh-auth` 自己维护 |
-| 产品侧重点 | Pi 风格交互、Focus、任务与 lineage、官方 flow | Claude Code 风格、主题与状态栏、VS Code 和自有插件生态 |
+| 登录服务范围 | 随已注册的官方登录流程动态变化 | 由 `dsh-auth` 自己维护 |
+| 产品侧重点 | Pi 风格交互、Focus、任务与 lineage、官方登录流程 | Claude Code 风格、主题与状态栏、VS Code 和自有插件生态 |
 | Stars（2026-08-26） | 13 | 2573 |
 
-Moonshot AI 即 Kimi 的开发公司；它维护的 `pi-tui` 源码公开放在 Kimi Code monorepo 内，而非独立公开 package。`dsh-pi-tui` vendored 了这份源码并针对 DSH 修改；项目本身仍是 XMoon 的第三方项目，不属于 Moonshot 官方。
+Moonshot AI 是 Kimi 的开发公司；它维护的 `pi-tui` 源码公开放在 Kimi Code 单一仓库（monorepo）内，没有作为独立 package 公开。`dsh-pi-tui` 把这份源码纳入自己的仓库并针对 DSH 修改；项目本身仍是 XMoon 的第三方项目，不属于 Moonshot 官方。
 
-### <a id="2026-08-26-boundaries"></a>风险与未验证项
+### <a id="2026-08-26-boundaries"></a>验证范围与使用限制
 
-- 本次结论来自固定 commit 的源码、README、依赖、提交历史和仓库状态；尚未用六类真实账号逐一完成登录、刷新和模型请求 E2E。
+本轮调研能支持源码归属和实现路线比较，但不能代替真实账号、供应商条款与发布版本兼容性验证。具体限制如下：
+
+- 本次结论来自固定 commit 的源码、README、依赖、提交历史和仓库状态；尚未用六类真实账号逐一完成登录、刷新和模型请求的端到端（E2E）验证。
 - 技术可行不等于供应商允许第三方消费订阅凭据。Codex 社区插件已经明确提示账号限制或封禁风险，真实验证不应默认使用无法承受损失的主账号。
 - Claude 在第三方 harness 中可能进入 extra usage，而不是单纯消耗 Pro/Max 固定额度；OpenRouter OAuth 实质上会签发从账户余额扣费的 API Key。两者不能只因出现 OAuth 按钮就归类为固定订阅。
-- DSH 当时固定 `@earendil-works/pi-ai 0.82.1`，不会自动追随 Pi 后续 Provider 与模型变化。
-- Provider id 同时被官方和社区 Adapter 声明时会产生目录或 Adapter 冲突；安装多个订阅 Plugin 前必须检查 route 所有权。
-- 官方 Models 卡片内部没有通用 Plugin slot。最小 Web 方案应新增独立 Settings 页面，直接往官方卡片中插按钮通常意味着替换整页。
+- DSH 当时固定 `@earendil-works/pi-ai 0.82.1`，不会自动追随 Pi 后续的模型服务与模型变化。
+- 同一模型服务 id 同时被官方和社区适配器声明时，会产生模型目录或适配器冲突；安装多个订阅 Plugin 前需要检查每条模型路由由谁注册。
+- 官方 Models 卡片内部没有通用 Plugin 界面插槽。新增独立 Settings 页面可以保留官方 Models 页面；直接往官方卡片中插入按钮，则通常需要替换整页。
 - stars、版本和 Actions 结果会变化；它们用于判断关注度与维护信号，不替代源码和真实 E2E。
 
-### <a id="2026-08-26-target-route"></a>目标对应的实现路线
+因此，下面的实现路线只回答“在当时源码上怎样减少重复实现”，账号可用性、计费与合规性仍需要独立验证。
 
-当前目标是用较小改动，让 DSH Web 使用官方已经迁入的 Pi OAuth 后端，并覆盖尽可能多的订阅 Provider，同时避免社区 Plugin 再保存一份 Token、再实现一套刷新和协议转换。
+### <a id="2026-08-26-target-route"></a>官方 OAuth Web 界面的实现路线
 
-初步推荐以 `dsh-oauth-adapter` 为 Web 基线：
+本轮实现路线以三个条件为约束：DSH Web 使用官方已经迁入的 Pi OAuth 后端，覆盖尽可能多的订阅模型服务，社区 Plugin 不再单独保存 Token、刷新凭据或转换模型协议。
+
+按这些约束，Web 交互层以 `dsh-oauth-adapter` 为基线，再结合其他项目中可复用的部分：
 
 ```text
-dsh-oauth-adapter 的 Web / WebSocket 交互桥
+dsh-oauth-adapter 的 Web / WebSocket 交互桥接
         +
-dsh-pi-tui 的动态 flow 枚举与完整 prompt 处理思路
+dsh-pi-tui 的动态登录流程枚举与完整输入处理
         +
-dsh-model-hub 的 record-key 绑定与 keyless profile 激活
+dsh-model-hub 的凭据记录 key 绑定与无 API Key 配置激活
         ↓
 官方 dsh-authorization
         ↓
 官方 llm-pi-ai + Pi Models.login()
         ↓
-官方 credential records / refresh / PiAiAdapter
+官方凭据记录 / Token 刷新 / PiAiAdapter
 ```
 
-具体改动保持在 surface 层：
+具体改动保持在 Web 交互层：
 
-- 用 `authorization.list()` / `describe()` 动态读取 flow，不再在服务端和客户端重复硬编码 Codex、Copilot。
-- 只展示 record scope 属于 `llm-pi-ai` 且 methods 包含 `oauth` 的条目。
-- 浏览器按通用类型渲染 notice、URL、device code、文本、secret、select 和取消。
-- 登录成功后写入空 Provider profile `{}`，继续使用官方 route、record、刷新和 Adapter。
+- 用 `authorization.list()` / `describe()` 动态读取登录流程，不在服务端和客户端重复硬编码 Codex、Copilot。
+- 只展示凭据记录范围属于 `llm-pi-ai` 且登录方法包含 `oauth` 的条目。
+- 浏览器按通用类型渲染提示、URL、device code、文本、敏感信息输入、选项和取消状态。
+- 登录成功后写入空的模型服务配置 `{}`，继续使用官方模型路由、凭据记录、Token 刷新和模型适配器。
 - 不复制 Pi OAuth client、client id、Token 文件、刷新函数或模型协议。
-- `qwen-code`、Radius 等官方静态 catalog 之外的 Provider 作为独立后续范围，不和六类官方 flow 的 surface 混在第一版。
+- `qwen-code`、Radius 等官方静态目录之外的模型服务作为独立后续范围，不放进第一版官方 OAuth 交互界面。
 
 现成方案按目标区分：
 
@@ -268,36 +276,36 @@ dsh-model-hub 的 record-key 绑定与 keyless profile 激活
 |---|---|
 | 立即使用多订阅 Web 功能，不要求官方后端 | `dsh-plugin-subscriptions` |
 | 只需要完整 Codex 产品体验 | `dsh-codex-subscription` 或 `dsh-codex` |
-| 在终端验证官方 flow | `dsh-pi-tui` |
-| 开发通用官方 Web surface | `dsh-oauth-adapter` 为基线，参考 `dsh-pi-tui` 与 `dsh-model-hub` |
+| 在终端验证官方登录流程 | `dsh-pi-tui` |
+| 开发通用官方 Web 登录界面 | `dsh-oauth-adapter` 为基线，参考 `dsh-pi-tui` 与 `dsh-model-hub` |
 | 运行 Pi Plugin 生态 | `pi2dsh` |
 | 使用成熟终端产品与自有生态 | `dsh-TUI` |
 
-这仍是初步推荐，不是最终决定。进入实现前至少需要完成：官方六类 flow 的枚举测试、每种 prompt 的无凭据单元测试、少量非主账号真实登录与刷新 smoke test、登录后模型请求验证，以及供应商条款风险确认。
+这仍是阶段性路线，实现前还需要完成：官方六类登录流程的枚举测试、每种交互输入的无凭据单元测试、少量非主账号的真实登录与刷新基本测试、登录后的模型请求验证，以及供应商条款风险确认。
 
-## <a id="2026-08-27-installed-source-followup"></a>2026-08-27 · 安装后源码复核
+## <a id="2026-08-27-installed-source-followup"></a>2026-08-27 · Model Hub 安装与源码复核
 
-本轮在 DSH `0.1.1-rc.2` 的 Web Profile 中实际安装 `@fhxgs/dsh-model-hub@0.2.3`，并以仓库 commit `6897374e90b2f383a797e6597c011e076594f3e7` 复核 Host、Client、OAuth、record binding、Adapter 注册与 smoke checklist。安装、composition dump 和 Web 启动成功；没有使用真实订阅账号完成外部 OAuth 与模型请求，因此下面结论是运行时装载验证加源码归属判断，不是账号 E2E。
+本轮在 DSH `0.1.1-rc.2` 的 Web Profile 中实际安装 `@fhxgs/dsh-model-hub@0.2.3`，并以仓库 commit `6897374e90b2f383a797e6597c011e076594f3e7` 复核主进程入口、浏览器客户端、OAuth、凭据绑定、适配器注册与基本验证清单。安装、配置合成结果导出和 Web 启动成功；没有使用真实订阅账号完成外部 OAuth 与模型请求，因此下面结论只包含运行时装载验证和源码归属判断，不代表账号端到端验证。
 
-### Model Hub 的两条 Codex 路由
+### Model Hub 的 Codex 路由
 
-Model Hub 不是“Codex 一律复用官方 flow”。它有意让 DSH 官方 `openai-codex` 与插件内建 `codex` 同时存在，页面搜索 `codex` 会出现两行：
+Model Hub 同时保留 DSH 官方 `openai-codex` 和插件内建 `codex`，页面搜索 `codex` 时会同时显示这两个模型路由：
 
-| Provider key | OAuth 与 record 归属 | 模型请求归属 | 页面含义 |
+| 模型路由 key | OAuth 与凭据归属 | 模型请求归属 | 页面含义 |
 |---|---|---|---|
-| `openai-codex` | DSH 官方 `llm-pi-ai` 注册 flow，使用 `recordKeyFor()` 对应的官方 credential record | 官方 `PiAiAdapter` 与 Pi catalog | 宿主适配器的官方路由；Model Hub 只桥接 `authorization.begin()`、状态与 keyless profile 激活 |
-| `codex` | Model Hub 自己实现 authorization-code + PKCE，写入 `model-hub` scope 的独立 record | 插件自己的 `NativeOAuthAdapter` 与静态模型表 | 显示名为 **OpenAI Codex** 的内建路由；拥有自己的 grant、record、models 与错误行为 |
+| `openai-codex` | DSH 官方 `llm-pi-ai` 注册登录流程，使用 `recordKeyFor()` 对应的官方凭据记录 | 官方 `PiAiAdapter` 与 Pi 模型目录 | DSH 的官方路由；Model Hub 只负责启动 `authorization.begin()`、显示状态与激活无 API Key 配置 |
+| `codex` | Model Hub 自己实现 authorization-code + PKCE，写入 `model-hub` 范围的独立凭据记录 | 插件自己的 `NativeOAuthAdapter` 与静态模型表 | 显示名为 **OpenAI Codex** 的内建路由；OAuth 授权结果、凭据、模型表与错误行为均由插件维护 |
 
-内建 `codex` 的 client id、OpenAI OAuth endpoints、scope 和非标准参数取自同版本 pi-ai 的公开实现，但“常量来自官方依赖”不等于“运行官方 DSH flow”：它由插件自己的 OAuth skeleton 执行、由 `createNativeFlow()` 写插件 record，再由 `NativeOAuthAdapter` 消费。选择哪一行，决定 Token 生命周期和模型请求最终归谁维护。
+内建 `codex` 的 client id、OpenAI OAuth endpoints、scope 和非标准参数取自同版本 pi-ai 的公开实现。实际登录仍由插件自己的 OAuth 骨架执行，`createNativeFlow()` 写入插件凭据记录，`NativeOAuthAdapter` 再使用该记录发起模型请求。因此，常量来自官方依赖，并不改变登录流程、Token 生命周期和模型请求的归属。
 
-> 来源：[内建 `codex` 与官方 `openai-codex` 并存及独立归属](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/native/catalog.ts#L269-L410)、[官方与 Model Hub 两套 binding](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/bindings.ts#L69-L82)、[插件自建 flow 与 record scope](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/native/flows.ts#L43-L60)、[自建 Adapter 与 flow 注册](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/native/registration.ts#L69-L77)、[两行 Codex 的人工 smoke checklist](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/scripts/smoke-p1.zh.md#L55-L68)。
+> 来源：[内建 `codex` 与官方 `openai-codex` 并存及独立归属](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/native/catalog.ts#L269-L410)、[官方与 Model Hub 的两套凭据绑定](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/bindings.ts#L69-L82)、[插件自建登录流程与凭据记录范围](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/native/flows.ts#L43-L60)、[自建适配器与登录流程注册](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/native/registration.ts#L69-L77)、[Codex 路由的人工基本验证清单](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/scripts/smoke-p1.zh.md#L55-L68)。
 
-### Web surface 的额外 loopback 边界
+### Model Hub Web 页面的本机地址限制
 
-Model Hub 的浏览器端在建立 handshake 之前读取 `ctx.connection.isLoopback`。页面 authority 不是 `localhost`、`127/8` 或 `[::1]` 时，它直接注册只读说明页并返回，不调用 `/model-hub`；因此反向代理只改变上游 HTTP headers，不能把浏览器地址栏中的公网 hostname 变成 loopback。这个限制属于 Model Hub Client 自己，和 DSH Host 对代理后的 Host/Origin 是否放行是两层判断。
+Model Hub 的浏览器端在建立连接前读取 `ctx.connection.isLoopback`。页面地址不是 `localhost`、`127/8` 或 `[::1]` 这些本机回环地址时，它只注册说明页，不调用 `/model-hub`。反向代理可以改变发往 DSH 的 HTTP 请求头，但不能改变浏览器地址栏中的公网主机名。这个限制由 Model Hub 客户端自己判断，与 DSH 主进程是否接受代理后的 Host/Origin 是两层独立检查。
 
-> 来源：[非 loopback Client 直接降级且不建立 handshake](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/client/index.ts#L334-L358)、[DSH Client 以页面 hostname 计算 `isLoopback`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/client/index.ts#L80-L89)。
+> 来源：[非本机回环地址时客户端降级且不建立连接](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/client/index.ts#L334-L358)、[DSH 客户端以页面主机名计算 `isLoopback`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/client/index.ts#L80-L89)。
 
-### 对原路线建议的修正
+### Model Hub 与官方 OAuth 链路的边界
 
-若目标是“所有官方 OAuth Provider 共用官方 flow、record、刷新与 Adapter”，Model Hub 可借鉴的是 Provider directory、record-key binding、keyless activation 和 UI 组织；不能把它的内建 `codex` 当成官方链证据。实际选型必须按 provider key 判断所有权，而不是按显示名判断。
+若所有官方 OAuth 模型服务都要共用官方登录流程、凭据记录、Token 刷新与模型适配器，Model Hub 可复用的是模型服务目录、凭据记录 key 绑定、无 API Key 配置激活和 UI 组织。其内建 `codex` 仍是插件自建链路，不能作为官方链路已被复用的证据。判断归属时需要查看模型路由 key，显示名称“OpenAI Codex”不足以区分两条路由。
