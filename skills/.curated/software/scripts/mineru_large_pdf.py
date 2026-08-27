@@ -5,7 +5,10 @@
 # ///
 """处理超过 MinerU 当前单次限制 (200MB / 200 页) 的大 PDF：
 下载（可选） → 拆分（页数 + 大小双约束，含 overlap）→ batch 上传 MinerU
-→ 轮询 → 下载 zip 结果 → 合并 full.md。
+→ 轮询 → 下载各 part 的原始 zip → 生成带分卷标记的 full.concat.md。
+
+注意：本脚本目前只做原始结果暂存与 Markdown 机械拼接；不合并 JSON / images，
+不删除 overlap，也不产出最终 full.md。最终交付必须再经过结构化合并和 agent 接缝复核。
 
 过去 URL 单任务曾按 600 页上限设计，旧默认值是 500；当前官方限制已经统一为
 200 页，因此默认使用 198 页主体 + 2 页 overlap，保证每卷总页数不超过 200。
@@ -13,7 +16,7 @@
 示例：
     ./mineru_large_pdf.py \\
         --input 'https://47.102.36.175/share/mineru-upload/foo.pdf' \\
-        --out-dir mineru_output/foo \\
+        --work-dir mineru_work/foo \\
         --pages-per-part 198 --overlap 2
 """
 from __future__ import annotations
@@ -128,7 +131,7 @@ def plan_parts(total_pages: int, pages_per_part: int, overlap: int) -> list[tupl
 
 def split_pdf(
     src_pdf: Path,
-    out_dir: Path,
+    parts_dir: Path,
     pages_per_part: int,
     overlap: int,
 ) -> list[Part]:
@@ -142,7 +145,7 @@ def split_pdf(
         log(f"计划拆分 {len(ranges)} 卷（主体 {pages_per_part} + overlap {overlap}）")
         parts: list[Part] = []
         for i, (s, e) in enumerate(ranges, 1):
-            part_path = out_dir / f"part{i:02d}_p{s:04d}-{e:04d}.pdf"
+            part_path = parts_dir / f"part{i:02d}_p{s:04d}-{e:04d}.pdf"
             writer = PdfWriter()
             for p in range(s - 1, e):
                 writer.add_page(reader.pages[p])
@@ -160,6 +163,53 @@ def split_pdf(
                 break
         else:
             return parts
+
+
+def write_parts_manifest(
+    src_pdf: Path,
+    parts: list[Part],
+    work_dir: Path,
+    configured_body_pages: int,
+    overlap: int,
+) -> Path:
+    """记录原 PDF 全局页范围与基线保留范围，供结构化 merger 和 agent 接缝复核。"""
+    if not parts:
+        raise ValueError("没有可写入 manifest 的分卷")
+    effective_body_pages = (
+        parts[1].start - parts[0].start
+        if len(parts) > 1
+        else min(configured_body_pages, parts[0].end - parts[0].start + 1)
+    )
+    rows = []
+    for p in parts:
+        local_pages = p.end - p.start + 1
+        drop_prefix = 0 if p.idx == 1 else min(overlap, local_pages)
+        retained_start = p.start + drop_prefix
+        rows.append(
+            {
+                "idx": p.idx,
+                "source_pages_1based": [p.start, p.end],
+                "local_page_count": local_pages,
+                "drop_prefix_pages_baseline": drop_prefix,
+                "retained_source_pages_1based": [retained_start, p.end],
+                "pdf_path": str(p.pdf_path.relative_to(work_dir)),
+            }
+        )
+    payload = {
+        "source_pdf": str(src_pdf),
+        "source_page_count": parts[-1].end,
+        "configured_body_pages": configured_body_pages,
+        "effective_body_pages": effective_body_pages,
+        "overlap": overlap,
+        "page_idx_base": 0,
+        "parts": rows,
+        "status": "raw_parts_only",
+        "note": "JSON/images 尚未合并，full.concat.md 尚未由 agent 去重；本 manifest 不进入最终产物目录。",
+    }
+    path = work_dir / "parts_manifest.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    log(f"分卷清单: {path}")
+    return path
 
 
 def mineru_batch_upload(parts: list[Part], token: str, language: str = "ch", is_ocr: bool = False) -> str:
@@ -197,8 +247,13 @@ def mineru_batch_upload(parts: list[Part], token: str, language: str = "ch", is_
     return batch_id
 
 
-def mineru_wait_batch(batch_id: str, token: str, poll_sec: int = 30) -> list[dict]:
-    """轮询直到所有任务 done/failed。返回每个文件的 extract_result 项。"""
+def mineru_wait_batch(
+    batch_id: str,
+    token: str,
+    expected_count: int,
+    poll_sec: int = 30,
+) -> list[dict]:
+    """轮询到 expected_count 个任务全部 done/failed；空结果不能误判为完成。"""
     url = f"{MINERU_API}/extract-results/batch/{batch_id}"
     last_states: dict[str, str] = {}
     while True:
@@ -212,6 +267,13 @@ def mineru_wait_batch(batch_id: str, token: str, poll_sec: int = 30) -> list[dic
             time.sleep(poll_sec)
             continue
         results = data.get("data", {}).get("extract_result", [])
+        if len(results) < expected_count:
+            waiting = {"<batch>": f"waiting {len(results)}/{expected_count}"}
+            if waiting != last_states:
+                log(f"状态: waiting {len(results)}/{expected_count}")
+                last_states = waiting
+            time.sleep(poll_sec)
+            continue
         states = {r["file_name"]: r.get("state", "?") for r in results}
         if states != last_states:
             summary = ", ".join(f"{n.split('_',1)[0]}={s}" for n, s in states.items())
@@ -223,8 +285,8 @@ def mineru_wait_batch(batch_id: str, token: str, poll_sec: int = 30) -> list[dic
         time.sleep(poll_sec)
 
 
-def download_and_extract(results: list[dict], parts: list[Part], out_dir: Path) -> list[Path]:
-    """下载每个 part 的 full_zip 并解压到 out_dir/<part-name>/。返回各 part 的 full.md 路径。"""
+def download_and_extract(results: list[dict], parts: list[Part], work_dir: Path) -> list[Path]:
+    """下载每个 part 的 full_zip 并解压到 work_dir/<part-name>/。返回各 part 的 full.md 路径。"""
     by_name = {r["file_name"]: r for r in results}
     md_paths: list[Path] = []
     for p in parts:
@@ -236,7 +298,7 @@ def download_and_extract(results: list[dict], parts: list[Part], out_dir: Path) 
         if not zip_url:
             log(f"  part{p.idx:02d} 无 full_zip_url")
             continue
-        part_dir = out_dir / f"part{p.idx:02d}"
+        part_dir = work_dir / f"part{p.idx:02d}"
         part_dir.mkdir(parents=True, exist_ok=True)
         log(f"  下载 part{p.idx:02d} zip")
         zb = httpx.get(zip_url, timeout=None).content
@@ -250,8 +312,8 @@ def download_and_extract(results: list[dict], parts: list[Part], out_dir: Path) 
     return md_paths
 
 
-def merge_full_md(md_paths: list[Path], parts: list[Part], out_path: Path) -> None:
-    """直接拼接 + 分卷标记。"""
+def write_concat_md(md_paths: list[Path], parts: list[Part], out_path: Path) -> None:
+    """机械拼接并插入分卷标记；输出是待 agent 复核的中间稿，不是最终 full.md。"""
     lines: list[str] = []
     for p, md in zip(parts, md_paths):
         lines.append(f"\n\n<!-- === part {p.idx:02d} (pages {p.start}-{p.end}) === -->\n\n")
@@ -263,13 +325,24 @@ def merge_full_md(md_paths: list[Path], parts: list[Part], out_path: Path) -> No
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--input", required=True, help="PDF URL 或本地路径")
-    ap.add_argument("--out-dir", required=True, help="输出根目录（存放 part PDF + 解压结果 + 合并 md）")
+    ap.add_argument(
+        "--work-dir",
+        "--out-dir",
+        dest="work_dir",
+        required=True,
+        help="任务工作目录（part PDF、分卷解压结果、full.concat.md）；--out-dir 为兼容旧命令的别名",
+    )
+    ap.add_argument(
+        "--state-dir",
+        default="",
+        help="任务状态目录（batch_id/results）；默认写到 work-dir 同级的隐藏目录，不污染正式产物目录",
+    )
     ap.add_argument("--pages-per-part", type=int, default=198)
     ap.add_argument("--overlap", type=int, default=2)
     ap.add_argument("--language", default="ch")
     ap.add_argument("--token", default=os.environ.get("MINERU_TOKEN", ""), help="默认读 $MINERU_TOKEN")
     ap.add_argument("--skip-download", action="store_true", help="如 --input 已是本地文件，跳过下载")
-    ap.add_argument("--skip-split", action="store_true", help="out-dir 下已有 part*.pdf 时跳过拆分")
+    ap.add_argument("--skip-split", action="store_true", help="任务工作目录的 parts/ 下已有分卷时跳过拆分")
     ap.add_argument("--resume-batch", default="", help="复用已存在的 batch_id（跳过上传）")
     ap.add_argument("--ocr", action="store_true", default=False,
                     help="使用 OCR 模式（默认 is_ocr=false，对文本层 PDF 推荐；扫描件 / 图片 PDF 加此选项）")
@@ -280,15 +353,22 @@ def main() -> None:
     if not args.token:
         sys.exit("未设置 MINERU_TOKEN")
 
-    out_dir = Path(args.out_dir).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    parts_dir = out_dir / "parts"
+    work_dir = Path(args.work_dir).resolve()
+    work_dir.mkdir(parents=True, exist_ok=True)
+    state_dir = (
+        Path(args.state_dir).expanduser().resolve()
+        if args.state_dir
+        else work_dir.parent / f".{work_dir.name}.mineru-state"
+    )
+    state_dir.mkdir(parents=True, exist_ok=True)
+    log(f"任务状态目录: {state_dir}")
+    parts_dir = work_dir / "parts"
     parts_dir.mkdir(exist_ok=True)
 
     # 1. 准备原 PDF
     is_url = urlsplit(args.input).scheme in ("http", "https")
     if is_url:
-        src_pdf = out_dir / "source.pdf"
+        src_pdf = work_dir / "source.pdf"
         if args.skip_download and src_pdf.exists():
             log(f"已存在 {src_pdf}，跳过下载")
         elif src_pdf.exists():
@@ -296,9 +376,8 @@ def main() -> None:
         else:
             fetch_pdf(args.input, src_pdf, verify_ssl=not args.insecure)
     else:
-        src_pdf = Path(args.input).expanduser().resolve()
-        if not src_pdf.exists():
-            sys.exit(f"找不到文件: {src_pdf}")
+        # fetch_pdf 对本地路径会先等待文件大小稳定，再返回原路径。
+        src_pdf = fetch_pdf(args.input, work_dir / "source.pdf")
 
     # 2. 拆分
     existing = sorted(parts_dir.glob("part*.pdf"))
@@ -315,23 +394,26 @@ def main() -> None:
             f.unlink()
         parts = split_pdf(src_pdf, parts_dir, args.pages_per_part, args.overlap)
 
+    write_parts_manifest(src_pdf, parts, work_dir, args.pages_per_part, args.overlap)
+
     # 3. 上传 + 轮询
     if args.resume_batch:
         batch_id = args.resume_batch
         log(f"复用 batch_id: {batch_id}")
     else:
         batch_id = mineru_batch_upload(parts, args.token, args.language, is_ocr=args.ocr)
-        (out_dir / "batch_id.txt").write_text(batch_id)
+        (state_dir / "batch_id.txt").write_text(batch_id)
 
-    results = mineru_wait_batch(batch_id, args.token)
-    (out_dir / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=2))
+    results = mineru_wait_batch(batch_id, args.token, expected_count=len(parts))
+    (state_dir / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=2))
 
-    # 4. 下载 + 合并
-    md_paths = download_and_extract(results, parts, out_dir)
+    # 4. 下载原始分卷结果 + 生成待复核的机械拼接稿
+    md_paths = download_and_extract(results, parts, work_dir)
     if len(md_paths) == len(parts):
-        merge_full_md(md_paths, parts, out_dir / "full.md")
+        write_concat_md(md_paths, parts, work_dir / "full.concat.md")
+        log("⚠ full.concat.md 仍含 overlap 与分卷标记，且 JSON/images 尚未合并；不得作为最终产物")
     else:
-        log(f"⚠ 只成功 {len(md_paths)}/{len(parts)} 卷，未合并")
+        log(f"⚠ 只成功 {len(md_paths)}/{len(parts)} 卷，未生成拼接稿")
 
 
 if __name__ == "__main__":
