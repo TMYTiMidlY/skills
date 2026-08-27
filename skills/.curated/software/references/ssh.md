@@ -34,9 +34,33 @@ agent 通常不允许客户端导出私钥，但能访问 socket 的同一用户
 
 ### <a id="systemd-agent"></a>Linux systemd user agent
 
-桌面和发行版常把 agent 包装为 systemd user unit。这里的“系统 service”指由系统软件包安装到 `/usr/lib/systemd/user/`、由 `systemctl --user` 管理的用户服务，不是由 PID 1 直接持有密钥的 system service。
+Linux 上容易混淆“软件装在哪里”“unit 由谁提供”和“进程以谁的身份运行”。GCR 与 OpenSSH 都通常由系统软件包安装，但它们提供的是 systemd user unit：每个用户由自己的 `systemd --user` 启动独立 agent，socket 位于各自的 `/run/user/<UID>/`，不会共享私钥或进程。
 
-先查实际 unit 来源和状态，再决定启用方式：
+#### 软件包、user unit 与运行实例
+
+Debian/Ubuntu 上的两个实现如下：
+
+| 实现 | 软件包与程序 | 软件包提供的 user unit | Ubuntu 常见默认行为 |
+|---|---|---|---|
+| GCR | `gcr4`；`gcr-ssh-agent` | `gcr-ssh-agent.service`、`gcr-ssh-agent.socket` | 桌面安装可能在 `/etc/systemd/user/` 为所有用户全局 enable |
+| OpenSSH | `openssh-client`；`/usr/bin/ssh-agent` | `ssh-agent.service` | Ubuntu 24.04 为 static 图形会话 unit；其他发行版可能提供可直接 enable 的 service/socket |
+
+`openssh-client` 在许多系统中已经预装。先检查，再决定是否安装：
+
+```bash
+command -v ssh-agent
+dpkg-query -W openssh-client
+```
+
+只有软件包缺失时才需要系统权限：
+
+```bash
+sudo apt install openssh-client
+```
+
+sudo 用于把程序和 vendor unit 安装到 `/usr`；启动 agent、创建当前用户 override、加载私钥都使用 `systemctl --user` 和用户目录，不需要 sudo。
+
+检查生效 unit 时同时看来源、状态和 enable 类型：
 
 ```bash
 systemctl --user show gcr-ssh-agent.socket \
@@ -45,15 +69,102 @@ systemctl --user show ssh-agent.service \
   -p LoadState -p FragmentPath -p UnitFileState -p ActiveState
 ```
 
-`FragmentPath` 能看出当前生效的是发行版 unit，还是 `~/.config/systemd/user/` 下的同名用户覆盖。
+`FragmentPath` 指向 `/usr/lib/systemd/user/` 表示软件包原件，指向 `~/.config/systemd/user/` 表示当前用户的同名覆盖。这里的全局 enable 只是“对所有用户采用同一启动策略”，每个用户仍启动自己的实例。
 
-#### user unit 的 enable 作用域
+多个 provider 可以监听不同 socket；客户端最终通过 `IdentityAgent`、`SSH_AUTH_SOCK` 或各库的显式参数选择一个：
 
-user unit 的“全局”仍然是用户服务配置，不是 system service：`systemctl --global enable` 通常把 wants symlink 放到 `/etc/systemd/user/`，对所有用户今后的 user manager 生效；`systemctl --user enable` 则把 symlink 放到当前用户的 `~/.config/systemd/user/`。
+| 行为 | GCR | 原生 OpenSSH agent |
+|---|---|---|
+| 桌面集成 | GNOME Secret Service 和图形提示 | 取决于 TTY、`SSH_ASKPASS` 与会话环境 |
+| 身份发现 | 可枚举 `~/.ssh` 中的身份并按需解锁 | 初始为空，需 `ssh-add` 或 `AddKeysToAgent` |
+| 常见入口 | `%t/gcr/ssh` | 由 unit 决定，如 `%t/openssh_agent` 或 `%t/ssh-agent.socket` |
+| 重启后的状态 | 可再次从 keyring 取已保存秘密 | 内存身份消失，需要重新加入 |
 
-`systemctl --user disable` 只删除当前用户作用域中的 enable symlink。systemd 没有一个名为“disabled”的负向记录去遮蔽 `/etc/systemd/user/*target.wants/` 中的全局链接，所以 unit 仍可能被全局依赖自动拉起；命令会对此给出 “still enabled in global scope” 警告。[systemctl 对 `--user` / `--global` 与 `disable` 的定义](https://github.com/systemd/systemd/blob/v255/man/systemctl.xml)明确区分了这几个作用域。
+#### GCR `gcr-ssh-agent`
 
-只让当前用户改用另一种 agent 时，user-level mask 是作用域最小的覆盖：
+GNOME 的 `gcr4` 包提供 `gcr-ssh-agent.service` 和 `gcr-ssh-agent.socket`。[Ubuntu 24.04 `gcr4` 文件清单](https://packages.ubuntu.com/noble/amd64/gcr4/filelist)列出了这两个 systemd user unit。若发行版没有替所有用户全局 enable，单个用户可以启用 socket：
+
+```bash
+systemctl --user enable --now gcr-ssh-agent.socket
+systemctl --user status gcr-ssh-agent.socket gcr-ssh-agent.service
+```
+
+GCR 使用 socket activation；socket 已存在而 service 进程尚未运行是正常状态。它可以先列出 `~/.ssh` 中已知身份，并在签名时从 GNOME Secret Service 取已保存的 passphrase，或启动图形提示，再交给内部 OpenSSH agent 完成签名。[GNOME 维护者对加载流程的说明](https://discourse.gnome.org/t/gdm-gnome-keyring-and-gcr-ssh-agent-service/23498/3)记录了这一行为。
+
+无图形界面时，GCR 的按需解锁可能失败：若私钥需要 passphrase、Secret Service 没有已保存秘密，`org.gnome.keyring.SystemPrompter` 又无法启动，签名请求会返回 `agent refused operation`，journal 常见：
+
+```text
+couldn't prompt for password: ... SystemPrompter exited with status 1
+the /usr/bin/ssh-add command failed
+```
+
+此时 `ssh-add -l` 仍可能列出身份，因为它只查询 GCR 广告的公钥；签名探针才能验证真实可用性：
+
+```bash
+agent_socket=/run/user/"$(id -u)"/gcr/ssh
+SSH_AUTH_SOCK="$agent_socket" ssh-add -T ~/.ssh/id_ed25519.pub
+journalctl --user -u gcr-ssh-agent.service -n 50 --no-pager
+```
+
+GCR 已声明拥有该身份后，OpenSSH 会走 agent 签名分支；agent 拒绝时不会进入“直接读取 `IdentityFile`、从终端解锁、再执行 `AddKeysToAgent`”的路径。无图形环境仍可从 TTY 手动加入私钥：
+
+```bash
+SSH_AUTH_SOCK="$agent_socket" ssh-add ~/.ssh/id_ed25519
+```
+
+该身份只缓存到 agent 生命周期结束。若期望第一次交互式 SSH 从终端解锁、随后自动缓存，原生 OpenSSH agent 的调用链更直接。
+
+#### OpenSSH `ssh-agent`
+
+OpenSSH 的 agent 程序来自 `openssh-client`，不少发行版也随包提供 systemd user unit。[Ubuntu 24.04 `openssh-client` 文件清单](https://packages.ubuntu.com/noble-updates/amd64/openssh-client/filelist)包含 `/usr/bin/ssh-agent`、`ssh-agent.service` 和 `/usr/lib/openssh/agent-launch`。
+
+不能仅凭“unit 文件存在”就执行 enable，先看 unit 内容和状态：
+
+```bash
+systemctl --user cat ssh-agent.service
+systemctl --user is-enabled ssh-agent.service
+```
+
+带 `[Install]` 且状态为 `disabled` 的发行版 unit，可以由用户直接启用：
+
+```bash
+systemctl --user enable --now ssh-agent.service
+```
+
+Ubuntu 24.04 的 vendor unit 是 `static`，由系统提供的 `graphical-session-pre.target.wants/ssh-agent.service` 拉起；`agent-launch` 还要求图形/XSession 条件，不适合无图形 user manager，也不能直接 enable。
+
+这类环境可在当前用户目录放同名 override，使它优先于 vendor unit，并补上适合 headless 的固定 socket 与 `[Install]`：
+
+```ini
+[Unit]
+Description=OpenSSH authentication agent
+Documentation=man:ssh-agent(1)
+
+[Service]
+Type=simple
+Environment=SSH_AUTH_SOCK=%t/ssh-agent.socket
+ExecStart=/usr/bin/ssh-agent -D -a $SSH_AUTH_SOCK
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now ssh-agent.service
+```
+
+同名 override 只影响该用户；其他用户仍加载 `/usr/lib/systemd/user/ssh-agent.service`。这里不应 mask `ssh-agent.service`：mask 按 unit 名生效，会同时挡住 vendor 定义和当前用户想运行的 override。
+
+原生 agent 初始为空。第一次交互式 SSH 可以从 `IdentityFile` 读取私钥并在终端询问 passphrase；`AddKeysToAgent yes` 随后将身份缓存。之后非交互连接可复用，直到 agent/service 或系统重启。`loginctl enable-linger` 可以让 user manager 在无登录会话时继续运行，但不改变“agent 重启后内存身份消失”的事实。
+
+#### 保留全局 GCR，只切换当前用户
+
+这里的目标是：保留 `/etc/systemd/user/*target.wants/` 中的全局 GCR 策略和其他用户行为，只让当前用户使用 OpenSSH agent。
+
+`systemctl --user disable` 只能删除当前用户自己创建的 enable symlink，不能删除 `/etc/systemd/user/` 中面向所有用户的全局链接；systemd 也没有一个“当前用户 disabled”的负向标记去抵消全局 enable，所以 GCR 仍会被拉起。[systemctl 对 `--user` / `--global` 与 `disable` 的定义](https://github.com/systemd/systemd/blob/v255/man/systemctl.xml)明确记录了这个边界。
+
+为单个用户建立例外，应在该用户范围 mask GCR：
 
 ```bash
 systemctl --user mask --now \
@@ -61,17 +172,17 @@ systemctl --user mask --now \
   gcr-ssh-agent.socket
 ```
 
-mask 会在当前用户的高优先级 unit 目录建立指向 `/dev/null` 的同名链接，使该用户的手动启动、依赖拉起和 socket activation 都被拒绝，同时不影响其他用户。[systemd.unit 对 masked load state 的定义](https://github.com/systemd/systemd/blob/v255/man/systemd.unit.xml)也说明了空文件或 `/dev/null` symlink 的语义。
+mask 会在当前用户的高优先级 unit 目录建立指向 `/dev/null` 的同名链接。该用户的手动启动、依赖拉起和 socket activation 都会被拒绝；全局 enable 链接和其他用户不受影响。[systemd.unit 对 masked load state 的定义](https://github.com/systemd/systemd/blob/v255/man/systemd.unit.xml)说明了这一覆盖机制。
 
-只有整台机器的策略是“所有用户都不自动启用 GCR”时，才修改全局 enable 链接：
+恢复该用户继承全局设置时：
 
 ```bash
-sudo systemctl --global disable \
+systemctl --user unmask \
   gcr-ssh-agent.service \
   gcr-ssh-agent.socket
 ```
 
-`--global disable` 只改变今后所有用户的 enablement，不会自动停止已经运行在各 user manager 中的实例；现有实例仍需在对应用户会话中 stop/mask，或等该 user manager 结束。只切换当前用户时无需 sudo，也无需改动全局配置。恢复当前用户的覆盖使用 `systemctl --user unmask ...`。
+> 只有目标变成“整台机器上的所有用户都不再自动启用 GCR”时，才使用 `sudo systemctl --global disable gcr-ssh-agent.service gcr-ssh-agent.socket`。这是修改全局策略，不是建立单用户例外；它不会自动停止已运行的用户实例。
 
 #### `systemctl --user` 的控制总线
 
@@ -94,96 +205,6 @@ systemctl --user status ssh-agent.service
 ```
 
 这种前缀赋值只对该命令生效；同一 shell 需要连续管理 user unit 时可以 export。它们只帮助 `systemctl` 找到控制总线，不会设置 `SSH_AUTH_SOCK`、不会选择 agent，也不会解锁私钥。若 bus socket 或 user manager 不存在，单纯补变量无效，应检查登录会话、PAM/systemd 集成或 linger 状态。
-
-#### GCR `gcr-ssh-agent`
-
-GNOME 的 `gcr4` 包可提供 `gcr-ssh-agent.service` 和 `gcr-ssh-agent.socket`，对外 socket 通常是 `%t/gcr/ssh`。`%t` 在 systemd user unit 中展开为用户 runtime 目录，通常即 `/run/user/<UID>`。[Ubuntu 24.04 `gcr4` 文件清单](https://packages.ubuntu.com/noble/amd64/gcr4/filelist)列出了这两个 unit。
-
-GCR 是 OpenSSH agent 协议的包装层：它可以列出 `~/.ssh` 中已知身份，并在真正收到签名请求时从 GNOME Secret Service 取已保存的 passphrase，或弹出图形提示，再交给内部 OpenSSH agent 完成签名。因此 `ssh-add -l` 看见身份，不一定表示对应私钥已经解密。[GNOME 维护者对加载流程的说明](https://discourse.gnome.org/t/gdm-gnome-keyring-and-gcr-ssh-agent-service/23498/3)记录了这一行为。
-
-GCR 使用 socket activation；启用 socket 后，首次连接可以按需启动 service：
-
-```bash
-systemctl --user enable --now gcr-ssh-agent.socket
-systemctl --user status gcr-ssh-agent.socket gcr-ssh-agent.service
-```
-
-socket 已存在而进程尚未运行是正常状态，单看 `pgrep` 会把这种状态误判为 agent 不可用。
-
-无图形界面时，GCR 的“按需解锁”还有一层限制：它可以先广告 `~/.ssh` 中的公钥，但私钥需要 passphrase 且 Secret Service 没有已保存秘密时，会尝试启动 `org.gnome.keyring.SystemPrompter`。没有可用的 `DISPLAY` / `WAYLAND_DISPLAY` 或图形 prompter 启动失败时，签名请求会返回 `agent refused operation`，journal 常见：
-
-```text
-couldn't prompt for password: ... SystemPrompter exited with status 1
-the /usr/bin/ssh-add command failed
-```
-
-此时 `ssh-add -l` 仍可能列出身份，因为它只查询 GCR 广告的公钥；用签名探针才能复现真正故障：
-
-```bash
-agent_socket=/run/user/"$(id -u)"/gcr/ssh
-SSH_AUTH_SOCK="$agent_socket" ssh-add -T ~/.ssh/id_ed25519.pub
-journalctl --user -u gcr-ssh-agent.service -n 50 --no-pager
-```
-
-GCR 已向 OpenSSH 声明拥有该身份后，OpenSSH 会走 agent 签名分支；agent 拒绝签名时，不会进入“直接读取 `IdentityFile`、终端询问 passphrase、再执行 `AddKeysToAgent`”的路径。因此 `AddKeysToAgent yes` 不能修复这个故障。
-
-无图形环境可以从交互式 TTY 手动把私钥加入 GCR 的内部 agent：
-
-```bash
-SSH_AUTH_SOCK="$agent_socket" ssh-add ~/.ssh/id_ed25519
-```
-
-这会在终端读取 passphrase，并缓存到 agent 生命周期结束。重启 GCR service 会清空该内存缓存；无需为普通 SSH 连接反复 restart。若期望“首次交互式 SSH 在终端解锁，随后由 `AddKeysToAgent` 缓存”，原生 OpenSSH agent 比依赖图形 prompter 的 GCR 更符合这条调用链。
-
-#### OpenSSH `ssh-agent`
-
-一些发行版在 `openssh-client` 包中提供 `ssh-agent.service`。Debian/Ubuntu 的包清单包含该 user unit 和 `/usr/lib/openssh/agent-launch`；这属于发行版集成，不是所有 Linux 发行版都采用相同 unit。[Ubuntu 24.04 `openssh-client` 文件清单](https://packages.ubuntu.com/noble-updates/amd64/openssh-client/filelist)可作为一个版本化实例。
-
-Ubuntu 24.04 的 vendor unit 是 `static`，由 `graphical-session-pre.target` 的系统级 wants 链接拉起，不能用 `systemctl --user enable ssh-agent.service` 启用。其 `agent-launch` 还会检查图形会话条件、已有的 `SSH_AUTH_SOCK` 和 `/etc/X11/Xsession.options`；条件满足时常见 socket 为 `%t/openssh_agent`。其他发行版或更新版本可能提供可启用的 `ssh-agent.socket`，应以本机 unit 为准：
-
-```bash
-systemctl --user cat ssh-agent.service
-systemctl --user is-enabled ssh-agent.service
-systemctl --user start ssh-agent.service
-systemctl --user status ssh-agent.service
-```
-
-原生 OpenSSH agent 把已加入身份保存在进程内存中。service 或系统重启后需要重新加入受保护密钥；`ssh-add -t` 或 `AddKeysToAgent` 的时间参数可以限制身份寿命。
-
-#### Agent 选择与启用
-
-GCR、OpenSSH、GPG agent 和第三方 agent 可以同时运行在不同 socket 上，但客户端一次只选中一个。选择时看所需行为，而不是只看哪个进程存在：
-
-| 行为 | GCR | 原生 OpenSSH agent |
-|---|---|---|
-| 桌面集成 | GNOME Secret Service 和图形提示 | 取决于 `SSH_ASKPASS` 与会话环境 |
-| 身份发现 | 可枚举 `~/.ssh` 中的身份并按需解锁 | 初始为空，需 `ssh-add` 或 `AddKeysToAgent` |
-| 常见发行版入口 | `gcr-ssh-agent.socket` | `ssh-agent.service` 或 `ssh-agent.socket`，随发行版变化 |
-| 重启后的状态 | 可再次从 keyring 取已保存秘密 | 内存身份消失，需要重新加入 |
-
-同名用户 unit 会覆盖系统 unit。若 `FragmentPath` 指向 `~/.config/systemd/user/ssh-agent.service`，当前使用的是本地覆盖，不是软件包原件。
-
-只有在发行版没有可用 unit、且确实需要固定 socket 的常驻原生 agent 时，才需要自建 user unit：
-
-```ini
-[Unit]
-Description=OpenSSH authentication agent
-
-[Service]
-Type=simple
-Environment=SSH_AUTH_SOCK=%t/ssh-agent.socket
-ExecStart=/usr/bin/ssh-agent -D -a $SSH_AUTH_SOCK
-
-[Install]
-WantedBy=default.target
-```
-
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now ssh-agent.service
-```
-
-`loginctl enable-linger` 会让 user manager 在没有登录会话时仍可运行，并可能在开机时启动；没有 linger 时，生命周期通常跟用户会话走。是否启用 linger 是独立的常驻策略，不是 agent 本身的要求。
 
 ### <a id="locate-agent"></a>客户端定位 agent 与选择身份
 
