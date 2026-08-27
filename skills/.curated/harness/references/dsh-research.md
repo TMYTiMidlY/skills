@@ -578,3 +578,157 @@ TUI 时间轴等界面有从 grok-pager 借来的交互，那是 UI，不是 Gro
 同一 Web profile 上再装 `dsh-auth` 或 `dsh-codex`，会与 Model Hub / 官方 `llm-pi-ai` 争夺 `openai-codex` 适配器。`dsh-auth` 对已被占用的路由会拒绝挂载。
 
 > 来源：[dsh-auth 的 OAuth 路由](https://github.com/ccch1mneyyy/dsh-TUI/blob/99b8b147a22ba3e3c55a9c909c543331b4e46cae/dsh-auth/README.md#L43-L47)、[Gemini 列为 M4](https://github.com/ccch1mneyyy/dsh-TUI/blob/99b8b147a22ba3e3c55a9c909c543331b4e46cae/dsh-auth/README.md#L128-L136)、[已被占用的路由拒绝注册](https://github.com/ccch1mneyyy/dsh-TUI/blob/99b8b147a22ba3e3c55a9c909c543331b4e46cae/dsh-auth/README.md#L93-L96)。
+
+## <a id="2026-08-28-session-import"></a>2026-08-28 · 外部会话导入 DSH
+
+本轮专题是：社区 Plugin 如何把**其他产品的聊天记录**写成 DSH 可 resume 的 Session。官方 DSH 没有这条导入面；市场目录（`dsh-market` 快照 `updated: 2026-08-16`）当时只收录 `dsh-chat-import` 与 `dsh-plugin-session-import`，后续 Codex 双向同步、网页版导入等仓库不在那份快照里。
+
+**调研时间：** 2026-08-28（Asia/Shanghai）
+
+**调研目标：**
+
+- 核对官方 Session 日志、已知事件词汇表、token meter 重放和 workspace 归组对导入器的约束。
+- 盘点把 Claude Code / Codex / ChatGPT / Cursor / Pi / opencode / DeepSeek 网页等外部记录写入 DSH 的社区仓库。
+- 比较写入路径（`sessionPersistence` / `agents.create` / 直接写 `session.jsonl.zstd`）、事件配对、反向导出与 MCP/Skills 附带能力。
+- 记录 HTTP 路由、路径范围和进程副作用；不把 README 的「一键续聊」当成已验证的 Web 组合结果。
+
+> **证据边界：** 官方源码固定 `deepseek-ai/deepseek-harness@b150a551`（`0.1.1-rc.2`）。社区仓库均为完整、非 shallow clone，HEAD 与远端默认分支一致。本轮在 `dsh-chat-import` 执行 `npm ci && npm test`（587 项通过）；在 `dsh-codex-sync` 执行 `npm ci && npm test`（38 通过、1 失败，见下文）。没有把候选装进当前 Web Profile，也没有用真实 Claude/Codex/网页账号做端到端导入。
+
+### <a id="session-import-official-constraints"></a>官方 Session 写入与恢复约束
+
+导入器最终要交出一份 DSH 能 `list` / 打开 / 续聊的 Session。官方默认 Profile 把每个 Session 写成 `.jsonl.zstd`；JSONL 后端要求**第一个 zstd 帧只含一行 header**，后面的帧才是事件批次。把整份明文压成单帧会在扫描时报 `first frame is not exactly one header line`。
+
+读路径拒绝词汇表外的事件类型，除非该事件带 `ignorable: true`。`session/imported` 不在官方 `KNOWN_SESSION_EVENT_TYPES` 中；导入器若写入这种标记，必须设 `ignorable`，否则插件卸载或换一套不含该类型的 harness 后，持久日志可能被拒绝。
+
+`assistant/message`、`tool/call`、`tool/result` 必须落在配对的 `step/start`…`step/end` 内。原生会话由 agent-loop 写这些标记；导入器漏写时，换模型或 compaction 的 token meter 冷重放会报 `assistant/message at seq N has no matching step/start event`。
+
+侧边栏归组走 `workspaceRegistry`：只 `create`+`append` 而不 `attachSession` 的会话会进「未分组」。`cwd` 为用户主目录时，DSH 沙箱 ACL 会拒绝后续工具，导入器需要跳过 HOME 归组。
+
+> 来源：[恢复拒绝未知非 ignorable 事件](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/session/session-persistence/src/coordinator.ts#L1051-L1065)、[官方已知事件词汇表（无 `session/imported`）](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/core/session/src/known-event-types.ts#L19-L68)。
+
+### <a id="session-import-repository-snapshot"></a>仓库快照
+
+下表按本轮 clone 的 HEAD。「测试」是仓库内文件或本轮实际执行，不代表已在真实 DSH Web 组合通过。
+
+| 仓库 | 版本 / commit | Stars | 主要范围 | 测试与发布信号 |
+|---|---|---:|---|---|
+| [`dsh-chat-import`](https://github.com/Nwflower/dsh-chat-import/tree/fc99352bdbcd36a65c04e045f8ebe5f42f754674) | `0.8.0` / `fc99352` | 115 | 18 种来源导入、反向导出、可选双向同步 | 34 个 `*.test.mjs`；本轮 `npm test` 587 通过；CI + headless smoke；npm 与 tag `v0.8.0` 一致 |
+| [`dsh-codex-sync`](https://github.com/Walvez/dsh-codex-sync/tree/20f707a76d2a172951932d4b1734f578f6a99dd8) | `1.6.1` / `20f707a` | 25 | Codex 会话双向 + Skills 挂载 + MCP 镜像 | 本轮 38 通过、`client.render` 1 失败（React `useState` 空）；CI Node 20/22 + `dsh-boot-smoke`；npm `v1.6.1` |
+| [`dsh-import-agents`](https://github.com/Chang-Tong/dsh-import-agents/tree/d5095df4d3b16594fb0eddd2d10f92b251d087a0) | `0.2.8` / `d5095df` | 13 | pi / opencode / Codex / Claude Code 会话，agent 转 skill | 7 个 vitest 文件；有 CI |
+| [`dsh-plugin-session-import`](https://github.com/huguangyu666/dsh-plugin-session-import/tree/13139abe5820ea07bf5a89cef36801ee17987aa0) | `0.1.1` / `13139ab` | 6 | claude / codex / reasonix / zcode | 4 个根目录 `test-*.mjs`；无 CI |
+| [`dsh-cc-import`](https://github.com/Mreate/dsh-cc-import/tree/db07df7599c4ac1594b801e56d9f605f52aabba6) | `0.1.0` / `db07df7` | 4 | Claude 会话导入 + CLAUDE.md/`/init` | 有 CI workflow；无本轮执行 |
+| [`deepseek-web-import`](https://github.com/wpc0323/deepseek-web-import/tree/8780b8c80addf9f6519a02106f6a28d2ebaedb99) | `0.1.0` / `8780b8c` | 4 | chat.deepseek.com API → DSH Session | 无测试 |
+| [`dsh-session-importer`](https://github.com/sunzeJAVA/dsh-session-importer/tree/ff8c042f85f01c951102b17d79010aec69247579) | `0.1.7` / `ff8c042` | 0 | Claude / Codex / JSONL / Markdown | 有 `test/` |
+| [`dsh-codex-import`](https://github.com/G1en-114/dsh-codex-import/tree/7ec772883ec610b5d9974d7d6ceccb93131f437d) | `0.1.0` / `7ec7728` | 2 | Codex `/codex-import` | 1 个测试文件 |
+| [`dsh-plugin-codex-import`](https://github.com/Gordonynh/dsh-plugin-codex-import/tree/85db489dcc67390d269bcfad6a883941b57366c9) | `1.0.0` / `85db489` | 1 | Codex `/codex-import` | 有 `test/` |
+| [`session-import-codex`](https://github.com/xing01l/session-import-codex/tree/5dcc2196becb8be8e983addc5340c95c90af5a8e) | `0.1.1` / `5dcc219` | 0 | 经 `codex app-server --stdio` 导入，不扫 jsonl | vitest + CI |
+| [`dsh-codex-session-sync`](https://github.com/linmu115/dsh-codex-session-sync/tree/1797669de0d7540def75bee90a5c9c5b15175455) | `0.3.3` / `1797669` | 0 | 停 DSH 进程后做 Codex 单向同步（Windows/EAC） | 2 个测试文件 |
+| [`dsh-plugin-claude-import`](https://github.com/changhang155/dsh-plugin-claude-import/tree/6d3aaff9e5958ce4d323c6247e457d954f190e4a) | `0.1.0` / `6d3aaff` | 1 | 把 Claude 记录渲染成当前对话上下文，不新建 Session | `tests/parse.test.mjs` |
+| [`dsh-claude-importer`](https://github.com/LXW419/dsh-claude-importer/tree/5796d073d603795233af851a9eb79f999878e4a9) | 无 npm / `5796d07` | 0 | Inspect 用 `plugin.json` 草稿，不是可安装 Cordis 包 | 无测试 |
+| [`dsh-web-import`](https://github.com/Ranz-Feng/dsh-web-import/tree/0a82cf23e0ab13234ce7ce7c71ef28525a0fe17d) | `0.1.0` / `0a82cf2` | 0 | CLI：网页版 `conversations.json` → 直接写 zstd | 3 个测试文件 |
+| [`dsh-importer`](https://github.com/PrismScopes/dsh-importer/tree/042181a03d334e7705d270cda01154168af9690a) | `1.0.0` / `042181a` | 0 | 网页版 token 同步到本地 JSON，供模型 `read`，不建 Session | 无测试 |
+| [`dsh-chat-import` (Scarlett)](https://github.com/AI-Scarlett/dsh-chat-import/tree/81f1a9785fbae6acd04a6b49a576b237c4f70eae) | `0.4.0` / `81f1a97` | 0 | 上游 fork，停在 0.4.0 | 测试集小于 `fc99352` |
+
+> Stars 为 2026-08-28 GitHub API 快照，只表示当时关注度，不代表架构质量或安全审计。
+
+相邻但不在本轮 clone 集的：`kinyokun/dsh-session-import`（5）等只吃 DSH `/export` zip/jsonl，属于 DSH→DSH 再导入，不是外部 transcript。Skill / 主题 / CCSWITCH 导入也不在本专题。
+
+### <a id="session-import-write-models"></a>写入模型
+
+外部记录变成 DSH Session 只有三条实测路径；「侧边栏能看到一段历史」不等于第三条。
+
+| 写入模型 | 谁用 | 续聊含义 |
+|---|---|---|
+| `ctx.sessionPersistence.create` + `append`，或 `ctx.agents.create({ seed })` | `dsh-chat-import`、`dsh-codex-sync`、`dsh-import-agents`、多数 Codex/Claude 专用包、`deepseek-web-import` | 官方列表/打开/resume；可挂 preset 与工具 |
+| 直接写 `<sessions>/<projectKey>/<id>/session.jsonl.zstd`（头帧+事件帧） | `dsh-web-import` CLI；`dsh-codex-sync` 的 `dsh-writer.mjs` 仍导出但导入热路径已改走 persistence | 不经过内存索引，通常要重启或刷新才出现 |
+| 不写 Session：markdown seed、本地 JSON 给 `read`、停进程后改磁盘 | `dsh-plugin-claude-import`、`dsh-importer`、`dsh-codex-session-sync` | 当前回合上下文或文件，不是可独立打开的导入会话 |
+
+`dsh-codex-sync` 的导入服务注明改编自 `dsh-import-agents`，并补了 256 MiB 单文件上限（避免 Node 字符串上限打断整批）和整批 workspace 再挂载。
+
+### <a id="session-import-dsh-chat-import"></a>`dsh-chat-import`
+
+这是本轮覆盖来源最多、测试最密的导入器（115）。插件 `name` 仍是 `import-claude`，bundle id 同名；npm 包与面板已是 18 种格式。默认扫描根在 `defaultRoots()`：`~/.claude/projects`、`~/.codex/sessions`、`~/.cursor/projects`、`~/.gemini/history`、`~/.reasonix/sessions`、opencode/mimocode SQLite、`~/.zcode/cli/db/db.sqlite`、`~/.grok/sessions`、`~/.openclaw/agents`、`~/.pi/agent/sessions`、`~/.hermes`、`~/.kimi{,-code}/sessions`、`~/.qoder/projects`、`~/.workbuddy/projects`、`~/.dsh/sessions`。ChatGPT 没有自动根，必须指向 `conversations.json`。
+
+转换层是零 DSH 依赖的纯函数：各源先收成回合中间结构，再 `synthesizeSession` 写出平衡日志。seq 0 为 `session/imported` 且 `ignorable: true`；随后注入一条 `source.kind='plugin'` 的环境变更 `user/message`；每轮有 `turn/start`、`step/start`…`step/end`、`user/message`、`assistant/message`，工具为 `tool/call` + 带 `sourceEventSeqs` 的 `tool/result`。落盘优先 `agents.create({ seed, setup: agentPresets.mount })`，失败再回退 `sessionPersistence.create`+`append`。`cwd === HOME` 时跳过归组。幂等登记在 `$DSH_HOME/dsh-chat-import`。
+
+入口：模型工具 `import_chat`（`format` 枚举 18 值）、`scan_discover`、`export_chat`（claude/codex/kimi）、bundle 备份/恢复、`verify_session`、识别/撤回；Web 侧边栏面板；`/import`、`/resume-claude`、`/resume-codex`。反向导出写新 UUID 文件，不覆盖已有 Claude transcript。MCP 镜像默认 dry-run，只把 YAML 写到 `$DSH_HOME/dsh-chat-import/mcp-mirror.cordis.yml`，不改 profile。双向同步面板默认关闭。
+
+Web 路由是 exact `/api-import/sessions`、`/api-import/import`、`/api-import/prefs`。注释称与面板同一信任围栏，handler 内没有 Host / Origin / `Sec-Fetch-Site` 检查；路径也不是官方 `/api` 前缀，因此不继承标准 API 栅栏。请求体里的 `sourcePath` 会交给 `ctx.fs.resolve` 再导入。
+
+> 来源：[18 种转换器与 `synthesizeSession`](https://github.com/Nwflower/dsh-chat-import/blob/fc99352bdbcd36a65c04e045f8ebe5f42f754674/lib/convert/core.mjs#L1-L128)、[`session/imported` + `ignorable`](https://github.com/Nwflower/dsh-chat-import/blob/fc99352bdbcd36a65c04e045f8ebe5f42f754674/lib/convert/core.mjs#L97-L114)、[`agents.create` 与 persistence 回退](https://github.com/Nwflower/dsh-chat-import/blob/fc99352bdbcd36a65c04e045f8ebe5f42f754674/lib/import-core.mjs#L140-L184)、[默认扫描根](https://github.com/Nwflower/dsh-chat-import/blob/fc99352bdbcd36a65c04e045f8ebe5f42f754674/lib/discovery.mjs#L68-L98)、[插件名仍为 `import-claude`](https://github.com/Nwflower/dsh-chat-import/blob/fc99352bdbcd36a65c04e045f8ebe5f42f754674/index.mjs#L49-L66)、[`/api-import/import` 按 `sourcePath` 导入](https://github.com/Nwflower/dsh-chat-import/blob/fc99352bdbcd36a65c04e045f8ebe5f42f754674/lib/panel.mjs#L236-L295)。
+
+### <a id="session-import-dsh-codex-sync"></a>`dsh-codex-sync`
+
+范围是 Codex 一家（25），但比「导入会话」宽：`~/.codex/skills` 注册为 DSH skill、`config.toml` 的 `[mcp_servers.*]` 热镜像到 `@deepseek-ai/dsh-mcp-client`、可选把 DSH 插件能力反向装进 Codex MCP。会话导入读 `~/.codex/sessions/**/rollout-*.jsonl`，id 为 `codex-<uuid>`；默认丢掉 `parent_thread_id` 子代理线程。热路径是 `persistence.create`+`append`，已存在则按用户消息文本做增量 `append`。转换器补 `step/start`…`step/end`，因为 v1.6.0 前的日志会在换模型时被 token meter 拒绝；`/repair-sessions --fix` 用系统 `zstd -dc` 读盘、按真实 `@deepseek-ai/dsh-token-meter` 校验后再写回，并留 `.bak`。
+
+`lib/dsh-writer.mjs` 仍实现头帧+事件帧的 zstd 写法，但当前 `importCodex` 不再调用它。MCP 镜像默认开，且永远排除 `dsh-plugins` 以免递归。HTTP 前缀 `/dsh-codex-sync` 同样不走官方 `/api` 栅栏；`POST /open-path` 只允许打开 Codex/DSH 相关路径，但在 Windows 上走 `cmd /c start`。
+
+本轮 `npm test`：导入/修复/host smoke 等 38 项通过；`test/client.render.mjs` 因本机全局 `@deepseek-ai/dsh` 的 React 与仓库 `node_modules/react` 不是同一份，`useState` 读到 null。不能据此判断 UI 在真实 Web Profile 里失败。
+
+> 来源：[改编自 `dsh-import-agents` 与 256 MiB 护栏](https://github.com/Walvez/dsh-codex-sync/blob/20f707a76d2a172951932d4b1734f578f6a99dd8/lib/import-service.js#L1-L29)、[create/append 与增量更新](https://github.com/Walvez/dsh-codex-sync/blob/20f707a76d2a172951932d4b1734f578f6a99dd8/lib/import-service.js#L206-L259)、[step 配对原因](https://github.com/Walvez/dsh-codex-sync/blob/20f707a76d2a172951932d4b1734f578f6a99dd8/lib/convert.mjs#L49-L60)、[修复用系统 zstd](https://github.com/Walvez/dsh-codex-sync/blob/20f707a76d2a172951932d4b1734f578f6a99dd8/lib/session-repair.mjs#L63-L75)、[MCP 镜像职责](https://github.com/Walvez/dsh-codex-sync/blob/20f707a76d2a172951932d4b1734f578f6a99dd8/lib/mcp.js#L1-L21)、[`/open-path` allowlist 与 `cmd /c start`](https://github.com/Walvez/dsh-codex-sync/blob/20f707a76d2a172951932d4b1734f578f6a99dd8/lib/index.js#L615-L664)。
+
+### <a id="session-import-other-plugins"></a>其余项目
+
+**多源、写入 Session**
+
+| 项目 | Stars | 来源 | 写入 | 要点 |
+|---|---:|---|---|---|
+| `dsh-import-agents` | 13 | `~/.pi/agent/sessions`、opencode db、`~/.codex/sessions`、Claude jsonl | 插件路径 `sessionPersistence`；CLI `--apply` 另走原始 zstd。agent 写 `$DSH_AGENTS_HOME/skills` | `/import-all`、composer Sync、新会话迁移询问；是 `dsh-codex-sync` 导入服务的上游。事件**没有** `step/start`…`step/end`，换模型时会撞 token meter |
+| `dsh-plugin-session-import` | 6 | claude / codex / reasonix / zcode | `agents.create` | 侧边栏与 `/api-import/list|batch`，与 `dsh-chat-import` **同前缀冲突**；id 为 `import-${Date.now()}-…`，不幂等；`findJsonlBySessionId` 只读 `USERPROFILE`，Linux 会漏 |
+| `dsh-session-importer` | 0 | Claude、Codex、Kimi、generic JSONL、Markdown；扫描还看 `.gemini` / `.cursor` / `.aider` / `.windsurf` 目录 | `sessionPersistence`（可选 inject） | 无 `dsh.bundle`，需手写 patch。硬 `inject` 为 `commands`+`sessions`；persistence 另绑，服务名对不上时可能不写盘。id 为 `import-${source}-${sha1}` |
+
+**单源 Codex**
+
+| 项目 | Stars | 输入 | 写入 | 与 `dsh-codex-sync` 的差别 |
+|---|---:|---|---|---|
+| `dsh-codex-import` | 2 | `~/.codex/sessions/**/rollout-*.jsonl` | 插件 persistence；CLI 原始 zstd（目录名未 `encodeSegment`） | 随机 `session-${uuid}`；另写 `permission/preset` / `sandbox/mode` |
+| `dsh-plugin-codex-import` | 1 | 同上，可 `--archived` | persistence，**沿用 Codex UUID** 作 DSH id | 无 bundle，需手写 patch；会补缺失的 tool/result |
+| `session-import-codex` | 0 | **不读 jsonl**：拉起 `codex app-server --stdio` | persistence，id `codex-${threadId}`；自定义 `session-import-codex/source`（`ignorable: true`） | 结构最接近官方事件校验；模型名写死 `codex-import-unknown` |
+| `dsh-codex-session-sync` | 0 | 读 Codex home，转换器是 vendored 的 chat-import | 原始 zstd + **停掉官方 DSH 再重启** | Windows/EAC：`cordis.patch.yml` 写死 `D:\AI\DeepSeek-Harness`，需要 `Start-Official-DSH.ps1` |
+
+**Claude**
+
+`dsh-cc-import`（npm 名 `cc-import`，4）方向是 **Claude → DSH**：jsonl 写成 Session（id `cc-<filename>`），并注入 CLAUDE.md/DSH.md、提供 `/init` 写 DSH.md。`turn/end` 的 `reason.kind` 为 `'success'`，官方原生是 `'completed'`，恢复时是否接受未在本轮验证。路由 `/api/cc-import/*`，无测试，CI 只 build。
+
+`dsh-plugin-claude-import`（1）默认把摘要渲染进**当前**对话；`createSession=true` 时走 apiProxy 新建空 Session 再 `sessions.prompt` 一条 seed 文本，仍然不是把 jsonl 重放成事件日志。`dsh-claude-importer`（0）只有 Inspect `plugin.json` 和 `cordis_define` 草稿，不能 `dsh plugin add`。
+
+**DeepSeek 网页版**
+
+| 项目 | Stars | 输入 | 是否 DSH Session |
+|---|---:|---|---|
+| `deepseek-web-import` | 4 | 设置页粘贴 `userToken`，拉 `chat.deepseek.com` API | 是：文本-only 事件，随机 `session-…`，须选手动工作区。Host HTTP 使用 `rejectUnauthorized = false` |
+| `dsh-web-import` | 0 | 开发者工具拷的 `conversations.json` | 是：独立 CLI（不是 Plugin），直接写两帧 zstd；默认若 3080 已占用则拒绝，除非 `--import-only` |
+| `dsh-importer` | 0 | 同样要 token，curl 轮询官方导出 | 否：写入 `$DSH_HOME/dsh-importer/` 的 JSON，UI「发送」只把路径填进 composer |
+
+`dsh-importer` 的 Origin 允许列表含 `chat.deepseek.com` 与 `http://127.0.0.1:3080`，但缺 Origin 时仍放行，且 `status` 会把 token 原文返回。`deepseek-web-import` 把浏览器 `userToken` 交给 Host 去拉历史，等于把网页登录态交给 DSH 进程。
+
+**Fork**
+
+`AI-Scarlett/dsh-chat-import@81f1a97` 与 Nwflower 同分叉根 `e791dbe`，停在 `0.4.0`（157 commit），上游已是 `0.8.0`（286 commit）。Scarlett 独有 `project-share`，未合进上游；不是双向同步的现行版本。
+
+> 来源：[import-agents 无 step 标记的 convert](https://github.com/Chang-Tong/dsh-import-agents/blob/d5095df4d3b16594fb0eddd2d10f92b251d087a0/lib/convert.mjs#L31-L132)、[session-importer 的 inject](https://github.com/sunzeJAVA/dsh-session-importer/blob/ff8c042f85f01c951102b17d79010aec69247579/src/index.js#L18-L36)、[claude-import 默认不重放日志](https://github.com/changhang155/dsh-plugin-claude-import/blob/6d3aaff9e5958ce4d323c6247e457d954f190e4a/lib/index.js#L1-L4)、[网页版导入 persistence](https://github.com/wpc0323/deepseek-web-import/blob/8780b8c80addf9f6519a02106f6a28d2ebaedb99/lib/index.js#L225-L255)、[CLI 两帧 zstd](https://github.com/Ranz-Feng/dsh-web-import/blob/0a82cf23e0ab13234ce7ce7c71ef28525a0fe17d/src/dsh.js#L7-L16)。
+
+### <a id="session-import-security"></a>导入器的请求与磁盘范围
+
+和[浏览器文件传输](#file-transfer-security-boundaries)同一条：Plugin 自注册的 exact / 非 `/api` 前缀路由不会自动得到 Host/Origin/`Sec-Fetch-Site` 栅栏。本轮导入器里，`/api-import/*` 与 `/dsh-codex-sync` 都是这种路由；它们能列出本机 agent 目录、按客户端给出的路径导入、开关 MCP 镜像或打开本机文件。默认 Web bind 仍是 loopback，因此风险首先是「本机浏览器里的任意页面」，不是公网匿名。LAN 或反向代理部署时，这些路由没有第二层身份。
+
+另外几条与文件上传不同的范围：
+
+- 导入器按设计读取 `~/.claude`、`~/.codex`、SQLite 库和网页 `userToken`。这是功能，不是越权；把它们挂到可被非 loopback 访问的 Host 上，等于导出这些目录。
+- `dsh-chat-import` 的 `export_chat format=claude` 向 `~/.claude/projects` 写新文件（新 UUID，不覆盖）。`dsh-codex-sync` 向 `~/.codex/sessions` 写新 rollout，并改 `config.toml`（`codex-install`）。
+- `dsh-codex-sync` 的 MCP 镜像会在 DSH 进程里拉起 Codex 配置的 stdio/HTTP 服务器；`dsh-chat-import` 的 MCP 工具默认只出 YAML 计划。
+- `/repair-sessions` 与部分 CLI 用系统 `zstd` 二进制加裸 `writeFileSync` 改 Session 目录；成功路径有 `.bak`，仍绕过 `sessionPersistence` 的追加语义。
+- `dsh-codex-session-sync` 会停止官方 DSH 进程。这超出「写一条会话日志」。
+- `deepseek-web-import` 的 Node HTTPS 客户端关闭证书校验（`rejectUnauthorized = false`）。
+- `dsh-importer` 缺 Origin 时仍允许请求，`status` 回传明文 token。
+- `dsh-plugin-session-import` 与 `dsh-cc-import` 的导入 HTTP 同样没有 Host/Origin 栅栏；batch 体里的路径是任意本机读取。
+
+同 Profile 同时安装 `dsh-chat-import` 与 `dsh-plugin-session-import` 会争 `/api-import/*`；再叠加 `dsh-codex-sync` 与 `dsh-import-agents` 会重复扫描同一批 Codex rollout，id 前缀不同（`import-…` vs `codex-…` vs `claude-…`），列表里可能出现同一对话的多份副本。
+
+### <a id="session-import-validation"></a>验证范围
+
+本轮源码结论能回答「谁把外部记录写成哪一种 DSH 产物」。不能代替：真实 Claude/Codex 目录导入后打开、换模型、compaction、fork、插件卸载再恢复；网页版 token 拉取；MCP 镜像在已占用 `openai-codex` 路由的 Profile 上的冲突；Windows 与 Linux 默认根（`APPDATA` / `USERPROFILE` / `.local/share`）是否扫全。
+
+`dsh-chat-import` 的 587 项测试覆盖转换、幂等、预算裁剪、发现缓存和面板 prefs，不启动真实 `dsh web`。`dsh-codex-sync` 的 host smoke 用假 MCP client 装插件并断言命令名，不导入真实 rollout。CI 里的 `dsh plugin add` smoke 只证明当时 npm latest 的 DSH 能激活插件行。
+
+因此：需要立刻从 18 家 transcript 续聊，以 `dsh-chat-import` 为候选；需要 Codex 会话+Skills+MCP 一起迁，以 `dsh-codex-sync` 为候选；两者都还没有本轮的真实 Web 组合验收。
