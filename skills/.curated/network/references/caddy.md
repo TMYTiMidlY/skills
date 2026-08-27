@@ -119,9 +119,221 @@ systemctl cat caddy | grep -E 'ExecStart=|ExecReload='
 - 多人/多自动化会同时改 Caddy 时要串行；若当前版本的 `GET /config/...` 响应带 `Etag`，写请求带回 `If-Match`，收到 412 就重新读取，不能在旧快照上硬重试。
 - 需要构造复杂 JSON 时，优先用**正在运行的同一个 Caddy 二进制**执行 `caddy adapt` / `POST /adapt`，或从 `GET /config/` 克隆同类对象；不要凭记忆手写第三方插件 JSON schema。
 
+
+### 先分清三种 Caddyfile 语法
+
+`@dsh`、`(dsh)` 和 `{host}` 看起来都像“给东西起名字”，实际处在三个完全不同的层次：
+
+| 写法 | 含义 | 生效阶段 |
+|---|---|---|
+| `@dsh` | **命名请求匹配器**（named matcher）：给一组请求条件起名 | 每个请求到来时判断真/假 |
+| `(dsh)` | **可复用 snippet**：给一段 Caddyfile 配置起名，供 `import dsh` 展开 | Caddyfile 解析 / adapt 时展开 |
+| `{host}` | **运行时占位符**（placeholder）：当前请求的 Host | handler 执行时替换成请求值 |
+
+下面的 `@dsh` / `handle` 是由 `import` 插进 `:18080` site block 的 route fragment，不是可单独运行的完整 Caddyfile。在这个上下文里：
+
+```caddyfile
+@dsh host dsh.hfnl.app.chenzhaoyun.com
+
+handle @dsh {
+    reverse_proxy 127.0.0.1:3080
+}
+```
+
+第一行不是赋值，也没有定义模板。它近似于：
+
+```javascript
+const dsh = request.host === "dsh.hfnl.app.chenzhaoyun.com"
+
+if (dsh) {
+    reverseProxy("127.0.0.1:3080")
+}
+```
+
+`dsh` 只是匹配器的本地名字；改成 `banana`，行为完全相同：
+
+```caddyfile
+@banana host dsh.hfnl.app.chenzhaoyun.com
+
+handle @banana {
+    reverse_proxy 127.0.0.1:3080
+}
+```
+
+命名匹配器也可以用块形式组合条件。主 Caddyfile 里的 `@blocked` 与 `@dsh` 属于同一种语法：
+
+```caddyfile
+@blocked {
+    not remote_ip 10.144.18.66 10.144.18.100 127.0.0.1 ::1
+}
+respond @blocked 403
+```
+
+真正接近“模板”的是 snippet：
+
+```caddyfile
+(dsh_proxy) {
+    reverse_proxy 127.0.0.1:3080
+}
+
+example.com {
+    import dsh_proxy
+}
+```
+
+`(dsh_proxy)` 只负责复用配置，本身不判断请求 Host。`{host}` 又是另一回事，例如入口 Caddy 的：
+
+```caddyfile
+header_up Host {host}
+```
+
+这里 Caddy 会在处理请求时把 `{host}` 换成该请求自己的 Host。结论是：`@dsh` 这个**名字**可以任意换，但在当前共享监听架构里，必须保留这个 Host 条件或等价 matcher；否则 DSH 路由会变成无条件分支。
+
+
 ### 实例：临时加入 DSH admin 路由
 
 这次实际场景是：公网 HTTPS 网关已经负责证书与 TLS，内层 Caddy 监听 `10.144.18.100:18080`，按 Host 分流；DSH 已监听 `127.0.0.1:3080`，现有 `admin_access` policy 只允许 `authp/admin`。
+
+
+#### “共享 `:18080`”共享的是监听入口，不是后端
+
+本机主 Caddyfile 只有一个内网 HTTP listener：
+
+```caddyfile
+:18080 {
+    bind 10.144.18.100
+
+    @blocked {
+        not remote_ip 10.144.18.66 10.144.18.100 127.0.0.1 ::1
+    }
+    respond @blocked 403
+
+    import /etc/caddy/routes.d/*.caddy
+    respond 404
+}
+```
+
+`10.144.18.66` 是入口机（Alibaba）的组网地址。`@blocked` 是命名匹配器：来源 IP 不在白名单时为真，设计意图是返回 403；但文本位置能否保证它先于业务 route 执行，还要看 adapt 后的顺序（见下方警告）。与此独立，很多公网域名都被入口 Caddy 转到同一个目标：
+
+```text
+dsh.hfnl.app.chenzhaoyun.com       ─┐
+pg.hfnl.app.chenzhaoyun.com         ├─→ 10.144.18.100:18080
+slides.hfnl.app.chenzhaoyun.com     ┤
+code.timidly.hfnl.app...           ─┘
+```
+
+目标 IP 和端口相同，不代表请求失去原域名。入口 Caddy 明确保留 Host，因此内层收到的请求仍类似：
+
+```http
+GET / HTTP/1.1
+Host: dsh.hfnl.app.chenzhaoyun.com
+X-Forwarded-Proto: https
+```
+
+内层 Caddy 不靠端口区分这些业务，而是根据每个请求的 Host 选择 route。
+
+#### `import` 展开后怎样理解
+
+`import /etc/caddy/routes.d/*.caddy` 在 Caddyfile 解析时把匹配文件的 token 原地展开，可以把它理解成“把各 route 文件内容插进当前 `:18080` block”。例如这些 fragment：
+
+```caddyfile
+# routes.d/dsh.caddy
+@dsh host dsh.hfnl.app.chenzhaoyun.com
+handle @dsh {
+    authorize with admin_access
+    reverse_proxy 127.0.0.1:3080
+}
+
+# routes.d/pg.caddy
+@pg host pg.hfnl.app.chenzhaoyun.com
+handle @pg {
+    authorize with admin_access
+    reverse_proxy 127.0.0.1:5050
+}
+
+# routes.d/slides.caddy
+@slides host slides.hfnl.app.chenzhaoyun.com
+handle @slides {
+    reverse_proxy 127.0.0.1:<slides-port>
+}
+```
+
+概念上展开为：
+
+```caddyfile
+:18080 {
+    bind 10.144.18.100
+
+    @blocked {
+        not remote_ip 10.144.18.66 10.144.18.100 127.0.0.1 ::1
+    }
+    respond @blocked 403
+
+    @dsh host dsh.hfnl.app.chenzhaoyun.com
+    handle @dsh {
+        authorize with admin_access
+        reverse_proxy 127.0.0.1:3080
+    }
+
+    @pg host pg.hfnl.app.chenzhaoyun.com
+    handle @pg {
+        authorize with admin_access
+        reverse_proxy 127.0.0.1:5050
+    }
+
+    @slides host slides.hfnl.app.chenzhaoyun.com
+    handle @slides {
+        reverse_proxy 127.0.0.1:<slides-port>
+    }
+
+    respond 404
+}
+```
+
+
+`<slides-port>` 只是示意，占用端口以实际 route 文件为准。上面的展开图用于理解配置来源；Caddyfile adapter 之后还会按 directive order 整理原生 JSON route，所以运行态的数组位置必须以 `caddy adapt` 或 `GET /config/` 为准，不能只按文本行号猜。
+
+> ⚠️ **来源限制不能只靠文本先后判断。** 普通 site block 会对不同 directive 排序；`handle` 通常排在 `respond` 前。2026-08-27 对本机 `GET /config/` 的实查结果是：业务 Host routes 位于 index `0..18`，`<blocked>` 在 `19`，catch-all 在 `20`。因此上面“`respond @blocked 403` 写在 `import` 前”表达了意图，却不能证明非白名单请求一定先被挡住。
+
+若来源白名单是硬安全边界，用 `route` 明确保留字面顺序，再检查 active JSON：
+
+```caddyfile
+:18080 {
+    bind 10.144.18.100
+
+    route {
+        @blocked {
+            not remote_ip 10.144.18.66 10.144.18.100 127.0.0.1 ::1
+        }
+        respond @blocked 403
+
+        import /etc/caddy/routes.d/*.caddy
+        respond 404
+    }
+}
+```
+
+在来源顺序已由 `route` 固定、或请求本来就来自入口机/本机时，Host 分流结果是：
+
+| 请求 | 结果 |
+|---|---|
+| `Host: dsh.hfnl...` | 先过 `admin_access`；授权成功后转到 `127.0.0.1:3080` |
+| `Host: pg.hfnl...` | 命中 `@pg`，转到 `127.0.0.1:5050` |
+| `Host: slides.hfnl...` | 命中 `@slides`，转到它自己的后端 |
+| 未知 Host | 所有业务 matcher 都为假，落到最终 404 |
+| 非白名单来源 | `@blocked` 为真；在上述 `route` 结构中先于业务 route 返回 403 |
+
+如果去掉 Host matcher，写成无条件 handle：
+
+
+```caddyfile
+handle {
+    reverse_proxy 127.0.0.1:3080
+}
+```
+
+它会成为这组 `handle` 的无条件分支，可能把原本属于 pg、slides、code 等域名的请求也送进 DSH。因而在当前共享 `:18080` 架构中，`@dsh` 这个字面名字可以换成 `@banana`，但 `host dsh.hfnl.app.chenzhaoyun.com` 这个条件或等价 Host matcher 必须存在。
+
 
 先展开目标 route 数组，找到 blocked / catch-all 前的 index：
 
@@ -1819,6 +2031,7 @@ reverse_proxy http://127.0.0.1:8082 {
 
 - 基础站点优先顺序：**域名模式 > IP 模式**
 - 功能叠加顺序：**先反代，再错误页，再认证**
+- Caddyfile 语法别混：`@name` 是请求 matcher，`(name)` 是可 `import` 的 snippet，`{host}` 是运行时 placeholder；共享监听上的每条业务 route 必须保留 Host matcher
 - `reload` 只适合改 Caddyfile；**换二进制或改环境变量用 `restart`**
 - **`reload` 永久卡住 / 挂起**（终端不返回、服务仍在）：第一手 `systemctl restart caddy` 解卡；治本 = `timeout` 包住 reload + 收严 on-demand 签证 + `grace_period`/`stream_timeout` 封顶泄漏，详见「`systemctl reload caddy` 卡住 / 永久挂起」节
 - Admin API 的 `PUT /config/.../<index>` 会向数组**插入**，`PATCH` 才是替换；临时对象加唯一 `@id`，用 `/id/<name>` 验证和定向撤销
