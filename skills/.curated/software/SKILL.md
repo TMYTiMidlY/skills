@@ -83,7 +83,7 @@ MAS（`irm https://get.activated.win | iex`；HWID / Ohook / TSforge / Online KM
 
 ## 格式转换
 
-pandoc 文档转换（LaTeX→Word）、PDF→图片、feishu2md 飞书/Lark→Markdown，以及 Markdown→PDF 的三档路线——最轻量的 Calibre `ebook-convert`、印刷级 CSS Paged Media 引擎（Prince / Vivliostyle / Paged.js / WeasyPrint 选型、Prince XML 无 sudo pixi 安装与 CJK 字体大坑、引用标签预处理 → pandoc → Prince 一键流水线、Vivliostyle 自定义 CSS）、中文友好的 Typst 路线——全部见 [references/format-conversion.md](references/format-conversion.md)。
+格式转换覆盖 LaTeX→Word（pandoc 引用处理）、PPTX→PDF（Office/LibreOffice 导出及字体、版式、动态字段与视觉验收）、Markdown→PDF（Calibre、CSS Paged Media、Typst）、PDF→图片（Poppler/MuPDF 与 CJK 兼容性），以及飞书/Lark→Markdown（feishu2md 的权限、配置和表格后处理）。完整流程见 [references/format-conversion.md](references/format-conversion.md)。
 
 ## USTC Overleaf / olcli
 
