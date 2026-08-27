@@ -1,6 +1,6 @@
 # DeepSeek Harness（dsh）Plugin 开发
 
-本文面向 Plugin 作者，集中说明 DSH 插件系统的组成、配置合成和生命周期，再给出从临时原型到源码工程、分层验证、打包安装与版本维护的完整开发流程。运行 DSH、安装或卸载现成 Plugin、使用内置扩展以及判断完整权限边界见 [DeepSeek Harness 运行时](dsh.md)；现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-plugin-research.md)。
+本文面向 Plugin 作者，集中说明 Cordis 插件框架的组成、配置合成和生命周期，再给出从临时原型到源码工程、分层验证、打包安装与版本维护的完整开发流程。运行 DSH、安装或卸载现成 Plugin、使用内置扩展以及判断完整权限边界见 [DeepSeek Harness 运行时](dsh.md)；现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-plugin-research.md)。
 
 > **来源口径：** 模块与生命周期的原有结论按 2026-08-16 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)保留；开发、安装和测试流程另按 2026-08-26 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e)复核。每条具体引用都链接到对应 commit。
 
