@@ -511,67 +511,70 @@ Model Hub 管理模型目录、路由和凭据入口，不会把不同供应商�
 
 > 来源：[`dsh-file-upload` 在上传处理阶段调用视觉描述](https://github.com/HongMing-Huang/dsh-file-upload/blob/ce4ca943da592be36a784a5648d36a600aeda136/src/upload.ts#L199-L215)、[社区文件上传 Plugin 的外部视觉调用](https://github.com/HongMing-Huang/dsh-file-upload/blob/ce4ca943da592be36a784a5648d36a600aeda136/src/vision.ts#L60-L135)。
 
-## <a id="2026-08-28-web-search-codex-quota"></a>2026-08-28 · `web_search` 与 Codex 额度、Model Hub 边界
+## <a id="2026-08-28-web-search-codex-quota"></a>2026-08-28 · `web_search` 的搜索提供方与额度归属
 
-本轮从 bbei 工作区一份已归档笔试会话出发，核对 `web_search` 实际打到哪家 API，再对照官方 web seam、`dsh-codex`、`dsh-codex-subscription`、`dsh-plugin-subscriptions`、`dsh-TUI`/`dsh-auth`，以及本机安装的 `@timidly/dsh-model-hub`。核心问题：会话模型已经是 Codex 时，`web_search` 会不会自动吃 Codex 额度；Model Hub 能不能兼做这件事；若要在 Hub fork 里做，应吸收哪些既有实现的约束。
+上一节说明 `read_image` 在 Tool 执行阶段不另开模型请求。本节说明 `web_search` 相反：账单跟着 `ctx.web` 当时选中的搜索提供方走，不跟着对话模型走。
 
 **调研时间：** 2026-08-28（Asia/Shanghai）
 
-> **证据边界：** 笔试会话的 `web_search` 结论来自解压后的 `session.jsonl` 工具结果，不是实时网络复测。插件行为以本机 `rorepos/dsh-codex`、`rorepos/dsh-codex-subscription`、`rorepos/dsh-plugin-subscriptions`、`rorepos/dsh-TUI` 与 `dsh-model-hub` checkout 为准；官方 seam 以 DeepSeek Harness `packages/web/**` 为准。未用真实 ChatGPT 账号打通 Codex `alpha/search` 端到端。
+> 官方 seam 与默认 composition 以 DeepSeek Harness [`b150a551`](https://github.com/deepseek-ai/deepseek-harness/tree/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e) 为准。社区插件以各自仓库对应 commit 为准，见各节来源。供应商如何把搜索折算成订阅额度或金额，仍由该供应商的实时规则决定。
 
-### 工具名不决定搜索账单
+### <a id="web-search-provider-selection"></a>`web_search` 与 WebSearchProvider
 
-`web_search` 由 `@deepseek-ai/dsh-tool-web` 注册，只拥有 schema 与结果卡片。执行路径是 `ctx.web.search()`，账单属于当时选中的 `WebSearchProvider`，与对话模型路由无关。这和上一节 `read_image` 不同：`read_image` 执行阶段只做本地 I/O；官方 DeepSeek 搜索提供方会**另开一轮** Anthropic 兼容 Messages 调用（`web_search_20250305`），用 `DEEPSEEK_API_KEY`，打 `https://api.deepseek.com/anthropic/v1`。
+`web_search` 由 `@deepseek-ai/dsh-tool-web` 注册，负责 schema 与结果卡片。执行路径是 `ctx.web.search()`，由当时选中的 `WebSearchProvider` 发请求。对话里选了 `openai-codex` / `gpt-5.6-sol`，并不改搜索提供方。
 
-`dsh-base` 已把 `web.searchProvider` 钉成 `deepseek-official`。因此会话选 `openai-codex / gpt-5.6-sol` 也不会改搜索账单。归档笔试会话里 32 次 `web_search` 全部 `WEB_PROVIDER_CREDENTIAL_MISSING`（缺 `DEEPSEEK_API_KEY`），请求未出站；后续材料来自 bash 抓公开搜索引擎与高校官网。
+`dsh-base` 把 `web.searchProvider` 写成 `deepseek-official`。该提供方另开一轮 Anthropic 兼容 Messages 调用：模型默认 `deepseek-v4-flash`，工具为 `web_search_20250305`，凭据复用 `DEEPSEEK_API_KEY`，基址默认 `https://api.deepseek.com/anthropic/v1`（再拼 `/messages`）。这与 chat-completions 使用的 `https://api.deepseek.com` 不是同一基址，因此不复用 `$DEEPSEEK_BASE_URL`。
 
-Exa 是第三条独立账单：环境变量 `EXA_API_KEY`，插件 `@deepseek-ai/dsh-web-search-exa`，端点 `https://api.exa.ai/search`。默认 composition 不启用它。Perplexity 同理。多个搜索提供方同时可用且未钉 `searchProvider` 时，seam 抛 `WEB_PROVIDER_AMBIGUOUS`。
+缺 key 时提供方在发 HTTP 之前失败，错误码 `WEB_PROVIDER_CREDENTIAL_MISSING`，会话里不会出现下面这条 log-only 事件。凭据就绪并准备发出时，提供方会先 `append` `web/deepseek-search-llm-request`，再 `fetch` 该 Messages 端点。事件正文含 endpoint、`anthropic-version` 和秘密已剥除的 JSON body（`Perform a web search for the query: …` 与 `web_search_20250305`）。
 
-### 本机 Model Hub 当时不管搜索
+一次实测会话在对应 `web_search` 调用旁留下了该事件，字段与默认常量一致：`endpoint` 为 `https://api.deepseek.com/anthropic/v1/messages`，`apiVersion` 为 `2023-06-01`，`model` 为 `deepseek-v4-flash`，`max_tokens` 为 4096，`max_uses` 为 5。据此可以判断那一次搜索走了 DeepSeek 搜索提供方。返回的网页 URL 不能当判据，DeepSeek 与 Codex 都可能搜到同一页面。
 
-本机 Web profile 的 bundles 是 `dsh-base`、`dsh-web-app`、`@timidly/dsh-model-hub@0.2.3-remote.1`。Hub 的 `inject` 只有 `connection` 与 `settings`；`cordis.patch.yml` 插入 authorization 与 model-hub，并关掉官方 Models 页。源码没有 `registerSearchProvider`。Hub 管的是对话路由与两套 Codex 凭据：
+> 来源：[工具只调用 `ctx.web.search()`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/tool-web/README.zh.md#L1-L15)、[`dsh-base` 钉死 `searchProvider: deepseek-official`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/bundle/base/cordis.patch.yml#L404-L407)、[DeepSeek 搜索默认基址与模型](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-deepseek/src/provider.ts#L26-L47)、[发出前记录的请求体](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-deepseek/src/provider.ts#L197-L218)、[事件写入会话](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-deepseek/src/index.ts#L117-L121)、[凭据缺失不写该事件](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-deepseek/README.zh.md#L49)。
 
-| 路由 key | 凭据 | 适配器 |
+Exa 是另一条账单：环境变量 `EXA_API_KEY`，插件 `@deepseek-ai/dsh-web-search-exa`，端点 `https://api.exa.ai/search`。默认 composition 不启用它。Perplexity 同类。多个搜索提供方同时可用、又未钉 `searchProvider` 时，seam 抛 `WEB_PROVIDER_AMBIGUOUS`。
+
+> 来源：[Exa 的 `apiKey` 与 `$EXA_API_KEY`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-exa/README.zh.md#L11-L24)、[提供方选择与歧义](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web/README.md#L31-L42)。
+
+一份归档会话里，32 次 `web_search` 均返回 `WEB_PROVIDER_CREDENTIAL_MISSING`，会话中无 `web/deepseek-search-llm-request`。那一轮没有发出 DeepSeek 搜索 HTTP。
+
+### <a id="model-hub-and-search"></a>Model Hub 与搜索提供方
+
+Model Hub 的 Host `inject` 是 `connection` 与 `settings`。它注册模型目录、Authorization 与两条 Codex 对话路由，不调用 `ctx.web.registerSearchProvider`。显示名「OpenAI Codex」不能区分下面两行：
+
+| 路由 key | 凭据记录 | 适配器 |
 |---|---|---|
 | `openai-codex` | `llm-pi-ai` 的 `recordKeyFor()` | 官方 `PiAiAdapter` |
-| `codex` | `model-hub` 范围的 native grant | Hub `NativeOAuthAdapter` |
+| `codex` | Model Hub 自有 native grant | Hub `NativeOAuthAdapter` |
 
-显示名「OpenAI Codex」不足以区分。两条路由的 token 不得交叉刷新。
+两条路由的 token 分属不同记录范围，不能交叉刷新。
 
-### 社区里真正把 `web_search` 接到 Codex 的实现
+> 来源：[Model Hub 的两条 Codex 路由](#model-hub-codex-routes)、[Host `inject` 为 `connection` 与 `settings`](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/index.ts#L89-L90)。
 
-| 项目 | 做法 | 搜索 id | 是否另注册 LLM |
-|---|---|---|---|
-| `dsh-codex` | `OpenAICodexSearchProvider` 打固定 `https://chatgpt.com/backend-api/codex/alpha/search`，与对话共用 ChatGPT OAuth；patch 把 `searchProvider` 设为 `openai-codex` | `openai-codex` | 是，`openai-codex` |
-| `dsh-codex-subscription` | 同样打 Codex 独立搜索；设置可在 DSH 默认 / Codex / 自动之间切换；失败不静默改走别的付费路由 | 自有 Codex 搜索 id + auto 包装 | 是，`openai-codex` |
+若在 Model Hub 进程内再注册搜索提供方：搜索 registry 的 id 与 LLM 路由 id 是两套表；搜索 id 写成 `openai-codex` 时，与 [`dsh-codex` 使用同一搜索 id](https://github.com/Yan-Zero/dsh-codex/blob/e3e54e206f7c829503c7e6eed378643ba0416792/src/search.ts#L19-L26) 并存会触发 `WEB_DUPLICATE_PROVIDER`。LLM 侧再注册 `openai-codex` 适配器会与官方 / Hub 已占路由冲突。默认 composition 已钉 `deepseek-official`，不改 `web.searchProvider` 则新提供方不会被选中。
 
-应吸收的约束：
+### <a id="community-codex-search-plugins"></a>把 `web_search` 接到 Codex 订阅的插件
 
-- 端点写死，配置不能把 bearer 重定向到别的 origin。
-- `available()` 只做本地检查，不发网络。
-- 只接受 `http:`/`https:` 引用；结构化 `text_result`，不从散文里抓 URL。
-- 取消映射为 `WEB_ABORTED`；401/403 为 `WEB_PROVIDER_CREDENTIAL_MISSING`。
-- 诊断文本去掉 JWT。
-- 失败不回退到 DeepSeek 或其他付费搜索。
-- 不要用 `openai-codex` 当搜索 id，以免与 `dsh-codex` 撞 `WEB_DUPLICATE_PROVIDER`。
-- 不要再注册一条 `openai-codex` LLM 适配器，Hub 已经占着。
-- 不要改 `KNOWN_SESSION_EVENT_TYPES`：第三方事件在插件卸载后可能导致 Session 恢复拒绝。
+这些插件把现有 `web_search` 接到 ChatGPT Codex 独立搜索，同时各自再注册 `openai-codex` 对话适配器：
 
-`dsh-plugin-subscriptions` 的 `x_search` 是 Grok 订阅上的 **X/Twitter** 搜索，不是网页 `web_search`。它还自建 `codex`/`claude`/`grok`/`copilot` 适配器，和 Hub 冲突。
+| 项目 | 搜索后端 | 搜索提供方 id |
+|---|---|---|
+| [`dsh-codex`](https://github.com/Yan-Zero/dsh-codex/tree/e3e54e206f7c829503c7e6eed378643ba0416792) | 固定 `https://chatgpt.com/backend-api/codex/alpha/search`，与对话共用 ChatGPT OAuth；bundle 把 `searchProvider` 设为 `openai-codex` | `openai-codex` |
+| [`dsh-codex-subscription`](https://github.com/WSL043/dsh-codex-subscription/tree/a738dbaf5a48101c0b153421e4abdd28dddab100) | 同一 Codex 独立搜索；设置可在 DSH 默认搜索、Codex 搜索与按对话路由自动切换之间选择；失败时不改走另一条付费路由 | 自有 Codex 搜索 id，外加自动切换包装 |
 
-### dsh-TUI 没有 Gemini / Grok 网页搜索
+`dsh-codex` 的搜索实现还固定：端点不可配置，以免 bearer 被转到其他 origin；`available()` 只做本地检查；只收录 `http:` / `https:` 的 `text_result`；取消为 `WEB_ABORTED`，401/403 为 `WEB_PROVIDER_CREDENTIAL_MISSING`；诊断文本去掉 JWT 形态。
 
-本机 `dsh-tui` profile 只装 TUI + `dsh-base`。`dsh-auth` 给对话做 OAuth（`openai-codex` / `anthropic` / `xai`）；README 写明 Gemini 是 M4，pi-ai 没有 Google 登录。TUI 里的 grok 是 xAI 对话模型或时间轴 UI，不是 Grok 网页搜索。把 `dsh-auth` 装进 Web 会和 Hub 抢 `openai-codex`。TUI 生态规范里有按 provider 覆盖 `web_search` 执行的测试夹具，并未随包发布 Gemini/Grok 搜索提供方。
+> 来源：[Codex 独立搜索 URL 与提供方 id](https://github.com/Yan-Zero/dsh-codex/blob/e3e54e206f7c829503c7e6eed378643ba0416792/src/search.ts#L19-L26)、[`dsh-codex` 用现有 `web_search`](https://github.com/Yan-Zero/dsh-codex/blob/e3e54e206f7c829503c7e6eed378643ba0416792/README.zh.md#L12-L13)、[`dsh-codex-subscription` 的搜索切换](https://github.com/WSL043/dsh-codex-subscription/blob/a738dbaf5a48101c0b153421e4abdd28dddab100/README.zh-CN.md#L52)。
 
-### Hub fork 的实现取舍
+[`dsh-plugin-subscriptions`](https://github.com/V1ki/dsh-plugin-subscriptions/tree/08b9b7cc30e72e8eedd559ac01af9fc576157453) 在 Grok 登录后注册 `x_search`，搜的是 X/Twitter，不是网页 `web_search`。它还自建 `codex` / `claude` / `grok` / `copilot` 对话适配器，与 Model Hub、官方 `openai-codex` 占用同一类路由名。
 
-在 `@timidly/dsh-model-hub` 内增加搜索，而不是再装 `dsh-codex`：
+> 来源：[随 Grok 启用的 `x_search`](https://github.com/V1ki/dsh-plugin-subscriptions/blob/08b9b7cc30e72e8eedd559ac01af9fc576157453/README.zh.md#L50-L54)。
 
-1. 注册搜索 id `model-hub-codex`，自动包装 id `model-hub-search`；patch 把 `web.searchProvider` 钉成后者，覆盖 `deepseek-official`，避免歧义。
-2. 设置 `model-hub.search.backend`：`auto`（默认）/ `codex` / `dsh`。`auto` 仅在当前对话路由是 `openai-codex` 或 `codex` 时走 Codex 搜索，否则委派 `deepseek-official`。强制 Codex 但未登录则失败，不回退。
-3. 凭据按当前路由优先，再试官方 `openai-codex`，再试 native `codex`；两条 grant 格式不同，不得混用 refresh。
-4. 搜索 HTTP 使用 ChatGPT 账号 id（从 access token 解析）与固定 `alpha/search`；`redirect: 'error'`。
-5. `web` 仍用 `ctx.inject`，无 web 的 composition 继续能加载 Hub。
-6. 不写不可忽略的自定义 Session 事件。
+### <a id="dsh-tui-search-related"></a>dsh-TUI 与 dsh-auth 的登录范围
 
-未验证：真实 ChatGPT 账号的 `alpha/search` 往返；与同时安装的 `dsh-codex` 双 patch 抢 `searchProvider` 的现场；远程 trusted-host 部署下的搜索超时。
+[`dsh-auth`](https://github.com/ccch1mneyyy/dsh-TUI/blob/99b8b147a22ba3e3c55a9c909c543331b4e46cae/dsh-auth/README.md) 给对话做 OAuth，路由为 `openai-codex`、`anthropic`、`xai`。README 把 Gemini 列为 M4，并写明 pi-ai 不提供 Google 登录。它不注册 `WebSearchProvider`。
+
+TUI 时间轴等界面有从 grok-pager 借来的交互，那是 UI，不是 Grok 网页搜索。生态规范测试里有按对话 provider 覆盖 `web_search` 执行的夹具，不随 TUI 发布 Gemini 或 Grok 搜索提供方。
+
+同一 Web profile 上再装 `dsh-auth` 或 `dsh-codex`，会与 Model Hub / 官方 `llm-pi-ai` 争夺 `openai-codex` 适配器。`dsh-auth` 对已被占用的路由会拒绝挂载。
+
+> 来源：[dsh-auth 的 OAuth 路由](https://github.com/ccch1mneyyy/dsh-TUI/blob/99b8b147a22ba3e3c55a9c909c543331b4e46cae/dsh-auth/README.md#L43-L47)、[Gemini 列为 M4](https://github.com/ccch1mneyyy/dsh-TUI/blob/99b8b147a22ba3e3c55a9c909c543331b4e46cae/dsh-auth/README.md#L128-L136)、[已被占用的路由拒绝注册](https://github.com/ccch1mneyyy/dsh-TUI/blob/99b8b147a22ba3e3c55a9c909c543331b4e46cae/dsh-auth/README.md#L93-L96)。
