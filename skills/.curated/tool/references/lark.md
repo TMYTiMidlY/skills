@@ -1,35 +1,62 @@
 # Lark / Feishu CLI 作为 Agent Tool
 
-本 reference 用 `lark-cli` 说明一个现成 CLI 怎样进入 agent 系统。主线是 executable、tool adapter、AI Skill 与外部授权之间的分工；命令全集仍以对应版本的官方文档和已安装 Lark Skills 为准。
+`lark-cli` 是飞书/Lark 官方命令行工具，提供面向人和 Agent 的飞书开放平台操作入口。Agent 可以通过通用 shell tool 调用它，也可以由 adapter 包装成参数更窄的 typed tool。`lark-*` Skills 提供按业务域组织的命令路由、身份权限规则和操作流程。
 
-## Lark Tool 的分层
+本 reference 介绍 CLI 的能力、身份模型、一键安装、Skills 安装与 Agent 发现。日历、消息、文档等具体业务流程直接进入对应官方 Skill。
 
-Lark 的一键安装把 CLI 与 Agent Skills 一起交付，但二者承担不同职责。官方 v1.0.90 README 分别列出安装流程、Agent Skills 和 OAuth 登录入口。[lark-cli v1.0.90：安装、Skills 与认证](https://github.com/larksuite/cli/blob/v1.0.90/README.zh.md#L55-L196)
+## 飞书 CLI 能做什么
 
-| 层 | Lark 实例 | 提供什么 |
-|---|---|---|
-| Tool implementation | `lark-cli` 原生可执行文件 | 调用飞书 OpenAPI，处理命令参数、身份、输出和 CLI 风险门禁 |
-| Tool adapter | harness 的 shell tool，或包装 `lark-cli` 的 typed tool | 把具体能力暴露给 agent，承担 schema、进程执行、超时和结果转换 |
-| AI Skill | `lark-*` 的 `SKILL.md`、references 与可选 scripts | 告诉 agent 何时选哪个命令、怎样处理身份、权限和易错点 |
-| Authority | 开放平台应用配置、user/bot identity、OAuth scopes | 决定 CLI 最终能访问或修改哪些飞书资源 |
+`lark-cli` 覆盖即时通讯、文档、云空间、多维表格、电子表格、幻灯片、日历、邮箱、任务、审批、会议、知识库、考勤、OKR 和妙搭应用等业务域。[lark-cli v1.0.90：功能](https://github.com/larksuite/cli/blob/v1.0.90/README.zh.md#L32-L53)
 
-授权界面中的 `application`、`base`、`calendar`、`docs`、`drive` 等是 scope domain（权限集合），不是 npm 模块或 Skill 安装开关。安装 Skill 只增加说明层；是否存在可执行文件、harness 是否暴露执行能力、当前身份是否获授权，仍需分别确认。
+| 能力域 | 典型操作 |
+|---|---|
+| 消息与组织 | 发送和搜索消息、管理群聊、查询联系人、处理邮箱 |
+| 内容与存储 | 创建和编辑文档、管理云空间文件、原生 Markdown、知识库和画板 |
+| 结构化数据 | 操作多维表格、电子表格、字段、记录、公式、图表和视图 |
+| 协作流程 | 管理日程、会议室、任务、审批、OKR 和考勤记录 |
+| 会议 | 查询视频会议、妙记、会议纪要、逐字稿和录制产物 |
+| 应用平台 | 管理开放平台应用能力，开发和部署妙搭/Spark 应用 |
+
+CLI 提供三层命令入口：[lark-cli v1.0.90：命令层级](https://github.com/larksuite/cli/blob/v1.0.90/README.zh.md#L199-L230)
+
+- **快捷命令**：以 `+` 开头，为常见任务提供面向人和 Agent 的参数与默认值。
+- **API 命令**：与精选飞书 OpenAPI 端点一一对应。
+- **通用 API 调用**：通过 HTTP method 与 OpenAPI path 调用其他开放平台端点。
+
+## Agent 如何调用飞书 CLI
+
+调用链把业务知识、运行控制、CLI 执行和飞书资源连在一起：
 
 ```text
 用户目标
    ▼
-Agent ──读取 lark-* Skill──提出调用
+Agent 读取对应 lark-* Skill
    ▼
-Harness ──policy / approval / cwd / timeout / output handling
+Harness 暴露 shell tool 或 typed adapter
    ▼
-shell tool 或 typed adapter
+lark-cli 选择身份并调用飞书 OpenAPI
    ▼
-lark-cli ──user / bot identity + app/OAuth scopes
-   ▼
-Feishu / Lark OpenAPI
+飞书/Lark 资源
 ```
 
-经通用 shell tool 调 CLI 时，Skill 承担较多命令路由知识；包装成 typed tool 时，常用操作可以有更窄的 schema 和更明确的风险标记。两种接法都以 `lark-cli` 为执行实现，整个 runtime 与 agent-as-tool 关系见 `harness` skill。
+通用 shell tool 直接执行 `lark-cli` 命令，适合复用完整 CLI 能力。Typed adapter 为高频操作定义固定 schema，并处理进程退出码、stdout/stderr、timeout 和结构化结果。单个 adapter 的契约设计见 `tool` skill；整个运行时怎样装载 Skill、注册工具和管理会话见 `harness` skill。
+
+`lark-cli --format json` 的成功 envelope 使用 `ok: true`，错误 envelope 写入 stderr 并配合非零退出码。完整字段和判断规则见 [`lark-shared` 的 JSON 输出契约](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-shared/references/lark-shared-output-contract.md#L1-L17)。
+
+## 用户态、Bot 态与授权
+
+CLI 支持 user 与 bot 两种身份，调用时可显式使用 `--as user` 或 `--as bot`：
+
+| 身份 | 代表对象 | 凭据与权限 | 典型资源 |
+|---|---|---|---|
+| user | 完成 OAuth 登录的飞书用户 | 开放平台应用已开通相关 scope，并由用户完成授权 | 用户自己的日历、云空间、邮箱及可见协作资源 |
+| bot | 当前绑定的开放平台应用 | 应用配置与 bot scope | 机器人自己的资源，以及平台授予应用身份的能力 |
+
+`lark-cli auth login` 支持按 domain、具体 scope 或推荐集合申请用户授权；`auth status`、`auth check` 和 `auth scopes` 用于核对当前状态。[lark-cli v1.0.90：认证命令](https://github.com/larksuite/cli/blob/v1.0.90/README.zh.md#L165-L196)
+
+授权界面的 `application`、`base`、`calendar`、`docs`、`drive` 等名称用于组织 OAuth scope 集合。Skills 的安装由 `skills` CLI 管理，授权由 `lark-cli auth` 管理。
+
+身份自动选择、user/bot 资源边界、增量授权和缺少 scope 的处理见 [`lark-shared` 的身份与权限说明](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-shared/references/lark-shared-identity-and-permissions.md#L23-L90)。
 
 ## 一键安装
 
@@ -37,60 +64,104 @@ Feishu / Lark OpenAPI
 npx @larksuite/cli@latest install
 ```
 
-以 v1.0.90 为实现快照，交互式向导依次检查/升级全局 npm 包、安装 Lark Skills、配置应用并发起授权；非交互环境只完成 CLI 与 Skills 安装并打印后续配置提示。[install-wizard.js v1.0.90](https://github.com/larksuite/cli/blob/v1.0.90/scripts/install-wizard.js#L223-L356)
+以 v1.0.90 为实现快照，一键安装按下面的顺序工作：[install-wizard.js v1.0.90](https://github.com/larksuite/cli/blob/v1.0.90/scripts/install-wizard.js#L223-L356)
 
-全局 npm 包的 postinstall 会下载对应平台 archive、校验 SHA-256、解压并把原生 binary 写进包内 `bin/`，临时目录在结束时清理。[install.js v1.0.90](https://github.com/larksuite/cli/blob/v1.0.90/scripts/install.js#L212-L255)
+### npm 包与 CLI
 
-| 路径 | 作用 |
+`npx` 取得 `@larksuite/cli` 安装包装器。向导读取 npm registry 的最新版本，并在全局包缺失或版本较旧时执行：
+
+```bash
+npm install -g @larksuite/cli
+```
+
+全局 npm 包的 `postinstall` 下载当前操作系统和 CPU 架构对应的 `lark-cli` archive，校验 SHA-256，解压到包内 `bin/` 并设置执行权限。[install.js v1.0.90](https://github.com/larksuite/cli/blob/v1.0.90/scripts/install.js#L212-L255)
+
+### AI Skills
+
+向导先读取全局 Skills 清单：
+
+```bash
+npx -y skills ls -g
+```
+
+需要安装时，向导调用生产 Skills 源：
+
+```bash
+npx -y skills add https://open.feishu.cn/lark-cli/skills/regular -y -g
+```
+
+生产源不可用时使用 GitHub 仓库来源：
+
+```bash
+npx -y skills add larksuite/cli -y -g
+```
+
+`-g` 表示个人级全局安装，`-y` 表示使用自动选择并跳过交互确认。v1.0.90 的具体命令见 [install-wizard.js：Skills 安装](https://github.com/larksuite/cli/blob/v1.0.90/scripts/install-wizard.js#L247-L278)。
+
+### 应用配置与用户授权
+
+交互式终端继续执行应用配置和用户授权：
+
+```text
+lark-cli config init --new
+lark-cli auth login
+```
+
+非交互环境完成 CLI 与 Skills 安装后输出这两个后续入口。配置应用和 OAuth 的完整流程由 `lark-shared` Skill 维护。
+
+### 文件系统布局
+
+| 路径 | 内容 |
 |---|---|
-| npm cache | `npx` 包装器和下载缓存；具体目录由 npm 配置决定，不是最终命令入口 |
-| `<npm-prefix>/lib/node_modules/@larksuite/cli/` | Unix-like 系统常见的全局 npm 包位置；实际前缀由 `npm prefix -g` 决定 |
-| `<npm-prefix>/bin/lark-cli` | npm 创建的命令入口，通常指向包内 launcher |
-| `~/.agents/skills/lark-*` | `skills` CLI 使用的规范副本 |
-| `$XDG_STATE_HOME/skills/.skill-lock.json`，未设置时 `~/.agents/.skill-lock.json` | Skills 的来源、摘要和安装/更新时间 |
-| Agent 自有 skills 目录 | 需要专用目录的客户端可链接到规范副本；通用客户端直接读取 `.agents/skills` |
+| npm cache | `npx` 包装器和下载缓存，具体目录由 npm 配置决定 |
+| `<npm-prefix>/lib/node_modules/@larksuite/cli/` | Unix-like 系统常见的全局 npm 包位置 |
+| `<npm-prefix>/bin/lark-cli` | npm 创建的命令入口 |
+| `~/.agents/skills/lark-*` | `skills` CLI 写入的规范 Skills 副本 |
+| `$XDG_STATE_HOME/skills/.skill-lock.json`，未设置时 `~/.agents/.skill-lock.json` | Skills 来源、摘要和安装/更新时间 |
+| Agent 自有 skills 目录 | 需要专用目录的客户端使用指向规范副本的链接 |
 
-`skills@1.5.23` 把全局规范副本放在 home 下的 `.agents/skills`，lock 文件路径受 `XDG_STATE_HOME` 覆盖。[installer.ts v1.5.23：canonical 路径](https://github.com/vercel-labs/skills/blob/v1.5.23/src/installer.ts#L90-L137) [skill-lock.ts v1.5.23](https://github.com/vercel-labs/skills/blob/v1.5.23/src/skill-lock.ts#L58-L68)
+全局规范目录与 lock 路径见 [`skills@1.5.23` 的 installer](https://github.com/vercel-labs/skills/blob/v1.5.23/src/installer.ts#L90-L137) 和 [skill-lock](https://github.com/vercel-labs/skills/blob/v1.5.23/src/skill-lock.ts#L58-L68)。当前环境的 npm 安装位置通过 `npm prefix -g` 与 `command -v lark-cli` 核对。
 
-当前环境的 global npm 位置以 `npm prefix -g` 和 `command -v lark-cli` 的实测输出为准。
+## Skills 安装与 Agent 发现
 
-## Skills 的 Agent 探测
+`skills@1.5.23` 遍历已知 Agent 定义并调用各自的 `detectInstalled()`，再把命中的 Agent 交给安装流程。[agents.ts v1.5.23：探测循环](https://github.com/vercel-labs/skills/blob/v1.5.23/src/agents.ts#L785-L793)
 
-`skills@1.5.23` 会遍历已知 Agent 定义并调用各自的 `detectInstalled()`，然后保留返回 true 的类型。[agents.ts v1.5.23：探测循环](https://github.com/vercel-labs/skills/blob/v1.5.23/src/agents.ts#L785-L793)
-
-常见 Agent 的判断主要是配置目录是否存在：
-
-| Agent | v1.5.23 默认信号 |
+| Agent | v1.5.23 使用的发现信号 |
 |---|---|
 | Claude Code | `$CLAUDE_CONFIG_DIR`，未设置时 `~/.claude` |
-| Codex | `$CODEX_HOME`，未设置时 `~/.codex`；另检查 `/etc/codex` |
+| Codex | `$CODEX_HOME`，未设置时 `~/.codex`；同时检查 `/etc/codex` |
 | Grok Build | `$GROK_HOME`，未设置时 `~/.grok` |
 | GitHub Copilot | `~/.copilot` |
 | Kimi Code CLI | `~/.kimi-code` 或 `~/.kimi` |
 
-这些条件见 [home 覆盖变量](https://github.com/vercel-labs/skills/blob/v1.5.23/src/agents.ts#L6-L14)、[Claude 与 Codex](https://github.com/vercel-labs/skills/blob/v1.5.23/src/agents.ts#L145-L218) 和 [Copilot、Grok、Kimi](https://github.com/vercel-labs/skills/blob/v1.5.23/src/agents.ts#L343-L438)。它们属于存在性探测，不是 binary、版本或登录态健康检查；残留空目录也会命中。
+目录条件见 [home 覆盖变量](https://github.com/vercel-labs/skills/blob/v1.5.23/src/agents.ts#L6-L14)、[Claude 与 Codex](https://github.com/vercel-labs/skills/blob/v1.5.23/src/agents.ts#L145-L218) 和 [Copilot、Grok、Kimi](https://github.com/vercel-labs/skills/blob/v1.5.23/src/agents.ts#L343-L438)。这些信号描述配置目录的存在状态；程序版本和登录状态通过各自 CLI 命令继续核对。
 
-带 `-y` 的自动路径会在已探测类型之外追加所有被定义为 universal 的 Agent；universal 的判据是项目 skills 目录为 `.agents/skills`。[add.ts v1.5.23：自动目标](https://github.com/vercel-labs/skills/blob/v1.5.23/src/add.ts#L323-L338) [agents.ts v1.5.23：universal 判据](https://github.com/vercel-labs/skills/blob/v1.5.23/src/agents.ts#L827-L865)
+带 `-y` 的自动安装会加入所有被定义为 universal 的 Agent；universal Agent 使用 `.agents/skills` 作为项目级 Skills 目录。[add.ts v1.5.23：自动目标](https://github.com/vercel-labs/skills/blob/v1.5.23/src/add.ts#L323-L338) [agents.ts v1.5.23：universal Agent](https://github.com/vercel-labs/skills/blob/v1.5.23/src/agents.ts#L827-L865)
 
-全局安装时，universal Agent 直接使用 `~/.agents/skills`，不会再创建其专用全局链接；非 universal Agent 使用自己的目录，链接失败时安装器回退为复制。[installer.ts v1.5.23](https://github.com/vercel-labs/skills/blob/v1.5.23/src/installer.ts#L790-L823)
+全局安装把规范副本写入 `~/.agents/skills`。Universal Agent 直接读取该目录；其他已发现 Agent 使用自己的 Skills 目录，symlink 不可用时安装器写入一份副本。[installer.ts v1.5.23：写入与链接](https://github.com/vercel-labs/skills/blob/v1.5.23/src/installer.ts#L790-L823)
 
-因此某个 Agent 出现在安装摘要里，只能说明目录探测或 universal 规则命中；不能据此断言对应程序仍能运行。
+## 按业务进入官方 Lark Skills
 
-## 身份与权限
+具体命令、参数、权限和写入流程由对应 `lark-*` Skill 维护。下面链接固定到官方仓库 commit `84f9414311ee315671ecceb7bd964e87874bf96c`：
 
-Lark CLI 把应用配置、OAuth 登录、scope 和运行时身份分开。v1.0.90 提供按 domain、具体 scope 或推荐集合登录，也支持显式 `--as user` / `--as bot`。[lark-cli v1.0.90：认证与身份](https://github.com/larksuite/cli/blob/v1.0.90/README.zh.md#L165-L196)
+| 主题 | 官方 Skill |
+|---|---|
+| 应用配置、身份、授权、输出契约与安全规则 | [`lark-shared`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-shared/SKILL.md#L1-L40) |
+| 日历、忙闲、会议室与参会人 | [`lark-calendar`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-calendar/SKILL.md#L1-L30) |
+| 消息、群聊、卡片与聊天文件 | [`lark-im`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-im/SKILL.md#L1-L30) |
+| 在线文档正文 | [`lark-doc`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-doc/SKILL.md#L1-L30) |
+| 云空间文件、评论、版本与权限 | [`lark-drive`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-drive/SKILL.md#L1-L30) |
+| 原生 Markdown 文件 | [`lark-markdown`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-markdown/SKILL.md#L1-L30) |
+| 多维表格与电子表格 | [`lark-base`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-base/SKILL.md#L1-L30)、[`lark-sheets`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-sheets/SKILL.md#L1-L30) |
+| 任务、审批与 OKR | [`lark-task`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-task/SKILL.md#L1-L30)、[`lark-approval`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-approval/SKILL.md#L1-L30)、[`lark-okr`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-okr/SKILL.md#L1-L30) |
+| 邮箱 | [`lark-mail`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-mail/SKILL.md#L1-L30) |
+| 视频会议、妙记、会议纪要与逐字稿 | [`lark-meeting`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-meeting/SKILL.md#L1-L30) |
+| 知识库与画板 | [`lark-wiki`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-wiki/SKILL.md#L1-L30)、[`lark-whiteboard`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-whiteboard/SKILL.md#L1-L30) |
+| 妙搭/Spark 应用开发与部署 | [`lark-apps`](https://github.com/larksuite/cli/blob/84f9414311ee315671ecceb7bd964e87874bf96c/skills/lark-apps/SKILL.md#L1-L30) |
 
-Tool adapter 不静默切换身份或扩大 scope。缺少权限时，把缺失 scope、身份和可操作提示作为错误返回给 harness，由上层决定是否向用户请求授权。
+[官方 Skills 目录](https://github.com/larksuite/cli/tree/84f9414311ee315671ecceb7bd964e87874bf96c/skills)提供其余业务域和组合工作流。
 
-## 输出与副作用
-
-v1.0.90 的 JSON 成功 envelope 写入 stdout、退出码为 0，并以 `ok: true` 表示；错误写入 stderr、退出码非 0，顶层 `code` 不能用作成功判断。[lark-cli v1.0.90：JSON 输出契约](https://github.com/larksuite/cli/blob/v1.0.90/README.zh.md#L233-L267)
-
-自动化 wrapper 同时保留 stdout、stderr 与退出码。写操作超时后先查询真实状态再决定是否重试；第一次请求可能已经成功，直接重放会造成重复创建。能 dry-run 的操作把预览和提交拆成不同阶段，高风险确认回到 harness 临近执行时处理。
-
-## 诊断
-
-诊断时分别核对 executable、Skill discovery、应用配置、identity 与 scopes，不从其中一层推断另一层：
+## 诊断入口
 
 ```bash
 command -v lark-cli
@@ -99,8 +170,7 @@ npm prefix -g
 npx -y skills ls -g
 ```
 
-- executable 缺失或版本错，处理 CLI 安装。
-- `lark-*` 不可发现，检查规范副本、软链接和目标 harness 的 discovery 规则。
-- CLI 能运行但资源为空或权限报错，检查实际 identity、应用权限与用户授权。
-
-“Skill 能被看见”不证明 CLI 已安装；“CLI 能运行”也不证明当前身份有权访问目标资源。
+- executable 和版本信息来自前两条命令。
+- npm global prefix 来自 `npm prefix -g`。
+- Skills 规范副本、来源和 Agent 发现结果来自 `skills ls -g`。
+- 应用配置、identity 与 scopes 由 `lark-shared` Skill 的诊断流程继续核对。
