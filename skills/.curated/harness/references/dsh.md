@@ -58,8 +58,6 @@ DeepSeek Harness（`dsh`）是 DeepSeek 开源的 agent harness（把模型、�
 
 源码构建使用仓库自己的 pnpm 策略。固定 tag 中的 `pnpm-workspace.yaml` 记录已经审核的 `allowBuilds` 条目，也显式拒绝随依赖带入但不需要执行的脚本；部署直接沿用该文件，避免把 npm warning 翻译成另一套全量授权。
 
-`pnpm dlx` 与 `pnpm add -g` 使用不同的链接布局。上游 [Discussion #55](https://github.com/deepseek-ai/deepseek-harness/discussions/55) 记录了早期版本的一次 bug 行为：在当时的 pnpm 全局链接布局中，dsh 按包名执行的动态 `import` 无法解析相应 package。这条记录描述的是当时的复现结果，不代表当前 tag 仍有同样行为；`pnpm dlx` 使用的则是独立临时项目布局。
-
 > 来源：[官方源码的 `allowBuilds`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/pnpm-workspace.yaml#L35-L55)。
 
 ### Web 与 headless
