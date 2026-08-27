@@ -1,15 +1,22 @@
 # Caddy：安装、基础反代、认证与文档私链分享
 
-本参考覆盖 Caddy 安装、反向代理、证书、caddy-security 和文档私链服务。排查时按“基础反代 → 可选错误页 → 认证”的依赖顺序验证，避免上层功能掩盖底层故障。
+> 这份参考按“先把基础反代跑通，再叠加功能”的顺序组织：
+>
+> - 安装并验证 Caddy
+> - 选择基础站点模式：域名模式 / IP 模式
+> - 按需加错误页
+> - 需要 GitHub OAuth 时安装 `caddy-security`
+>
+> 经验上，**先把最小反代跑通，再加认证**，排错会轻松很多。
 
-## <a id="deployment-scenarios"></a>部署场景
+## 选型速查
 
-| 场景 | 配置模式 | 关键条件 |
+| 场景 | 推荐方案 | 关键前提 |
 |---|---|---|
-| 公网域名 HTTPS | 域名模式 | 域名已解析，并存在可用的 ACME challenge 路径 |
-| IP 入口 | IP 模式 | 使用 `tls internal`，客户端导入 Caddy local root CA |
-| GitHub OAuth 登录 | `caddy-security` | 自定义 Caddy 二进制，配置 OAuth client 与固定 JWT key |
-| 带过期时间的文档私链 | RustFS S3 + presigned URL + Markdeep viewer | SigV4 URL 负责访问期限，不叠加 caddy-security |
+| 有域名、想省心上 HTTPS | 域名模式 | 域名已解析到机器，`80/443` 可从公网直达 |
+| 只有 IP / 未备案 | IP 模式 | 用 `tls internal`，并在客户端导入 Caddy local root CA |
+| 需要 GitHub OAuth 登录 | `caddy-security` | 使用自定义 Caddy 二进制，配置 `GITHUB_CLIENT_*` 与 `JWT_SHARED_KEY` |
+| 需要“拿到链接即可读”的文档私链 | RustFS S3 + presigned + Markdeep viewer (docs-share) | 桶级 SigV4 签名 URL，自带过期；无 caddy-security 层 |
 
 ## 安装 Caddy
 
@@ -36,24 +43,141 @@ sudo systemctl reload caddy
 
 文件型部署中的 Caddyfile、JSON 内容和新增域名通过 reload 应用；API 型 JSON 通过 Admin API 写入。更换二进制、systemd unit 或进程环境时才需要 restart。官方把 reload 定义为运行中更新配置的语义操作，并明确说明 restart 会产生停机，见 [Caddy 运行文档](https://github.com/caddyserver/website/blob/15ac087cfd9c21a53b2ddfa10359fdc63d5ec9b6/src/docs/markdown/running.md#L111-L119)和 [reload 命令说明](https://github.com/caddyserver/website/blob/15ac087cfd9c21a53b2ddfa10359fdc63d5ec9b6/src/docs/markdown/command-line.md#L344-L352)。
 
-`reload` 通过 Admin API 的 `POST /load` 应用整份配置；加载失败时继续运行旧配置。细粒度运行态修改见 [Caddy Admin API 运行态配置](caddy-admin-api.md)，配置锁诊断见 [Admin API 与 pprof 诊断](#admin-diagnostics)和 [reload 配置锁阻塞](#reload-lock)。Caddyfile 使用 systemd 注入的环境变量时，验证方式见 [service 环境变量](#validate-service-environment)。
+`reload` 通过 Admin API 的 `POST /load` 应用整份配置；加载失败时继续运行旧配置。细粒度运行态修改见 [Admin API 运行态配置](#admin-runtime-config)，配置锁诊断见 [Admin API 与 pprof 诊断](#admin-diagnostics)和 [reload 配置锁阻塞](#reload-lock)。Caddyfile 使用 systemd 注入的环境变量时，验证方式见 [service 环境变量下的配置验证](#validate-service-environment)。
 
-## <a id="reverse-proxy-modes"></a>基础反代模式
+## <a id="admin-runtime-config"></a>Admin API 运行态配置
 
-域名模式与 IP 模式在证书、端口形态和认证边界上不同。先按运行条件选择模式，再读取对应小节：
+本节说明如何通过 Admin API 修改 HTTP 路由和 caddy-security，并在验证后回滚或固化。Caddy 的写入、回滚、ID 索引与 autosave 流程按 v2.11.2 核验，见 [Caddy 源码](https://github.com/caddyserver/caddy/blob/v2.11.2/caddy.go#L150-L403)。caddy-security 的 JSON 结构属于安装版本的内部 schema，操作前必须以同一二进制的适配结果和实时配置为准。
 
-| 维度 | 域名模式 | IP 模式 |
+### <a id="admin-config-source"></a>配置来源与持久化
+
+Admin API 写请求先修改 raw JSON，再严格解码并 provision 整份新配置；成功后切换运行上下文并默认写入 `autosave.json`，失败则继续运行旧配置并恢复 raw JSON。单次写入具有原子性，但它不是只修改某一个现存 handler 的内存补丁。
+
+“临时”取决于进程下次从哪里读取配置：
+
+| 启动方式 | API 写入后的重启行为 | 权威配置 |
 |---|---|---|
-| 适用前提 | 域名已解析，并存在可用的 ACME challenge 路径 | 没有可用域名或不使用公网域名 |
-| 证书 | 公网 ACME 证书，客户端通常无需额外配置 | `tls internal` 自签，客户端导入 local root CA |
-| SNI | 浏览器携带域名 SNI | IP 直连的 SNI 可能为空，需要 `default_sni <IP>` 兜底 |
-| 端口形态 | 多域名共享 `80/443`，靠 SNI 和 Host 分流 | 每个服务独占一个对外端口 |
-| HTTP→HTTPS | Caddy 默认生成跳转 | 默认也生成跳转；同一 IP 多端口时通常关闭后按需手写 |
-| `bind` | 共享 listener 上的局部 `bind` 会拆分 server | 独占端口可单独限制监听地址 |
-| caddy-security cookie | 跨子域共享登录时配置 `cookie domain` | 不配置 `Domain=<IP>`，依赖 host-only cookie |
-| OAuth callback | callback 使用域名入口 | callback 使用 IP 入口时与域名入口分开配置 |
+| `caddy run --config <Caddyfile>`，没有 `--resume` | restart 重新读取文件，API 写入被文件覆盖 | Caddyfile |
+| `caddy reload --config <Caddyfile>` | 立即用文件适配出的整份配置覆盖当前运行态 | Caddyfile |
+| `caddy run --resume` / `caddy-api.service` | restart 读取 `autosave.json`，API 写入和 `@id` 保留 | Admin API 管理的 JSON |
+| `admin.config.persist=false` / `persist_config off` | 当前进程仍应用写入，但不更新 autosave | 取决于启动参数 |
 
-> 具体行为见 [域名模式](#domain-mode)、[IP 模式](#ip-mode)、[自动 HTTP→HTTPS 跳转](#automatic-https-redirects)、[caddy-security](#caddy-security)和 [listener 分组](#listener-groups)。
+> Caddy 的 API 文档说明变更默认持久化，并由 `--resume` 恢复；官方 systemd 文档把 `caddy.service` 和 `caddy-api.service` 分为文件型与 API 型工作流。见 [API 持久化说明](https://github.com/caddyserver/website/blob/15ac087cfd9c21a53b2ddfa10359fdc63d5ec9b6/src/docs/markdown/api.md#L9-L17)和 [systemd 服务类型](https://github.com/caddyserver/website/blob/15ac087cfd9c21a53b2ddfa10359fdc63d5ec9b6/src/docs/markdown/running.md#L34-L41)。
+
+先读取实际 unit，不从服务名或目录习惯推断：
+
+```bash
+systemctl show caddy \
+  --property=ExecStart \
+  --property=ExecReload \
+  --no-pager
+```
+
+文件型和 API 型工作流只选一个作为权威来源。文件型部署的运行态试验最终回写 Caddyfile；API 型部署把最终 JSON 保存到配置管理系统，并让 autosave 与该来源保持一致。
+
+默认 endpoint 是 `localhost:2019`，但 `CADDY_ADMIN`、Caddy 配置和发行版打包均可改变它。默认值与环境变量覆盖逻辑见 [v2.11.2 admin 源码](https://github.com/caddyserver/caddy/blob/v2.11.2/admin.go#L57-L64)和 [默认监听地址](https://github.com/caddyserver/caddy/blob/v2.11.2/admin.go#L1422-L1425)。
+
+```bash
+ADMIN_URL="${ADMIN_URL:-http://localhost:2019}"
+```
+
+Admin endpoint 只监听 loopback 或权限受控的 Unix socket。完整配置可能包含 OAuth client secret、JWT key、上游 token 或已展开的环境变量；能读取或修改 endpoint 的主体应按入口层管理员对待。
+
+### <a id="admin-config-methods"></a>配置 API 方法
+
+`/config/[path]` 对 object 和 array 的语义不同：
+
+| 方法 | object | array |
+|---|---|---|
+| `GET` | 读取字段或对象 | 读取元素或数组 |
+| `POST` | 新建或覆盖字段 | 追加元素；路径以 `/...` 结尾时可展开追加数组 |
+| `PUT` | 只新建尚不存在的字段 | 在指定 index 前插入元素 |
+| `PATCH` | 替换已存在的字段 | 替换指定 index |
+| `DELETE` | 删除字段 | 删除指定 index |
+
+> 方法语义、`@id` 与并发控制见锁定版本的 [Admin API 文档源码](https://github.com/caddyserver/website/blob/15ac087cfd9c21a53b2ddfa10359fdc63d5ec9b6/src/docs/markdown/api.md#L143-L271)。
+
+数组 index 会随插入和删除漂移。给临时 route、policy、transformer 等对象加入全局唯一的 `"@id"`，后续通过 `/id/<name>` 查询和删除。Caddy 在 raw config 中索引 ID，加载模块前剥离该元字段，因此第三方模块不会收到 `@id`。
+
+每次从 `GET /config/...` 读取目标 scope 时，同时保存响应的 `Etag`。对应写请求带 `If-Match`；HTTP 412 表示配置已被其他写入改变，必须重新读取、重新定位对象并重新计算 index。
+
+```bash
+ADMIN_URL="${ADMIN_URL:-http://localhost:2019}"
+WORK_DIR="${WORK_DIR:?set a protected working directory}"
+CONFIG_SCOPE="${CONFIG_SCOPE:?set a scope without the /config/ prefix}"
+umask 077
+
+headers_file="$(mktemp "${WORK_DIR%/}/caddy-api-headers.XXXXXX")"
+body_file="$(mktemp "${WORK_DIR%/}/caddy-api-body.XXXXXX.json")"
+
+curl --noproxy '*' --fail --silent --show-error \
+  --dump-header "$headers_file" \
+  --output "$body_file" \
+  "$ADMIN_URL/config/$CONFIG_SCOPE"
+
+etag="$(
+  sed -n 's/^[Ee][Tt][Aa][Gg]:[[:space:]]*//p' "$headers_file" |
+    tr -d '\r'
+)"
+test -n "$etag"
+jq -e . "$body_file" >/dev/null
+```
+
+`CONFIG_SCOPE` 是本次读取和写入共同覆盖的父 scope。body 可能包含敏感配置，按完整快照的相同标准保护。不要从另一台机器复制 `srv0`、嵌套数组路径、index 或 adapter 生成的 `groupNN`。
+
+### <a id="admin-preflight"></a>变更前检查
+
+写入前确认版本、启动方式、endpoint、完整快照和回滚对象。下面的命令作为一个 shell 脚本执行；任一步失败都会停止，不继续发送修改请求。
+
+```bash
+set -euo pipefail
+
+systemctl show caddy --property=ExecStart --property=ExecReload --no-pager
+CADDY_BIN="${CADDY_BIN:?set the exact ExecStart binary path}"
+"$CADDY_BIN" version
+"$CADDY_BIN" build-info |
+  grep -E 'caddy-security|go-authcrunch|caddyserver/caddy/v2'
+
+ADMIN_URL="${ADMIN_URL:-http://localhost:2019}"
+SNAPSHOT_DIR="${SNAPSHOT_DIR:?set a protected snapshot directory}"
+test -d "$SNAPSHOT_DIR"
+
+umask 077
+snapshot="$(mktemp "${SNAPSHOT_DIR%/}/caddy-live-before.XXXXXX.json")"
+
+curl --noproxy '*' --fail --silent --show-error \
+  --max-time 10 \
+  --output "$snapshot" \
+  "$ADMIN_URL/config/"
+
+jq -e . "$snapshot" >/dev/null
+test -s "$snapshot"
+stat -c '%a %n' "$snapshot"
+```
+
+只有脚本完整成功后，这份文件才算可用快照。快照不得贴进聊天、工单或普通日志；验证窗口结束后，按所在主机的敏感文件保留与销毁流程处理。
+
+候选 JSON 使用正在运行的同一个 Caddy 二进制生成，输出也放进权限受控的目录：
+
+```bash
+set -euo pipefail
+
+CADDY_BIN="${CADDY_BIN:?set the exact ExecStart binary path}"
+CANDIDATE_CADDYFILE="${CANDIDATE_CADDYFILE:?set the candidate Caddyfile path}"
+SNAPSHOT_DIR="${SNAPSHOT_DIR:?set a protected snapshot directory}"
+umask 077
+candidate_json="$(mktemp "${SNAPSHOT_DIR%/}/caddy-candidate.XXXXXX.json")"
+
+"$CADDY_BIN" adapt \
+  --config "$CANDIDATE_CADDYFILE" \
+  --adapter caddyfile \
+  --pretty > "$candidate_json"
+
+jq -e . "$candidate_json" >/dev/null
+printf '%s\n' "$candidate_json"
+```
+
+片段不是完整 Caddyfile 时，先用最小 site block 包起来再适配。也可以调用 `POST /adapt`。复杂对象从实时配置克隆，或从同版本适配结果抽取；不凭记忆手写 caddy-security schema。
 
 ### <a id="shared-listener-routing"></a>共享 listener 的 Host 分流
 
@@ -101,9 +225,193 @@ handle @app_b {
 }
 ```
 
-matcher 的本地名字可以改变，Host 条件不能省略；无条件 `handle` 会成为这组 handle 的兜底分支，可能接走其他域名。普通 site block 会按 directive order 重排 `handle` 与 `respond`，因此来源限制是安全边界时要用 `route` 固定字面顺序，再通过 `caddy adapt` 或 `GET /config/` 核对 active JSON。Caddy v2.11.2 的默认顺序把 `handle` 放在 `respond` 前，见 [directive order 源码](https://github.com/caddyserver/caddy/blob/v2.11.2/caddyconfig/httpcaddyfile/directives.go#L32-L103)；`route` 不重排内部 directive，见 [route 文档源码](https://github.com/caddyserver/website/blob/15ac087cfd9c21a53b2ddfa10359fdc63d5ec9b6/src/docs/markdown/caddyfile/directives/route.md#L5-L32)。
+matcher 的本地名字可以改变，Host 条件不能省略；无条件 `handle` 会成为这组 handle 的兜底分支，可能接走其他域名。普通 site block 会按 directive order 重排 `handle` 与 `respond`，因此来源限制是安全边界时使用 `route` 固定字面顺序，再通过 `caddy adapt` 或 `GET /config/` 核对 active JSON。Caddy v2.11.2 的默认顺序把 `handle` 放在 `respond` 前，见 [directive order 源码](https://github.com/caddyserver/caddy/blob/v2.11.2/caddyconfig/httpcaddyfile/directives.go#L32-L103)；`route` 不重排内部 directive，见 [route 文档源码](https://github.com/caddyserver/website/blob/15ac087cfd9c21a53b2ddfa10359fdc63d5ec9b6/src/docs/markdown/caddyfile/directives/route.md#L5-L32)。
 
-通过 Admin API 临时插入共享 listener route 时，目标数组发现、blocker/catch-all 顺序和 ETag 保护见 [临时 HTTP 路由](caddy-admin-api.md#temporary-route)。
+### <a id="temporary-http-route"></a>临时 HTTP 路由
+
+Admin API 修改的是适配后的 JSON。先从 `GET /config/` 中按 listener、Host matcher 或稳定 ID 找到目标 route 数组，再检查其真实结构：
+
+```bash
+ROUTES_JSON="${ROUTES_JSON:?set the active route array JSON path}"
+
+jq -r '
+  to_entries[]
+  | [
+      .key,
+      ((.value.match // []) | map(keys) | add // [] | join(",")),
+      (.value.group // "-")
+    ]
+  | @tsv
+' "$ROUTES_JSON"
+```
+
+执行前满足以下断言：
+
+- 目标 server 和 route 数组各有且只有一个符合项；
+- 来源 blocker 和 catch-all 各有且只有一个符合项；
+- `path`、`expression` 等未识别 matcher 不归类为 catch-all；
+- blocker 位于插入点之前，catch-all 位于插入点之后；
+- 候选 route 来自同版本 `caddy adapt`，并带唯一 `@id`；
+- 互斥 `group` 等结构字段从当前相邻业务 route 读取，不复制固定 `groupNN`。
+
+blocker 若位于已有业务 route 之后，先修正 Caddyfile 的 `route` 顺序；不继续制造绕过来源限制的新 route。
+
+读取父 scope 的当前 `Etag` 后执行插入：
+
+```bash
+ROUTE_JSON="${ROUTE_JSON:?set the candidate route JSON path}"
+ROUTES_PATH="${ROUTES_PATH:?set the active route array path}"
+INSERT_AT="${INSERT_AT:?set the verified insertion index}"
+test -n "$etag"
+
+curl --noproxy '*' --fail --silent --show-error \
+  --max-time 60 \
+  -X PUT \
+  -H 'Content-Type: application/json' \
+  -H "If-Match: $etag" \
+  --data-binary @"$ROUTE_JSON" \
+  "$ADMIN_URL/config/$ROUTES_PATH/$INSERT_AT"
+```
+
+收到 412 后，从读取目标数组开始重做；不能在旧快照上只更新 index。客户端超时也不能立即重发，服务端可能仍在全局配置锁内继续加载。
+
+验证覆盖以下层次：
+
+- `GET /id/<route-id>` 能唯一找到新对象；
+- 上游自身健康；
+- 直接访问共享 listener 并携带目标 Host 时，来源限制和认证结果符合预期；
+- 经过外层入口访问时，证书、Host、转发头和登录回跳符合预期；
+- 登录成功只证明认证完成，还要用实际角色验证 authorization policy。
+
+定向回滚前重新读取父 scope 并获取当前 `Etag`，再删除该 ID：
+
+```bash
+curl --noproxy '*' --fail --silent --show-error \
+  -X DELETE \
+  -H "If-Match: $etag" \
+  "$ADMIN_URL/id/<route-id>"
+```
+
+反代请求头与长连接超时分别见 [给上游注入请求头](#reverse-proxy-request-headers)和 [stream_timeout](#reverse-proxy-stream-timeout)，本节不重复固定的业务值。
+
+### <a id="security-runtime-config"></a>caddy-security 运行态配置
+
+caddy-security 位于同一棵 JSON 配置树，常见数组路径为：
+
+```text
+/config/apps/security/config/identity_providers
+/config/apps/security/config/authentication_portals
+/config/apps/security/config/authorization_policies
+```
+
+这些路径和字段属于安装版本的内部 schema。先读取实时对象，或用同一个二进制把候选 Caddyfile 适配为 JSON。
+
+| 对象 | 候选配置的来源 | 对现有登录态的影响 |
+|---|---|---|
+| authorization policy | 克隆现有同类 policy，换唯一 name 和 `@id`；需要改规则时从适配结果抽取 | 后续请求立即用新 policy 检查现有 JWT claims |
+| portal user transformer | 克隆同一 portal 的同类 transformer，换唯一 `@id` | 只影响以后签发的 JWT；现有 token 要重登或等过期 |
+| identity provider、cookie、签名 key | 仅从完整适配结果修改 | 可能打断登录流或使现有 token 全部失效，不用于普通临时验证 |
+
+> policy 与 transformer 的生效时机见 [权限策略与令牌角色](#security-token-claims)。
+
+已有共享 policy 的语义满足目标 route 时，route 可以直接引用它；修改共享 policy 会同时影响所有引用者。需要隔离影响时，从实时配置克隆一份独立 policy：
+
+```bash
+SOURCE_POLICY="${SOURCE_POLICY:?set the source policy name}"
+NEW_POLICY_NAME="${NEW_POLICY_NAME:?set the new policy name}"
+NEW_POLICY_ID="${NEW_POLICY_ID:?set the temporary policy ID}"
+POLICIES_JSON="${POLICIES_JSON:?set the current policies JSON path}"
+POLICY_JSON="${POLICY_JSON:?set the candidate policy JSON path}"
+
+jq --arg source "$SOURCE_POLICY" \
+   --arg name "$NEW_POLICY_NAME" \
+   --arg id "$NEW_POLICY_ID" '
+  map(select(.name == $source))
+  | if length == 1
+    then .[0]
+    else error("expected exactly one source policy")
+    end
+  | .name = $name
+  | .["@id"] = $id
+' < "$POLICIES_JSON" > "$POLICY_JSON"
+
+jq -e . "$POLICY_JSON" >/dev/null
+```
+
+若要改变 ACL，先在候选 Caddyfile 中表达目标规则并适配，再把对应字段合入 `POLICY_JSON`。读取 policy 数组并保存当前 `Etag` 后，用 `POST` 追加：
+
+```bash
+POLICIES_PATH='apps/security/config/authorization_policies'
+test -n "$etag"
+
+curl --noproxy '*' --fail --silent --show-error \
+  --max-time 60 \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -H "If-Match: $etag" \
+  --data-binary @"$POLICY_JSON" \
+  "$ADMIN_URL/config/$POLICIES_PATH"
+```
+
+route 在下一次独立请求中引用新 policy。portal transformer 同样先按 portal name 断言唯一对象，从同版本适配结果或实时对象生成候选 transformer，再在 `If-Match` 保护下追加；不保存并复用可能漂移的 portal index。
+
+### <a id="admin-multi-request"></a>多请求一致性与超时恢复
+
+单个写请求失败时，Caddy 保留旧运行配置；多个请求之间没有事务。新增 policy 与新增 route 的执行顺序为 policy → route → 验证，回滚顺序为 route → policy。
+
+写请求超过客户端 `--max-time` 后：
+
+- 不立即重发相同请求；
+- 先测试业务 URL，再读取 `/id/<id>`；
+- `GET /config/` 也超时而 pprof 正常时，按 [reload 配置锁阻塞](#reload-lock)处理；
+- 确认对象未生效且没有其他配置写入后，才重新读取并构造请求。
+
+全量快照恢复会覆盖快照之后所有人的修改，只作为最后手段：
+
+```bash
+curl --noproxy '*' --fail --silent --show-error \
+  --max-time 60 \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  --data-binary @"$snapshot" \
+  "$ADMIN_URL/load"
+```
+
+执行前再次确认快照是非空合法 JSON，并确认快照之后没有其他写入。可以按 ID 定向回滚时，不使用整份恢复。
+
+### <a id="admin-convergence"></a>配置回写与收敛
+
+运行态验证结束后，按启动方式把配置收敛回唯一权威来源：
+
+| 部署方式 | 接受变更 | 放弃变更 |
+|---|---|---|
+| Caddyfile 型 | 把等价配置写入实际 import 的文件，格式化、带齐 service 环境变量验证，再 reload；完整文件覆盖临时对象 | 按 ID 删除临时对象，或 reload 原 Caddyfile |
+| `--resume` / API 型 | 把临时 name、`@id` 和对象整理为正式 JSON，导出并保存到配置管理系统；确认 autosave 后用 `--resume` restart 验证 | 按依赖反序删除临时对象，确认 autosave 已更新 |
+
+Caddyfile 型配置通过 reload 应用；API 型 JSON 通过 Admin API 写入。新增域名和配置规模本身不是 restart 条件；更换二进制、systemd unit 或进程环境时才需要 restart。reload 已确认卡在配置锁时，restart 是恢复手段，后续仍要定位卡锁模块。
+
+最后重新检查：
+
+- 目标业务和认证结果；
+- `GET /config/` 中的最终对象；
+- 所有临时 ID 已删除或改成正式 ID；
+- Caddyfile 型部署 reload 后不再出现临时对象；
+- API 型部署 `--resume` restart 后仍能恢复正式对象。
+
+## <a id="reverse-proxy-modes"></a>基础反代模式
+
+域名模式与 IP 模式在证书、端口形态和认证边界上不同。先按运行条件选择模式，再读取对应小节：
+
+| 维度 | 域名模式 | IP 模式 |
+|---|---|---|
+| 适用前提 | 域名已解析，并存在可用的 ACME challenge 路径 | 没有可用域名或不使用公网域名 |
+| 证书 | 公网 ACME 证书，客户端通常无需额外配置 | `tls internal` 自签，客户端导入 local root CA |
+| SNI | 浏览器携带域名 SNI | IP 直连的 SNI 可能为空，需要 `default_sni <IP>` 兜底 |
+| 端口形态 | 多域名共享 `80/443`，靠 SNI 和 Host 分流 | 每个服务独占一个对外端口 |
+| HTTP→HTTPS | Caddy 默认生成跳转 | 默认也生成跳转；同一 IP 多端口时通常关闭后按需手写 |
+| `bind` | 共享 listener 上的局部 `bind` 会拆分 server | 独占端口可单独限制监听地址 |
+| caddy-security cookie | 跨子域共享登录时配置 `cookie domain` | 不配置 `Domain=<IP>`，依赖 host-only cookie |
+| OAuth callback | callback 使用域名入口 | callback 使用 IP 入口时与域名入口分开配置 |
 
 ### <a id="domain-mode"></a>域名模式
 
@@ -115,7 +423,7 @@ example.com {
 }
 ```
 
-Caddy 会从配置的或默认的 ACME issuer 获取公网证书。HTTP-01 需要公网 `80`，TLS-ALPN-01 需要公网 `443`，DNS-01 则需要 DNS provider；不要求两个入站端口同时满足同一种 challenge。多个域名可以平铺为独立 site block；监听地址相同的站点进入同一个内部 server，再靠 TLS SNI 和 HTTP Host 分流。单个共享端口站点不要局部添加 `bind`，具体边界见 [listener 分组](#listener-groups)。
+Caddy 会从配置的或默认的 ACME issuer 获取公网证书。HTTP-01 需要公网 `80`，TLS-ALPN-01 需要公网 `443`，DNS-01 则需要 DNS provider；不要求两个入站端口同时满足同一种 challenge。多个域名可以平铺为独立 site block；监听地址相同的站点进入同一个内部 server，再靠 TLS SNI 和 HTTP Host 分流。单个共享端口站点不做局部 `bind`，具体边界见后文 listener 分组主题。
 
 ### <a id="ip-mode"></a>IP 模式
 
@@ -151,7 +459,7 @@ https://<主 IP>:<对外端口> {
 >
 > IP 模式天然是"每服务独占一个端口"，所以用 `bind` 把监听限定到指定网卡在这里是安全的；这跟域名模式下多站点共享 `:443` 的情形正好相反（见本节末「`bind` 与 listener 分组」）。
 
-### <a id="automatic-https-redirects"></a>自动 HTTP→HTTPS 跳转
+### 自动 HTTP→HTTPS 跳转：默认行为、关闭、多端口选择
 
 **默认行为**：只要 Caddy 知道站点的 host——**域名、IP、hostname 都算**——就会给它自动管 HTTPS，并在 HTTP 口（默认 `80`）起 `308` 跳转。**IP 站点一样自动跳**；"IP 不自动跳"的说法对当前版本（v2.11.2 实测 + 源码核对）是错的。域名和 IP 的差别只在**证书来源**，不在跳不跳：
 
@@ -331,7 +639,7 @@ echo | openssl s_client -connect <edge_ip>:443 -servername <host> 2>/dev/null \
 
 **实测坑（on-demand 特有）**：on-demand 证书是"首次握手现签"，签发失败时，触发它的首次握手会直接失败（`curl` 退出码 35 = SSL 握手错）而非超时。**触发连接与 ACME 验证是两条独立链路**：`curl --resolve <host>:443:127.0.0.1` 只把这次客户端连接钉到本机、用正确 SNI 触发签发；CA 随后仍按公网 DNS 独立访问该域名的 80/443 完成 HTTP-01 / TLS-ALPN-01。只要公网 DNS 指向这台 Caddy、验证端口可达，本地环回触发也能成功；若失败，应查 Caddy 的 ACME 日志、公网 DNS、80/443 入站与 challenge 是否被其他服务截走，**不能归因于 `--resolve` 本身把挑战带进了环回路径**。换公网访问后成功，说明当时公网验证链路已可用，不代表 CA 会沿着 curl 的连接路径验证。通配证书无此首访问题（证书早在缓存里，与连接从哪来无关）。
 
-### <a id="caddyfile-snippets"></a>错误页 snippet
+### 可复用的错误页 snippet
 
 如果你有一个单独的 `error-pages` 服务跑在 `localhost:4040`，可以用 snippet 集中定义，再按站点 `import`：
 
@@ -356,7 +664,7 @@ example.com {
 - `snippet` 用 `(name)` 定义，用 `import name` 引用。
 - 想让错误页真正走到 `handle_errors`，要用 `error` 触发，而不是 `respond`。
 
-### `reverse_proxy` 注入请求头给上游（给后端补凭据）
+### <a id="reverse-proxy-request-headers"></a>`reverse_proxy` 注入请求头给上游（给后端补凭据）
 
 `reverse_proxy` 里的 `header_up` 能改**发往上游**的请求头（注入 / 覆盖 / 删除）。一个常用模式：**后端自己需要一份凭据，但你不想让用户手填**——在边缘用 caddy-security 认证放行用户后，reverse_proxy 顺手把后端要的头注入进去，用户端全程无感、也不接触这份凭据。
 
@@ -390,7 +698,7 @@ https://panel.example.com {
 - **公网端口别忘了放行安全组/防火墙**。  
   中国大陆 Aliyun ECS 的未备案 SNI 封锁与“IP 直连 + `tls internal`”绕过方案由 `vps-maintenance` skill 的大陆备案与端口策略主题覆盖。
 
-### <a id="listener-groups"></a>listener 分组与 `bind`
+### `bind` 与 listener 分组：独占端口 vs 共享端口
 
 `bind` 表面是"决定监听哪个网卡地址"，但它真正的杀伤力是会**改变 Caddy 的 server 分组**，进而决定整段端口的流量归属。一次把 `:443` 上一堆域名全打白屏的事故就出在这里，所以单独拎出来讲。
 
@@ -476,7 +784,7 @@ caddy list-modules --versions | grep -i security
 
 升级 `caddy-security` **大版本**前务必看文末「排障与诊断 · 跨版本 cookie 名陷阱」：默认 cookie 名变过，**升级会让所有现存会话失效（全员重登）**，且共用同一 portal 的各机要一起升、否则签发/读取的 cookie 名对不上会登录死循环。
 
-## <a id="caddy-security"></a>caddy-security GitHub OAuth
+## `caddy-security`：GitHub OAuth 认证
 
 ### 安装
 
@@ -563,7 +871,7 @@ caddy-security 的 GitHub OAuth 由三种东西拼起来，先理清它们的关
 
 **想要更长的免登期**：把两个 lifetime 一起调长（如 30 天 `2592000` / 90 天 `7776000`，两者设一样）。代价：JWT 无状态，调长 = 撤销窗口变长（过期前无法 server-side 失效，强行作废只能换 `JWT_SHARED_KEY`，但那会让**所有人**一起掉线）。
 
-### <a id="security-token-claims"></a>权限策略与令牌角色的生效时机
+### <a id="security-token-claims"></a>改权限不即时生效：本想放行的人被旧 token 挡在门外、还蒙在鼓里
 
 **事故还原**：你在 Caddyfile 里给某用户放行（典型：改 `transform user` 给他发个新角色，或把站点切到要这新角色的权限组），reload 生效，本以为他能进了——可他刷新页面还是 `403`。于是你想"把他踢下线、逼他重登，不就拿到新角色了？"结果发现：**单个用户根本踢不下线**。为什么改了权限他还被拒、为什么踢不了人，根子都在上一节的"无状态"。
 
@@ -1407,7 +1715,7 @@ example.com {
 
 **修复**：确认 `caddy validate` 通过后 `sudo systemctl restart caddy` 一次，让新进程在「旧证书文件已不存在」的干净状态下走 `tls.obtain`；日志看到 `certificate obtained successfully` 才算恢复。**只看端口 LISTEN 不够，要实际完成一次 TLS 握手**（`curl -kIv https://<IP>:<port>/`）验证。
 
-### WebSocket / 长连接反代的连接泄漏与 `stream_timeout`
+### <a id="reverse-proxy-stream-timeout"></a>WebSocket / 长连接反代的连接泄漏与 `stream_timeout`
 
 `reverse_proxy` 代理 WebSocket 时会 **hijack** 掉连接、退化成一条双向 `io.Copy` 的裸管道（后端↔客户端各一个 copier goroutine）。这条管道**默认不设任何读写超时**（`stream_timeout` 默认无）。当客户端**不告而别**——手机休眠 / 标签切后台 / NAT 空闲驱逐 / **上游代理节点被墙**，没有 FIN/RST——Caddy 察觉不到，copier 永不返回，连接与 goroutine **泄漏**。
 
@@ -1490,14 +1798,14 @@ reverse_proxy http://127.0.0.1:8082 {
 
 ## 实用备忘
 
-- 域名模式使用公网 ACME 与共享 `80/443`；IP 模式使用 internal CA 与独占端口
-- 排查按基础反代、错误页、认证的依赖顺序逐层验证
+- 基础站点优先顺序：**域名模式 > IP 模式**
+- 功能叠加顺序：**先反代，再错误页，再认证**
 - 共享 listener 上的业务 route 使用 Host matcher；来源限制的顺序见 [共享 listener 的 Host 分流](#shared-listener-routing)
 - 文件型 Caddyfile/JSON 通过 reload 应用，API 型 JSON 通过 Admin API 写入；二进制、systemd unit 或进程环境变更使用 restart
 - reload 卡在配置锁时先恢复服务，再按 [reload 配置锁阻塞](#reload-lock)定位原因
-- Admin API 的方法语义、autosave、ETag、临时 route、caddy-security 与配置收敛见 [Caddy Admin API 运行态配置](caddy-admin-api.md)
-- `tls internal` 场景下，客户端只导入 root CA
-- 共享端口上的域名站点不做局部 `bind`；独占端口可以单独限制监听地址
+- Admin API 的方法语义、autosave、ETag、临时 route、caddy-security 与配置收敛见 [Admin API 运行态配置](#admin-runtime-config)
+- `tls internal` 场景下，**客户端只导 root CA**
+- **共享端口（`:443`）上的域名站点别写 `bind`**：会独占该 `IP:443`、劫持整段端口流量 → 其它域名 200 空 body 白屏；偏偏本机回环自查正常，极隐蔽。只有独占端口的站点才可以 bind。
 - `caddy-security`：
   - 跨子域共享登录时配置 `cookie domain`
   - 同一 host 或 IP 入口使用 host-only cookie，不设置 `Domain=<IP>`
