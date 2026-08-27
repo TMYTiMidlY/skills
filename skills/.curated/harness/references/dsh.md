@@ -18,26 +18,39 @@ DeepSeek Harness（`dsh`）是 DeepSeek 开源的 agent harness（把模型、�
 
 | 安装方式 | 命令 | 依赖解析时机 | 使用场景 |
 |---|---|---|---|
-| npm 临时运行 | `npx @deepseek-ai/dsh@<version> web` | 首次运行或 cache miss 时 | 官方快速启动入口 |
-| pnpm 临时运行 | `pnpm dlx @deepseek-ai/dsh@<version> web` | 首次运行或 store miss 时 | 临时验证；当前发布版已通过 Linux Web 与 PTY smoke test |
-| npm 全局安装 | `npm install --global @deepseek-ai/dsh@<version>`，随后运行 `dsh web` | 安装阶段 | 需要固定可执行路径的服务 |
+| npm 临时运行 | `npx @deepseek-ai/dsh@<version> web` | 尚无可复用的 `_npx` 安装树时 | 官方快速启动入口 |
+| pnpm 临时运行 | `pnpm dlx @deepseek-ai/dsh@<version> web` | 尚无对应的 dlx 临时项目时 | 临时验证；当前发布版已通过 Linux Web 与 PTY smoke test |
+| npm 全局安装 | `npm install --global @deepseek-ai/dsh@<version>`，随后运行 `dsh web` | 安装或升级阶段 | 需要固定可执行路径的服务 |
 | 源码构建 | `pnpm install && pnpm run build`，随后运行 `pnpm dsh web` | checkout 的安装与构建阶段 | 源码开发、锁文件复现或源码审计 |
 
-源码模式以仓库根 `package.json` 的 `packageManager` 字段确定 pnpm 版本。`pnpm run build` 生成 CLI 所需的 Host、Client 和前端产物；`pnpm dsh web` 使用已有产物。长期服务直接执行已经安装或构建的入口，使服务启动不依赖即时下载和 package resolution（包解析）。
+源码模式以仓库根 `package.json` 的 `packageManager` 字段确定 pnpm 版本。`pnpm run build` 生成 CLI 所需的 Host、Client 和前端产物；`pnpm dsh web` 使用已有产物。
 
 > 来源：[官方 npm 与源码运行方式](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/README.md#L13-L37)；[Node 与 pnpm 版本约束](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/package.json#L1-L10)；[CLI 的可执行入口](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/package.json#L11-L18)。
 
-### npm 依赖解析
+### npm 首次安装的依赖解析
 
-`@deepseek-ai/dsh@0.1.1-rc.2` 的 npm 安装曾在 dsh 子进程启动前长时间停留于 Arborist 的 peer dependency 树构造。隔离观测与最终成功运行采用了不同的 Node、npm、HOME 和 cache 条件，现有证据支持“依赖解析可能很慢”，对单一环境变量的归因仍未确定。
+这里的问题发生在 npm 尚未完成安装树的首次安装阶段。`npx` 成功建立对应的 `_npx` 安装树后，同一 cache 与 package spec 下的后续调用可以复用它；`npm install -g` 也只在安装或升级时解析依赖。下面的实测描述首次安装为何可能长时间没有进度。
 
-CPU profile 和依赖图都把主要工作定位到 peer placement、bundle 归属和 package spec/semver 解析。它们没有证明某一条 peer 环永久不收敛。部署若需要确定的启动时延，可以在部署阶段完成安装或构建，再让服务执行固定入口。
+| 实测 | 条件 | 结果 |
+|---|---|---|
+| 隔离 `npx --yes @deepseek-ai/dsh@0.1.1-rc.2 --version` | Node 24、npm 11.17.0、Arborist 9.8.0、独立 HOME 与空 cache | 150 秒观察窗内未完成，停在 `idealTree`，`_npx` 安装树仍为空 |
+| 更换 Node 后重复 | Node 26；npm、npx、Arborist 版本及相关文件哈希与上一轮相同 | 155 秒内仍未完成，安装树仍为空 |
+| 复用上一轮下载 cache | 128 个 cache hit、0 个 miss | 95 秒内仍停在相同阶段；下载命中没有跳过依赖树构造 |
+| 真实用户环境首次运行 | Node 22.23.1、npm 11.18.0、已有混合 cache | 最终成功；npm 父进程启动约 14 分 50 秒后才出现 dsh 子进程，dsh 自身启动只占最后几秒 |
 
-`legacy-peer-deps` 会跳过 peer placement，但当前发布图中存在由运行时代码直接 import、只在 manifest 中声明为 peer 的包；实测首先缺少的是 `@deepseek-ai/cordis-plugin-group`。因此它可能把安装时延变成运行期缺包。
+同一套隔离测试还覆盖了从 `0.0.1-rc.1` 到 `0.1.1-rc.2` 的多个版本；除早期版本另有未发布 package 的 404 外，其余版本都在 150 秒观察窗内停留于 `idealTree`。慢解析跨越多个预发布版本，当前 tag 是其中之一。
 
-官方的 packed-install gate 把所有 workspace tarball 同时列为顶层依赖；普通用户只安装 `@deepseek-ai/dsh` 时解析的是另一张依赖图。两条路径可以分别出现 CI 通过与单包安装缓慢或缺包。
+运行状态把耗时进一步定位到 npm：进程持续占用约一个逻辑核，磁盘计数停止增长，npm timing 最后停在 `idealTree:buildDeps` 与 `placeDep ROOT @deepseek-ai/dsh-base`。一段 Node Inspector CPU profile 中，`URL`、Arborist 的 `getBundler` 和 `SemVer` 占主要 self samples；调用链集中在 `CanPlaceDep → satisfiedBy → depValid` 与 `canPlacePeers → inBundle → getBundler`。
 
-> 来源：[官方安装入口](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/README.md#L13-L37)；[`dsh` 聚合包依赖](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/package.json#L20-L103)；[`dsh-app-boot` 的 peer 声明](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/boot/app-boot/package.json#L31-L61)；[packed-install consumer 的构造](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/scripts/release/verify-packed-install.ts#L88-L109)；安装时延与缺包报告见 [Discussion #176](https://github.com/deepseek-ai/deepseek-harness/discussions/176) 和 [Discussion #1032](https://github.com/deepseek-ai/deepseek-harness/discussions/1032)。
+发布版的内部依赖闭包包含 199 个 package、1472 条内部边，其中 1138 条是 peer dependency；`@deepseek-ai/cordis` 被 192 个内部包引用，图中还存在强连通环。实测因此把瓶颈定位为 Arborist 在 CPU 上反复进行 peer placement、bundle 归属与 package spec/semver 判断。它尚未锁定某一条 peer 环或某一次 fixed point 是总耗时的唯一决定因素。
+
+几组对照进一步限定了结论：Node 24 与 26 的相同 npm/Arborist 实现都出现慢解析，单独更换 Node 没有消除现象；只有下载 cache、尚无完整 `_npx` 安装树时，npm 仍会重建 `idealTree`；真实环境最终成功则说明求解可以收敛。因此准确结论是“首次依赖树构造可能极慢且缺少进度反馈”，具体触发条件仍未归因到单一变量。
+
+`legacy-peer-deps` 在约 67 秒内完成安装，却在启动时缺少 `@deepseek-ai/cordis-plugin-group`：`dsh-app-boot` 会静态 import 该包，而 manifest 只把它声明为 peer，跳过 peer 安装便没有补齐运行时依赖。`install-strategy=nested`、`shallow` 与隔离 npm 12 也没有在各自观察窗内完成。作为另一条包管理器路径，`pnpm dlx` 的冷 store 用时约 47 秒、热 store 约 1 秒，并通过 Web 与 PTY smoke test；这项对照验证了 pnpm 路径可用，npm Arborist 的具体触发条件仍由 npm 侧证据界定。
+
+官方 packed-install gate 把所有 workspace tarball 同时列为顶层依赖，预先满足了许多 peer，也补齐了按包名动态加载的 package；普通用户只安装 `@deepseek-ai/dsh` 时解析的是另一张依赖图。packed-install CI 覆盖全 tarball 顶层依赖图，单包 consumer 需要独立验证。
+
+> 来源：[官方安装入口](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/README.md#L13-L37)；[`dsh` 聚合包依赖](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/package.json#L20-L103)；[`dsh-app-boot` 的 peer 声明](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/boot/app-boot/package.json#L31-L61)；[packed-install consumer 的构造](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/scripts/release/verify-packed-install.ts#L88-L109)；相关用户报告见 [Discussion #176](https://github.com/deepseek-ai/deepseek-harness/discussions/176)、[#223](https://github.com/deepseek-ai/deepseek-harness/discussions/223) 和 [#1032](https://github.com/deepseek-ai/deepseek-harness/discussions/1032)。
 
 ### 安装脚本授权
 
@@ -45,9 +58,9 @@ CPU profile 和依赖图都把主要工作定位到 peer placement、bundle 归�
 
 源码构建使用仓库自己的 pnpm 策略。固定 tag 中的 `pnpm-workspace.yaml` 记录已经审核的 `allowBuilds` 条目，也显式拒绝随依赖带入但不需要执行的脚本；部署直接沿用该文件，避免把 npm warning 翻译成另一套全量授权。
 
-`pnpm dlx` 与 `pnpm add -g` 使用不同的链接布局。前者已通过当前发布版的 Linux smoke test；后者有动态裸 import 无法从全局布局解析 package 的报告。
+`pnpm dlx` 与 `pnpm add -g` 使用不同的链接布局。上游 [Discussion #55](https://github.com/deepseek-ai/deepseek-harness/discussions/55) 记录了 `pnpm add -g` 的兼容性问题：在 pnpm 的全局链接布局中，dsh 按包名执行的动态 `import` 无法解析相应 package。该问题针对全局安装布局；`pnpm dlx` 使用的是独立临时项目布局。
 
-> 来源：[官方源码的 `allowBuilds`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/pnpm-workspace.yaml#L35-L55)；pnpm 全局布局问题见 [Discussion #55](https://github.com/deepseek-ai/deepseek-harness/discussions/55)。
+> 来源：[官方源码的 `allowBuilds`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/pnpm-workspace.yaml#L35-L55)。
 
 ### Web 与 headless
 
