@@ -1,48 +1,48 @@
 # DeepSeek Harness（dsh）Plugin 开发
 
-本文先说明运行中的 Plugin、配置实例和安装包分别是什么，再给出一条从临时原型到源码仓库、分层验证、Profile 安装和后续维护的完整开发流程。模块、生命周期和各类扩展接口都放在这条流程中；现成 Plugin 与社区生态放在文末，不打断开发主线。运行方式、内置扩展的用户行为和完整权限模型见 [DeepSeek Harness 运行时](dsh.md)。
+本文先说明运行中的 Plugin、配置实例和安装包分别是什么，再给出一条从临时原型到源码仓库、分层验证、Profile 安装和后续维护的完整开发流程。模块、生命周期和各类扩展接口都放在这条流程中；文末单独介绍现成 Plugin 与社区生态。运行方式、内置扩展的用户行为和完整权限模型见 [DeepSeek Harness 运行时](dsh.md)。
 
-> **来源口径：** 模块、生命周期和社区项目的原有结论按 2026-08-16 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)及 2026-08-17 的社区仓库快照保留；开发、安装和测试流程另按 2026-08-26 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e)复核。源码和文档链接固定到对应 commit，正文不反复书写 commit hash。
+> **来源口径：** 模块、生命周期和社区项目的原有结论按 2026-08-16 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)及 2026-08-17 的社区仓库快照保留；开发、安装和测试流程另按 2026-08-26 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e)复核。每条具体引用都链接到对应 commit。
 
 ## <a id="plugin-objects"></a>Plugin、配置与安装包的关系
 
-开发前先分开五个对象。Plugin 是运行代码；Loader entry 是一次配置好的加载实例；package 是安装和解析代码的单位；Bundle 给 package 附上一层默认配置；Profile 决定一套应用实际组合哪些 Bundle。后续所有“临时”“持久”“已安装”都由这些对象落在哪一层决定。
+为了讲清楚后面的开发流程，这里先说明运行代码、配置和安装包之间的关系。后续所说的“临时”“持久”和“已安装”，都取决于代码与配置保存在哪里。
 
-### <a id="plugin-entry-package"></a>Plugin、Loader entry、package、Bundle 与 Profile
+### <a id="plugin-entry-package"></a>Plugin 开发中的基本概念
 
-这几个对象分别描述运行、配置和分发：
+后文会反复用到以下名称：
 
-| 对象 | 含义 | 关系 |
+| 名称 | 含义 | 与其他名称的关系 |
 |---|---|---|
-| Plugin | Cordis 加载的 TypeScript / JavaScript module | 一个 module 可以由多个 Loader entry 以不同配置加载 |
-| Loader entry | 配置树中的一个 Plugin 实例，包含 `id`、`name`、`config` 和可选的 `disabled` | `name` 指向 Plugin module，Fiber 管理它的运行状态 |
-| 可安装 package | 通过 npm、Git、本地目录或 tarball 分发的 package | 可以包含 Plugin、浏览器代码、依赖或普通库 |
-| Bundle | 声明 `dsh.bundle` 并携带 patch 的可安装 package | patch 向配置树插入或覆盖 Loader entry |
-| Profile | 一套可启动的配置组合 | 按顺序应用 Bundle patch 和用户 patch |
+| Plugin | dsh 实际加载和运行的 TypeScript / JavaScript module | 同一个 module 可以按不同配置加载多次 |
+| Loader entry | 一条 Plugin 加载配置，记录 `id`、`name`、`config` 和可选的 `disabled` | `name` 指定要加载的 module；Fiber 记录这次加载的运行状态 |
+| package（安装包） | 通过 npm、Git、本地目录或 tarball 安装的软件包 | 可以包含 Plugin module、浏览器代码、依赖或普通库 |
+| Bundle | 在 `package.json` 中用 `dsh.bundle.patch` 指定默认 patch 的 package | 安装后登记到 Profile 的 Bundle 列表；Profile 启动时应用 patch |
+| Profile | 一套可启动的 dsh 配置 | 记录依赖和 Bundle 顺序，并在其后应用用户 patch |
 
-官方 Web Settings 的“插件配置”标签页编辑已运行 Host Plugin 主动开放的用户设置；“插件列表”标签页只读展示 Loader entry、有效启停状态和 Fiber 状态，点击卡片用于展开详情。package 的安装、删除和更新由 `dsh plugin` 负责，Loader entry 的启停由配置 patch 表达；社区 Settings 扩展可以增加操作入口，见文末的[插件市场与主题](#plugin-market)。
+官方 Web Settings 的“插件配置”标签页用于修改已运行 Host Plugin 主动开放的设置；“插件列表”标签页只读展示每条 Plugin 配置的启停状态和 Fiber 状态，点击卡片可以展开详情。package 的安装、删除和更新由 `dsh plugin` 负责；某条 Plugin 配置是否启用则写在 patch 中。社区 Settings 扩展可以增加操作入口，见文末的[插件市场与主题](#plugin-market)。
 
-因此，设置页清单中的一项表示一个 Plugin 配置实例；可安装 package 是承载代码和 Bundle 配置的分发单元。一个 package 可以贡献多个 Loader entry，同一个 Plugin module 也可以出现多个实例，普通库 package 则只提供依赖。
+因此，设置页清单中的一项对应一条 Plugin 配置。package 与配置是一对多关系：一个 package 可以加入多条 Plugin 配置，同一个 Plugin module 也可以按不同配置加载多次；普通库 package 则只提供依赖。
 
-一个 package 没有 `dsh.bundle` 时仍可作为普通依赖安装，只是不会自动贡献配置层；本地 module 也可以不经过 package，直接由绝对路径挂载。因此 `package.json`、Bundle patch 和预构建产物是特定分发路线的要求，不是每个临时 Plugin 的共同前置。无论采用哪条路线，真正启动时都必须有 Loader 能解析并导入的运行 module。
+临时 Plugin 的代码直接存在于当前进程；本地源码可以由 patch 通过绝对路径挂载。需要把 Plugin 作为 Bundle 安装并随 Profile 启用时，再准备 `package.json`、Bundle patch 和可直接导入的运行入口。普通 package 也可以只作为依赖安装，再由用户 patch 挂载其中的 module。
 
 > 来源：[Plugin、Bundle 与 Profile 的关系](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/architecture.md#L9-L29)；[官方 Plugin 配置页的范围](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/ui-settings-plugins/README.md#L5-L25)；[官方 Plugin inventory 的只读边界](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/packages/client/ui-settings-plugin-inventory/README.md#L5-L20)；[Bundle 与普通依赖](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L9-L64)。
 
 ### <a id="plugin-loading-paths"></a>代码来源、配置层与生效范围
 
-同一段 Plugin 代码可以由临时内存、命令行 overlay、持久 patch 或已安装 Bundle 挂载。这些入口使用相同的 Loader entry 形状，但保存位置和生效时间不同。
+同一段 Plugin 代码可以通过创造模式、`--patch`、Profile/Home 的 `cordis.patch.yml` 或已安装 Bundle 加载。这些方式都会指定要加载的 module、使用的配置以及是否停用；区别在于信息保存在哪里、什么时候生效。
 
-| 入口 | 代码从哪里来 | 配置保存位置 | 生效范围 |
+| 入口 | 代码来源 | 写入位置 | 何时生效 |
 |---|---|---|---|
-| `dsh plugin --profile <name> add <spec>` | npm、Git、本地目录或 tarball package | Profile 依赖与 Bundle 列表 | 持久安装；Bundle 成员随下次启动生效 |
-| Profile 的 `cordis.patch.yml` | 已可解析的 package 或本地 module | 当前 Profile | 持久配置，并在运行时监视有效改动 |
-| `$DSH_HOME/cordis.patch.yml` | 已可解析的 package 或本地 module | Harness home | 对所有 Profile 生效，并在运行时监视有效改动 |
-| `--patch <path>` | 已可解析的 package 或本地 module | 只来自本次命令行 | 当前启动；适合本地开发和临时覆盖 |
-| 创造模式 | 进程内的临时代码 | 当前 DSH 进程内存 | 原型停用、删除或重启前有效 |
+| `dsh plugin --profile <name> add <spec>` | npm、Git、本地目录或 tarball package | Profile 的依赖、lockfile 和 Bundle 列表 | 安装结果持久保存；新的 Bundle 集合在下次启动使用 |
+| Profile 的 `cordis.patch.yml` | 已安装 package 或绝对路径 module | 当前 Profile 的 patch 文件 | 保存后持续有效；运行进程会监视有效改动 |
+| `$DSH_HOME/cordis.patch.yml` | 已安装 package 或绝对路径 module | Harness home 的 patch 文件 | 对所有 Profile 持续有效；运行进程会监视有效改动 |
+| `--patch <path>` | 参数指定的 patch 文件 | 本次命令参数；Profile 保持原样 | 当前启动期间有效，适合本地开发和临时覆盖 |
+| 创造模式 | 进程内的临时代码 | 当前 dsh 进程内存 | 运行后立即生效，停用、删除或重启后消失 |
 
-安装 package 与应用 patch 是相邻的两层。可安装 Plugin package 通常同时携带 module 和 Bundle patch：`dsh plugin` 安装 package 并把 Bundle 加入 Profile，启动时再由 patch 创建 Loader entry。直接传 `--patch` 使用同一种配置格式，同时保持 Profile 的依赖和 Bundle 列表不变；patch 通过绝对路径可以直接加载本地 module，通过 package 名称加载时则要求该 package 已经可解析。
+把 Plugin 做成安装包时，package 通常同时包含运行 module 和 Bundle patch。`dsh plugin` 先把 package 安装进 Profile，再把它登记到 Profile 的 Bundle 列表；Profile 启动时，Bundle patch 创建对应的 Plugin 配置。直接使用 `--patch` 时，dsh 在当前启动应用这份配置，Profile 的依赖和 Bundle 列表保持原样。patch 写绝对路径可以加载本地 module；写 package 名称则要求这个 package 已经安装并且可以解析。
 
-Agent preset 还会为每个 Agent 组合 prompt、tools 和策略类 Plugin。它选择部署中已有的 Agent 侧 module，作用范围和 Host Profile 的 Bundle、patch 分开。
+Agent preset 只控制新 Agent 使用的 prompt、tools 和策略类 Plugin，并从部署中已有的 module 里选择。安装 Host Bundle 与修改 Agent preset 是两项独立操作。
 
 Bundle 列表在 Profile 启动时确定；通过 `dsh plugin` 添加、删除或更新 Bundle 后需要重启该 Profile。Profile 与 Harness home 的 patch 支持运行时重载；主题和部分浏览器端 Plugin 还可以即时切换或通过 HMR 刷新。这些差异在开发流程的[操作影响表](#operation-effects)中按动作展开。
 
@@ -50,7 +50,7 @@ Bundle 列表在 Profile 启动时确定；通过 `dsh plugin` 添加、删除�
 
 ## <a id="plugin-basics"></a>Plugin 开发流程
 
-一条完整开发链路从需求和扩展位置开始，经过可选的临时原型，再落成源码仓库；源码先以 `--patch` 挂载，逐层实现并验证，最后才打包、安装到 Profile 和发布。创造模式不是必经步骤，发布也不等于安装：每个阶段都有独立的产物和验收门。
+一条完整开发链路从需求和扩展位置开始。开发者可以直接建立源码仓库，也可以先在创造模式中验证原型；源码通过 `--patch` 挂载并逐层实现、验证后，再生成安装包、安装到 Profile、完成部署验收，最后发布可追踪的版本。每个阶段都有对应的产物和验收标准。
 
 ```mermaid
 flowchart LR
@@ -68,17 +68,17 @@ flowchart LR
 
 ### <a id="workflow-entry"></a>开发入口的选择
 
-入口只决定从哪一步开始，不改变源码 Plugin 最终需要的质量门。
+无论从哪个入口开始，源码 Plugin 最终都要经过相同的构建、测试和安装验收。
 
 | 当前目标 | 开发入口 | 下一阶段 |
 |---|---|---|
 | 扩展位置或可行性还不确定 | 在创造模式中检查真实接口并制作临时原型 | 将确认过的行为提炼成源码工程 |
 | 功能边界已经明确，或一开始就需要依赖、测试和构建 | 直接建立独立源码仓库 | 用 `--patch` 挂载最小 module |
 | 修改 dsh 官方能力并准备向上游贡献 | 在 dsh 官方仓库中新增或修改 package | 按官方 package、测试和文档清单注册 |
-| 只安装、更新或移除现成 package | 不进入开发流程，使用 `dsh plugin --profile <name> ...` | 重启目标 Profile 验证新 Bundle 集合 |
-| 只启停 Loader entry 或改用户配置 | 修改 Profile/Home patch 或官方 Settings | 观察热重载和 Fiber 状态 |
+| 安装、更新或移除现成 package | 使用 `dsh plugin --profile <name> ...` 管理 package | 重启目标 Profile 验证新 Bundle 集合 |
+| 启停 Plugin 配置或修改用户设置 | 修改 Profile/Home patch 或官方 Settings | 观察热重载和 Fiber 状态 |
 
-创造模式中运行的是**临时 Plugin**：它和源码 Plugin 都遵循 Cordis 的加载与生命周期规则，但没有对应的源码工程、构建产物和发布包。它适合回答“这个想法能否工作”，源码开发负责把答案变成长期可用的软件。
+创造模式把 **临时 Plugin** 保存在当前进程中，用来验证扩展位置和行为；源码 Plugin 则把实现、依赖、测试、构建产物和发布说明保存在磁盘上。两者都遵循 Cordis 的加载与生命周期规则，确认过的原型可以继续整理成长期工程。
 
 > 来源：[创造模式的定位与能力](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/agent.cordis.yml#L1-L27)；[创造模式与源码开发的环境差异](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L10-L80)。
 
@@ -104,7 +104,7 @@ flowchart LR
 
 ### <a id="creation-mode-plugin-development"></a>创造模式中的临时原型
 
-切换到 [`cordis` preset（创造模式）](dsh.md#creation-mode)后，Agent 会保留标准模式的编码能力，并获得一组专门面向 DSH 自身的开发上下文。此时加入的是**开发手段**，不是某个现成 Plugin；具体扩展仍由 Agent 根据用户目标现场创建。
+切换到 [`cordis` preset（创造模式）](dsh.md#creation-mode)后，Agent 会保留标准模式的编码能力，并获得一组专门面向 DSH 自身的开发上下文。Agent 再根据用户目标，利用这些开发能力创建具体扩展。
 
 #### 创造模式提供的开发上下文
 
@@ -116,7 +116,7 @@ flowchart LR
 | 运行时开发提示与工具说明 | 自动加入 | 说明临时 Plugin 的用途、版本和批准规则、检查与修改流程、后台与网页界面的分工，以及常见错误和恢复方式 |
 | 两份模式专用 Skill | 先加入名称与摘要，正文按需加载 | `cordis-plugin-development` 负责临时 Plugin 开发；`editing-cordis-compositions` 负责 Agent preset 与 Cordis 组合 |
 
-因此，具体的工具调用顺序、版本处理、浏览器批准、生命周期和故障恢复规则，确实会由创造模式直接提供给 Agent；更长的示例和组合规范则保存在 Skill 正文中，在任务需要时才加载，并不是切换模式时一次性塞入全部提示词。
+创造模式直接提供工具调用顺序、版本处理、浏览器批准、生命周期和故障恢复规则；更长的示例和组合规范保存在 Skill 正文中，按任务需要加载。
 
 从用户视角看，这些上下文让 Agent 能够检查正在运行的 DSH、创建和调整临时 Plugin、诊断加载或界面问题，以及创作新的 Agent preset。网页界面的临时扩展需要用户批准后才会加载。创造模式可以接触真实的 DSH 主进程，应视为与直接执行终端命令相近的高权限能力，只在受信任的开发场景中使用。
 
@@ -124,9 +124,9 @@ flowchart LR
 
 #### 创建、修改与验证临时 Plugin
 
-创造模式创建的临时 Plugin 可以作为源码 Plugin 的原型。先检查实际 Host/Client 接口，再定义一个版本并运行；失败时读取该版本的诊断，追加新版本修复，而不是覆盖旧版本。两者使用同一套 Cordis Plugin 思路，所以已经确认的行为、扩展位置和部分代码可以继续利用；区别在于临时 Plugin 只存在于当前 DSH 进程，源码 Plugin 则有磁盘上的源码、配置、依赖、测试和发布方式。
+创造模式创建的临时 Plugin 可以作为源码 Plugin 的原型。先检查实际 Host/Client 接口，再定义一个版本并运行；失败时读取该版本的诊断，并追加一个新版本修复，旧版本继续用于比较和回退。两者使用同一套 Cordis Plugin 思路，所以已经确认的行为、扩展位置和部分代码可以继续利用；临时 Plugin 保存在当前 DSH 进程中，源码 Plugin 则把源码、配置、依赖、测试和发布方式保存在磁盘上。
 
-临时原型只需要证明扩展位置、接口契约和用户行为成立，不应在这一阶段假定 TypeScript 编译、package resolution、安装脚本、干净 Profile 或发布包已经通过。
+临时原型负责验证扩展位置、接口契约和用户行为；TypeScript 编译、package resolution、安装脚本、干净 Profile 和发布包留到源码阶段逐项验证。
 
 #### 临时版本的保留、停用与清理
 
@@ -142,13 +142,13 @@ flowchart LR
 
 #### 从临时原型提炼源码工程
 
-创造模式不会一键生成长期工程。迁移时先记录已经确认的扩展位置、接口、配置字段、错误行为和清理方式，再把必要代码整理进源码仓库。源码工程仍需独立补齐依赖声明、类型、测试、构建、README、许可证、Bundle patch 和安装验收；临时版本的批准记录、Package id 和运行状态不属于发布产物。
+长期工程需要根据原型单独建立。迁移时先记录已经确认的扩展位置、接口、配置字段、错误行为和清理方式，再把必要代码整理进源码仓库。源码工程随后补齐依赖声明、类型、测试、构建、README、许可证、Bundle patch 和安装验收；发布产物保存这些长期文件，临时版本的批准记录、Package id 和运行状态继续属于进程状态。
 
-如果原型只证明了其中一半，例如 Host 能返回数据但 Client 还未渲染，就只把已证实的结论带入源码工程，并把另一半留作待验证项。这样临时试验不会被误写成完整兼容承诺。
+如果原型只证明了其中一半，例如 Host 能返回数据但 Client 还未渲染，就把已证实的结论带入源码工程，并把另一半留作待验证项。最终兼容承诺与已经完成的验证保持一致。
 
 ### <a id="source-plugin-development"></a>建立源码仓库
 
-源码仓库是长期维护的真相源：它保存人可读源码、依赖和测试；安装包是从某个源码版本生成的交付物；Profile 则是某台部署实际安装了什么。三者分别版本化，避免让一个不断变化的 checkout 同时充当源码、发布物和生产安装。
+源码仓库、安装包和 Profile 分别保存三类状态：仓库保存人可读源码、依赖和测试；安装包固定某个源码版本生成的交付内容；Profile 记录某台部署实际安装和启用的版本。三者分别版本化并相互追溯。
 
 #### <a id="code-location"></a>代码位置与贡献边界
 
