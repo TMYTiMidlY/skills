@@ -68,7 +68,7 @@ npx @larksuite/cli@latest install
 
 ### npm 包与 CLI
 
-`npx` 取得 `@larksuite/cli` 安装包装器。向导读取 npm registry 的最新版本，并在全局包缺失或版本较旧时执行：
+`npx` 下载并运行 `@larksuite/cli` 提供的安装入口。安装程序读取 npm registry 的最新版本，并在全局包缺失或版本较旧时执行：
 
 ```bash
 npm install -g @larksuite/cli
@@ -78,13 +78,13 @@ npm install -g @larksuite/cli
 
 ### AI Skills
 
-向导先读取全局 Skills 清单：
+安装程序先读取全局 Skills 清单：
 
 ```bash
 npx -y skills ls -g
 ```
 
-需要安装时，向导调用生产 Skills 源：
+需要安装时，安装程序调用生产 Skills 源：
 
 ```bash
 npx -y skills add https://open.feishu.cn/lark-cli/skills/regular -y -g
@@ -113,7 +113,7 @@ lark-cli auth login
 
 | 路径 | 内容 |
 |---|---|
-| npm cache | `npx` 包装器和下载缓存，具体目录由 npm 配置决定 |
+| npm cache | `npx` 下载的安装入口和依赖缓存，具体目录由 npm 配置决定 |
 | `<npm-prefix>/lib/node_modules/@larksuite/cli/` | Unix-like 系统常见的全局 npm 包位置 |
 | `<npm-prefix>/bin/lark-cli` | npm 创建的命令入口 |
 | `~/.agents/skills/lark-*` | `skills` CLI 写入的规范 Skills 副本 |
