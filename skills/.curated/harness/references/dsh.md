@@ -448,11 +448,30 @@ Web 的 **Settings → Models** 可以配置 DeepSeek、已安装 catalog provid
 
 > 来源：[模型、凭据、自定义 provider 与图片能力配置](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/guide/providers.zh.md#L5-L80)。
 
-#### <a id="pi-ai-catalog-version"></a>pi-ai 模型目录版本
+#### <a id="pi-ai-catalog-version"></a>pi-ai 模型目录版本与容量覆盖
 
 `dsh-llm-pi-ai` 从 `@earendil-works/pi-ai` 取得内置 provider 的模型目录、请求协议和推理档位等元数据。DSH `0.1.1-rc.2` 声明的是 `^0.82.1`；对 `0.x` 版本，caret 范围不会跨 minor，因此它只能解析 `<0.83.0`，不能自动跟到 `0.84.x`。已知 provider 的“发现模型”也直接返回已安装目录，不会请求厂商的 `/models` 刷新。由此产生的典型症状是：凭据已配置、厂商接口已经列出新模型，但 DSH 选择器没有该模型；强行点名则由适配器报 `UNKNOWN_MODEL`。
 
 > 来源：[`dsh-llm-pi-ai` 的 pi-ai 依赖范围](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/package.json#L45-L47)、[已知 provider 只读取安装目录](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/discovery.ts#L1-L14)、[目录优先分支](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/discovery.ts#L195-L210)，以及 [npm caret range 规则](https://github.com/npm/node-semver/blob/v7.7.2/README.md#caret-ranges-123-025-004)。
+
+DSH 的 `openai-codex` provider 由 `dsh-llm-pi-ai` 直接驱动，不读取 Codex CLI 的 `~/.codex/config.toml`。当已安装的 pi-ai 目录仍把 `gpt-5.6-sol` 的 `contextWindow` 记为 272000，而部署希望 DSH 按 1,000,000 tokens 预算时，应在 `$DSH_HOME/settings.yaml` 覆盖该模型的目录元数据：
+
+```yaml
+llm-pi-ai:
+  providers:
+    openai-codex:
+      modelOverrides:
+        gpt-5.6-sol:
+          contextWindow: 1000000
+```
+
+`modelOverrides` 只改指定模型的容量，保留同一 provider 的其余目录字段；settings provider 会热重载文件，`dsh-llm-pi-ai` 在后续操作重新读取 profile，因此不需要重启服务或新建 Session。目标是 1M 时应写 `1000000`；Codex CLI 的 `max_context_window` 等元数据属于另一套运行时，换成较小数值会直接缩小 DSH 的预算，并非等价配置。使用 dsh-model-hub 的部署还需确认选择的是官方 `openai-codex`，而不是插件自带的 `codex`；两条路由的归属区别见[调研记录](dsh-research.md#2026-08-27-installed-source-followup)。
+
+自动压缩由 DSH 的 `compaction-basic` 负责，并按解析后的 `contextWindow` 计算预算。默认在窗口的 80% 触发压缩，逐字保留最近 16%；窗口设为 1,000,000 后，对应 800,000 tokens 触发、保留 160,000 tokens。若要改变比例、绝对保留量或摘要模型，应修改 Agent preset 中的 compaction 配置，而不是 Codex CLI 的 `model_auto_compact_token_limit`。
+
+> 🔬 2026-08-27 本机实测：把正在使用的 `openai-codex/gpt-5.6-sol` profile 从空配置改为上述 override 后，Web 页面即时显示 1M，当前 Session 的后续请求也继续成功；这验证了热重载和路由可用，不是向服务端发送接近 1M 输入的压力测试。`contextWindow` 是客户端容量声明，不能扩大服务端实际能力。
+
+> 来源：[`contextWindow` 与 `modelOverrides` 配置字段](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/config.ts#L283-L335)、[模型覆盖的解析优先级](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/catalog.ts#L790-L880)、[settings 动态配置的生效时机](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/README.zh.md#L115-L119)，以及 [compaction 默认比例与按模型策略](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/compaction/compaction-basic/src/types.ts#L9-L43)。
 
 > 🔬 2026-08-27 本机实测：Z.AI 和 xAI 的真实 `/models` 请求都返回 200，并分别列出 `glm-5.3` 和 `grok-4.6`；同机 DSH 实际解析的 pi-ai `0.82.1` 却只列到 `glm-5.2` 和 `grok-4.5`。pi-ai `0.84.3` 同时补齐两项：xAI 内置模型改走 Responses API，并把 Grok 4.6 设为默认；Z.AI Coding Plan 的 GLM-5.3 推理档位补全为 low、high 和 max。
 
