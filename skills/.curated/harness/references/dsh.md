@@ -1,6 +1,6 @@
 # DeepSeek Harness（dsh）运行时
 
-本文从使用者和集成者视角说明 DeepSeek Harness 的产品定位、安装与运行、Cordis 插件框架、Agent 执行、内置扩展、程序化入口和权限边界。本文只给出安装、卸载和选择工作模式所需的插件概念；插件怎样组成运行环境、叠加配置、协作和清理，以及怎样开发和分发，见 [DeepSeek Harness Plugin 开发](dsh-dev.md)。现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-plugin-research.md)。
+本文从使用者和集成者视角说明 DeepSeek Harness 的产品定位、安装与运行、Cordis 插件框架、Agent 执行、内置扩展、程序化入口和权限边界。本文只给出安装、卸载和选择工作模式所需的插件概念；插件怎样组成运行环境、叠加配置、协作和清理，以及怎样开发和分发，见 [DeepSeek Harness Plugin 开发](dsh-dev.md)。现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-research.md)。
 
 ## <a id="product-position"></a>产品定位
 

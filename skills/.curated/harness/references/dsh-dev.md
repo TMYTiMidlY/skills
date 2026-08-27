@@ -1,6 +1,6 @@
 # DeepSeek Harness（dsh）Plugin 开发
 
-本文面向 Plugin 作者，集中说明 Cordis 插件框架的组成、配置合成和生命周期，再给出从临时原型到源码工程、分层验证、打包安装与版本维护的完整开发流程。运行 DSH、安装或卸载现成 Plugin、使用内置扩展以及判断完整权限边界见 [DeepSeek Harness 运行时](dsh.md)；现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-plugin-research.md)。
+本文面向 Plugin 作者，集中说明 Cordis 插件框架的组成、配置合成和生命周期，再给出从临时原型到源码工程、分层验证、打包安装与版本维护的完整开发流程。运行 DSH、安装或卸载现成 Plugin、使用内置扩展以及判断完整权限边界见 [DeepSeek Harness 运行时](dsh.md)；现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-research.md)。
 
 > **来源口径：** 模块与生命周期的原有结论按 2026-08-16 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/47f943859bef60e4160492346772ded9b24f765a)保留；开发、安装和测试流程另按 2026-08-26 的[仓库源码状态](https://github.com/deepseek-ai/deepseek-harness/commit/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e)复核。每条具体引用都链接到对应 commit。
 
@@ -23,7 +23,7 @@
 
 `cordis.patch.yml` 可以插入、修改或停用多条配置，每条最终配置都是一个 Loader entry。Loader 根据 entry 的 `name` 导入 module，并为这次加载创建 Fiber；配置怎样逐层形成这些 entry，见下一节的加载路径。
 
-开发验收时，官方 Web Settings 的“插件配置”标签页用于修改已运行 Host Plugin 主动开放的设置；“插件列表”标签页只读展示每条 Plugin 配置的启停状态和 Fiber 状态，点击卡片可以展开详情。package 的安装、删除和更新由 `dsh plugin` 负责；某条 Plugin 配置是否启用则写在 patch 中。社区 Settings 扩展可以增加其他操作入口，相关项目见调研篇的[插件市场与主题](dsh-plugin-research.md#plugin-market)。
+开发验收时，官方 Web Settings 的“插件配置”标签页用于修改已运行 Host Plugin 主动开放的设置；“插件列表”标签页只读展示每条 Plugin 配置的启停状态和 Fiber 状态，点击卡片可以展开详情。package 的安装、删除和更新由 `dsh plugin` 负责；某条 Plugin 配置是否启用则写在 patch 中。社区 Settings 扩展可以增加其他操作入口，相关项目见调研篇的[插件市场与主题](dsh-research.md#plugin-market)。
 
 因此，设置页清单中的一项对应一条 Plugin 配置。package 与配置是一对多关系：一个 package 可以加入多条 Plugin 配置，同一个 Plugin module 也可以按不同配置加载多次；普通库 package 则只提供依赖。
 
@@ -816,6 +816,6 @@ CI workflow artifact 保存某次 CI 运行的检查结果。稳定分发可以�
 
 #### <a id="plugin-community-discovery"></a>社区发现信息
 
-公开仓库可以添加 [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic，并在 README 写清 package 名、目标 Profile 和安装入口。这个操作只改变仓库的发现信息，不改变 package 或任何 Profile；调研时怎样使用 topic、目录和市场发现项目，见调研篇的[社区项目发现入口](dsh-plugin-research.md#community-discovery)。
+公开仓库可以添加 [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic，并在 README 写清 package 名、目标 Profile 和安装入口。这个操作只改变仓库的发现信息，不改变 package 或任何 Profile；调研时怎样使用 topic、目录和市场发现项目，见调研篇的[社区项目发现入口](dsh-research.md#community-discovery)。
 
 开发流程到这里完成：仓库保存可维护源码，release/tag 标记可追踪版本，package 承载可安装字节，Profile 记录部署选择，启动后的 Loader/Fiber 决定实际运行状态。任何一层改变，都回到对应验收门验证，不用另一层的“成功”代替。
