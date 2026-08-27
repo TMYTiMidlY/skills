@@ -47,6 +47,34 @@ systemctl --user show ssh-agent.service \
 
 `FragmentPath` 能看出当前生效的是发行版 unit，还是 `~/.config/systemd/user/` 下的同名用户覆盖。
 
+#### user unit 的 enable 作用域
+
+user unit 的“全局”仍然是用户服务配置，不是 system service：`systemctl --global enable` 通常把 wants symlink 放到 `/etc/systemd/user/`，对所有用户今后的 user manager 生效；`systemctl --user enable` 则把 symlink 放到当前用户的 `~/.config/systemd/user/`。
+
+`systemctl --user disable` 只删除当前用户作用域中的 enable symlink。systemd 没有一个名为“disabled”的负向记录去遮蔽 `/etc/systemd/user/*target.wants/` 中的全局链接，所以 unit 仍可能被全局依赖自动拉起；命令会对此给出 “still enabled in global scope” 警告。[systemctl 对 `--user` / `--global` 与 `disable` 的定义](https://github.com/systemd/systemd/blob/v255/man/systemctl.xml)明确区分了这几个作用域。
+
+只让当前用户改用另一种 agent 时，user-level mask 是作用域最小的覆盖：
+
+```bash
+systemctl --user mask --now \
+  gcr-ssh-agent.service \
+  gcr-ssh-agent.socket
+```
+
+mask 会在当前用户的高优先级 unit 目录建立指向 `/dev/null` 的同名链接，使该用户的手动启动、依赖拉起和 socket activation 都被拒绝，同时不影响其他用户。[systemd.unit 对 masked load state 的定义](https://github.com/systemd/systemd/blob/v255/man/systemd.unit.xml)也说明了空文件或 `/dev/null` symlink 的语义。
+
+只有整台机器的策略是“所有用户都不自动启用 GCR”时，才修改全局 enable 链接：
+
+```bash
+sudo systemctl --global disable \
+  gcr-ssh-agent.service \
+  gcr-ssh-agent.socket
+```
+
+`--global disable` 只改变今后所有用户的 enablement，不会自动停止已经运行在各 user manager 中的实例；现有实例仍需在对应用户会话中 stop/mask，或等该 user manager 结束。只切换当前用户时无需 sudo，也无需改动全局配置。恢复当前用户的覆盖使用 `systemctl --user unmask ...`。
+
+#### `systemctl --user` 的控制总线
+
 `systemctl --user` 通过用户 D-Bus 控制 user manager，它不通过 agent socket。由非登录 shell、远端执行器或某些终端启动的进程可能没有 `XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS`，此时会报 `Failed to connect to bus: No medium found`（本地化后也可能显示“找不到介质”）。
 
 先区分“环境没有指向 bus”和“user manager 根本不存在”：
