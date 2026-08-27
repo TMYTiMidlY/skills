@@ -1,6 +1,6 @@
 # DeepSeek Harness（dsh）Plugin 调研记录
 
-本文件按日期记录 DSH 社区 Plugin 的检索与源码调研，保留调研时间、目标、候选仓库、证据边界、阶段结论和后续验证。运行 DSH、安装或卸载现成 Plugin 及判断权限边界见 [DeepSeek Harness 运行时](dsh.md)；插件系统怎样组成、叠加配置、协作和清理，以及可复用的实现、测试与发布方法，见 [DeepSeek Harness Plugin 开发](dsh-plugin.md)。这里保留调研过程，避免后来只剩脱离证据的选型结果。
+本文件按日期记录 DSH 社区 Plugin 的检索与源码调研，保留调研时间、目标、候选仓库、证据边界、阶段结论和后续验证。运行 DSH、安装或卸载现成 Plugin 及判断权限边界见 [DeepSeek Harness 运行时](dsh.md)；插件系统怎样组成、叠加配置、协作和清理，以及可复用的实现、测试与发布方法，见 [DeepSeek Harness Plugin 开发](dsh-dev.md)。这里保留调研过程，避免后来只剩脱离证据的选型结果。
 
 ## <a id="packaging-and-community"></a>2026-08-17 · 现成 Plugin 与社区生态
 
@@ -18,7 +18,7 @@
 
 ### <a id="community-discovery"></a>社区项目的发现入口
 
-官方建议 Plugin 仓库添加 [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic（GitHub 仓库话题标签）。本文件把该 topic、社区目录、市场数据和已知项目之间的引用当作候选发现入口，再回到固定 commit 核对源码；被目录或市场收录不表示 package 已通过安全审查或安装验收。Plugin 作者怎样提供 topic、README 和安装信息，见开发篇的[社区发现信息](dsh-plugin.md#plugin-community-discovery)。
+官方建议 Plugin 仓库添加 [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic（GitHub 仓库话题标签）。本文件把该 topic、社区目录、市场数据和已知项目之间的引用当作候选发现入口，再回到固定 commit 核对源码；被目录或市场收录不表示 package 已通过安全审查或安装验收。Plugin 作者怎样提供 topic、README 和安装信息，见开发篇的[社区发现信息](dsh-dev.md#plugin-community-discovery)。
 
 > 来源：[官方 README 的 `dsh-plugin` 发现约定](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/README.md#L37-L45)；[GitHub topic 的分类和发现作用](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/classifying-your-repository-with-topics?apiVersion=2022-11-28)（2026-08-26 查阅）。
 
@@ -51,7 +51,7 @@ dsh plugin --profile web add dshmarket
 
 ### Tool、Provider 与业务扩展
 
-下表按开发篇定义的 [Tool 与可替换能力](dsh-plugin.md#tool-and-providers)标记各项目的扩展位置，并另外记录宿主范围、用途和安装入口。
+下表按开发篇定义的 [Tool 与可替换能力](dsh-dev.md#tool-and-providers)标记各项目的扩展位置，并另外记录宿主范围、用途和安装入口。
 
 | Plugin | 开发形态 | 宿主范围 | 用途 | 安装 |
 |---|---|---|---|---|
@@ -68,9 +68,9 @@ ModLens 在 DSH 中既可以注册 `modlens_read_image` Tool，也可以为已�
 
 ### 扩展形态与权限边界
 
-阅读上面的生态项目时，按四个维度比较即可：交互入口是桌面、TUI、Web 还是外部协议；能力落在 Tool、Provider 还是业务 UI；package 只服务 DSH 还是同时适配多个宿主；安装内容是否带 Host 入口、构建脚本或子进程。前三项的实现边界见 [DeepSeek Harness Plugin 开发](dsh-plugin.md)，最后一项的完整权限模型见运行时篇的[信任边界](dsh.md#trust-boundaries)。目录热度和安装成功都不能替代这些检查。
+阅读上面的生态项目时，按四个维度比较即可：交互入口是桌面、TUI、Web 还是外部协议；能力落在 Tool、Provider 还是业务 UI；package 只服务 DSH 还是同时适配多个宿主；安装内容是否带 Host 入口、构建脚本或子进程。前三项的实现边界见 [DeepSeek Harness Plugin 开发](dsh-dev.md)，最后一项的完整权限模型见运行时篇的[信任边界](dsh.md#trust-boundaries)。目录热度和安装成功都不能替代这些检查。
 
-Plugin 卸载、热替换和失败状态的语义见开发篇的[实现 Plugin 模块](dsh-plugin.md#plugin-runtime)。
+Plugin 卸载、热替换和失败状态的语义见开发篇的[实现 Plugin 模块](dsh-dev.md#plugin-runtime)。
 
 ## <a id="2026-08-26-subscription-auth-surfaces"></a>2026-08-26 · 订阅登录与交互界面
 
