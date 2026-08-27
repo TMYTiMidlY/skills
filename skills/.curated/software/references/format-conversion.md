@@ -12,6 +12,115 @@ pandoc --citeproc --bibliography=qham.bib --csl=https://www.zotero.org/styles/ch
 - `--bibliography`：指定 BibTeX 文献库
 - `--csl`：指定引用格式样式（此处为 GB/T 7714 国标格式）
 
+## <a id="pptx-to-pdf"></a>PPTX → PDF
+
+把 PPTX 转成用于审阅、归档或后续处理的 PDF 时，应让 Office 渲染器正常导出；不要把每页截图后再拼成 PDF。正常导出能保留可提取文本、矢量公式和图片对象，但 LibreOffice 与 PowerPoint 的字体匹配、占位符自动缩放和动态字段求值并不完全一致，所以“命令成功”不等于版式保真。
+
+> 以下行为实测于 Linux/WSL 上的 LibreOffice 24.2。PowerPoint 原生导出仍是 PowerPoint 版式的参考实现；LibreOffice 适合自动化转换，但产物必须做结构和视觉验收。
+
+### LibreOffice 无界面导出
+
+使用独立的用户配置目录，避免已有 LibreOffice 进程、锁文件或用户配置影响无界面任务：
+
+```bash
+src="input.pptx"
+out="output"
+tmp=$(mktemp -d)
+mkdir -p "$tmp/profile" "$out"
+
+libreoffice --headless \
+  "-env:UserInstallation=file://$tmp/profile" \
+  --convert-to pdf --outdir "$out" "$src"
+```
+
+LibreOffice 按源文件名生成 PDF。先确认 stdout 中出现 `using filter : impress_pdf_Export`，再检查实际文件；只看退出码可能漏掉输出目录、同名覆盖或文档未打开的问题。
+
+### 字体匹配与临时 Fontconfig
+
+先从 PPTX 的 OOXML 中统计 `typeface`，再用 `fc-match` 检查实际命中的字体：
+
+```bash
+fc-match '黑体'
+fc-match 'Cambria Math'
+```
+
+中文字体名尤其容易命中替代字体。例如 PPTX 请求“黑体”，字体文件内部家族名却是 `SimHei`；公式字体 `Cambria Math` 缺失时，LibreOffice 可能退到 FreeSerif。替代字体会改变字宽、换行和公式字形，不能只凭“中文能显示”判断正常。
+
+需要使用本机合法持有的精确字体时，把所需字体复制到临时目录，通过一次性 Fontconfig 暴露给转换进程，不必永久安装：
+
+```bash
+font_file="/path/to/licensed-font-file"
+mkdir -p "$tmp/fonts" "$tmp/cache"
+cp "$font_file" "$tmp/fonts/"
+
+cat >"$tmp/fonts.conf" <<EOF
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
+  <dir>$tmp/fonts</dir>
+  <cachedir>$tmp/cache</cachedir>
+  <alias>
+    <family>黑体</family>
+    <prefer><family>SimHei</family></prefer>
+  </alias>
+</fontconfig>
+EOF
+
+export FONTCONFIG_FILE="$tmp/fonts.conf"
+export FONTCONFIG_PATH=/etc/fonts
+export XDG_CACHE_HOME="$tmp/cache"
+fc-cache -f "$tmp/fonts"
+fc-match '黑体'
+fc-match 'Cambria Math'
+```
+
+确认 `fc-match` 已指向临时目录后，在同一 shell 中运行 LibreOffice。WSL 可以读取 Windows 字体目录，但只加载本次需要且已有使用许可的字体；字体文件不要提交进项目或随产物分发。
+
+### PowerPoint 版式语义
+
+PowerPoint 的占位符可能依靠隐式自动缩放保持单行，LibreOffice 不一定复现。例如一个继承自 Layout 的 60 pt 居中标题，在 PowerPoint 中自动缩小后是一行，LibreOffice 却可能把最后一个字挤到下一行。发现这类差异时：
+
+1. 从 `docProps/thumbnail.jpeg` 提取源文件保存时的缩略图，与转换后的封面并排比较；缩略图可能过期，只能作为线索。
+2. 在 PowerPoint 或其他独立渲染结果中确认预期版式。
+3. 仅创建“转换用副本”，给问题文本框写入明确字号、边界或自动适应设置，再重新导出；原始 PPTX 保持不动。
+
+动态日期是另一类语义差异。PPTX 中 `<a:fld type="datetime…">` 同时保存字段类型和上次显示的文字，LibreOffice 导出时会按当前系统时间重新求值。历史课件、归档演示或固定版本不应因此改变日期。可在转换副本中把日期字段冻结为普通文本 run，保留原 `<a:rPr>` 和 `<a:t>`；不要顺手冻结页码等仍需动态计算的字段。修改后检查替换数量、幻灯片数量，并用 `ZipFile.testzip()` 或 `unzip -t` 验证 OOXML 包完整。
+
+> 实测一份 163 页课件时，直接导出把全部日期字段从文件内保存值刷新成了转换当天日期；冻结日期字段并显式收小封面标题后，原始日期和单行标题才同时恢复。此类 OOXML 修复必须按字段类型或目标 shape 精确定位，避免对整个 XML 做无范围字符串替换。
+
+### PDF 验收
+
+先做结构验收，确认页数、页面尺寸、字体和文本对象：
+
+```bash
+unzip -t input.pptx
+pdfinfo output.pdf
+pdffonts output.pdf
+pdftotext output.pdf - | sed -n '1,20p'
+```
+
+验收口径：
+
+- PDF 页数与 PPTX 幻灯片数量一致，页面比例符合源 deck。
+- 关键字体命中预期字体且已嵌入；`pdffonts` 只证明 PDF 声明了字体，不证明每个字都视觉正确。
+- `pdftotext` 能抽出主要正文，说明产物不是整页栅格化；复杂公式仍以视觉结果为准。
+- 源 PPTX 和最终 PDF 分别记录大小与 SHA-256，上传或移动后再比对。
+
+视觉验收必须实际读取渲染后的页面，不能只看 `pdfinfo`、`pdffonts` 或退出码：
+
+1. 低分辨率渲染全部页面，组成联系表，总览空白页、错位、异常换行和图片丢失。
+2. 高分辨率抽查封面、目录、密集公式、图表、引用和末页。
+3. 对已修复的问题页重新渲染并比较，不沿用修复前的预览结论。
+
+```bash
+mkdir -p thumbnails
+pdftoppm -jpeg -r 24 output.pdf thumbnails/page
+pdftoppm -f 1 -l 1 -singlefile -png -r 120 output.pdf cover
+```
+
+Poppler 可能对少数合法 CJK PDF 静默渲染空白；出现“退出码为 0 但中文消失”时，按 [PDF → 图片](#pdf-to-images) 的方法用 MuPDF、pdfium、Adobe 或 Chrome 交叉验证。正式交付时使用正常导出的文本 PDF，不要把预览用的联系表或逐页截图 PDF 当作转换结果。
+
 ## Markdown → PDF
 
 把任何本地 Markdown（研报 / 论文 / 笔记，也含自托管 docs-share 内容）导出为可打印 PDF。按质量与复杂度从轻到重大致三档，按需挑：
@@ -250,7 +359,7 @@ if first > 0:
 - **无 poppler 时验证 PDF 视觉**：`pdfinfo` / `pdf2image` 都依赖 poppler 系统包；最轻量是 `uv run --with pymupdf python -c "import fitz; doc=fitz.open('x.pdf'); print(len(doc)); doc[0].get_pixmap(dpi=120).save('/tmp/p1.png')"`，渲染单页 PNG 直接 view 看
 - **TinyTeX 用 Fandol 中文字体缺异体字**：会出现“煙/會/召開”这种繁体异体字字面缺失（fc-list 显示有但渲染缺）。预处理时把已知缺字用 sed 转简体，或者在模板里给二级字体 fallback 到 Noto CJK
 
-## PDF → 图片
+## <a id="pdf-to-images"></a>PDF → 图片
 
 使用 pdftoppm 将 PDF 每页转为 JPEG：
 
