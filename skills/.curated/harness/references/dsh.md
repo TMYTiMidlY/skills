@@ -1,6 +1,6 @@
 # DeepSeek Harness（dsh）运行时
 
-本文从使用者和集成者视角说明 DeepSeek Harness 的产品定位、安装与运行、插件框架、Agent 执行、内置扩展、程序化入口和权限边界。编写、测试和分发 Plugin 的代码路径见 [DeepSeek Harness Plugin 开发](dsh-plugin.md)。
+本文从使用者和集成者视角说明 DeepSeek Harness 的产品定位、安装与运行、插件框架、Agent 执行、内置扩展、程序化入口和权限边界。Plugin、Bundle、Profile、Agent preset 及配置合成的运行时含义以本文为准；编写、测试和分发 Plugin 的代码路径见 [DeepSeek Harness Plugin 开发](dsh-plugin.md)，现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-plugin-research.md)。
 
 ## <a id="product-position"></a>产品定位
 
@@ -301,7 +301,7 @@ dsh --profile web --dump-config
 
 每个已加载 Plugin 都在一个 Cordis Context 中运行，并由 Fiber 管理生命周期。Plugin 通过 Context 注册 service、event listener 或 effect；Fiber 卸载时撤销这些注册。热替换实现以及叠加审批、重试、日志或压缩策略都沿用这套生命周期。
 
-运行时篇只解释这些对象怎样配合。Plugin 的模块形式、配置、依赖和热更新写法见 [模块、配置与生命周期](dsh-plugin.md#plugin-runtime)。
+本节集中解释这些运行时对象怎样配合，以及配置层按什么顺序形成最终 Plugin 树。Plugin 的模块形式、配置、依赖和热更新写法见 [模块、配置与生命周期](dsh-plugin.md#plugin-runtime)。
 
 > 来源：[Cordis 的插件、Context、依赖、事件与可逆注册](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/cordis-primer.zh.md#L5-L13)；[Profile 与组合包的加载顺序](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/architecture.zh.md#L15-L37)。
 
@@ -327,7 +327,7 @@ Session 创建时加入所选 preset 的组合。尚未产生内容的 Session �
 | 用途 | 能做什么 | 持久性 |
 |---|---|---|
 | 运行时检查与排障 | 查看当前加载的 Plugin、可用能力、工具、界面扩展位置和失败状态 | 只读取运行状态，不修改配置 |
-| 临时调整 | 在运行中的 DSH 里增加小工具、提示内容、事件处理或局部界面，用于验证想法 | 可以先临时停用并在之后重新启用；删除实验或重启 DSH 后不再保留 |
+| 临时调整 | 在运行中的 DSH 里增加小工具、提示内容、事件处理或局部界面，用于验证想法 | 当前进程内；版本、停用和清理方法见开发篇 |
 | Agent 定制 | 复制已有 Agent preset，再调整工具、角色说明、提示内容、压缩策略或子智能体入口，并验证组合能否挂载 | 写入用户 preset，供之后创建的 Session 使用 |
 | Plugin 开发 | 先观察 DSH 的实际扩展位置，再快速制作临时原型 | 何时使用、何时不用及如何落成正式 Plugin，见开发篇的[创造模式中的 Plugin 开发](dsh-plugin.md#creation-mode-plugin-development) |
 
