@@ -197,6 +197,81 @@ systemctl --user start dsh.service
 
 卸载 executable 或 unit 会保留 `~/.dsh` 中的 Session、配置和凭据。运行时卸载与数据删除是两个独立操作；回滚同样安装明确的旧版本或切回旧 tag。
 
+### <a id="systemd-system-service"></a>systemd 系统服务
+
+system service（系统级服务）由 PID 1 的 system manager 托管，适合管理员统一管理、无需依赖某个用户 manager 的部署。DSH 仍不应以 root 身份运行：unit 通过 `User=`、`Group=` 降权到拥有 `$DSH_HOME` 的普通用户，并显式写出 `HOME`、`DSH_HOME`、`PATH`、workspace 与绝对 executable，避免系统 manager 缺少交互 shell 环境。
+
+用户服务与系统服务只能启用一套；两者同时绑定 `127.0.0.1:3080` 时，后启动者会因 `EADDRINUSE` 反复失败。
+
+| 维度 | 用户服务 | 系统服务 |
+|---|---|---|
+| unit 路径 | `~/.config/systemd/user/dsh.service` | `/etc/systemd/system/dsh.service` |
+| manager / enable target | user manager / `default.target` | system manager（PID 1）/ `multi-user.target` |
+| DSH 进程身份 | 隐式为当前用户 | 必须显式 `User=<user>`、`Group=<group>`；不要省略为 root |
+| Home 与运行数据 | 通常自动继承用户环境 | 显式 `HOME=<home>`、`DSH_HOME=<home>/.dsh` |
+| 无人登录时启动 | 依赖 `Linger=yes` | 不依赖 linger |
+| 管理与日志 | `systemctl --user …`、`journalctl --user -u …` | `sudo systemctl …`、`sudo journalctl -u …` |
+| 适用场景 | 单用户自行维护 | 主机管理员统一托管、按系统启动顺序管理 |
+
+下面的模板沿用前文已经解析出的绝对 Node/DSH 路径；`<workspace>` 与 `<dsh-home>` 必须归 `<user>` 可读写：
+
+```ini
+[Unit]
+Description=DeepSeek Harness Web
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=<workspace> <dsh-home>
+
+[Service]
+Type=simple
+User=<user>
+Group=<group>
+WorkingDirectory=<workspace>
+Environment=HOME=<home>
+Environment=DSH_HOME=<dsh-home>
+Environment=PATH=<node-bin-dir>:/usr/local/bin:/usr/bin:/bin
+ExecStart=<dsh-executable> web --no-open --host 127.0.0.1 --port 3080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+保存为一个普通文件后，以 root 安装并验收：
+
+```sh
+sudo install -o root -g root -m 0644 ./dsh.service /etc/systemd/system/dsh.service
+sudo systemd-analyze verify /etc/systemd/system/dsh.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now dsh.service
+
+sudo systemctl show dsh.service \
+  -p LoadState -p UnitFileState -p ActiveState -p SubState \
+  -p MainPID -p ExecMainStatus -p NRestarts -p FragmentPath -p User -p Group
+curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:3080/
+```
+
+从用户服务迁移时，先安装并静态校验系统 unit，但不要让两套服务同时运行；停掉用户服务后再启动系统服务。只有系统服务已经达到 `enabled`、`active/running`、HTTP 200，才回收旧用户 unit：
+
+```sh
+systemctl --user disable --now dsh.service
+sudo systemctl enable --now dsh.service
+
+# 验收通过后再移除旧 unit
+trash-put "$HOME/.config/systemd/user/dsh.service"
+systemctl --user daemon-reload
+```
+
+系统服务启动失败时，先读取 `sudo journalctl -u dsh.service`；需要回滚则释放系统端口后恢复用户服务：
+
+```sh
+sudo systemctl disable --now dsh.service
+systemctl --user enable --now dsh.service
+```
+
+> 来源：[systemd 系统与用户 unit 的加载路径](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html#Unit%20File%20Load%20Path)、[`User=`、`Group=` 与执行环境](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#User=)、[`WantedBy=` 的 enable 语义](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html#%5BInstall%5D%20Section%20Options)、[linger 的生命周期语义](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html#enable-linger%20USER%E2%80%A6)。
+
 ### <a id="web-trusted-host"></a>Web 域名信任与反向代理
 
 DSH Web 默认监听 `127.0.0.1:3080`。CLI 把 `--host 0.0.0.0` 视为安全相关的用法错误并退出，使默认服务入口保持在 loopback。
@@ -241,7 +316,9 @@ dsh web --trusted-host dsh.hfnl.app.chenzhaoyun.com
 
 #### 公网域名方案二：强认证后改写为 loopback
 
-反向代理完成强认证后，可以把上游 `Host` 与 `Origin` 改写为 loopback，让远程浏览器同时使用普通 API、WebSocket 和设置 UI：
+反向代理完成强认证后，可以把上游 authority 改写成 loopback，让远程浏览器通过同一条认证 route 使用普通 API、WebSocket 和允许 loopback authority 的配置接口。这里有一个不可拆开的不变量：**若请求带 `Origin`，它的 authority 必须与 `Host` 完全相等。**
+
+DSH 的 `isTrustedApiRequest()` 先解析 `Host`，要求它是 loopback 或显式 trusted authority；随后拒绝 `Sec-Fetch-Site: cross-site`；最后在 `Origin` 存在时执行等价于 `new URL(origin).host === hostUrl.host` 的比较。因此只把 `Origin` 改成 loopback、却保留公网 `Host` 会被拒绝；只改 `Host`、却保留公网 `Origin` 也会被拒绝。选择 loopback 代理模式时，两者必须成对改写：
 
 ```caddyfile
 https://<public-host> {
@@ -253,9 +330,11 @@ https://<public-host> {
 }
 ```
 
-该模式把 DSH 后端的可达范围收敛到服务主机和已认证网关：所有 HTTP 与 WebSocket 路径进入同一认证 route，DSH 继续监听 loopback，跨节点 relay 只接受网关来源。Caddy 的 `reverse_proxy` 自动处理 WebSocket upgrade，`header_up` 同时作用于普通请求和升级请求；`Host` 与 `Origin` 一起改写后满足 DSH 的 loopback 同源检查。
+另一种正确模式是保留浏览器原本的公网 `Host` 与同源 `Origin`，并在 DSH 启动参数中声明 `--trusted-host <public-host>`；不要把两种模式各取一半。缺少 `Origin` 的非浏览器请求可以在 Host fence 通过后继续，但浏览器 fetch 和 WebSocket 通常会携带 Origin，代理配置不能依赖“恰好没有 Origin”。
 
-> 来源：[Web CLI 的默认监听、`--host 0.0.0.0` 限制与 `--trusted-host`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.zh.md#L67-L79)；[Web 参数解析与 wildcard host 拒绝](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/bundle/web-app/src/startup.ts#L43-L85)；[authority、Origin 与 cross-site 检查](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/api-request-trust.ts#L40-L122)；[配置与凭据方法的 loopback 边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/index.ts#L69-L148)；[Web server 的 TLS 与认证边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/host/webserver/README.zh.md#L19-L22)。
+该模式把 DSH 后端的可达范围收敛到服务主机和已认证网关：所有 HTTP 与 WebSocket 路径进入同一认证 route，DSH 继续监听 loopback，跨节点 relay 只接受网关来源。Caddy 的 `reverse_proxy` 自动处理 WebSocket upgrade，`header_up` 同时作用于普通请求和升级请求。
+
+> 来源：[Web CLI 的默认监听、`--host 0.0.0.0` 限制与 `--trusted-host`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.zh.md#L67-L79)；[Host fence、cross-site fence 与 Origin/Host 精确相等检查](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/api-request-trust.ts#L90-L123)；[loopback 与 trusted-host RPC authority 的选择](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/rpc-host.ts#L74-L105)；[Web server 的 TLS 与认证边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/host/webserver/README.zh.md#L19-L22)。
 
 ## <a id="runtime-composition"></a>Cordis 插件框架
 
