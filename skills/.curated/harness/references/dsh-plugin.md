@@ -50,7 +50,7 @@ Bundle 列表在 Profile 启动时确定；通过 `dsh plugin` 添加、删除�
 
 > 来源：[Bundle 安装、Profile manifest 与配置层顺序](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L9-L128)；[Profile、`--patch` 与运行时重载](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L7-L84)。
 
-## <a id="plugin-basics"></a>Plugin 开发流程
+## <a id="plugin-development-workflow"></a>Plugin 开发流程
 
 一条完整开发链路从需求和扩展位置开始。开发者可以直接建立源码仓库，也可以先在创造模式中验证原型；源码通过 `--patch` 挂载并逐层实现、验证后，再生成安装包、安装到 Profile、完成部署验收，最后发布可追踪的版本。每个阶段都有对应的产物和验收标准。
 
