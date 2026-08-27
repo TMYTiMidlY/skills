@@ -1,6 +1,6 @@
 # DeepSeek Harness（dsh）运行时
 
-本文从使用者和集成者视角说明 DeepSeek Harness 的产品定位、安装与运行、插件化思路、Agent 执行、内置扩展、程序化入口和权限边界。本文只给出安装、卸载和选择工作模式所需的插件概念；插件怎样组成运行环境、叠加配置、协作和清理，以及怎样开发和分发，见 [DeepSeek Harness Plugin 开发](dsh-plugin.md)。现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-plugin-research.md)。
+本文从使用者和集成者视角说明 DeepSeek Harness 的产品定位、安装与运行、插件化思路、Agent 执行、内置扩展、程序化入口和权限边界。本文只给出安装、卸载和选择工作模式所需的插件概念；插件怎样组成运行环境、叠加配置、协作和清理，以及怎样开发和分发，见 [DeepSeek Harness Plugin 开发](dsh-dev.md)。现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-plugin-research.md)。
 
 ## <a id="product-position"></a>产品定位
 
@@ -74,7 +74,7 @@ cd /path/to/project
 dsh web
 ```
 
-这里的 workspace 表示 Agent 操作的项目目录，与 Plugin 的安装位置相互独立。一个插件怎样从安装包进入指定运行配置、再形成最终启用的能力组合，见 Plugin 开发篇的[配置与安装包关系](dsh-plugin.md#plugin-objects)。
+这里的 workspace 表示 Agent 操作的项目目录，与 Plugin 的安装位置相互独立。一个插件怎样从安装包进入指定运行配置、再形成最终启用的能力组合，见 Plugin 开发篇的[配置与安装包关系](dsh-dev.md#plugin-objects)。
 
 Web 与 headless 是两个 Profile（启动时选用的具名运行配置）。Web 提供浏览器应用和 HTTP 服务；headless 负责一次性运行任务，并在 Agent idle 后输出结果。
 
@@ -349,7 +349,7 @@ DSH 把模型、工具、策略、存储和界面等能力做成可以组合的 
 | 安装到指定 Profile | `dsh plugin --profile <profile> add <package-or-git-spec>` | 写入该 Profile；重启后使用新的插件集合 |
 | 从指定 Profile 卸载 | `dsh plugin --profile <profile> remove <package>` | 从该 Profile 移除；重启后不再加载 |
 
-安装和卸载改变的是指定 Profile，已经运行的进程继续使用本次启动时的插件集合，直到重启。一个插件怎样从安装包进入运行配置、怎样合并默认设置与部署覆盖，见开发篇的[加载方式、保存位置与生效时间](dsh-plugin.md#plugin-loading-paths)；插件怎样共享能力、响应运行事件，并在更新或卸载时清理自身影响，见开发篇的[模块与生命周期](dsh-plugin.md#plugin-runtime)。
+安装和卸载改变的是指定 Profile，已经运行的进程继续使用本次启动时的插件集合，直到重启。一个插件怎样从安装包进入运行配置、怎样合并默认设置与部署覆盖，见开发篇的[加载方式、保存位置与生效时间](dsh-dev.md#plugin-loading-paths)；插件怎样共享能力、响应运行事件，并在更新或卸载时清理自身影响，见开发篇的[模块与生命周期](dsh-dev.md#plugin-runtime)。
 
 > 来源：[Plugin package、Profile 与安装命令](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L9-L128)；[安装、移除与重启边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L41-L64)；[插件化组合的整体结构](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/architecture.zh.md#L15-L37)。
 
@@ -366,7 +366,7 @@ Agent preset（智能体预设）是创建 Agent 时选择的工作模式，决�
 | [`minimal`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/config/agent-presets/minimal/preset.yml#L1-L3) | 极简模式 | 固定 system prompt，只提供 persistent Bash 与 `str_replace_editor` |
 | [`cordis`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/config/agent-presets/cordis/preset.yml#L1-L3) | 创造模式 | 在标准能力上增加运行时检查、动态 Plugin 实验和自定义 preset 创作能力 |
 
-Session 创建时采用所选 preset。尚未产生内容的 Session 可以切换 preset；已经产生内容的 Session 保持原能力集合，使日志中的工具调用与恢复后的工具定义一致。preset 的后续修改由新建或新加入的 Session 使用。怎样组合和保存自定义工作模式，见开发篇的[运行配置与 Agent 工作模式](dsh-plugin.md#plugin-loading-paths)。
+Session 创建时采用所选 preset。尚未产生内容的 Session 可以切换 preset；已经产生内容的 Session 保持原能力集合，使日志中的工具调用与恢复后的工具定义一致。preset 的后续修改由新建或新加入的 Session 使用。怎样组合和保存自定义工作模式，见开发篇的[运行配置与 Agent 工作模式](dsh-dev.md#plugin-loading-paths)。
 
 #### <a id="creation-mode"></a>创造模式
 
@@ -377,7 +377,7 @@ Session 创建时采用所选 preset。尚未产生内容的 Session 可以切�
 | 运行时检查与排障 | 查看当前加载的 Plugin、可用能力、工具、界面扩展位置和失败状态 | 只读取运行状态，不修改配置 |
 | 临时调整 | 在运行中的 DSH 里增加小工具、提示内容、事件处理或局部界面，用于验证想法 | 当前进程内；版本、停用和清理方法见开发篇 |
 | Agent 定制 | 复制已有 Agent preset，再调整工具、角色说明、提示内容、压缩策略或子智能体入口，并验证组合能否挂载 | 写入用户 preset，供之后创建的 Session 使用 |
-| Plugin 开发 | 先观察 DSH 的实际扩展位置，再快速制作临时原型 | 何时使用、何时不用及如何落成正式 Plugin，见开发篇的[创造模式中的 Plugin 开发](dsh-plugin.md#creation-mode-plugin-development) |
+| Plugin 开发 | 先观察 DSH 的实际扩展位置，再快速制作临时原型 | 何时使用、何时不用及如何落成正式 Plugin，见开发篇的[创造模式中的 Plugin 开发](dsh-dev.md#creation-mode-plugin-development) |
 
 创造模式主要调整当前 Agent 和临时扩展。需要跨 Session 共用的持久能力、权限或模型路由，应整理成可以长期维护和测试的正式 Plugin；长期使用的 Agent 工作方式则保存为自定义 preset。动态 Plugin 会接触真实运行时，安全上按 shell 权限看待。
 
@@ -397,7 +397,7 @@ Session 是只追加的事件日志。模型历史、Trajectory、恢复、分�
 
 默认 Profile 为每个 Session 保存一份 `.jsonl.zstd` 日志。可选的 SQLite `SessionPersistence` provider 可以把多个 Session 集中到一个数据库，随产品交付的组合当前不启用它。两种 backend 共享同一套逻辑事件语义；预发布存储格式不提供跨 schema 迁移。
 
-开发需要持久保存的新事件、从日志计算状态或回放历史时，转到 [会话数据 Plugin](dsh-plugin.md#session-data-plugins)。
+开发需要持久保存的新事件、从日志计算状态或回放历史时，转到 [会话数据 Plugin](dsh-dev.md#session-data-plugins)。
 
 > 来源：[官方轮次流程与会话日志](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/architecture.zh.md#L65-L100)；[默认 Profile 的 JSONL provider](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/bundle/base/cordis.patch.yml#L98-L101)；[JSONL 的每 Session 布局与默认压缩](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/session/session-persistence-jsonl/README.zh.md#L5-L17)；[SQLite provider 的启用边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/session/session-persistence-sqlite/README.zh.md#L5-L7)。
 
@@ -491,7 +491,7 @@ Host Plugin、Agent 工具、MCP server 和遥测处理的是不同权限主体�
 
 从 Git 安装 TypeScript Plugin 时，包通常依赖 `prepare` 生成构建产物。pnpm 会要求用户在 Profile 的 `pnpm-workspace.yaml` 中加入 `allowBuilds`；这项授权意味着安装期直接执行 package 代码，发生在 Agent sandbox 之外。
 
-不希望用户授权构建脚本时，应发布已经包含产物的 npm package 或 tarball。具体流程见开发篇的 [打包与安装](dsh-plugin.md#packaging-and-installation)。
+不希望用户授权构建脚本时，应发布已经包含产物的 npm package 或 tarball。具体流程见开发篇的 [打包与安装](dsh-dev.md#packaging-and-installation)。
 
 > 来源：[Git 安装的构建脚本与授权边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L153-L178)；[动态 Cordis VM 的信任立场](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/extensions/cordis-host-runner/README.zh.md#L26-L32)。
 
