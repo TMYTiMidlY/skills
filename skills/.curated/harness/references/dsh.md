@@ -448,7 +448,7 @@ Web 的 **Settings → Models** 可以配置 DeepSeek、已安装 catalog provid
 
 > 来源：[模型、凭据、自定义 provider 与图片能力配置](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/guide/providers.zh.md#L5-L80)。
 
-#### <a id="pi-ai-catalog-version"></a>pi-ai 模型目录版本与容量覆盖
+#### <a id="pi-ai-catalog-version"></a>pi-ai 模型目录版本与上下文窗口配置
 
 `dsh-llm-pi-ai` 从 `@earendil-works/pi-ai` 取得内置 provider 的模型目录、请求协议和推理档位等元数据。DSH `0.1.1-rc.2` 声明的是 `^0.82.1`；对 `0.x` 版本，caret 范围不会跨 minor，因此它只能解析 `<0.83.0`，不能自动跟到 `0.84.x`。已知 provider 的“发现模型”也直接返回已安装目录，不会请求厂商的 `/models` 刷新。由此产生的典型症状是：凭据已配置、厂商接口已经列出新模型，但 DSH 选择器没有该模型；强行点名则由适配器报 `UNKNOWN_MODEL`。
 
