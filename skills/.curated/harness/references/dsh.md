@@ -242,6 +242,18 @@ WantedBy=multi-user.target
 
 DSH Web 默认监听 `127.0.0.1:3080`。CLI 把 `--host 0.0.0.0` 视为安全相关的用法错误并退出，使默认服务入口保持在 loopback。
 
+#### authority 在本文中的含义
+
+本文中的 authority 专指 URL 解析后的 `host[:port]`，也就是**域名或 IP，加上非默认端口**；不包含 `http://`、`https://` 等 scheme，也不包含路径。请求的 `Host` header 直接携带 authority；`Origin` 则形如 `scheme://authority`，DSH 用 `new URL(origin).host` 取出其中的 authority。
+
+| 本文用语 | 示例 | 指什么 |
+|---|---|---|
+| 公网域名及端口（公网 authority） | `dsh.example.com`、`dsh.example.com:8443` | 浏览器地址栏所访问的域名及可选非默认端口 |
+| Caddy 上游连接地址 | `127.0.0.1:3080`、`10.144.18.10:13080` | Caddy 在网络层实际连接的 DSH 或 relay 地址 |
+| DSH 收到的 authority | `Host` 与 `Origin` 中最终送到 DSH 的 `host[:port]` | DSH 执行 Host / Origin 校验时真正读取的值 |
+
+后两者不是一回事。例如 Caddy 可以实际连接 `10.144.18.10:13080`，同时把 DSH 收到的 `Host` 与 `Origin` 改成 `127.0.0.1:3080`。下文凡讨论放行或拒绝，均以 **DSH 实际收到的 authority** 为准，而不是以 Caddy 连接了哪个 IP 和端口为准。
+
 远程接入可以由不同层的方法独立完成或按需组合：
 
 | 方法 | 建立的路径 | 主要职责 |
@@ -275,35 +287,53 @@ socat TCP-LISTEN:<relay-port>,bind=<private-address>,fork,reuseaddr TCP:127.0.0.
 1. **保持 DSH 上游私有。** DSH 继续监听 `127.0.0.1:3080`；Caddy 同机时直接访问该地址，跨节点时只通过受控 relay 到达，并用绑定地址、防火墙或来源 ACL 把 relay 限给网关。
 2. **在 Caddy 终止 TLS 并执行真实认证。** DSH 的 Host / Origin fence 不是身份认证；认证必须发生在 `reverse_proxy` 之前，并覆盖整个 DSH 站点。
 3. **代理完整的 HTTP 与 WebSocket 路径。** 不要只代理某一个 API；Caddy 的 `reverse_proxy` 会处理 WebSocket upgrade，不需要另建一条绕过认证的 WebSocket route。
-4. **只选择一种 authority 策略并贯彻到底。** 要么保留公网 `Host` 与同源公网 `Origin`，同时给 DSH 配 `--trusted-host`；要么把上游 `Host` 与 `Origin` 成对改成同一个 loopback authority。只写 `X-Forwarded-Host` 或只改其中一个 header 都不满足 DSH 校验。
+4. **让 DSH 收到一套自洽的 Host / Origin。** 要么保留公网域名及端口，并给 DSH 配匹配的 `--trusted-host`；要么把两者成对改成同一个 loopback 域名/IP及端口。只写 `X-Forwarded-Host` 或只改其中一个 header 都不满足 DSH 校验。
 
 以下示例中的 `authorize with <policy>` 代表部署中已经安装并实际生效的认证模块与策略；若使用 `basic_auth`、`forward_auth` 或其他认证方式，应替换成对应的真实配置，不能省略。
 
-##### 方案一：保留公网 authority，并使用 `--trusted-host`
+##### 方案一：保留公网域名及端口，并使用 `--trusted-host`
 
-用可重复的 `--trusted-host <host[:port]>` 声明普通 `/api` 和 WebSocket 接受的公网 authority：
+假设浏览器访问 `https://dsh.example.com`，其公网 authority 是 `dsh.example.com`。DSH 启动时声明同一个裸 `host[:port]`；标准 HTTPS 端口 443 不写，非默认端口则显式写入：
 
 ```sh
-dsh web --no-open --trusted-host <public-authority>
+dsh web --no-open --trusted-host dsh.example.com
+# 若公网地址是 https://dsh.example.com:8443：
+# dsh web --no-open --trusted-host dsh.example.com:8443
 ```
 
-合法值是规范化的裸主机名或 `host:port`，不带 scheme、路径或用户信息。对普通 HTTP 上游，Caddy 默认透传浏览器的 `Host` 和其他请求 headers；不要再用其他规则把 `Host` 或 `Origin` 改成不同 authority：
+`--trusted-host` 的值不带 scheme、路径或用户信息。对普通 HTTP 上游，Caddy 默认透传浏览器的 `Host` 和其他请求 headers；不要再用其他规则把 `Host` 或 `Origin` 改成不同的域名或端口：
 
 ```caddyfile
-https://<public-host> {
+https://dsh.example.com {
 	authorize with <policy>
 	reverse_proxy <private-upstream>:3080
 }
 ```
 
-`--trusted-host` 负责 DNS rebinding（DNS 重绑定）与同源校验，不负责 TLS、网络入口或身份认证。公网 `Host` 与同源公网 `Origin` 可以通过普通 `/api` 和 WebSocket 栅栏；`settings.*`、`credentials.*`、预设编辑、宿主文件选择与打开、模型端点探测等配置平面仍只接受 loopback authority。
+这里的 `<private-upstream>:3080` 是 Caddy 的连接地址，不是 DSH 用来判断信任的公网域名。DSH 实际收到 `Host: dsh.example.com` 和 `Origin: https://dsh.example.com` 后，匹配的 `--trusted-host dsh.example.com` 可以放行非配置平面的 API 与 WebSocket。
 
-##### 方案二：强认证后成对改写为 loopback
+##### 重点：`--trusted-host` 不开放配置平面
 
-反向代理完成强认证后，可以让 DSH 收到 loopback authority。此模式不需要把公网域名加入 `--trusted-host`，但 `Host` 与 `Origin` 必须成对改写为同一个 authority：
+**配置平面不是另一台服务或另一个端口，而是同一条 `/api` 路径里被额外保护的一组方法。** 普通方法使用启动参数提供的 `trustedHosts` 校验；下列特权方法会再以空列表 `[]` 调用同一个 `isTrustedApiRequest()`。空列表意味着只认 loopback，完全忽略 `--trusted-host` 中的公网域名。
+
+| 配置平面范围 | 代表方法 | 为什么只允许 loopback |
+|---|---|---|
+| Settings 读取与修改 | `settings.describe`、`settings.openDocument`、`settings.update/replace/mutate` | 会读取或改变各配置 namespace |
+| Credentials 读取与修改 | `credentials.describe/set/unset` | 涉及凭据是否存在、来源及 secret store |
+| Agent preset 管理 | `agentPreset.read/copy/openDocument/remove` | 会查看或改变实际运行的 Plugin 组合，并可能驱动宿主桌面 |
+| 宿主文件操作 | `host.pickDirectory`、`host.openPath` | 直接操作运行 DSH 的主机 |
+| 模型端点探测 | `llm.discoverModels` | 携带草稿凭据，让宿主请求调用者指定的 URL，并把结果返回 |
+
+因此浏览器通过 `https://dsh.example.com` 访问时，即使已经配置 `--trusted-host dsh.example.com`，也只是让非配置平面的 API 与 WebSocket 通过；上表方法仍返回 403。模型目录 `llm.providers`、`llm.models` 和 `agentPreset.list` 不在这份 loopback-only 清单中，不能把“配置平面”误解成所有模型或 preset 相关读取。
+
+这层限制的原因也必须与 Caddy 认证区分：`--trusted-host` 只防 DNS rebinding 和跨站请求，不证明调用者是谁。Settings、Credentials、宿主路径和端点探测一旦公开，不只是“改配置”的风险，还会泄露主机状态或把 DSH 变成访问宿主可达网络的探针。
+
+##### 方案二：强认证后，把 DSH 收到的 Host / Origin 成对改为 loopback
+
+反向代理完成强认证后，可以让 DSH 收到 loopback 域名/IP及端口。此模式不需要把公网域名加入 `--trusted-host`，但 `Host` 与 `Origin` 必须成对改写为同一个值：
 
 ```caddyfile
-https://<public-host> {
+https://dsh.example.com {
 	authorize with <policy>
 	reverse_proxy <private-upstream>:3080 {
 		header_up Host 127.0.0.1:3080
@@ -312,13 +342,25 @@ https://<public-host> {
 }
 ```
 
-这里改的是 DSH 实际读取的 `Host` 和 `Origin`，不是 `X-Forwarded-Host`。同一个 `reverse_proxy` 处理普通请求和 WebSocket upgrade，因此两条 `header_up` 同时覆盖两者。
+这里 Caddy 仍可实际连接任意受控的 `<private-upstream>:3080`，但 DSH 收到的是 `Host: 127.0.0.1:3080` 与 `Origin: http://127.0.0.1:3080`。改写的是 DSH 真正读取的 headers，不是 `X-Forwarded-Host`；同一个 `reverse_proxy` 处理普通请求和 WebSocket upgrade，所以两条 `header_up` 同时覆盖两者。
+
+从 Host 端实现看，这种成对改写会让配置平面的空列表校验也通过。因此安全性完全依赖前置强认证、完整 route 覆盖和私有上游，不能把单纯的 header 改写当成认证。
+
+##### 远程使用配置平面时的实际差异
+
+| 接入方式 | DSH Host 端配置方法 | 浏览器 Client 的 `isLoopback` | 实际结果 |
+|---|---|---|---|
+| SSH 本地隧道，从 `http://127.0.0.1:3080` 打开 | 通过 | `true` | Host 与页面都具备完整 loopback 语义 |
+| Caddy 保留公网域名，并使用 `--trusted-host` | 403 | `false` | 适合非配置平面的会话/API/WebSocket；不能远程配置 |
+| Caddy 强认证后成对改写 Host / Origin 为 loopback | 通过 | `false` | Host 方法可调用，但依赖 `isLoopback` 的页面入口仍可能隐藏或禁用 |
+
+结论：**需要完整使用远程配置界面时，SSH 本地隧道最接近真正的本机访问。** Caddy 的 loopback header 改写只伪装了 DSH Host 收到的请求，不能改变浏览器地址栏；Client 仍从 `location.hostname` 看见公网域名，因此它不等价于端到端 loopback。
 
 ##### 同源校验结论
 
-确认：在“代理改写为 loopback”模式下，`Host` 和 `Origin` 必须成对改写为相同 authority。DSH 的 `isTrustedApiRequest()` 按以下顺序执行：
+确认：在“代理改写为 loopback”模式下，`Host` 和 `Origin` 必须成对改写为相同的域名/IP及端口。DSH 的 `isTrustedApiRequest()` 按以下顺序执行：
 
-1. 解析 `Host`；它必须是 loopback authority 或命中 `trustedHosts`。
+1. 解析 `Host`；其中的域名/IP及端口必须是 loopback，或命中 `trustedHosts`。
 2. 若 `Sec-Fetch-Site: cross-site`，立即拒绝。
 3. 若存在 `Origin`，执行等价于 `new URL(origin).host === hostUrl.host` 的比较。
 
@@ -326,16 +368,14 @@ https://<public-host> {
 
 | DSH 收到的 `Host` | DSH 收到的 `Origin` | 结果 |
 |---|---|---|
-| 公网 authority | loopback authority | 拒绝；公网 Host 未受信时在第 1 步失败，即使已配置 `--trusted-host` 也会因第 3 步不同源失败 |
-| loopback authority | 公网 authority | 拒绝；第 3 步不同源 |
-| loopback authority | 相同 loopback authority | 通过 |
-| 公网 authority | 相同公网 authority | 配置匹配的 `--trusted-host` 后，通过 Host 端普通 API / WebSocket 栅栏；不因此开放 loopback-only 配置平面 |
+| `dsh.example.com` | `http://127.0.0.1:3080` | 拒绝；公网域名未受信时在第 1 步失败，即使已配置 `--trusted-host dsh.example.com` 也会因第 3 步不同源失败 |
+| `127.0.0.1:3080` | `https://dsh.example.com` | 拒绝；第 3 步的域名及端口不同 |
+| `127.0.0.1:3080` | `http://127.0.0.1:3080` | 通过，包括 Host 端的 loopback-only 配置方法 |
+| `dsh.example.com` | `https://dsh.example.com` | 配置 `--trusted-host dsh.example.com` 后，仅通过非配置平面的 API / WebSocket 栅栏；配置方法仍因空 trust list 返回 403 |
 
 缺少 `Origin` 的请求可以在 Host fence 通过后继续，但浏览器 fetch 和 WebSocket 通常会携带 `Origin`，代理不能依赖“恰好没有 Origin”。同样不要删除或伪造 `Sec-Fetch-Site` 来绕过第 2 步；正常从该公网页面发往同源公网 API 的请求本就不是 `cross-site`。
 
-还要区分 Host 端信任与 Client 端页面身份：代理改写只改变 DSH 收到的 headers，浏览器地址栏仍是公网 hostname。DSH Client 通过 `location.hostname` 计算 `ctx.connection.isLoopback`；因此 Host 端放行不等于所有 Client 界面都会启用只在本机页面开放的能力。需要浏览器端也具备 loopback 语义时，应使用 SSH 本地隧道并从 `http://127.0.0.1:<port>` 打开页面，不能靠反向代理改写 headers 伪造浏览器自身的 hostname。
-
-> 来源：[Web CLI 的默认监听、`--host 0.0.0.0` 限制与 `--trusted-host`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.zh.md#L67-L79)；[Host fence、cross-site fence 与 Origin/Host 精确相等检查](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/api-request-trust.ts#L90-L123)；[对应的 Host / Origin 行为测试](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/tests/api-request-trust.host.spec.ts#L19-L68)；[loopback 与 trusted-host RPC authority 的选择](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/rpc-host.ts#L74-L105)；[Client 从页面 hostname 派生 `isLoopback`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/client/index.ts#L80-L89)；[Web server 的 TLS 与认证边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/host/webserver/README.zh.md#L19-L22)；[Caddy `reverse_proxy` 的 header 默认值与 WebSocket 支持](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)。
+> 来源：[Web CLI 的默认监听、`--host 0.0.0.0` 限制与 `--trusted-host`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.zh.md#L67-L79)；[Host fence、cross-site fence 与 Origin/Host 精确相等检查](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/api-request-trust.ts#L90-L123)；[配置平面的特权方法清单与空 trust list 校验](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/index.ts#L69-L154)；[对应的 Host / Origin 行为测试](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/tests/api-request-trust.host.spec.ts#L19-L68)；[loopback 与 trusted-host RPC authority 的选择](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/rpc-host.ts#L74-L105)；[Client 从页面 hostname 派生 `isLoopback`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/client/index.ts#L85-L132)；[Web server 的 TLS 与认证边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/host/webserver/README.zh.md#L19-L22)；[Caddy `reverse_proxy` 的 header 默认值与 WebSocket 支持](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)。
 
 ## <a id="runtime-composition"></a>Cordis 插件框架
 
