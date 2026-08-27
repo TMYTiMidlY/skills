@@ -199,21 +199,49 @@ systemctl --user start dsh.service
 
 ### <a id="web-trusted-host"></a>Web 域名信任与反向代理
 
-默认回环监听可以通过 SSH tunnel 交给远端浏览器：
+DSH Web 默认监听 `127.0.0.1:3080`。CLI 把 `--host 0.0.0.0` 视为安全相关的用法错误并退出，使默认服务入口保持在 loopback。
+
+远程接入可以由不同层的方法独立完成或按需组合：
+
+| 方法 | 建立的路径 | 主要职责 |
+|---|---|---|
+| SSH 本地隧道 | 浏览器本机 `127.0.0.1:3080` → 服务主机 `127.0.0.1:3080` | 为单个操作者提供临时的端到端 loopback 入口 |
+| `socat`、Windows `portproxy` 或 SSH 端口转发 | 受控私网地址 → DSH loopback | 在主机、网络 namespace 或节点之间提供 TCP 接力；绑定地址与来源 ACL 定义可达范围 |
+| Caddy 或同类反向代理 | 稳定域名 → 私有上游 | 提供 TLS、身份认证、域名路由，以及按部署模式设置上游 `Host` / `Origin` |
+
+#### SSH 本地隧道
+
+SSH 本地隧道让远端浏览器通过自己的 loopback authority 访问 DSH：
 
 ```sh
 ssh -N -L 3080:127.0.0.1:3080 <host>
 ```
 
-浏览器随后访问本机 `http://127.0.0.1:3080`。通过非 loopback 域名访问时，用可重复的 `--trusted-host <host[:port]>` 声明 `/api` 接受的 authority；值是规范化的裸主机名或 `host:port`。请求的 `Host` 需要命中回环地址或该清单，浏览器携带 `Origin` 时还需要与 `Host` 使用相同 authority。
+浏览器访问 `http://127.0.0.1:3080`。请求携带 loopback `Host` 与 `Origin`，普通 API、WebSocket 和配置平面都沿用本机访问语义。
+
+当反向代理与 DSH 分处不同节点或网络 namespace 时，可以先用受控 TCP relay 提供私有上游。例如：
 
 ```sh
-dsh web --trusted-host <public-host>
+socat TCP-LISTEN:<relay-port>,bind=<private-address>,fork,reuseaddr TCP:127.0.0.1:3080
 ```
 
-`trusted-host` 提供 DNS rebinding（DNS 重绑定）与同源校验。TLS 和身份认证由外层部署提供。`settings.*`、`credentials.*`、预设编辑、宿主文件选择和模型端点探测保持 loopback 限制，因此普通远程访问把密钥与持久设置留在服务主机完成。
+该 relay 的绑定地址、主机防火墙和来源 ACL 可以只覆盖反向代理节点；上层域名、TLS、认证和 HTTP header 处理继续由反向代理承担。
 
-已经由反向代理完成强认证、又确实需要远程设置 UI 时，可以让代理在鉴权后把上游 `Host` 与 `Origin` 改写成 loopback。这样会绕过 dsh 对配置平面的 loopback 限制，必须保证所有 HTTP 与 WebSocket 路径都先经过认证，且后端端口不能被不受信任的客户端直接访问：
+#### 公网域名方案一：使用 `--trusted-host`
+
+官方的具名域名方式是用可重复的 `--trusted-host <host[:port]>` 声明 `/api` 和 WebSocket 接受的 authority：
+
+```sh
+dsh web --trusted-host dsh.hfnl.app.chenzhaoyun.com
+```
+
+合法值是规范化的裸主机名或 `host:port`，不带 scheme、路径或用户信息。请求 `Host` 命中 loopback 或该清单时通过 authority 检查；浏览器携带 `Origin` 时，其 authority 与 `Host` 保持一致；显式的 cross-site 请求由同源围栏拒绝。
+
+`--trusted-host` 负责 DNS rebinding（DNS 重绑定）与同源校验。TLS、网络入口和身份认证由 Caddy 等外层网关提供。普通 `/api` 与 WebSocket 可以通过公网域名使用；`settings.*`、`credentials.*`、预设编辑、宿主文件选择与打开、模型端点探测等配置平面继续只接受 loopback authority。远程部署可以在服务主机完成密钥和持久设置；依赖这些 API 的首次 API Key 引导也以本机访问为入口。
+
+#### 公网域名方案二：强认证后改写为 loopback
+
+反向代理完成强认证后，可以把上游 `Host` 与 `Origin` 改写为 loopback，让远程浏览器同时使用普通 API、WebSocket 和设置 UI：
 
 ```caddyfile
 https://<public-host> {
@@ -225,7 +253,9 @@ https://<public-host> {
 }
 ```
 
-> 来源：[Web CLI 的 `--trusted-host` 参数](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/bundle/web-app/src/startup.ts#L43-L79)；[authority、Origin 与 cross-site 检查](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/api-request-trust.ts#L40-L122)；[配置与凭据方法的 loopback 边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/index.ts#L69-L148)；[Web server 的 TLS 与认证边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/host/webserver/README.zh.md#L19-L22)。
+该模式把 DSH 后端的可达范围收敛到服务主机和已认证网关：所有 HTTP 与 WebSocket 路径进入同一认证 route，DSH 继续监听 loopback，跨节点 relay 只接受网关来源。Caddy 的 `reverse_proxy` 自动处理 WebSocket upgrade，`header_up` 同时作用于普通请求和升级请求；`Host` 与 `Origin` 一起改写后满足 DSH 的 loopback 同源检查。
+
+> 来源：[Web CLI 的默认监听、`--host 0.0.0.0` 限制与 `--trusted-host`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.zh.md#L67-L79)；[Web 参数解析与 wildcard host 拒绝](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/bundle/web-app/src/startup.ts#L43-L85)；[authority、Origin 与 cross-site 检查](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/api-request-trust.ts#L40-L122)；[配置与凭据方法的 loopback 边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/index.ts#L69-L148)；[Web server 的 TLS 与认证边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/host/webserver/README.zh.md#L19-L22)。
 
 ## <a id="runtime-composition"></a>Cordis 插件框架
 
