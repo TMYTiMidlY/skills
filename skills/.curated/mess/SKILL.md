@@ -23,6 +23,8 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
   - 关键词：`NLS MISSING`、`nls.messages.js`、`_VSCODE_NLS_MESSAGES`、`Accept-Language`、`127.0.0.1 能用但另一个 IP 不行`、`页面空白`
 - **workbench 连不上 server，WebSocket 握手后即断** → 1.119 的 CLI launcher 把 hyper 0.14 升到 1.x，反代那段漏改成 `serve_connection_with_upgrades`；`localhost` 直连一样炸，与反代无关 → [直达](references/code-serve-web.md#ws-upgrade-1119)
   - 关键词：`Time limit reached`、`The workbench failed to connect to the server`、`upgrade expected but low level API in use`、`serve_connection_with_upgrades`、`reconnectionToken 死循环`、`1.119 vs 1.115`
+- **页面永远卡在 "The latest version of the VS Code Server is downloading"** → serve-web 跟踪 latest，下载的 `vscode-server-linux-x64-web.tar.gz` 在 CDN 边缘是损坏对象（声称 245MB、~80–150MB 断流）；CLI 无续传、失败静默、每请求从头重试；`curl -C -` 续传拼满后植入 `~/.vscode/cli/serve-web/` 即愈 → [直达](references/code-serve-web.md#web-tarball-cdn-stall)
+  - 关键词：`Downloading server`、`please wait a moment`、`HTTP 202 占位页`、`vscode-server-linux-x64-web.tar.gz`、`245499233`、`curl -C - 续传`、`lru.json`、`多实例逐端口巡检`
 
 ### Windows 宿主机
 
