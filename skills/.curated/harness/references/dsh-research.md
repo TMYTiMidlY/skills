@@ -677,7 +677,7 @@ Web 路由是 exact `/api-import/sessions`、`/api-import/import`、`/api-import
 - 核对 DSH `0.1.2-rc.1` 的 web 包家族、默认组合与配置面相对 `0.1.1-rc.2` 的变化，并用 DeepSeek 官方 API 文档印证计费机制。
 - 盘点把 `web_search` 接到 Codex 订阅、以及直接实现 `WebSearchProvider` seam 的社区插件，归纳接入模式与冲突边界。
 
-> **证据边界：** 官方源码两轮固定——08-28 原记录锚定 `0.1.1-rc.2`（commit [`b150a551`](https://github.com/deepseek-ai/deepseek-harness/tree/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e)，其原有来源链接仍指向该 commit）；09-04 复核锚定 `0.1.2-rc.1`（commit [`a66e470`](https://github.com/deepseek-ai/deepseek-harness/commit/a66e4702047846cdaa10c66c9d3df3951f5ea70d)，2026-09-02 发布提交，未另标 commit 的官方引用均指它）。本机安装树为 0.1.2-rc.1，🔬 常量核对与包内 README 行号定位以它为据（同一 release 的包内 README 与 GitHub blob 行号一致）。DeepSeek API 文档为 2026-09-04 抓取的现行页面。社区插件按各仓库 HEAD 快照固定到来源链接中的 commit，未做逐行全量源码审计；除注明 🔬 的两段归档会话观察外，两轮均未用真实凭据做端到端搜索验证。供应商如何把搜索折算成订阅额度或金额，仍由该供应商的实时规则决定。
+> **证据边界：** 官方源码两轮固定——08-28 原记录锚定 `0.1.1-rc.2`（commit [`b150a551`](https://github.com/deepseek-ai/deepseek-harness/tree/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e)，其原有来源链接仍指向该 commit）；09-04 复核锚定 `0.1.2-rc.1`（commit [`a66e470`](https://github.com/deepseek-ai/deepseek-harness/commit/a66e4702047846cdaa10c66c9d3df3951f5ea70d)，2026-09-02 发布提交，未另标 commit 的官方引用均指它）。本机安装树为 0.1.2-rc.1，🔬 常量核对与包内 README 行号定位以它为据（同一 release 的包内 README 与 GitHub blob 行号一致）。DeepSeek API 文档为 2026-09-04 抓取的现行页面。社区插件按各仓库 HEAD 快照固定到来源链接中的 commit（插件商店快照中新增的发现条目仅链接仓库首页，未固定 commit），未做逐行全量源码审计；除注明 🔬 的两段归档会话观察外，两轮均未用真实凭据做端到端搜索验证。供应商如何把搜索折算成订阅额度或金额，仍由该供应商的实时规则决定。
 
 ### <a id="web-search-provider-selection"></a>web_search 的执行链与提供方选择
 
@@ -723,9 +723,9 @@ Web 路由是 exact `/api-import/sessions`、`/api-import/import`、`/api-import
 
 🔬 归档会话观察两则（08-28）：其一，一次实测会话在对应 `web_search` 调用旁留下该事件，字段与默认常量一致——`endpoint` 为 `https://api.deepseek.com/anthropic/v1/messages`、`apiVersion` 为 `2023-06-01`、`model` 为 `deepseek-v4-flash`、`max_tokens` 为 4096、`max_uses` 为 5，据此可判断那一次搜索走了 DeepSeek 搜索提供方；其二，另一份会话里 32 次 `web_search` 均返回 `WEB_PROVIDER_CREDENTIAL_MISSING`、无该事件，说明那一轮没有发出 DeepSeek 搜索 HTTP。返回的网页 URL 不能当判据，DeepSeek 与 Codex 都可能搜到同一页面。
 
-Exa 是另一条账单：环境变量 `EXA_API_KEY`，插件 `@deepseek-ai/dsh-web-search-exa`，端点 `https://api.exa.ai/search`，默认组合不启用。08-28 记为"Perplexity 同类"；09-04 起 Perplexity 已是随官方仓库发布的可选包（见下节）。
+Exa 是官方可选搜索包（provider id `exa`，默认组合不启用）：密钥回退 `$EXA_API_KEY`，端点 `https://api.exa.ai/search`，支持 `searchType`（auto / keyword / neural）、`numResults` 与 `highlightsPerResult`。Exa 不返回生成答案（结果无 `content`），没有非空白高亮的来源会被整个丢弃，返回来源可能少于请求数。08-28 记为"Perplexity 同类"；本轮确认 Perplexity 已随官方仓库发布为可选包（见下节）。
 
-> 来源：[DeepSeek 搜索默认基址与模型](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-deepseek/src/provider.ts#L26-L47)、[发出前记录的请求体](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-deepseek/src/provider.ts#L197-L218)、[事件写入会话](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-deepseek/src/index.ts#L117-L121)、[凭据缺失不写该事件](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-deepseek/README.zh.md#L49)、[Exa 的 `apiKey` 与 `$EXA_API_KEY`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-exa/README.zh.md#L11-L24)；[provider id 与固定方式](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-deepseek/README.zh.md#L28)、[一次搜索=完整模型轮次](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-deepseek/README.zh.md#L32)、[完整配置表与 Settings 段投影](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-deepseek/README.zh.md#L45-L56)、[请求日志事件语义](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-deepseek/README.zh.md#L64)、[失败码与配置指引](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-deepseek/README.zh.md#L68)、[凭据逐次解析](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-deepseek/README.zh.md#L85)。🔬 本机安装树 `dsh-web-search-deepseek/lib/index.js` 的常量（默认基址、默认模型、`web_search_20250305`、`DEEPSEEK_SEARCH_BASE_URL` 回退）与上述 README 逐项一致。
+> 来源：[DeepSeek 搜索默认基址与模型](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-deepseek/src/provider.ts#L26-L47)、[发出前记录的请求体](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-deepseek/src/provider.ts#L197-L218)、[事件写入会话](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-deepseek/src/index.ts#L117-L121)、[凭据缺失不写该事件](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/web/web-search-deepseek/README.zh.md#L49)、[Exa 可选包的配置表与来源映射](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-exa/README.zh.md)；[provider id 与固定方式](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-deepseek/README.zh.md#L28)、[一次搜索=完整模型轮次](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-deepseek/README.zh.md#L32)、[完整配置表与 Settings 段投影](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-deepseek/README.zh.md#L45-L56)、[请求日志事件语义](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-deepseek/README.zh.md#L64)、[失败码与配置指引](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-deepseek/README.zh.md#L68)、[凭据逐次解析](https://github.com/deepseek-ai/deepseek-harness/blob/a66e4702047846cdaa10c66c9d3df3951f5ea70d/packages/web/web-search-deepseek/README.zh.md#L85)。🔬 本机安装树 `dsh-web-search-deepseek/lib/index.js` 的常量（默认基址、默认模型、`web_search_20250305`、`DEEPSEEK_SEARCH_BASE_URL` 回退）与上述 README 逐项一致。
 
 ### <a id="web-search-six-packages"></a>官方 web 包家族与 fetch 侧网络策略
 
@@ -760,6 +760,8 @@ DeepSeek API 文档独立印证了从源码推出的计费模型：
 > 来源：[Claude Code 接入与 Web Search 说明](https://api-docs.deepseek.com/zh-cn/quick_start/agent_integrations/claude_code/)、[Anthropic API 兼容细节](https://api-docs.deepseek.com/zh-cn/guides/anthropic_api/)、[更新日志](https://api-docs.deepseek.com/zh-cn/updates/)（均 2026-09-04 查阅）。
 
 ### <a id="model-hub-and-search"></a>Model Hub 与搜索提供方
+
+[`dsh-model-hub`](https://github.com/yhyfhgs/dsh-model-hub)（`yhyfhgs/dsh-model-hub`，社区 Plugin）替换官方 Models 页面与模型选择器，为官方模型服务桥接 OAuth 并写入无 API Key 配置，同时自建 `codex`、`qwen-code` 等模型路由；其双 Codex 路由与凭据归属见[订阅登录调研](#2026-08-26-subscription-auth-surfaces)与[Model Hub 安装与源码复核](#2026-08-27-installed-source-followup)。本节只看它与搜索的关系。
 
 Model Hub 的 Host `inject` 是 `connection` 与 `settings`。它注册模型目录、Authorization 与两条 Codex 对话路由，不调用 `ctx.web.registerSearchProvider`。显示名「OpenAI Codex」不能区分下面两行：
 
@@ -821,23 +823,15 @@ TUI 时间轴等界面有从 grok-pager 借来的交互，那是 UI，不是 Gro
 2. **覆盖 `searchProvider` 的两条途径。** 手写 profile patch 覆盖 `web` 行 config（brave 的 README 示例），或像 searxng 那样在 `dsh.bundle.patch` 里自带切换、装完即生效。
 3. **Settings 集成的多种 workaround。** settingsScope 白名单只对官方 namespace 开放（brave README：第三方 namespace 一律"设置段不可用"），社区因此分化出：自建 loopback settings bridge（brave、free-search 的 `/api/dsh-*-settings` 路由）、挂官方 `settings.plugin.item` 插槽自渲染卡片（free-search）、以及跟进新版注册 API——free-search 09-03 的提交专门做了"alpha+ 用 `installSection`、rc.2 回退 `installSettingsSection`"的双兼容，说明 0.1.2 系列改过 settings 注册面。
 4. **归属注意。** searxng 仓库的 package.json 使用 `@deepseek-ai/` scope 名（用于本地 link 安装、未发布 npm）；安装第三方包前应核对真实发布者，scope 名不等于官方归属。zai README 也自注"目录收录不意味官方 DSH 或 Z.ai 背书"。
-5. **外部印证。** [掘金文章](https://juejin.cn/post/7673816823688003630)实测"主模型切到 opencode 后 `web_search` 仍走 DeepSeek 官方计费"、[DataCamp 教程](https://www.datacamp.com/zh/tutorial/deepseek-harness)写明"默认搜索 provider 与模型共用同一 DeepSeek API key"——与本节源码结论一致。
+5. **外部印证。** [掘金文章](https://juejin.cn/post/7673816823688003630)实测"主模型切到 opencode 后 `web_search` 仍走 DeepSeek 官方计费"、[DataCamp 教程](https://www.datacamp.com/zh/tutorial/deepseek-harness)写明"默认搜索 provider 与模型共用同一 DeepSeek API key"、[官方讨论 #779](https://github.com/deepseek-ai/deepseek-harness/discussions/779)（"联网搜索能否兼容其他模型"）的回复确认 `web_search` 是可插拔 provider 架构、更换 provider 即可兼容——三条口径与本节源码结论一致。
+
+插件商店聚合目录（2026-09-04 快照收录 6465 个插件，`web-search` 匹配 75 项）显示该类别规模已远超上表核心样本。快照中值得注意的条目：[`anysearch-team/anysearch-dsh`](https://github.com/anysearch-team/anysearch-dsh)（AnySearch 官方团队出品，provider 加高级搜索工具；InfoQ / CSDN 教程安装的即此包，与 `mcxianyujun/dsh-web-search-anysearch` 是两个仓库）、[`A3Boy/dsh-web-tools`](https://github.com/A3Boy/dsh-web-tools)（多提供方 + 回退 + X / 小红书检索，即博客园文章所装包）、[`moguiyu/dsh-tavily`](https://github.com/moguiyu/dsh-tavily)（另一种接入模式：注册独立可选搜索工具并做多 key 轮换，不替换内置 `web_search`）、[`liustack/modsearch`](https://github.com/liustack/modsearch)（见 [2026-08-17 生态调研](#packaging-and-community)，现以免费免 key 搜索为主打）；另有多个 Tavily、SearXNG、TinyFish 与 zero-key Bing / Baidu 聚合的同构 provider。本段条目按商店快照与仓库自述收录，未固定 commit、未做源码审计；商店条目由 GitHub 公开项目自动聚合，未经人工审核。
+
+> 来源：[插件商店 `web-search` 类目快照](https://dsh.deepseek404.com/index.php?q=web-search)（2026-09-04 查阅，仅作发现信号）。
 
 > free-search 的 README 声称 "`web_fetch` 无 SSRF 防护、agent 理论上可访问内网地址"，与官方子系统文档和 base patch 注释矛盾：官方 fetch 后端逐请求解析并拒绝非公开目的地、pin 连接、同源重定向复检（见[官方 web 包家族与 fetch 侧网络策略](#web-search-six-packages)）。该说法应视为过时或不准确。
 
 > 来源：上表各仓库 README（固定到表内 commit）；[AnySearch 发布讨论](https://github.com/deepseek-ai/deepseek-harness/discussions/2671)；周边文章 [InfoQ 的 anysearch-dsh 安装教程](https://www.infoq.cn/article/bfZzslUtldTMeEgYuVhe)与[博客园的免费搜索插件记录](https://www.cnblogs.com/dqtx33/p/22579950)（2026-09-04 查阅，仅作发现信号）。
-
-### 原专题结论的现状核对
-
-| 原结论（08-28 及更早） | 现状（09-04） |
-|---|---|
-| 账单跟搜索提供方走，与对话模型无关 | 维持；官方文档与社区文章双向印证 |
-| `dsh-base` 钉死 `searchProvider: deepseek-official` | 维持；同一 `web` 行新增 `fetchProvider: http` |
-| DeepSeek 搜索走 Anthropic 兼容 Messages + `deepseek-v4-flash` + `DEEPSEEK_API_KEY` | 维持；配置面新增 baseURL / model / apiVersion / maxTokens / maxUses 与 `$DEEPSEEK_SEARCH_BASE_URL` |
-| `web/deepseek-search-llm-request` 是判据事件 | 维持；补充"发出前凭据失败或取消不建事件，发出后失败保留记录" |
-| Exa 是另一条账单，Perplexity 同类 | 更新：Perplexity 已是官方可选包，默认组合仍不装两者 |
-| 多 provider 未钉时抛 `WEB_PROVIDER_AMBIGUOUS` | 维持；选择错误扩为四态，另有 `$DSH_WEB_SEARCH_PROVIDER` 入口与 `WEB_DUPLICATE_PROVIDER` 注册期错误 |
-| Model Hub 不注册搜索提供方 | 09-04 未重读 Model Hub 源码，维持原记录 |
 
 ### 验证范围
 
