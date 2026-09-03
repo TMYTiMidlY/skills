@@ -114,7 +114,7 @@ flowchart LR
 | 暂停临时 Plugin | 临时版本保留 | 不变 | 撤销当前注册和界面 | 可再次运行已有 Package |
 | 删除临时 Plugin | 删除进程内全部版本 | 不变 | 撤销当前效果 | 只能从另有保存的源码重新创建 |
 | 建立或修改源码仓库 | 文件和 Git 工作区改变 | 不变 | 未挂载时无影响 | Git commit 只保存源码历史，不会安装 Plugin |
-| 以 `--patch` 启动本地 module | 源码文件保留在原处 | Profile 依赖与 Bundle 列表不变 | 只对本次启动加入 overlay；有效改动可由 HMR 重载 | 退出进程即失去挂载关系，源码仍在 |
+| 以 `--patch` 启动本地 module | 源码文件保留在原处 | Profile 依赖与 Bundle 列表不变 | 只对本次启动加入 overlay；有效改动可由 [HMR](dsh.md#mcp-patch-hot-reload)（Hot Module Replacement，热模块替换）重载 | 退出进程即失去挂载关系，源码仍在 |
 | 修改 Profile/Home `cordis.patch.yml` | package 源码不变 | patch 持久改变 | 有效修改通常热重载对应 entry | 回退 patch 即可；无需改 package |
 | `dsh --dump-config` | 不变 | 不变 | 不启动应用或 Plugin | 只验证配置合成，不能替代实际启动 |
 | `pnpm pack` 或等价打包 | 新增可审查的安装产物 | 不变 | 不变 | 检查 tarball 后再装进干净 Profile |
