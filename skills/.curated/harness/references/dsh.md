@@ -615,11 +615,22 @@ Skill 支持 `<name>/SKILL.md` 目录 bundle 和 `<name>.md` 平铺文件；发�
 
 内置 MCP client 支持 `stdio` 和 `streamable-http`。每个 server 以独立 Plugin 连接并把远端工具注册进 `ctx.tools`，公开名称中的 server namespace 区分不同 server 的同名工具。
 
+配置由 `transport` 字段的值决定取哪个分支，两个分支构成判别联合（discriminated union，由一个共用字段决定取哪个分支的联合类型），字段不共用：
+
+| | `stdio` | `streamable-http` |
+|---|---|---|
+| 连接方式 | spawn 本机子进程，管道通信 | 连接远程 HTTP MCP 端点 |
+| 必填字段 | `command` | `url` |
+| 认证位置 | `env`（并入子进程环境） | `headers`（附加到每条请求） |
+| 分支其余字段 | `args`、`cwd` | — |
+
+`serverName`、`toolCallTimeoutMs`、`failOnStartupError` 与 `reconnect.*` 为两种 transport 共有。Streamable HTTP 内部使用 SSE，但配置枚举只有这两个值，没有单独的 `sse` 或 WebSocket 选项。认证位置的差异源于形态本身：stdio server 是本地进程，自己读环境变量；HTTP 端点没有子进程，凭据只能放进请求 header。
+
 当前 Harness 消费面覆盖 **Tools**；Resources 与 Prompts 等待相应的消费接口。执行期规范值保留完整 JSON MCP blocks 和可选 `structuredContent`。进入模型历史时，文本与资源链接转成文本；挂载附件存储且调用模型明确声明图片输入能力时，PNG、JPEG、WebP 和 GIF 会成为持久图片块。音频、嵌入资源和 Harness 当前范围之外的 block 会变成明确的诊断文本。
 
 MCP server 采用显式启用方式：部署在 patch 中加入 server 对应的 MCP client Plugin 实例。`stdio` server 由 Host 直接启动并持有 Host 用户权限；Agent 工具沙箱与 server 进程构成两个独立的权限范围。
 
-> 来源：[MCP transport、工具命名、结果映射与图片准入](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/mcp/mcp-client/README.zh.md#L5-L32)，以及[工具结果与已知边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/mcp/mcp-client/README.zh.md#L62-L117)。
+> 来源：[MCP transport、工具命名、结果映射与图片准入](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/mcp/mcp-client/README.zh.md#L5-L32)，以及[工具结果与已知边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/mcp/mcp-client/README.zh.md#L62-L117)；[transport 判别联合 schema 与两种 Config 的字段清单](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L49-L134)。
 
 #### <a id="mcp-persistent-configuration"></a>持久配置 MCP Server
 
@@ -652,6 +663,12 @@ MCP server 采用显式启用方式：部署在 patch 中加入 server 对应的
 ```
 
 `id` 是 Cordis 配置行的稳定标识，只需在组合中保持唯一，不要求以 `mcp` 开头。为了让 MCP 行在 patch、日志和排障输出中容易识别，推荐使用 `mcp-<serverName>` 形式；`mcp-` 是配置可读性约定，模型工具名仍由 `serverName` 决定。`serverName` 对应模型所见的 `mcp__<serverName>__<rawName>` namespace；它匹配 `[A-Za-z0-9_-]{1,32}`，并在存活的 MCP client 实例中唯一。
+
+`!!js` 是 Cordis 的 YAML 标签：挂载配置时把该处当 JS 表达式求值，不是字面字符串。上例里 stdio 的 `env` 直接引用变量，HTTP 的 `Authorization` 多两层写法——`>-` 是 YAML 折行标量（`>` 折行、`-` 去掉末尾换行），只是把长表达式折行；`a && b` 短路求值，token 未设置时整个表达式的值为 `undefined`。
+
+缺 token 时 `a && b` 求值成什么，直接决定这一行能否通过加载，而两种 transport 的默认行为不同。`env` 和 `headers` 都按字符串字典校验：stdio 的裸引用在缺 token 时得到 `undefined`，加载期即校验失败；HTTP 若照官方 README 的直写形式 `` !!js '`Bearer ${process.env.MCP_TOKEN}`' ``，模板字符串会把 `undefined` 拼成字符串 `Bearer undefined`，schema 放行，插件带着假凭据启动。上例的短路写法让 HTTP 与 stdio 行为一致：token 未设置时表达式值为 `undefined`，同样在加载期失败。要让某个 HTTP server 在缺 token 时照常启动，拿掉整行 header 或给表达式一个真正的字符串默认值，而不是依赖 `Bearer undefined`。
+
+> 来源：[官方 README 的 HTTP header 直写示例](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/README.zh.md#L45-L60)、[`env` 与 `headers` 的字符串字典校验](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L113-L134)。
 
 接入新 server 时，可以先把 overlay 保存为独立文件，例如 `./mcp-test.cordis.yml`，并在测试 shell 中导出 overlay 引用的环境变量。第一条命令验证配置层能否组合，第二条命令在备用端口启动一次真实 Web 进程，完成连接和工具发现测试：
 
@@ -698,6 +715,10 @@ systemctl show dsh.service -p EnvironmentFiles -p ActiveState -p SubState
 ```
 
 systemd 的 PATH 通常比交互 shell 短，systemd 部署中的 stdio `command` 使用绝对路径可获得一致的命令解析结果。
+
+config 的 schema 校验发生在插件 apply 之前；`failOnStartupError` 只覆盖初始连接与工具同步这类运行期失败，管不到校验层。校验失败的表现按进程状态分两种：冷启动 `dsh --profile web` 时一行配置校验抛错，整棵 plugin tree 加载失败、进程非零退出，错误从 `failed to apply loader entry <id>` 汇总为 `plugin tree failed to load`，不是只跳过这一行；已在运行的进程改 patch 触发 HMR 时，校验失败的候选被整体丢弃，上一棵可用树继续服务，进程不退出。
+
+> 来源：[`failOnStartupError` 的作用域](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L67-L72)、[冷启动时 `plugin tree failed to load` 的汇总与退出](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/src/index.ts#L770-L788)、[HMR 候选失败后保留旧树的测试](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/tests/config-reload.spec.ts#L190-L210)。
 
 无论采用 shell 还是 systemd 启动，运行中的 Host 都会监视 Profile patch，并通过 HMR 应用 patch 变更。进程环境在启动时形成快照，因此环境文件更新通过重新启动进入 Host。stdio transport 以清理后的父环境为基底，再合并 `config.env`；部署在 `config.env` 中显式转发各 server 所需的变量。HTTP header 由配置表达式从 Host 环境构造。
 
