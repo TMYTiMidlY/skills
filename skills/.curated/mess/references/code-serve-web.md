@@ -1,6 +1,6 @@
 # `code serve-web` 疑难杂症
 
-> VS Code 把 workbench 跑成浏览器可访问服务（`code serve-web`）时踩到的坑。两条都不是编辑器本身的问题，而是这条"浏览器 → CLI launcher → server"链路上的：一条出在服务端按 `Accept-Language` 注入的语言包，一条出在 launcher 自己的 HTTP 库。
+> VS Code 把 workbench 跑成浏览器可访问服务（`code serve-web`）时踩到的坑。几条都出在"浏览器 → CLI launcher → server"这条链路上：服务端按 `Accept-Language` 注入的语言包、launcher 自己的 HTTP 库、CDN 上的损坏构件叠加 CLI 的静默重试，都不算编辑器本身的问题。
 >
 > 顺带：serve-web 下 "Install from VSIX" 报 `Extension not found` 时怎么绕过，见 [回退式 workaround](pdfjs-tohex.md#vsix-bypass)。
 
@@ -110,4 +110,68 @@ https://update.code.visualstudio.com/1.115.0/cli-linux-x64/stable
 - **唯一对照组 ✅ 是宝藏**。当全网搜不到匹配症状时，找出“哪台是好的”，然后**把变量按字节列对照表**，逐个排除。本案三台 WSL 用同一条链路只有版本不同，前几轮乱猜参数全部白费，第三栏一列才直接给出答案。
 - **看 strings + cargo 编译路径**。Rust 二进制把 cargo 路径嵌死了，无源码也能拿到完整依赖图（含每个 crate 的精确版本号），用来 bisect 极快。
 - **「同 commit / 同 sha256 完全等价」是错觉**。本案 standalone tarball 和 deb 包内 binary 二进制完全一致，但跟 1.115.0 standalone tarball 的 commit 同样是 41dd792b 也可能 sha256 不同（不同时间 rebuild）—— 验证版本看 commit + `strings` 看依赖，别只看 sha。
+
+## <a id="web-tarball-cdn-stall"></a>页面永远卡在 "The latest version of the VS Code Server is downloading"
+
+> 2026-09-03 | 多用户 GPU 服务器（模板单元 `code-serve-web@.service` 给每个用户起一个实例，端口按 uid 递增）| CLI 1.129.1 (`/usr/bin/code`) | VS Code Server 1.136.1 / commit `a44adf7f`
+
+### 症状
+
+- 浏览器打开 `code serve-web`，一直停在 "The latest version of the Visual Studio Code Server is downloading, please wait a moment."，占位页返回 HTTP 202。
+- service 状态 `running`，journal 每隔几分钟一条 `info Downloading server a44adf7f...`，**中间没有任何 error/warn**，永远等不到 "Starting server"。
+- 当天早些时候还在用旧 commit `520fb30` 正常服务；旧 server idle 退出后新版接不上。
+- 同机多个用户实例里 3 个同时中招、其余正常——命中按"谁触发了新下载"分布，可以排除整机网络问题。
+
+### 排查关键转折
+
+错的方向（按踩坑顺序）：
+
+1. **「网络/代理问题」** — 用与 service 完全一致的干净 env（`env -i HOME=... VSCODE_CLI_DATA_DIR=...`）curl 官方下载 URL，全速拉完 218MB。但后来发现**测错了对象**：`update.code.visualstudio.com/commit:<hash>/server-linux-x64/stable` 重定向到的是 `vscode-server-linux-x64.tar.gz`，而 serve-web 下载的是另一个构件（见下）。
+2. **「常驻进程烂掉了」** — 单元已跑 3 天，怀疑老进程状态劣化；换全新进程 + 全新数据目录在 18080 端口 `--verbose` 复现 → **同样卡死**，排除。
+3. **「HTTP/2 / Accept-Encoding / 坏 CDN 边缘」** — curl `--http2`（被协商回 h1）、`-H 'Accept-Encoding: gzip, br'`、`--resolve` 钉死 DNSPod 调度出来的每个边缘 IP（分属腾讯系、电信系运营商）逐一测试，全部全速完成，全部排除。
+
+真正的突破点：
+
+1. **trace 日志里的字节数指纹**：`code serve-web --verbose` 会打 `Downloading server: X/245499233`，而这个总数 ≠ 上述 URL 的 `Content-Length` 228908092 —— CLI 下载的不是我测的那个文件。
+2. 对同一 commit 挨个 HEAD 其它构件：`vscode-server-linux-x64-web.tar.gz` 的 `Content-Length` = **245499233**，精确命中。
+3. curl 直接下载这个 `-web` 构件 → **148MB 处断流**（exit 124），与 CLI 卡死位置（132–150MB 区间）一致 → 复现成功，锅在 CDN 上的这一个对象。
+
+### 根因
+
+`code serve-web` 跟踪最新 stable（本案 1.136.1 / `a44adf7f`），按需下载 **`vscode-server-linux-x64-web.tar.gz`**。该构件在 `vscode.download.prss.microsoft.com`（DNSPod 动态调度的 "Lego Server" 边缘）上的缓存对象是坏的：响应声称 245,499,233 字节，单连接全速送到 ~80–150MB 后断流（每次断点不定，故障持续数小时，间歇可自愈）。三个致命叠加让它表现为"永远卡住"：
+
+- CLI 下载**没有断点续传**，断流即整趟作废；
+- 失败**不打 error 日志**（默认级别下完全静默）；
+- 每来一个页面请求就**从头重试一次** → 页面永远 202。
+
+同 commit 的非 `-web` 构件、`update.code.visualstudio.com` 本身、机器网络全部正常——故障面只有这一个 CDN 对象，所以一切"链路正常"的旁证都测不出来。
+
+### 解决
+
+**手工断点续传 + 植入缓存**（对卡住实例无需重启 service；多用户机可用 root 代做后 `chown` 回去）：
+
+```
+C=a44adf7f53e00964ab890f9f8758a334f1fc15bc
+U=https://vscode.download.prss.microsoft.com/dbazure/download/stable/$C/vscode-server-linux-x64-web.tar.gz
+# ① 循环续传拼满；长度与 sha256 对照
+#    https://update.code.visualstudio.com/api/update/server-linux-x64-web/stable/latest
+while [ "$(stat -c%s sw.tar.gz 2>/dev/null)" != 245499233 ]; do timeout 60 curl -C - -o sw.tar.gz "$U"; done
+sha256sum sw.tar.gz
+# ② 解压植入 serve-web 缓存（注意是裸内容，不带外层目录名），登记 lru.json
+tar -xzf sw.tar.gz && mv vscode-server-linux-x64-web ~/.vscode/cli/serve-web/$C
+rmdir ~/.vscode/cli/serve-web/$C.staging 2>/dev/null
+# 把 $C 插到 ~/.vscode/cli/serve-web/lru.json 数组首位
+```
+
+- 完整性双校验：tar.gz 的 sha256 对照官方 API；植入后 `node` 二进制应为 123,656,816 字节。
+- 本案用该法批量修了 3 个用户实例（root 代做播种后 `chown` 回各用户，端口下一个请求立即 200）；另一家在播种时恰好撞上健康边缘自愈——**等自愈不可预期，续传植入才是可控手段**。
+- 备选：`code serve-web --commit-id <hash>`（1.12x CLI 支持）pin 到已缓存 commit，配 systemd drop-in；需要 root。
+- 多用户实例巡检：各实例端口逐个 `curl` 探测，返回 202 即中招。
+
+### 教训
+
+- **先搞清"卡在下载"的到底在下载哪个对象**。update 服务对不同 product（`server-linux-x64` vs `server-linux-x64-web` vs `cli`）给的是不同 URL；curl 测错构件会得出"CDN 正常"的假阴性。CLI trace 里 `Downloading server: X/TOTAL` 的 TOTAL 就是 Content-Length 指纹，拿它去 HEAD 各候选构件对尺寸，一步锁定真实对象。
+- **"curl 正常" ≠ 链路正常**：URL、边缘 IP（DNSPod 调度每次可能不同）、请求头要逐字节等同才有对照意义。
+- 本故障的日志指纹：service `running` + journal 只有反复的 `Downloading server <commit>`、无任何 error + 页面 202。见到即按此案处理。
+- 顺带小坑：`pkill -f` 的模式若出现在自己命令行里会**把自己杀掉**；杀特定端口进程先 `ss -tlnp` 拿 PID 或运行时拼 pattern。
 
