@@ -52,7 +52,7 @@ Profile 从空条目列表开始按顺序应用配置层：
 3. Harness home 下的全局 `cordis.patch.yml`；
 4. 命令行通过 `--patch` 临时加载的 overlay。
 
-后层按 row id 覆盖前层，`config` 是整项替换；普通 dependency 只有在 package manifest 声明 `dsh.bundle` 后才会成为 Profile 的配置层。合成后的每条 Loader entry 在 Cordis Context 中启动为一个 Fiber；Plugin 通过它注册 service、event listener 和 effect，Fiber 卸载时再撤销这些注册。模块形式与完整清理规则见后文的[实现 Plugin 模块](#plugin-runtime)。
+后层按 row id 覆盖前层，`config` 是整项替换；字段含义、insert 与覆盖在 YAML 里如何区分，见[Loader entry 字段与 patch 文档](#loader-entry-patch)。普通 dependency 只有在 package manifest 声明 `dsh.bundle` 后才会成为 Profile 的配置层。合成后的每条 Loader entry 在 Cordis Context 中启动为一个 Fiber；Plugin 通过它注册 service、event listener 和 effect，Fiber 卸载时再撤销这些注册。模块形式与完整清理规则见后文的[实现 Plugin 模块](#plugin-runtime)。
 
 Agent preset 存放为包含 `agent.cordis.yml` 的目录，可选的 `preset.yml` 提供显示名称与说明。用户自建 preset 通常放在 `$DSH_HOME/.agent-presets/<id>/`，由随附 preset 复制后修改；它只影响之后选择该 preset 的 Agent，不负责安装 Host package。
 
@@ -69,6 +69,54 @@ Agent preset 存放为包含 `agent.cordis.yml` 的目录，可选的 `preset.ym
 上面的配置层次解释最终 Plugin 树从哪里形成；表格则用于选择开发入口。每项操作对源码、Profile 和当前进程的具体影响见后文的[操作影响表](#operation-effects)。
 
 > 来源：[Cordis 的 Plugin、Context、Fiber 与可逆注册](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/cordis-primer.zh.md#L5-L13)；[Bundle、Profile 与配置层顺序](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/architecture.zh.md#L15-L37)；[Agent preset 的组成与保存位置](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/preset/agent-presets/README.zh.md#L5-L85)；[Bundle 安装与 Profile manifest](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L9-L128)；[Profile、`--patch` 与运行时重载](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L7-L84)。
+
+### <a id="loader-entry-patch"></a>Loader entry 字段与 patch 文档
+
+上一节说明配置层从哪里来、按什么顺序叠加。本节说明合成后的一行由哪些字段组成，以及 patch 文件里「插入新行」和「覆盖已有行」在文档上怎样区分。
+
+合成后的每条 Loader entry 是一组并列字段。Loader 用它们完成不同工作：
+
+| 字段 | 作用 |
+|---|---|
+| `id` | 合成后插件树里这一行的稳定标识，同一棵树内必须唯一 |
+| `name` | 真正 import 的 module |
+| `inject` | 本行激活前必须具备的 service |
+| `config` | 交给该次加载的配置对象；后层整份替换前层，不做键级深合并 |
+| `disabled` | 可选；为 true 时该行不启动 Fiber |
+
+同一 `name` 可以挂很多行，只要各行 `id` 不同。内置 MCP client 就是这种用法：多台 server 都写 `name: '@deepseek-ai/dsh-mcp-client'`，用不同 `id` 区分。冲突发生在行 `id`，与包是否已经装进 Profile 无关。
+
+patch 文件是顶层 YAML 数组，数组里每一项是一条指令。include 插件按两项处理：
+
+- 带 `insert` 的项：把所列 entry 追加到树（若同时带 `id`，则插入那个 group 的子列表）。这是再造一行。
+- 不带 `insert`、带 `id` 的项：在已合成的树里找到该 id，把该项其余字段写到目标行上。这是覆盖已有行。找不到目标时跳过并告警。
+
+YAML 用缩进表示父子。写在 `- insert:` 下面的 `- id:` 是再造一行：
+
+```yaml
+- insert:
+    - id: existing-row
+      config:
+        key: value
+```
+
+与 `- insert:` 平级的 `- id:` 才是覆盖已有行：
+
+```yaml
+- id: existing-row
+  config:
+    key: value
+```
+
+`@deepseek-ai/dsh-web-app` 已经 insert 过 `id: connection` 的 `@deepseek-ai/dsh-client-connection`。再 insert 一条同 id 时，include 的合成结果里会留下两行相同 id；Loader 应用这棵树时抛出 `TypeError: duplicate loader entry id: connection`，包装为 `failed to apply loader entry include (cordis:include)`，再汇总成 `plugin tree failed to load`。
+
+后层只写 `id` 和 `config` 时，`name` 与 `inject` 继续沿用前层。`config` 内部则整份覆盖：漏写的键会从该行消失，所以覆盖时必须把仍要保留的键一并写出。覆盖时如果改了 `name`，Loader 会卸掉旧实例再按新模块 import；只改配置字段时保持 `name` 不动。
+
+冷启动要求整棵插件树一次装完。任一行失败就拆掉已起来的部分，进程非零退出；失败发生在 HTTP 监听之前，对外看起来就是进程立刻没了。已在运行的进程监视 Profile / Home 的 `cordis.patch.yml`：坏候选整棵丢掉，上一棵可用树继续服务，错误会留到下一次冷启动才再次出现。会拆掉正在对外服务的进程的，是冷启动（进程已死，或随后的 `systemctl restart`）。热更新的文件监视与事务回滚见运行时篇的 [Patch 热更新的生效机制](dsh.md#mcp-patch-hot-reload)。
+
+> 🔬 2026-09-04 实测：Profile patch 的 `- insert:` 列表里出现 `- id: connection`（与 web 组合包已有行撞 id），`dsh@<user>.service` 冷启动循环退出；运行中的另一实例靠热重载丢弃候选维持服务，直到重启前表面正常。
+
+> 来源：[patch 按 id 覆盖整份 config，或插入新行](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/docs/architecture.md#L27)；[applyEntryPatches 对 insert 与 id 覆盖的分流](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/include/src/index.ts#L57-L123)；[web-app 插入的 `connection` 行](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/bundle/web-app/cordis.patch.yml#L162-L169)；[`duplicate loader entry id`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/loader/src/config/group.ts#L59-L64)；[冷启动时 `plugin tree failed to load` 的汇总与退出](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/src/index.ts#L770-L788)；[HMR 候选失败后保留旧树的测试](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/tests/config-reload.spec.ts#L190-L210)；[Entry.update 对只改 config 与改 name / inject 的分叉](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/loader/src/config/entry.ts#L142-L246)。
 
 ## <a id="plugin-development-workflow"></a>Plugin 开发流程
 
@@ -116,7 +164,7 @@ flowchart LR
 | 建立或修改源码仓库 | 文件和 Git 工作区改变 | 不变 | 未挂载时无影响 | Git commit 只保存源码历史，不会安装 Plugin |
 | 以 `--patch` 启动本地 module | 源码文件保留在原处 | Profile 依赖与 Bundle 列表不变 | 只对本次启动加入 overlay；有效改动可由 [HMR](dsh.md#mcp-patch-hot-reload)（Hot Module Replacement，热模块替换）重载 | 退出进程即失去挂载关系，源码仍在 |
 | 修改 Profile/Home `cordis.patch.yml` | package 源码不变 | patch 持久改变 | 有效修改通常热重载对应 entry | 回退 patch 即可；无需改 package |
-| `dsh --dump-config` | 不变 | 不变 | 不启动应用或 Plugin | 只验证配置合成，不能替代实际启动 |
+| `dsh --dump-config` | 不变 | 不变 | 不启动应用或 Plugin，也不通知已运行进程 | 只验证配置合成，不能替代实际启动 |
 | `pnpm pack` 或等价打包 | 新增可审查的安装产物 | 不变 | 不变 | 检查 tarball 后再装进干净 Profile |
 | `dsh plugin ... add` | 安装 npm、Git、目录或 tarball package | 写依赖、lockfile 和 Bundle 列表 | 已运行进程保持原 Bundle 集合 | 重启目标 Profile 后验证 |
 | `dsh plugin ... update/remove` | 更新或移除已安装 package | 重写依赖和 Bundle 列表 | 已运行进程保持原 Bundle 集合 | 重启后切换；回滚 package 版本需再次安装旧版本 |
@@ -664,13 +712,17 @@ declare module '@deepseek-ai/dsh-session/types' {
 
 按配置合成、module/Fiber、用户行为和发布包顺序验证。配置 dump 证明配置树正确；Fiber 状态证明 Plugin 已加载；行为测试证明功能可用；干净 Profile 安装证明发布包完整。
 
-#### 配置层合成检查
+#### <a id="config-dump"></a>配置层合成检查
 
 ```sh
 dsh --profile <name> --dump-config
 ```
 
-`--dump-config` 展示 Bundle、Profile、Harness home 与 `--patch` overlay 合成后的配置树，并报告未匹配的 patch 目标。它不会启动应用、导入 Plugin、求值 `!!js` 或执行 Config schema，因此只用来确认配置项是否插入、覆盖顺序是否符合预期。
+`--dump-config` 展示 Bundle、Profile、Harness home 与 `--patch` overlay 合成后的配置树，并报告未匹配的 patch 目标。它另起一个只读进程：按与 boot 相同的 patch 算法合成、打印、退出。不绑定端口，也不通知正在跑的 dsh（包括 systemd 托管的那个）。监视 `$DSH_HOME/profiles/<profile>/cordis.patch.yml` 和 home 层 `$DSH_HOME/cordis.patch.yml` 的是那个已运行进程；先改这份 live 文件，热重载已经发生，dump 只是事后再读同一份。
+
+dump 走 include 的 `applyEntryPatches`，不跑 Loader 的 `EntryGroup.update`。同一 id 被 insert 两次时，dump 会打印出两行相同 id，并以 0 退出；真正启动时 Loader 才抛 `duplicate loader entry id`。核对合成结果时看：该 id 是否只出现一次、覆盖行的注释是否含 `patched by <patch 文件>`、`config` 是否含新写入且仍要保留的键。dump 也不导入 module、不求值 `!!js`、不跑 Config schema：缺导出、schema 校验失败这类问题，dump 过了，实跑才会失败。
+
+`--patch` 把草稿叠在现有 Profile patch 之上。草稿里再 insert 一遍已经存在的 id，合成结果同样出现两行。要测「整份替换现有 Profile patch」，把 Harness home 另拷一份，改副本里的 `profiles/<profile>/cordis.patch.yml`，用 `DSH_HOME` 指向副本再 dump 或实跑；正在跑的服务仍使用原来的 home。检查与写入 live 文件的先后关系：先看 dump 里的合成树，必要时再用备用端口实跑，最后才写入正在监视的 live 文件。
 
 #### 模块导入、配置校验与 Fiber 状态
 
@@ -718,7 +770,7 @@ pnpm run build
 pnpm run hygiene
 ```
 
-> 来源：[配置 dump 的非启动语义](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/src/dump-config.ts#L1-L52)；[Fiber 状态与缺失依赖诊断](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cordis-tutorial/06-composition-and-hmr.md#L63-L109)；[测试层级、真实入口与 snapshot](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/testing.md#L7-L49)；[官方仓库 package 检查](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/cookbook/adding-a-package.md#L109-L118)。
+> 来源：[配置 dump 的非启动语义](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/apps/cli/src/dump-config.ts#L1-L52)；[dump 与 boot 共用 `applyEntryPatches`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/src/index.ts#L363-L371)；[`--dump-config` 叠加 profile / home / `--patch`，不启动应用](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/apps/cli/reference/README.zh.md#L7-L39)；[Fiber 状态与缺失依赖诊断](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/docs/cordis-tutorial/06-composition-and-hmr.md#L63-L109)；[测试层级、真实入口与 snapshot](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/testing.md#L7-L49)；[官方仓库 package 检查](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/cookbook/adding-a-package.md#L109-L118)。
 
 ### <a id="packaging-and-installation"></a>打包并安装到 Profile
 
