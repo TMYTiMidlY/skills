@@ -677,7 +677,7 @@ Web 路由是 exact `/api-import/sessions`、`/api-import/import`、`/api-import
 - 核对 DSH `0.1.2-rc.1` 的 web 包家族、默认组合与配置面相对 `0.1.1-rc.2` 的变化，并用 DeepSeek 官方 API 文档印证计费机制。
 - 盘点把 `web_search` 接到 Codex 订阅、以及直接实现 `WebSearchProvider` seam 的社区插件，归纳接入模式与冲突边界。
 
-> **证据边界：** 官方源码两轮固定——08-28 原记录锚定 `0.1.1-rc.2`（commit [`b150a551`](https://github.com/deepseek-ai/deepseek-harness/tree/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e)，其原有来源链接仍指向该 commit）；09-04 复核锚定 `0.1.2-rc.1`（commit [`a66e470`](https://github.com/deepseek-ai/deepseek-harness/commit/a66e4702047846cdaa10c66c9d3df3951f5ea70d)，2026-09-02 发布提交，未另标 commit 的官方引用均指它）。本机安装树为 0.1.2-rc.1，🔬 常量核对与包内 README 行号定位以它为据（同一 release 的包内 README 与 GitHub blob 行号一致）。DeepSeek API 文档为 2026-09-04 抓取的现行页面。社区插件按各仓库 HEAD 快照固定到来源链接中的 commit（插件商店快照中新增的发现条目仅链接仓库首页，未固定 commit），未做逐行全量源码审计；除注明 🔬 的两段归档会话观察外，两轮均未用真实凭据做端到端搜索验证。供应商如何把搜索折算成订阅额度或金额，仍由该供应商的实时规则决定。
+> **证据边界：** 官方源码两轮固定——08-28 原记录锚定 `0.1.1-rc.2`（commit [`b150a551`](https://github.com/deepseek-ai/deepseek-harness/tree/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e)，其原有来源链接仍指向该 commit）；09-04 复核锚定 `0.1.2-rc.1`（commit [`a66e470`](https://github.com/deepseek-ai/deepseek-harness/commit/a66e4702047846cdaa10c66c9d3df3951f5ea70d)，2026-09-02 发布提交，未另标 commit 的官方引用均指它）。本机安装树为 0.1.2-rc.1，🔬 常量核对与包内 README 行号定位以它为据（同一 release 的包内 README 与 GitHub blob 行号一致）。DeepSeek API 文档为 2026-09-04 抓取的现行页面。社区插件按各仓库 HEAD 快照固定到来源链接中的 commit；本节点名插件至少核对过 README，其中新增四项（anysearch-dsh、dsh-web-tools、dsh-tavily、modsearch）已完整 clone 后复核 README 与关键源码，均未做逐行全量源码审计；插件商店快照中未点名的条目仅作发现信号；除注明 🔬 的两段归档会话观察外，两轮均未用真实凭据做端到端搜索验证。供应商如何把搜索折算成订阅额度或金额，仍由该供应商的实时规则决定。
 
 ### <a id="web-search-provider-selection"></a>web_search 的执行链与提供方选择
 
@@ -827,7 +827,16 @@ TUI 时间轴等界面有从 grok-pager 借来的交互，那是 UI，不是 Gro
 4. **归属注意。** searxng 仓库的 package.json 使用 `@deepseek-ai/` scope 名（用于本地 link 安装、未发布 npm）；安装第三方包前应核对真实发布者，scope 名不等于官方归属。zai README 也自注"目录收录不意味官方 DSH 或 Z.ai 背书"。
 5. **外部印证。** [掘金文章](https://juejin.cn/post/7673816823688003630)实测"主模型切到 opencode 后 `web_search` 仍走 DeepSeek 官方计费"、[DataCamp 教程](https://www.datacamp.com/zh/tutorial/deepseek-harness)写明"默认搜索 provider 与模型共用同一 DeepSeek API key"、[官方讨论 #779](https://github.com/deepseek-ai/deepseek-harness/discussions/779)（"联网搜索能否兼容其他模型"）的回复确认 `web_search` 是可插拔 provider 架构、更换 provider 即可兼容——三条口径与本节源码结论一致。
 
-插件商店聚合目录（2026-09-04 快照收录 6465 个插件，`web-search` 匹配 75 项）显示该类别规模已远超上表核心样本。快照中值得注意的条目：[`anysearch-team/anysearch-dsh`](https://github.com/anysearch-team/anysearch-dsh)（AnySearch 官方团队出品，provider 加高级搜索工具；InfoQ / CSDN 教程安装的即此包，与 `mcxianyujun/dsh-web-search-anysearch` 是两个仓库）、[`A3Boy/dsh-web-tools`](https://github.com/A3Boy/dsh-web-tools)（多提供方 + 回退 + X / 小红书检索，即博客园文章所装包）、[`moguiyu/dsh-tavily`](https://github.com/moguiyu/dsh-tavily)（另一种接入模式：注册独立可选搜索工具并做多 key 轮换，不替换内置 `web_search`）、[`liustack/modsearch`](https://github.com/liustack/modsearch)（见 [2026-08-17 生态调研](#packaging-and-community)，现以免费免 key 搜索为主打）；另有多个 Tavily、SearXNG、TinyFish 与 zero-key Bing / Baidu 聚合的同构 provider。本段条目按商店快照与仓库自述收录，未固定 commit、未做源码审计；商店条目由 GitHub 公开项目自动聚合，未经人工审核。
+插件商店聚合目录（2026-09-04 快照收录 6465 个插件，`web-search` 匹配 75 项）显示该类别规模已远超上表核心样本。快照中值得注意、已完整 clone 并固定 commit 复核 README 与关键源码的条目：
+
+| 插件 | 固定 commit | 接入方式 | 要点 |
+|---|---|---|---|
+| [`@anysearch/anysearch-dsh`](https://github.com/anysearch-team/anysearch-dsh/tree/3ccdef05e2b502509415b023e206a4c9f6afb038) | `3ccdef05`（08-26，v0.1.4） | provider：patch 钉 `searchProvider: anysearch`，源码调用 `ctx.web.registerSearchProvider` | AnySearch 官方团队（`@anysearch` npm scope）出品的实时网页与垂直搜索；InfoQ / CSDN 教程安装的即此包，与 `mcxianyujun/dsh-web-search-anysearch` 是两个仓库 |
+| [`dsh-web-tools`](https://github.com/A3Boy/dsh-web-tools/tree/9b45045ac8a011429d494399a49846ae907c07d3) | `9b45045a`（09-03，v0.3.3） | provider：bundle patch 把 `web` 行覆写为 `searchProvider: dsh-web-tools` | 8 个提供方原生适配、SearchHints 语义编译、多源回退、X / 小红书检索 |
+| [`@moguiyu/dsh-tavily`](https://github.com/moguiyu/dsh-tavily/tree/8f2784af3d89754acdd9baf58bdd21353ae9c00e) | `8f2784af`（09-02，v0.2.1） | 独立工具：不注册 provider、不改 `web.searchProvider`，内置 `web_search` 原样保留 | 可选 Tavily 搜索工具，多 key 轮换 / 故障转移、用量仪表盘、`extract` / `map` / `crawl` 直连工具 |
+| [`@liustack/modsearch`](https://github.com/liustack/modsearch/tree/81ed4d16fbdec19d078f7bfbeac11b6c5ceb1e80) | `81ed4d16`（08-28，v5.10.0） | skill / 工具为主，兼注册 provider（id `modsearch`） | 见 [2026-08-17 生态调研](#packaging-and-community)；引擎 Firecrawl（keyless 默认）/ Antigravity CLI / Tavily / Exa / Grok(X) / local 自动回退，免费免 key |
+
+"接入方式"一列把社区接入 `web_search` 的途径分成三类：换 provider（anysearch-dsh、dsh-web-tools 及上表五个）、加独立工具不动内置链路（dsh-tavily）、skill / 工具附带 provider（modsearch）。商店其余 Tavily、SearXNG、TinyFish、zero-key Bing / Baidu 聚合等同构条目未复核，仅作发现信号；商店条目由 GitHub 公开项目自动聚合，未经人工审核。
 
 > 来源：[插件商店 `web-search` 类目快照](https://dsh.deepseek404.com/index.php?q=web-search)（2026-09-04 查阅，仅作发现信号）。
 
