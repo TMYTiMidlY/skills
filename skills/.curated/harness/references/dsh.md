@@ -341,7 +341,7 @@ https://dsh.example.com {
 
 这里的 `<private-upstream>:3080` 是 Caddy 的连接地址。DSH 的信任判断使用实际收到的 `Host: dsh.example.com` 和 `Origin: https://dsh.example.com`；匹配的 `--trusted-host dsh.example.com` 让信任校验放行，会话、事件流、其他普通 API 与 WebSocket 能否使用仍取决于浏览器会话。
 
-配置 `--trusted-host dsh.example.com` 后，公网 `Host` 通过信任校验；能否调用 Host API 此后只取决于浏览器会话（见[Host 信任校验与浏览器会话认证](#browser-session-auth)）。Settings 读写、Credentials、Agent preset 管理、宿主文件操作（`host.pickDirectory`、`host.openPath`）、端点探测（`llm.discoverModels`）这组方法之所以值得单独点名，是因为 `0.1.1-rc.2` 及更早版本恰好把它们单独圈出，在通用校验之后追加只接受 loopback Host / Origin 的第二层，公网路径上返回 403；统一会话认证（`0.1.2-alpha.1` 起）取消了这层名单，它们与其余 Host RPC 一样只要求同一枚会话 cookie，没有会话时统一返回 401。旧模型的完整描述见[历史模型](#loopback-privilege-history)。
+配置 `--trusted-host dsh.example.com` 后，公网 `Host` 通过信任校验；能否调用 Host API 此后只取决于浏览器会话（见[Host 信任校验与浏览器会话认证](#browser-session-auth)）。Settings 读写、Credentials、Agent preset 管理、宿主文件操作（`host.pickDirectory`、`host.openPath`）、端点探测（`llm.discoverModels`）这组本机管理方法在 `0.1.1-rc.2` 及更早版本被单独圈出，在通用校验之后追加只接受 loopback Host / Origin 的第二层，公网路径上返回 403；统一会话认证（`0.1.2-alpha.1` 起）取消了这层名单，它们与其余 Host RPC 一样只要求同一枚会话 cookie，没有会话时统一返回 401。旧模型的完整描述见[历史模型](#loopback-privilege-history)。
 
 `--trusted-host` 提供 DNS rebinding 与跨站请求防护，Caddy 提供 TLS 与面向互联网的用户认证，浏览器会话认证决定谁能操作 Host；三层各守自己的边界。
 
@@ -392,7 +392,7 @@ DSH 的 `isTrustedApiRequest()` 按以下顺序校验改写后的请求：
 
 ##### <a id="loopback-privilege-history"></a>历史模型：本机管理方法的 loopback 特权
 
-DSH `0.1.1-rc.2` 及更早版本没有会话认证：通用校验之后，本机管理方法（Settings、Credentials、Agent preset、宿主文件操作、`llm.discoverModels` 等）再以空 `trustedHosts` 调用 `isTrustedApiRequest()`，构成只接受 loopback Host / Origin 的第二层。于是 `--trusted-host` 公网路径上这些方法返回 403；Caddy 强认证后把 `Host` / `Origin` 成对改写为 loopback 就能让它们通过——loopback 本身即特权，无需任何会话。统一浏览器会话认证在 `0.1.2-alpha.1` 取代了这一层（npm 首个发布为 `0.1.2-alpha.2`）：伪造 loopback `Host` 不再带来任何特权，上述改写路径与按接入方式区分的差异表随之失效。
+DSH `0.1.1-rc.2` 及更早版本没有会话认证：通用校验之后，上述本机管理方法再以空 `trustedHosts` 调用 `isTrustedApiRequest()`，构成只接受 loopback Host / Origin 的第二层。于是 `--trusted-host` 公网路径上这些方法返回 403；Caddy 强认证后把 `Host` / `Origin` 成对改写为 loopback 就能让它们通过——loopback 本身即特权，无需任何会话。统一浏览器会话认证在 `0.1.2-alpha.1` 取代了这一层（npm 首个发布为 `0.1.2-alpha.2`）：伪造 loopback `Host` 不再带来任何特权，上述改写路径与按接入方式区分的差异表随之失效。
 
 > 来源：[旧版本机管理方法清单与空 trust list 二层校验](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/index.ts#L69-L154)、[对应的 Host / Origin 行为测试](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/tests/api-request-trust.host.spec.ts#L19-L68)；现行统一会话模型的来源见 [Host 信任校验与浏览器会话认证](#browser-session-auth)。
 
