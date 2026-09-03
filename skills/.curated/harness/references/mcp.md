@@ -1,16 +1,30 @@
-# MCP 配置发现与工具名：五家客户端横向对照
+# 各客户端对 MCP 的支持
 
-同一台 MCP server 在不同 coding agent 客户端里会遇到两层问题：客户端从哪些配置源发现并合并它，用户怎样列出、修改和验证最终生效的 server；连接后，server 声明的工具 `foo` 又以什么名字暴露给模型。本篇对照 Copilot CLI、Claude Code、Codex、Gemini CLI、Cursor 的这两层行为。
+MCP 是连接 AI 应用与外部系统的开放协议；同一台 server 接进不同客户端，能力怎么消费、工具叫什么名字、配置从哪发现，各家做法并不相同。本篇先在 [MCP 概览](#capability-surfaces)讲清协议自身的模型，再按能力逐项对照 Copilot CLI、Claude Code、Codex、Gemini CLI、Cursor 的做法——[Tools 的命名](#tool-naming)、[Resources 的消费入口](#resources-entry)、[Prompts 的消费入口](#prompts-entry)、[工具结果的内容块](#tool-result-blocks)——最后是跨能力的[配置发现](#config-discovery)与[横向综合](#synthesis)。DeepSeek Harness（DSH）作为第六个对照点在各节出现，细节在 [dsh.md](dsh.md#mcp) 展开。
 
-配置发现决定“有哪些 server”，工具命名决定“模型看见什么 tool”。排查时先用客户端自己的列出 / 状态入口确认有效配置，不能只扫描一个用户配置文件：项目、插件 / 扩展、企业配置和单次运行覆盖都可能另外注入 server。
+## <a id="capability-surfaces"></a>MCP 概览
+
+Anthropic 在 2024-11-25 的公告里开源了 MCP，定位原文是「a new standard for connecting AI assistants to the systems where data lives, including content repositories, business tools, and development environments」，并称它「provides a universal, open standard for connecting AI systems with data sources, replacing fragmented integrations with a single protocol」。生态报道后来常把它比作 AI 应用的 USB-C 接口（如 Ars Technica 的报道标题「MCP: The new "USB-C for AI"」）；注意这个类比出自新闻，公告原文里没有。架构上（spec 2025-06-18）MCP 是 client-host-server 三方模型：host 进程装载并管理多个 client、每个 client 与一台 server 保持一条基于 JSON-RPC 的有状态会话，双方在初始化时做能力协商；server 通过三类 primitive 暴露能力。
+
+协议为三类能力规定了不同的控制方：Tools 是 **model-controlled**，模型基于上下文自主发现并调用；Resources 是 **application-driven**，由 host 应用决定把哪些 URI 标识的只读数据（文件、schema、日志等）挂进上下文，可以做成目录树、搜索列表或按启发式自动注入；Prompts 是 **user-controlled**，服务端预制的提示词模板，设计上由用户显式挑选，协议给出的典型呈现是斜杠命令。协议只定义 `tools/list`、`resources/list`、`prompts/list` 等发现与读取请求，并明确不强制任何特定交互模型——怎么暴露、暴露多少，是 host 自己的决策。后文各节对照的正是各家在这片决策空间里的不同选择。
+
+> 来源：[Anthropic 公告 Introducing the Model Context Protocol（2026-09-03 核）](https://www.anthropic.com/news/model-context-protocol)、[Ars Technica 的 USB-C 报道（2025-04）](https://arstechnica.com/information-technology/2025/04/mcp-the-new-usb-c-for-ai-thats-bringing-fierce-rivals-together/)、[MCP Architecture（2025-06-18）](https://modelcontextprotocol.io/specification/2025-06-18/architecture)、[Tools 的 model-controlled 定义](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)、[Resources 的 application-driven 定义](https://modelcontextprotocol.io/specification/2025-06-18/server/resources)、[Prompts 的 user-controlled 定义](https://modelcontextprotocol.io/specification/2025-06-18/server/prompts)。
+
+## 准确度约定
+
+各家源码开放度不同，本篇把证据类型和核对时间放在对应章节附近：
+
+- **配置发现、枚举与修改**：优先采用厂商官方文档，并用 1810 已安装的 CLI 核对实际命令面；Codex 另挂锁到 commit SHA 的配置 loader / MCP CLI 源码，Gemini CLI 未安装则明确标出未做 live 验证。滚动文档按文中日期理解。
+- **工具名装配**：Codex、Gemini CLI 真开源，行为挂锁到 commit SHA 的 file:line；Copilot CLI、Claude Code、Cursor 闭源 / minified，按 live MCP 观测或官方文档记录，并就地注明日期与未公开边界。
+- **能力消费面**（Resources / Prompts / 结果内容块）：按各家官方文档或开源源码核对，文档核对日期就地注明，Codex 挂 commit SHA；「文档未提及」指截至核对日，不代表永远不支持。DSH 的行为见 [dsh.md](dsh.md#mcp)（锚定 dsh-v0.1.2-rc.1）。
+
+## <a id="tool-naming"></a>Tools 的命名
 
 **为什么这事要紧**：常有人给 MCP 工具名硬加 server 名当前缀（`portal_exec` /
 `myserver_search`），理由是"防撞名"。但如果客户端**本来就**按 server 命名空间化，那这个
 自加前缀就是纯 **stutter（口吃）**——`portal` server 的 `portal_exec` 在客户端里会变成
 `portal-portal_exec` / `mcp__portal__portal_exec`。到底撞不撞、要不要自带前缀，取决于**每家
-客户端是否已经加、以及前缀取自哪里**。下面把五家逐一核实。
-
-## 速览
+客户端是否已经加、以及前缀取自哪里**。下面把六家逐一核实。
 
 | 客户端 | 加 server 前缀？ | 模型可见格式 | 分隔符 | 前缀取自 | 前缀来源实锤 |
 |---|---|---|---|---|---|
@@ -19,29 +33,265 @@
 | **Codex** | ✅ 默认 | `mcp__<key>__<tool>` | `__` ＋ `mcp__` 字面前缀 | **config key** | 源码：`callable_namespace = server_name`（`[mcp_servers.<KEY>]` 表键） |
 | **Gemini CLI** | ✅ 总是 | `mcp_<key>_<tool>` | `_` ＋ `mcp_` 字面前缀 | **config key** | 源码：`Object.entries(mcpServers)` 的 key |
 | **Cursor** | ✅（文档口径） | `<key>-<tool>` | `-` 连字符 | **config key**（`mcp.json`） | 官方文档：allowlist "server name is the key you used in `mcp.json`" |
+| **DeepSeek Harness** | ✅ 总是 | `mcp__<serverName>__<tool>` | `__` ＋ `mcp__` 字面前缀 | **插件 config 的 `serverName` 字段** | 官方 README 设计不变式：「绝不采用远程 `serverInfo.name`」；命名细则见 [dsh.md](dsh.md#mcp) |
 
-**五家一致的两条硬结论**：
+**六家一致的两条硬结论**：
 
 1. **全部都加 server 前缀**——没有一家把 MCP 工具名裸暴露给模型。所以"给工具名自带一个
-   server 名前缀防撞"在这五家里**都是冗余 stutter**：客户端已经替你加了一层。
-2. **前缀一律取『客户端配置里的 server key』**，**不是** server 自己在 MCP 握手里声明的
-   name。这点五家零例外（Copilot 用 key `portal` 而非 FastMCP 声明名 `portal-mcp-server`
-   是最干净的反证）。→ 想控制前缀长什么样，改的是**用户的配置 key**，改 server 内部
-   `FastMCP("...")` 声明名没用。
+   server 名前缀防撞"在这六家里**都是冗余 stutter**：客户端已经替你加了一层。
+2. **前缀一律取『客户端配置里的 server 标识』**，**不是** server 自己在 MCP 握手里声明的
+   name。这点六家零例外（Copilot 用 key `portal` 而非 FastMCP 声明名 `portal-mcp-server`
+   是最干净的反证；DSH 甚至把「绝不采用远程 `serverInfo.name`——远程名称不可信」写成设计
+   不变式）。→ 想控制前缀长什么样，改的是**配置里的 server 标识**（五家的 config key、
+   DSH 的 `serverName` 字段），改 server 内部 `FastMCP("...")` 声明名没用。
 
 分歧只在**表面装饰**：分隔符（`-` vs `_` vs `__`）、有没有 `mcp` 字面标记、以及净化 /
-截断规则。详见各节。
+截断规则。详见各小节。
 
-## 准确度约定
+### Copilot CLI
 
-各家源码开放度不同，本篇把证据类型和核对时间放在对应章节附近：
+**验证方法**：live 实测（Copilot CLI 1.0.69）。`~/.copilot/mcp-config.json` 注册了 5 个
+server，直接读该 session 里 CLI 暴露给模型的 MCP 工具清单，比对 config key 与最终工具名。
+闭源 SEA 二进制（本机 `~/.local/bin/copilot` 是 ~150MB Node SEA，无散装 `app.js`），故以
+**运行时观测**为准，不做字节级逆向——观测本身即首选验证法（live server + inspect exposed
+工具名），比读混淆 bundle 更硬。
 
-- **配置发现、枚举与修改**：优先采用厂商官方文档，并用 1810 已安装的 CLI 核对实际命令面；Codex 另挂锁到 commit SHA 的配置 loader / MCP CLI 源码，Gemini CLI 未安装则明确标出未做 live 验证。滚动文档按文中日期理解。
-- **工具名装配**：Codex、Gemini CLI 真开源，行为挂锁到 commit SHA 的 file:line；Copilot CLI、Claude Code、Cursor 闭源 / minified，按 live MCP 观测或官方文档记录，并就地注明日期与未公开边界。
+**格式：`<config-key>-<tool-name>`，分隔符是连字符 `-`，无 `mcp` 字面标记。**
+
+本机某 session 实测样例（5 个 server 全部命中同一规律）：
+
+| config key（`mcpServers` 下） | server 内部声明名 | 原始工具名 | 模型可见名 |
+|---|---|---|---|
+| `portal` | `portal-mcp-server`（FastMCP 名） | `portal_exec` | `portal-portal_exec` |
+| `github-mcp-server` | —（HTTP） | `get_me` | `github-mcp-server-get_me` |
+| `codex-image` | — | `codex-reply` | `codex-image-codex-reply` |
+
+要点：
+
+- **前缀 = config key，不是 server 声明名**。`portal` 那行最能说明问题：server 自己
+  `FastMCP("portal-mcp-server")`，若用声明名前缀应是 `portal-mcp-server-portal_exec`；实测
+  是 `portal-portal_exec` → 用的是配置 key `portal`。
+- **无净化、原样拼接 → 分隔符不可逆**。key `codex-image` ＋ tool `codex-reply` 直接拼成
+  `codex-image-codex-reply`；`_` 和 `-` 在 key、tool 两侧都**逐字保留**，不转义。于是光看
+  最终名**无法机器切回** (key, tool)——`codex-image-codex-reply` 从哪切都合法。（客户端内部
+  靠已知 key 集合反查，不是靠切分。）
+- **无 `mcp` 家族字面前缀**（区别于 Claude/Codex/Gemini）——就 `key` ＋ `-` ＋ `tool`。
+- **未见截断**：本 session 最长 `github-mcp-server-add_reply_to_pull_request_comment`
+  ≈ 51 字符，未触发截断（OpenAI/Anthropic 侧工具名史上限 64）。>64 的行为本 session 无样本，
+  未知。
+- **`portal_` stutter 实锤**：`portal-portal_exec` 就是"客户端加的 server 前缀"叠"工具名
+  自带的 server 前缀"，正是驱动 portal `portal_`→`remote_` 改名的现象。
+
+### Claude Code
+
+**验证方法**：官方文档逐字（`code.claude.com/docs`，2026-07 核）＋ 行为观测佐证。闭源 /
+minified，模型"看到"这串名字属**文档 + 行为观测**（hook 按 `tool_name` 触发、权限对话显示
+该名、`allowedTools` 按该名门控），非源码级——高置信但标 doc-derived / observed。
+
+**格式：`mcp__<serverName>__<toolName>`，`mcp` 字面前缀 ＋ 两处双下划线 `__`。**
+
+- **分隔符 `__`（双下划线）**：`mcp` 与 server 名之间、server 名与 tool 名之间都是 `__`。
+  官方 [Agent SDK MCP 页](https://code.claude.com/docs/en/agent-sdk/mcp) 原文 "MCP tools
+  follow the naming pattern `mcp__<server-name>__<tool-name>`"，例 `github` server 的
+  `list_issues` → `mcp__github__list_issues`。
+- **前缀取 config key**：[custom-tools 页](https://code.claude.com/docs/en/agent-sdk/custom-tools)
+  明写 "The key in `mcpServers` becomes the `{server_name}` segment"；
+  [permissions 页](https://code.claude.com/docs/en/permissions) "server name **as configured
+  in Claude Code**"。即 `claude mcp add <name> …` 的 `<name>` 或 `.mcp.json` / `~/.claude.json`
+  里 `mcpServers` 的 key——不是握手声明名。置信度高。
+- **净化 / 长度**：Anthropic API 侧工具名硬约束 `^[a-zA-Z0-9_-]{1,64}$`
+  （[define-tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools)）→
+  拼好的全名须 ≤64 字符，`mcp__…__` 本身吃掉 7 字符。server key 里的 `-`、`_` 官方例子里
+  **原样保留**（`mcp__brave-search__…`）。**普通 server 的非法字符净化规则文档未覆盖**（gap）；
+  **plugin 打包的 server 才有明文净化**（[mcp 页 plugin 段](https://code.claude.com/docs/en/mcp)）：
+  `mcp__plugin_<plugin>_<server>__<tool>`，"任何 `[A-Za-z0-9_-]` 之外的字符替换为 `_`"
+  （注意 plugin 段内用单 `_`，仅外层用 `__`）。
+- **权限接口即间接实锤**：`allowedTools` / `--disallowedTools` / `permissions` 全按该前缀名
+  操作——`mcp__github__*`（整台 server）、`mcp__github__create_issue`（单个）、`mcp__*`
+  （所有 MCP 工具）。这套 glob 只在字面 `mcp__<server>__` 前缀后才接受通配。
+- 注意：`mcp__server__tool`（双下划线）是 **Claude Code / Agent SDK 专属**；直连 Messages
+  API / Agent Skills 那套用 `ServerName:tool_name`（冒号）——别混（官方 issue
+  [anthropics/claude-code#18763](https://github.com/anthropics/claude-code/issues/18763)
+  确认过这处文档不一致）。
+
+### Codex
+
+**验证方法**：真开源 [`openai/codex`](https://github.com/openai/codex)（Apache-2.0，Rust
+`codex-rs/`）。下列链接锁到 commit
+[`927004c0`](https://github.com/openai/codex/tree/927004c06dc55565af17f0bc8eeb5e35fb990351)
+（本篇核对时的 `main` 头），行号已在该 SHA 上逐一核实、点开即到。
+
+**格式：`mcp__{server_key}__{tool_name}`，默认开。**Codex 走 OpenAI **Responses API 的
+namespace 机制**——注册一个名为 `mcp__{key}` 的 namespace 对象、内含名为 `{tool}` 的
+function，API 侧合成 `mcp__{key}__{tool}` 呈现给模型，回调时把两段**作为独立字段**返回。
+
+- **分隔符 `__`**：常量
+  [`MCP_TOOL_NAME_DELIMITER: &str = "__"` (mcp/mod.rs#L53-L55)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/mcp/mod.rs#L53-L55)
+  （同处 `MCP_TOOL_NAME_PREFIX: &str = "mcp"`），另在
+  [tools.rs#L260-L261](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/tools.rs#L260-L261)
+  与 [handlers/mcp.rs#L29-L30](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/core/src/tools/handlers/mcp.rs#L29-L30)
+  重复定义；字面前缀 `LEGACY_MCP_TOOL_NAME_PREFIX = "mcp__"`。装配函数
+  [`qualified_mcp_tool_name_prefix` (mod.rs#L71)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/mcp/mod.rs#L71)。
+- **前缀取 config key**：
+  [`callable_namespace: server_name.to_string()` (rmcp_client.rs#L755-L756)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/rmcp_client.rs#L755-L756)——`server_name`
+  是按 `[mcp_servers.<KEY>]` 表键传入的**配置 key**，非握手声明名。
+- **默认前缀开关**：
+  [`prefix_mcp_tool_names()` (config/mod.rs#L1618-L1619)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/core/src/config/mod.rs#L1618-L1619)
+  = `!features.enabled(NonPrefixedMcpToolNames)`，该
+  [feature (features/lib.rs#L166)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/features/src/lib.rs#L166)
+  默认 **off** → 默认带 `mcp__`。即便打开它，也只去掉 `mcp__` 字面（见
+  [`callable_namespace_with_prefix` (tools.rs#L311-L316)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/tools.rs#L311-L316)），
+  namespace 仍是 `{server_key}`，全名变 `{server_key}__{tool}`——**server key 前缀永远在**，
+  只是 `mcp__` 标记可选。
+- **净化**：
+  [`sanitize_responses_api_tool_name` (mod.rs#L441)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/mcp/mod.rs#L441)
+  把**非 `[A-Za-z0-9_]` 一律替 `_`**——注意注释说 API 允许 `-`，但代码只放行
+  `is_ascii_alphanumeric() || c == '_'`，**连字符也被替成 `_`**（单测钉死：`"Some-Server"` →
+  `"Some_Server"`，且不小写化）。
+- **长度 / 截断**：
+  [`MAX_TOOL_NAME_LENGTH: usize = 64` (tools.rs#L261)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/tools.rs#L261)。
+  `namespace + "__" + tool ≤ 64`（[`unique_callable_parts` #L372](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/tools.rs#L372)）；
+  超长或撞名 → **截断后接 12 位 SHA1 hash 后缀**
+  （[`fit_callable_parts_with_hash` #L352](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/tools.rs#L352)，
+  hash 源含 `server_name\0namespace\0connector_id\0callable_name\0tool.name` 保证稳定唯一）。
+- **反向映射无字符串切分**：Responses API 直接回 `{namespace, name}` 两字段，
+  [handlers/mcp.rs#L53](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/core/src/tools/handlers/mcp.rs#L53)
+  仅用 `{namespace}__{name}` 重建限定名做注册表匹配；`mcp__` 前缀与净化纯表现层，实际发往 MCP
+  server 的仍是**原始 config key ＋ 原始 tool 名**。
+
+### Gemini CLI
+
+**验证方法**：真开源 [`google-gemini/gemini-cli`](https://github.com/google-gemini/gemini-cli)
+（TypeScript）。链接锁到 commit
+[`b31b755b`](https://github.com/google-gemini/gemini-cli/tree/b31b755bbf89303159f03a36fbb899c6f7e57511)
+（本篇核对时的头），行号已核实。
+
+**格式：`mcp_<serverConfigKey>_<toolName>`，总是命名空间化（无"撞名才加"回退）。**
+
+- **常量**：
+  [`MCP_QUALIFIED_NAME_SEPARATOR = '_'` (mcp-tool.ts#L32)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L32)、
+  [`MCP_TOOL_PREFIX = 'mcp_'` (#L37)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L37)。
+  `DiscoveredMCPTool` 构造器无条件对
+  [`` `${serverName}_${serverToolName}` `` (#L184)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L184)
+  调 `generateValidName`；装配函数
+  [`formatMcpToolName` (#L82-L93)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L82-L93)
+  返回 `` `${MCP_TOOL_PREFIX}${serverName}_${toolName}` ``。单测钉死模型可见名
+  `mcp_my-server_my-tool`。
+- **前缀取 config key**：
+  [`discoverMcpTools` 里 `Object.entries(mcpServers)` (mcp-client.ts#L1115)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-client.ts#L1115)
+  的 **key**（`mcpServerName`）一路传到
+  [`new DiscoveredMCPTool` (#L1369)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-client.ts#L1369)。
+  非握手声明名。（特例：`--mcpServerCommand` 起的 server 硬编码 key `'mcp'`。）
+- **净化 / 长度**（[`generateValidName` (mcp-tool.ts#L593)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L593)）：
+  [`MAX_FUNCTION_NAME_LENGTH = 64` (#L590)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L590)；
+  ①确保 `mcp_` 前缀；②`replace(/[^a-zA-Z0-9_\-.:]/g, '_')`——**允许 `-`、`.`、`:`**，其余替
+  `_`（比 Codex 宽）；③首字符须字母或 `_`，否则补 `_`；④超
+  [`safeLimit = 64-1 = 63` (#L608)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L608)
+  → `first30 + '...' + last30` 截成恰好 63。
+- **坑**：[`parseMcpToolName` (#L54)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L54)
+  用 `^([^_]+)_(.+)$` 切——取 `mcp_` 之后**第一个 `_` 前**为 server 名。config key 若含 `_`
+  （`my_server`）会被切错 → 执行不受影响（注册表按全名查），但按 `mcp_server_*` 写的策略通配
+  会失配。
+- **wire 上用原始名**：命名空间名只给 LLM 看；实际调 MCP server 发的是裸 `serverToolName`
+  （见 [mcp-tool.ts](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts)
+  的 `DiscoveredMCPToolInvocation.execute()`）。
+
+### Cursor
+
+**验证方法**：闭源，无源码。以官方文档（`cursor.com/docs`，2026-07 核）为准，逐条标证据级别；
+分隔符仅有单个官方样例支撑，标注为**推断**。
+
+**格式：`<config-key>-<tool-name>`，连字符 `-`，无 `mcp` 字面标记（文档口径 + 单例推断）。**
+
+- **加前缀（文档口径）**：[Cloud Agent capabilities](https://cursor.com/docs/cloud-agent/capabilities)
+  原文 "Depending on your MCP client, tool names may include a server prefix (for example,
+  `cursor-cloud-run-info`)"，底层裸工具是 `run-info` 等。
+- **分隔符 `-`（单例推断）**：server `cursor-cloud` ＋ tool `run-info` → `cursor-cloud-run-info`
+  → 推断 `<key>-<tool>`，无 `mcp` 字面标记。**仅此一例**，第二例未在公开文档找到；且该拼名
+  同样 `-` 不可逆切分（key、tool 两侧都含 `-`），Cursor 内部应按已知 server 名反查。
+- **前缀取 config key（明文）**：[permissions 参考页](https://cursor.com/docs/reference/permissions)
+  "The server name is the key you used in `mcp.json` (e.g. `"github"`, `"linear"`)"。但注意：
+  allowlist 用 `server:tool`（**冒号**，大小写不敏感），与呈给模型的 function 声明名
+  `server-tool`（连字符）是**两套表示**——冒号形态不合 `^[a-zA-Z0-9_-]{1,64}$`，不可能是
+  function 名。[hooks](https://cursor.com/docs/hooks) matcher 另用 `MCP:<tool_name>`。
+- **净化 / 长度**：公开文档**未覆盖**（gap）。
+- **历史"~40 工具上限"**：当前文档未见；只说调用次数无限。[未证实 / 历史]
+
+## <a id="resources-entry"></a>Resources 的消费入口
+
+Resources 在协议里是 application-driven：server 用 URI 挂出只读数据，host 决定怎么暴露、何时读取（见 [MCP 概览](#capability-surfaces)）。各家入口分出三种做法——做成引用语法、桥接成模型可调用的工具、只在文档声明支持；还有两家没有这条消费线：
+
+| 客户端 | 入口形态 | 协议方法 |
+|---|---|---|
+| **Claude Code** | 聊天输入里 `@` 引用资源，与引用本地文件同一语法 | 引用的资源内容进入对话上下文 |
+| **Gemini CLI** | 补全菜单里资源 URI 与文件路径并列，同样 `@` 引用 | 发现阶段 `resources/list`；提交消息时 `resources/read`，内容注入对话 |
+| **Codex** | 无引用语法；三个内置工具暴露给模型，模型自己决定调用 | `list_mcp_resources` / `list_mcp_resource_templates` / `read_mcp_resource` 分别桥接 `resources/list`、`resources/templates/list`、`resources/read` |
+| **Cursor** | 官方能力表标 Supported；具体入口未展开 | — |
+| **Copilot CLI** | 官方文档通篇只覆盖 tools | — |
+| **DeepSeek Harness** | 无消费接口 | 不调用 `resources/*` |
+
+**Claude Code** 把资源做成了引用语法：官方文档写「MCP servers can expose resources that you can reference using @ mentions, similar to how you reference files」——在聊天输入里 `@` 某个资源即可，与引用本地文件同一套机制。server 的工具、提示词、资源清单还会随 `list_changed` 通知动态刷新；刷新失败时保留上一份已发现的清单，不会清空。
+
+**Gemini CLI** 同样用 `@`，机制文档写得更细：发现阶段就调 `resources/list` 拿到每台 server 的资源清单，`/mcp` 面板里除 Tools、Prompts 外单列 Resources 区；资源 URI 出现在补全菜单里，与文件路径并列；用户提交消息的那一刻才真正调 `resources/read`，把内容注入对话。
+
+**Codex** 没有引用语法，而是把整条资源线桥接成三个内置工具注册进模型工具表：`list_mcp_resources`、`list_mcp_resource_templates`、`read_mcp_resource`。控制方因此从协议设想的 application-driven 变成事实上的 model-controlled——要不要列资源、读哪个 URI，由模型在会话中自行决定。
+
+**Cursor** 的官方能力表把 Resources 标为 Supported（"Structured data sources that can be read and referenced"），但文档没有展开具体入口形态。
+
+**Copilot CLI** 的官方文档从添加到使用只覆盖 tools，resources 无任何记载（截至 2026-09-03 核对）。
+
+**DSH** 没有 resources 消费接口，也不顺着工具结果里的 resource link 回读资源（见[工具结果的内容块](#tool-result-blocks)）；完整边界见 [dsh.md](dsh.md#mcp)。
+
+> 来源：[Claude Code MCP 文档的 Use MCP resources 与 Dynamic tool updates（2026-09-03 核）](https://code.claude.com/docs/en/mcp)、[Gemini CLI 的 Working with MCP resources（2026-09-03 核）](https://geminicli.com/docs/tools/mcp-server/)、Codex 源码 `openai/codex@5af6979986` 的 [list_mcp_resources 工具](https://github.com/openai/codex/blob/5af6979986/codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resources.rs#L20-L24)、[list_mcp_resource_templates 工具](https://github.com/openai/codex/blob/5af6979986/codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resource_templates.rs#L20-L24)与 [read_mcp_resource 工具](https://github.com/openai/codex/blob/5af6979986/codex-rs/core/src/tools/handlers/mcp_resource/read_mcp_resource.rs#L23-L27)、[Cursor 能力表（2026-09-03 核）](https://cursor.com/docs/mcp)、[Copilot CLI 文档（2026-09-03 核）](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)；DSH 见 [dsh.md](dsh.md#mcp)。
+
+## <a id="prompts-entry"></a>Prompts 的消费入口
+
+Prompts 在协议里是 user-controlled：server 预制提示词模板，设想用法是用户显式挑选、填参数后进入对话，spec 给的典型呈现就是斜杠命令。这条能力比 resources 更依赖 host 做「用户挑模板」的交互面，所以分化也更干脆：
+
+| 客户端 | 入口形态 | 协议方法 |
+|---|---|---|
+| **Claude Code** | server 提供的 prompts 变成可用命令 | 调用时取回模板展开内容 |
+| **Gemini CLI** | 斜杠命令，`--key=value` 与位置参数两种传参 | `prompts/get` 带参数取回展开后的提示词发给模型 |
+| **Cursor** | 官方能力表标 Supported；入口细节未展开 | — |
+| **Codex** | 客户端侧无消费 | — |
+| **Copilot CLI** | 官方文档无记载 | — |
+| **DeepSeek Harness** | 无消费接口 | 不调用 `prompts/*` |
+
+**Claude Code** 的口径是「MCP servers can expose prompts that become available as commands in Claude Code」——server 的 prompts 直接变成会话里的命令；与 resources 一样随 `list_changed` 动态刷新。
+
+**Gemini CLI** 把 prompts 做成斜杠命令，执行时由 CLI 调 `prompts/get` 把参数代进模板，取回最终提示词发给模型；传参支持 `--key=value` 和位置参数两种写法，官方文档以一个写 haiku 的 prompt server 为例走完了全程。
+
+**Codex** 客户端侧不消费 prompts：源码里 `prompts/list` / `prompts/get` 只出现在 Codex 自己作为 MCP server 的实现（`mcp-server` crate）里，连接外部 server 的客户端路径上没有 prompts 消费。
+
+**Cursor** 能力表标 Supported（"Templated messages and workflows for users"），入口细节未展开。
+
+**Copilot CLI** 官方文档无记载（截至 2026-09-03 核对）。
+
+**DSH** 没有消费接口，而且不是做了一半：harness 核心没有「用户从预制列表挑提示词」的交互模型，MCP prompts 在它这里没有挂载点（见 [dsh.md](dsh.md#mcp)）。
+
+> 来源：[Claude Code MCP 文档的 Use MCP prompts as commands（2026-09-03 核）](https://code.claude.com/docs/en/mcp)、[Gemini CLI 的 MCP prompts as slash commands（2026-09-03 核）](https://geminicli.com/docs/tools/mcp-server/)、Codex 源码 `openai/codex@5af6979986` 的 [mcp-server 侧 prompts 处理](https://github.com/openai/codex/blob/5af6979986/codex-rs/mcp-server/src/message_processor.rs#L329-L333)（仅 server 角色）、[Cursor 能力表（2026-09-03 核）](https://cursor.com/docs/mcp)、[Copilot CLI 文档（2026-09-03 核）](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)；DSH 见 [dsh.md](dsh.md#mcp)。
+
+## <a id="tool-result-blocks"></a>工具结果的内容块
+
+协议在 Tools 页定义了返回值可携带的内容块类型与线上格式——text、image（base64 + mimeType）、audio、resource link、embedded resource、structured content——但不规定客户端拿到这些块之后怎么处理：给模型看、持久保存还是降级为说明文字，是各 host 自己的策略。同一次图片返回在不同客户端里的待遇可以完全不同：
+
+**Claude Code** 按体量管理输出：任何 MCP 工具输出超过 10,000 token 时显示警告；`MAX_MCP_OUTPUT_TOKENS` 环境变量设定上限，默认 25,000。超过默认落盘阈值的结果会持久化到磁盘，在对话里替换为文件引用；server 可以在 `tools/list` 条目的 `_meta["anthropic/maxResultSizeChars"]` 里为单个工具声明更高的文本阈值，最高 500,000 字符。返回图片的工具同样受 token 上限约束。
+
+**Gemini CLI** 把多块结果拆开处理：所有文本合并进单个 `functionResponse` 部件，图片作为独立的 `inlineData` 多模态部件直接给模型；执行结果同时分出 `llmContent`（进模型上下文的原始部件）与 `returnDisplay`（给用户看的展示）两个面。
+
+**Cursor** 的口径是「MCP servers can return images… Cursor attaches returned images to the chat. If the model supports images, it analyzes them」——图片挂进聊天，是否被分析取决于当前模型的能力。
+
+**Codex** 的通用 MCP 工具结果处理未逐行核实；源码中可见的图片进入模型路径只存在于 node-repl 代码模式的证据采集：`on_tool_result_accepted` 仅对来源为 `CodeMode` 且 server 为 node-repl backed 的调用生效，image 块经字节上限过滤后以 `UserInput::Image` 进入模型。
+
+**Copilot CLI** 官方文档未记载结果内容块的处理（截至 2026-09-03 核对）。
+
+**DSH** 的执行器为程序化调用方保留协议完整的规范值（全部 JSON 块、base64、嵌入资源原样不动），进模型历史前另做一次投影：挂载附件存储且当前模型声明图片输入时，白名单内的 PNG / JPEG / WebP / GIF 成为持久图片块；音频、嵌入资源与未知块转为诊断文本；resource link 只显示名称与 URI，不回读。细则见 [dsh.md](dsh.md#mcp)。
+
+> 来源：[Tools 页 Data Types 的结果内容块](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#data-types)、[Claude Code 的 MCP output limits（2026-09-03 核）](https://code.claude.com/docs/en/mcp)、[Gemini CLI 的 Returning rich content（2026-09-03 核）](https://geminicli.com/docs/tools/mcp-server/)、[Cursor 的 Images as context（2026-09-03 核）](https://cursor.com/docs/mcp)、Codex 源码 `openai/codex@5af6979986` 的 [on_tool_result_accepted 门控](https://github.com/openai/codex/blob/5af6979986/codex-rs/core/src/tools/handlers/mcp.rs#L279-L292)；DSH 见 [dsh.md](dsh.md#mcp)。
 
 ## <a id="config-discovery"></a>MCP 配置的发现、枚举与修改
 
-这里的“发现”有两步：客户端先发现并合并 server 配置，再连接有效 server 并通过 MCP 的 `tools/list`、`prompts/list`、`resources/list` 等请求发现能力。各家的 `list` 命令对第二步做得并不一样，所以“配置已列出”不能一概等同于“server 已连接”。
+这里的“发现”有两步：客户端先发现并合并 server 配置，再连接有效 server 并通过 MCP 的发现请求取得能力——tools 面对应 `tools/list`，resources / prompts 面是否有相应的发现与消费则各家不一（见 [Resources 的消费入口](#resources-entry)与 [Prompts 的消费入口](#prompts-entry)）。各家的 `list` 命令对第二步做得并不一样，所以“配置已列出”不能一概等同于“server 已连接”。排查时先用客户端自己的列出 / 状态入口确认有效配置，不能只扫描一个用户配置文件：项目、插件 / 扩展、企业配置和单次运行覆盖都可能另外注入 server。
 
 从哪个目录运行命令也会改变结果。项目配置参与合并的客户端，都应在目标项目的实际工作目录里执行枚举命令；只在 home 目录执行，会漏掉仅对项目生效的 server。
 
@@ -183,204 +433,24 @@ Cursor CLI 文档把配置优先级概括为“project → global → nested”�
 
 > 依据：[Cursor MCP 配置文档](https://cursor.com/docs/mcp)与[Cursor CLI MCP 文档](https://cursor.com/docs/cli/mcp)（2026-08-26 核）；1810 实测 Cursor CLI `2026.08.11-e8db854` 的 `agent mcp --help`。Cursor 闭源，父目录重名合并的未公开部分保持未定。
 
----
+## <a id="synthesis"></a>横向综合
 
-## Copilot CLI
-
-**验证方法**：live 实测（Copilot CLI 1.0.69）。`~/.copilot/mcp-config.json` 注册了 5 个
-server，直接读该 session 里 CLI 暴露给模型的 MCP 工具清单，比对 config key 与最终工具名。
-闭源 SEA 二进制（本机 `~/.local/bin/copilot` 是 ~150MB Node SEA，无散装 `app.js`），故以
-**运行时观测**为准，不做字节级逆向——观测本身即首选验证法（live server + inspect exposed
-工具名），比读混淆 bundle 更硬。
-
-**格式：`<config-key>-<tool-name>`，分隔符是连字符 `-`，无 `mcp` 字面标记。**
-
-本机某 session 实测样例（5 个 server 全部命中同一规律）：
-
-| config key（`mcpServers` 下） | server 内部声明名 | 原始工具名 | 模型可见名 |
-|---|---|---|---|
-| `portal` | `portal-mcp-server`（FastMCP 名） | `portal_exec` | `portal-portal_exec` |
-| `github-mcp-server` | —（HTTP） | `get_me` | `github-mcp-server-get_me` |
-| `codex-image` | — | `codex-reply` | `codex-image-codex-reply` |
-
-要点：
-
-- **前缀 = config key，不是 server 声明名**。`portal` 那行最能说明问题：server 自己
-  `FastMCP("portal-mcp-server")`，若用声明名前缀应是 `portal-mcp-server-portal_exec`；实测
-  是 `portal-portal_exec` → 用的是配置 key `portal`。
-- **无净化、原样拼接 → 分隔符不可逆**。key `codex-image` ＋ tool `codex-reply` 直接拼成
-  `codex-image-codex-reply`；`_` 和 `-` 在 key、tool 两侧都**逐字保留**，不转义。于是光看
-  最终名**无法机器切回** (key, tool)——`codex-image-codex-reply` 从哪切都合法。（客户端内部
-  靠已知 key 集合反查，不是靠切分。）
-- **无 `mcp` 家族字面前缀**（区别于 Claude/Codex/Gemini）——就 `key` ＋ `-` ＋ `tool`。
-- **未见截断**：本 session 最长 `github-mcp-server-add_reply_to_pull_request_comment`
-  ≈ 51 字符，未触发截断（OpenAI/Anthropic 侧工具名史上限 64）。>64 的行为本 session 无样本，
-  未知。
-- **`portal_` stutter 实锤**：`portal-portal_exec` 就是"客户端加的 server 前缀"叠"工具名
-  自带的 server 前缀"，正是驱动 portal `portal_`→`remote_` 改名的现象。
-
----
-
-## Claude Code
-
-**验证方法**：官方文档逐字（`code.claude.com/docs`，2026-07 核）＋ 行为观测佐证。闭源 /
-minified，模型"看到"这串名字属**文档 + 行为观测**（hook 按 `tool_name` 触发、权限对话显示
-该名、`allowedTools` 按该名门控），非源码级——高置信但标 doc-derived / observed。
-
-**格式：`mcp__<serverName>__<toolName>`，`mcp` 字面前缀 ＋ 两处双下划线 `__`。**
-
-- **分隔符 `__`（双下划线）**：`mcp` 与 server 名之间、server 名与 tool 名之间都是 `__`。
-  官方 [Agent SDK MCP 页](https://code.claude.com/docs/en/agent-sdk/mcp) 原文 "MCP tools
-  follow the naming pattern `mcp__<server-name>__<tool-name>`"，例 `github` server 的
-  `list_issues` → `mcp__github__list_issues`。
-- **前缀取 config key**：[custom-tools 页](https://code.claude.com/docs/en/agent-sdk/custom-tools)
-  明写 "The key in `mcpServers` becomes the `{server_name}` segment"；
-  [permissions 页](https://code.claude.com/docs/en/permissions) "server name **as configured
-  in Claude Code**"。即 `claude mcp add <name> …` 的 `<name>` 或 `.mcp.json` / `~/.claude.json`
-  里 `mcpServers` 的 key——不是握手声明名。置信度高。
-- **净化 / 长度**：Anthropic API 侧工具名硬约束 `^[a-zA-Z0-9_-]{1,64}$`
-  （[define-tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools)）→
-  拼好的全名须 ≤64 字符，`mcp__…__` 本身吃掉 7 字符。server key 里的 `-`、`_` 官方例子里
-  **原样保留**（`mcp__brave-search__…`）。**普通 server 的非法字符净化规则文档未覆盖**（gap）；
-  **plugin 打包的 server 才有明文净化**（[mcp 页 plugin 段](https://code.claude.com/docs/en/mcp)）：
-  `mcp__plugin_<plugin>_<server>__<tool>`，"任何 `[A-Za-z0-9_-]` 之外的字符替换为 `_`"
-  （注意 plugin 段内用单 `_`，仅外层用 `__`）。
-- **权限接口即间接实锤**：`allowedTools` / `--disallowedTools` / `permissions` 全按该前缀名
-  操作——`mcp__github__*`（整台 server）、`mcp__github__create_issue`（单个）、`mcp__*`
-  （所有 MCP 工具）。这套 glob 只在字面 `mcp__<server>__` 前缀后才接受通配。
-- 注意：`mcp__server__tool`（双下划线）是 **Claude Code / Agent SDK 专属**；直连 Messages
-  API / Agent Skills 那套用 `ServerName:tool_name`（冒号）——别混（官方 issue
-  [anthropics/claude-code#18763](https://github.com/anthropics/claude-code/issues/18763)
-  确认过这处文档不一致）。
-
----
-
-## Codex
-
-**验证方法**：真开源 [`openai/codex`](https://github.com/openai/codex)（Apache-2.0，Rust
-`codex-rs/`）。下列链接锁到 commit
-[`927004c0`](https://github.com/openai/codex/tree/927004c06dc55565af17f0bc8eeb5e35fb990351)
-（本篇核对时的 `main` 头），行号已在该 SHA 上逐一核实、点开即到。
-
-**格式：`mcp__{server_key}__{tool_name}`，默认开。**Codex 走 OpenAI **Responses API 的
-namespace 机制**——注册一个名为 `mcp__{key}` 的 namespace 对象、内含名为 `{tool}` 的
-function，API 侧合成 `mcp__{key}__{tool}` 呈现给模型，回调时把两段**作为独立字段**返回。
-
-- **分隔符 `__`**：常量
-  [`MCP_TOOL_NAME_DELIMITER: &str = "__"` (mcp/mod.rs#L53-L55)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/mcp/mod.rs#L53-L55)
-  （同处 `MCP_TOOL_NAME_PREFIX: &str = "mcp"`），另在
-  [tools.rs#L260-L261](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/tools.rs#L260-L261)
-  与 [handlers/mcp.rs#L29-L30](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/core/src/tools/handlers/mcp.rs#L29-L30)
-  重复定义；字面前缀 `LEGACY_MCP_TOOL_NAME_PREFIX = "mcp__"`。装配函数
-  [`qualified_mcp_tool_name_prefix` (mod.rs#L71)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/mcp/mod.rs#L71)。
-- **前缀取 config key**：
-  [`callable_namespace: server_name.to_string()` (rmcp_client.rs#L755-L756)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/rmcp_client.rs#L755-L756)——`server_name`
-  是按 `[mcp_servers.<KEY>]` 表键传入的**配置 key**，非握手声明名。
-- **默认前缀开关**：
-  [`prefix_mcp_tool_names()` (config/mod.rs#L1618-L1619)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/core/src/config/mod.rs#L1618-L1619)
-  = `!features.enabled(NonPrefixedMcpToolNames)`，该
-  [feature (features/lib.rs#L166)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/features/src/lib.rs#L166)
-  默认 **off** → 默认带 `mcp__`。即便打开它，也只去掉 `mcp__` 字面（见
-  [`callable_namespace_with_prefix` (tools.rs#L311-L316)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/tools.rs#L311-L316)），
-  namespace 仍是 `{server_key}`，全名变 `{server_key}__{tool}`——**server key 前缀永远在**，
-  只是 `mcp__` 标记可选。
-- **净化**：
-  [`sanitize_responses_api_tool_name` (mod.rs#L441)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/mcp/mod.rs#L441)
-  把**非 `[A-Za-z0-9_]` 一律替 `_`**——注意注释说 API 允许 `-`，但代码只放行
-  `is_ascii_alphanumeric() || c == '_'`，**连字符也被替成 `_`**（单测钉死：`"Some-Server"` →
-  `"Some_Server"`，且不小写化）。
-- **长度 / 截断**：
-  [`MAX_TOOL_NAME_LENGTH: usize = 64` (tools.rs#L261)](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/tools.rs#L261)。
-  `namespace + "__" + tool ≤ 64`（[`unique_callable_parts` #L372](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/tools.rs#L372)）；
-  超长或撞名 → **截断后接 12 位 SHA1 hash 后缀**
-  （[`fit_callable_parts_with_hash` #L352](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/codex-mcp/src/tools.rs#L352)，
-  hash 源含 `server_name\0namespace\0connector_id\0callable_name\0tool.name` 保证稳定唯一）。
-- **反向映射无字符串切分**：Responses API 直接回 `{namespace, name}` 两字段，
-  [handlers/mcp.rs#L53](https://github.com/openai/codex/blob/927004c06dc55565af17f0bc8eeb5e35fb990351/codex-rs/core/src/tools/handlers/mcp.rs#L53)
-  仅用 `{namespace}__{name}` 重建限定名做注册表匹配；`mcp__` 前缀与净化纯表现层，实际发往 MCP
-  server 的仍是**原始 config key ＋ 原始 tool 名**。
-
----
-
-## Gemini CLI
-
-**验证方法**：真开源 [`google-gemini/gemini-cli`](https://github.com/google-gemini/gemini-cli)
-（TypeScript）。链接锁到 commit
-[`b31b755b`](https://github.com/google-gemini/gemini-cli/tree/b31b755bbf89303159f03a36fbb899c6f7e57511)
-（本篇核对时的头），行号已核实。
-
-**格式：`mcp_<serverConfigKey>_<toolName>`，总是命名空间化（无"撞名才加"回退）。**
-
-- **常量**：
-  [`MCP_QUALIFIED_NAME_SEPARATOR = '_'` (mcp-tool.ts#L32)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L32)、
-  [`MCP_TOOL_PREFIX = 'mcp_'` (#L37)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L37)。
-  `DiscoveredMCPTool` 构造器无条件对
-  [`` `${serverName}_${serverToolName}` `` (#L184)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L184)
-  调 `generateValidName`；装配函数
-  [`formatMcpToolName` (#L82-L93)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L82-L93)
-  返回 `` `${MCP_TOOL_PREFIX}${serverName}_${toolName}` ``。单测钉死模型可见名
-  `mcp_my-server_my-tool`。
-- **前缀取 config key**：
-  [`discoverMcpTools` 里 `Object.entries(mcpServers)` (mcp-client.ts#L1115)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-client.ts#L1115)
-  的 **key**（`mcpServerName`）一路传到
-  [`new DiscoveredMCPTool` (#L1369)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-client.ts#L1369)。
-  非握手声明名。（特例：`--mcpServerCommand` 起的 server 硬编码 key `'mcp'`。）
-- **净化 / 长度**（[`generateValidName` (mcp-tool.ts#L593)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L593)）：
-  [`MAX_FUNCTION_NAME_LENGTH = 64` (#L590)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L590)；
-  ①确保 `mcp_` 前缀；②`replace(/[^a-zA-Z0-9_\-.:]/g, '_')`——**允许 `-`、`.`、`:`**，其余替
-  `_`（比 Codex 宽）；③首字符须字母或 `_`，否则补 `_`；④超
-  [`safeLimit = 64-1 = 63` (#L608)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L608)
-  → `first30 + '...' + last30` 截成恰好 63。
-- **坑**：[`parseMcpToolName` (#L54)](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts#L54)
-  用 `^([^_]+)_(.+)$` 切——取 `mcp_` 之后**第一个 `_` 前**为 server 名。config key 若含 `_`
-  （`my_server`）会被切错 → 执行不受影响（注册表按全名查），但按 `mcp_server_*` 写的策略通配
-  会失配。
-- **wire 上用原始名**：命名空间名只给 LLM 看；实际调 MCP server 发的是裸 `serverToolName`
-  （见 [mcp-tool.ts](https://github.com/google-gemini/gemini-cli/blob/b31b755bbf89303159f03a36fbb899c6f7e57511/packages/core/src/tools/mcp-tool.ts)
-  的 `DiscoveredMCPToolInvocation.execute()`）。
-
----
-
-## Cursor
-
-**验证方法**：闭源，无源码。以官方文档（`cursor.com/docs`，2026-07 核）为准，逐条标证据级别；
-分隔符仅有单个官方样例支撑，标注为**推断**。
-
-**格式：`<config-key>-<tool-name>`，连字符 `-`，无 `mcp` 字面标记（文档口径 + 单例推断）。**
-
-- **加前缀（文档口径）**：[Cloud Agent capabilities](https://cursor.com/docs/cloud-agent/capabilities)
-  原文 "Depending on your MCP client, tool names may include a server prefix (for example,
-  `cursor-cloud-run-info`)"，底层裸工具是 `run-info` 等。
-- **分隔符 `-`（单例推断）**：server `cursor-cloud` ＋ tool `run-info` → `cursor-cloud-run-info`
-  → 推断 `<key>-<tool>`，无 `mcp` 字面标记。**仅此一例**，第二例未在公开文档找到；且该拼名
-  同样 `-` 不可逆切分（key、tool 两侧都含 `-`），Cursor 内部应按已知 server 名反查。
-- **前缀取 config key（明文）**：[permissions 参考页](https://cursor.com/docs/reference/permissions)
-  "The server name is the key you used in `mcp.json` (e.g. `"github"`, `"linear"`)"。但注意：
-  allowlist 用 `server:tool`（**冒号**，大小写不敏感），与呈给模型的 function 声明名
-  `server-tool`（连字符）是**两套表示**——冒号形态不合 `^[a-zA-Z0-9_-]{1,64}$`，不可能是
-  function 名。[hooks](https://cursor.com/docs/hooks) matcher 另用 `MCP:<tool_name>`。
-- **净化 / 长度**：公开文档**未覆盖**（gap）。
-- **历史"~40 工具上限"**：当前文档未见；只说调用次数无限。[未证实 / 历史]
-
----
-
-## 横向综合
-
-**结构上分两派**（都取 config key、都加前缀，差在装饰）：
+**结构上分两派**（前缀都取本地配置、都加前缀，差在装饰）：
 
 - **裸 `<key><分隔><tool>`、无 `mcp` 标记**：Copilot（`-`）、Cursor（`-`）。分隔符与名字里的字符
   同形 → 最终名**不可机器逆切**，靠已知 key 集合反查。
-- **带 `mcp` 家族字面标记**：Claude Code / Codex（`mcp__…__`，双下划线，更强的分隔、撞的概率低）、
+- **带 `mcp` 家族字面标记**：Claude Code / Codex / DSH（`mcp__…__`，双下划线，更强的分隔、撞的概率低）、
   Gemini（`mcp_…_`，单下划线，key 含 `_` 时反切会错）。
 
 **净化 / 长度光谱**（松→紧）：Copilot / Cursor（观测：不净化 / 未文档化）< Claude Code（靠 API
 64 字符正则，普通 server 净化未文档化，plugin 才明文净化）< Gemini（允许 `-.:`，余替 `_`，
 63 截断 `首30…尾30`）< Codex（连 `-` 都替 `_`，64 上限，超长 SHA1 hash 截断）。上限锚点都在 64
-（OpenAI / Anthropic / Vertex 三家 API 工具名史上限一致）。
+（OpenAI / Anthropic / Vertex 三家 API 工具名史上限一致）。DSH 的净化规则未逐项核实，不列入光谱。
 
-**对『工具名要不要自带 server 名前缀』的取舍**：不要。五家客户端都已按 config key 命名
-空间化，工具名再自带一个 server 名就是 stutter（`portal` server 的 `portal_exec` →
-`portal-portal_exec` / `mcp__portal__portal_exec` / `mcp_portal_portal_exec`）。
+**对『工具名要不要自带 server 名前缀』的取舍**：不要。六家客户端都已按各自配置里的 server 标识
+（五家的 config key、DSH 的 `serverName` 字段）命名空间化，工具名再自带一个 server 名就是
+stutter（`portal` server 的 `portal_exec` → `portal-portal_exec` / `mcp__portal__portal_exec` /
+`mcp_portal_portal_exec`）。
 
 - 想**防撞、且自描述**：加一个**语义**词干（描述工具"干什么"）比加"server 名"更值——语义前缀在
   裸拼派（Copilot / Cursor）那种不可逆、模型只看一坨扁平串的场景下，帮模型理解；而 server 名那层

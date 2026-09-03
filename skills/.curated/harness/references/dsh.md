@@ -611,7 +611,7 @@ Skill 支持 `<name>/SKILL.md` 目录 bundle 和 `<name>.md` 平铺文件；发�
 
 > 来源：[Skill 根目录、优先级、格式与加载生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/skill/skill-filesystem/README.zh.md#L29-L67)。
 
-### MCP
+### <a id="mcp"></a>MCP
 
 内置 MCP client 支持 `stdio` 和 `streamable-http`。每个 server 以独立 Plugin 连接并把远端工具注册进 `ctx.tools`，公开名称中的 server namespace 区分不同 server 的同名工具。
 
@@ -716,11 +716,25 @@ systemctl show dsh.service -p EnvironmentFiles -p ActiveState -p SubState
 
 systemd 的 PATH 通常比交互 shell 短，systemd 部署中的 stdio `command` 使用绝对路径可获得一致的命令解析结果。
 
-config 的 schema 校验发生在插件 apply 之前；`failOnStartupError` 只覆盖初始连接与工具同步这类运行期失败，管不到校验层。校验失败的表现按进程状态分两种：冷启动 `dsh --profile web` 时一行配置校验抛错，整棵 plugin tree 加载失败、进程非零退出，错误从 `failed to apply loader entry <id>` 汇总为 `plugin tree failed to load`，不是只跳过这一行；已在运行的进程改 patch 触发 HMR 时，校验失败的候选被整体丢弃，上一棵可用树继续服务，进程不退出。
+config 的 schema 校验发生在插件 apply 之前；`failOnStartupError` 只覆盖初始连接与工具同步这类运行期失败，管不到校验层。校验失败的表现按进程状态分两种：冷启动 `dsh --profile web` 时一行配置校验抛错，整棵 plugin tree 加载失败、进程非零退出，错误从 `failed to apply loader entry <id>` 汇总为 `plugin tree failed to load`，不是只跳过这一行；已在运行的进程改 patch 触发 HMR（Hot Module Replacement，热模块替换：监视文件改动、不重启进程就地重载改动部分；机制见 [Patch 热更新的生效机制](#mcp-patch-hot-reload)）时，校验失败的候选被整体丢弃，上一棵可用树继续服务，进程不退出。
 
 > 来源：[`failOnStartupError` 的作用域](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L67-L72)、[冷启动时 `plugin tree failed to load` 的汇总与退出](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/src/index.ts#L770-L788)、[HMR 候选失败后保留旧树的测试](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/tests/config-reload.spec.ts#L190-L210)。
 
-无论采用 shell 还是 systemd 启动，运行中的 Host 都会监视 Profile patch，并通过 HMR 应用 patch 变更。进程环境在启动时形成快照，因此环境文件更新通过重新启动进入 Host。stdio transport 以清理后的父环境为基底，再合并 `config.env`；部署在 `config.env` 中显式转发各 server 所需的变量。HTTP header 由配置表达式从 Host 环境构造。
+#### <a id="mcp-patch-hot-reload"></a>Patch 热更新的生效机制
+
+持久 patch 改动不重启进程即生效，运行中的会话也会在下一个模型请求上看到工具集变化。本节沿文件监视到模型请求的顺序展开这条链路。
+
+是否安装监视器由 Profile 清单的 `patchReload` 字段决定：出厂模板里 web 是 `live`，acp / headless / sdk / sdk-minimal 是 `startup`（改动等下一次启动生效），自建 Profile 默认 `live`。被监视的是两个文件——`$DSH_HOME/profiles/<profile>/cordis.patch.yml` 和 home 层 `$DSH_HOME/cordis.patch.yml`；`--patch` overlay 只活在当前进程，不在监视范围。Profile 若没有显式启用模块 HMR，启动器会补挂一个 `root: []` 的 watch-only HMR 实例：只做配置文件热更、不替换源码模块——dsh-base 默认关闭模块 reload，patch 编辑走的是配置专线。
+
+监视由 HMR 的 `registerConfig` 完成：它用 chokidar（Node 生态常用的文件变动监视库）监听确切路径（文件还不存在时向上找最近的现存父目录当 watch root），add / change / unlink 都触发刷新；每次刷新串行执行且用 dirty 标记合并连发事件，编辑器一次保存触发多个事件也不会并发重放。刷新回调重新读 patch 文件（文件被删除等价于用户层清空）、按启动时的层次重新组合（bundle 层在下、`--patch` overlay 在上），然后对根 Include 条目调用 `entry.update()`；Include 收到 `internal/update` 后，把新 patch 列表应用到缓存的基准解析上，产出新的 entry 列表交给 Loader。
+
+Loader 对新列表做事务式对账：`EntryGroup.update` 逐行 `create`，消失的行 dispose，任何一行失败则整体回滚、上一棵可用树继续服务。单行处理按 diff 分三种：全新行——导入插件、启动 fiber（Cordis 中一个插件实例的运行与生命周期单元），`apply()` 连接 server 并把工具注册进 `ctx.tools`；只改 `config`——`Fiber.update` 先触发 `internal/update` 事件链（监听者可否决或替换默认动作），默认动作是 `restart()`：dispose 当前实例、带新配置重新 apply；`name` / `inject` 变化——dispose 后重新导入再启动。MCP client 没有挂自己的 update 钩子，所以「编辑某台 server 的配置行」在 loader 层就是换实例。README 说「编辑配置项会在原地重载服务器连接，未变的名称保持不变」——「原地」指 loader 的 entry id 稳定，「名称不变」来自公开名是 `(serverName, rawName)` 的纯函数：实例换了名字不换，会话历史与权限规则继续有效。
+
+运行中的会话无需任何通知就能看到变化：agent loop 在每个 step（每次模型请求）前都重新执行 `systemPrompt.assemble()`；ToolRuntime 在构造时把自己注册为 tools provider，`wireSchemas` 每次都从 live 层注册表现算该 scope 的可见工具——注册表与请求之间不存在缓存快照，会话本身也不持久化工具清单。因此 patch 落地后，正在执行的 turn 的下一个 step、空闲会话的下一个 turn，模型请求自然带上新的工具集。两个边界要精确：同一 step 的重试沿用已构建的请求（含旧工具表），变化从下一个 step 边界生效；被编辑行对应的 server 上正在执行的 `tools/call` 会在 dispose 中被中止（supervisor 等在途调用停稳才完成卸载），以取消收场。server 侧的工具清单变化（`tools/list_changed` 通知）重同步进的是同一条注册表，与 patch 走同一条可见性路径。
+
+> 来源：[watchUserPatches 与 patch 文件重读](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/src/index.ts#L235-L267)、[Profile 模板的 patchReload 取值与自建默认](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/src/profile.ts#L137-L169)、[live 判定与 watch-only HMR 实例](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/apps/cli/src/profile-boot.ts#L270-L296)、[registerConfig 的确切路径监视与串行刷新](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/hmr/src/index.ts#L134-L187)、[Include 对 internal/update 的重应用](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/include/src/index.ts#L206-L213)、[EntryGroup 的事务对账与回滚](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/loader/src/config/group.ts#L59-L106)、[Entry.update 的三种分叉](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/loader/src/config/entry.ts#L142-L246)、[Fiber.update 默认 restart](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/cordis/src/fiber.ts#L736-L753)、[MCP 插件「HMR 换实例、名称不变」的约定](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L7-L11)、[agent loop 每 step 重新 assemble](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/core/agent-loop/src/agent.ts#L234-L296)、[ToolRuntime 注册为 tools provider](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/core/tools/src/index.ts#L825)与[view 的 live 层遍历](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/core/tools/src/index.ts#L1143-L1184)。
+
+无论采用 shell 还是 systemd 启动，上述热更新对 live 型 Profile 同样成立（startup 型 Profile 的 patch 改动在下次启动时生效）。进程环境在启动时形成快照，因此环境文件更新通过重新启动进入 Host。stdio transport 以清理后的父环境为基底，再合并 `config.env`；部署在 `config.env` 中显式转发各 server 所需的变量。HTTP header 由配置表达式从 Host 环境构造。
 
 环境变量是整个 Host 进程的共享状态，每个 Host Plugin 都具备读取能力。`0600` 把环境文件的磁盘读写权限授予文件所有者；Host Plugin 信任范围同时构成这些凭据的读取范围。完成持久配置后，通过服务状态和新 Session 的工具清单验收；新 Session 中应能看到 `mcp__<serverName>__...` 工具。
 
