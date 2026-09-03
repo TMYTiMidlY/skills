@@ -238,33 +238,21 @@ WantedBy=multi-user.target
 
 > 来源：[systemd 系统与用户 unit 的加载路径](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html#Unit%20File%20Load%20Path)、[`User=`、`Group=` 与执行环境](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#User=)、[`WantedBy=` 的 enable 语义](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html#%5BInstall%5D%20Section%20Options)、[linger 的生命周期语义](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html#enable-linger%20USER%E2%80%A6)。
 
-### <a id="web-trusted-host"></a>Web 域名信任、会话认证与反向代理
+### <a id="web-trusted-host"></a>DSH Web 的访问控制
 
-DSH Web 默认监听 `127.0.0.1:3080`。CLI 把 `--host 0.0.0.0` 视为安全相关的用法错误并退出，使默认服务入口保持在 loopback。浏览器请求先过 Host/Origin 信任校验，再过浏览器会话认证；自 `0.1.2-alpha.1` 起 **localhost 不再是特权**——没有有效会话时，带 loopback `Host` 的请求同样收到 401。`0.1.1-rc.2` 及更早仍是 loopback 即特权，见本节末的[历史模型](#loopback-privilege-history)。
+本章说明 DSH Web 的访问控制模型和远程使用方式：浏览器请求经过哪两道校验、会话凭据怎样获取、续期与改寿命、远程接入有哪三条路径，以及远程页面上浏览器端的功能限制。
+
+DSH Web 默认监听 `127.0.0.1:3080`。CLI 把 `--host 0.0.0.0` 视为安全相关的用法错误并退出，使默认服务入口保持在 loopback。浏览器请求先过 Host/Origin 信任校验，再过浏览器会话认证；自 `0.1.2-alpha.1` 起 **localhost 不再是特权**——没有有效会话时，带 loopback `Host` 的请求同样收到 401。`0.1.1-rc.2` 及更早仍是 loopback 即特权，见本章末尾的[旧版本的 loopback 特权](#loopback-privilege-history)。
 
 > 版本边界：`browser-auth.ts` 在 [`dsh-v0.1.2-alpha.1`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.1/packages/client/connection/src/browser-auth.ts) 已存在，在 [`dsh-v0.1.1-rc.2`](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.1-rc.2/packages/client/connection/src) 尚无；npm 上 `0.1.2` 系列自 `0.1.2-alpha.2` 起发布，`alpha.1` 仅有 Git tag。
 
-#### authority 在本文中的含义
+> 来源：[webserver 的 host 只接受回环与全接口](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/host/webserver/README.zh.md#L39)、[`--host 0.0.0.0` 的启动拒绝](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/bundle/web-app/src/startup.ts#L74-L75)。
 
-本文中的 authority 专指 URL 解析后的 `host[:port]`，也就是**域名或 IP，加上非默认端口**；不包含 `http://`、`https://` 等 scheme，也不包含路径。请求的 `Host` header 直接携带 authority；`Origin` 则形如 `scheme://authority`，DSH 用 `new URL(origin).host` 取出其中的 authority。
+#### <a id="browser-session-auth"></a>浏览器请求的准入校验
 
-| 本文用语 | 示例 | 指什么 |
-|---|---|---|
-| 公网域名及端口（公网 authority） | `dsh.example.com`、`dsh.example.com:8443` | 浏览器地址栏所访问的域名及可选非默认端口 |
-| Caddy 上游连接地址 | `127.0.0.1:3080`、`10.144.18.10:13080` | Caddy 在网络层实际连接的 DSH 或 relay 地址 |
-| DSH 收到的 authority | `Host` 与 `Origin` 中最终送到 DSH 的 `host[:port]` | DSH 执行 Host / Origin 校验时真正读取的值 |
+本节先定义读判定规则所需的 authority 概念，再说明两道校验的通过条件，最后给出信任校验的判定顺序；会话凭据本身的获取、属性与寿命见[浏览器会话凭据的生命周期](#browser-session-lifecycle)。
 
-后两者不是一回事。例如 Caddy 可以实际连接 `10.144.18.10:13080`，同时把 DSH 收到的 `Host` 与 `Origin` 改成 `127.0.0.1:3080`。下文凡讨论放行或拒绝，均以 **DSH 实际收到的 authority** 为准，而不是以 Caddy 连接了哪个 IP 和端口为准。
-
-远程接入可以由不同层的方法独立完成或按需组合：
-
-| 方法 | 建立的路径 | 主要职责 |
-|---|---|---|
-| SSH 本地隧道 | 浏览器本机 `127.0.0.1:3080` → 服务主机 `127.0.0.1:3080` | 为单个操作者提供临时的端到端 loopback 入口 |
-| `socat`、Windows `portproxy` 或 SSH 端口转发 | 受控私网地址 → DSH loopback | 在主机、网络 namespace 或节点之间提供 TCP 接力；绑定地址与来源 ACL 定义可达范围 |
-| Caddy 或同类反向代理 | 稳定域名 → 私有上游 | 提供 TLS、身份认证、域名路由，以及按部署模式设置上游 `Host` / `Origin` |
-
-#### <a id="browser-session-auth"></a>Host 信任校验与浏览器会话认证
+这里的 authority 专指 URL 解析后的 `host[:port]`，也就是**域名或 IP，加上非默认端口**；不包含 `http://`、`https://` 等 scheme，也不包含路径。请求的 `Host` header 直接携带 authority；`Origin` 则形如 `scheme://authority`，DSH 用 `new URL(origin).host` 取出其中的 authority。
 
 浏览器无论经哪条路径到达 DSH，请求都按顺序经过两道校验：先信任，后身份。每个 Host RPC 方法与 WebSocket stream 都要求同一个浏览器会话，不存在按方法区分的 loopback 层。
 
@@ -273,120 +261,7 @@ DSH Web 默认监听 `127.0.0.1:3080`。CLI 把 `--host 0.0.0.0` 视为安全相
 | 信任 | `Host` 是 loopback，或匹配 `trustedHosts` 条目；`Sec-Fetch-Site` 是 `same-origin`、`same-site`、`none` 或缺省；`Origin` 缺省，或与 `Host` 为同一 authority | 403 | DNS rebinding 与跨站请求；不证明请求者身份 |
 | 身份 | 信任通过后，请求携带未过期、签名正确、绑定当前 authority 的会话 cookie | 401 | 未认证访问；伪造 `Host: localhost` 也绕不过这一层 |
 
-第一次（或没有 cookie）时，必须完成一次 token 交换：
-
-1. 每个进程在启动时生成一个随机 token，`dsh web` 打印（且除非 `--no-open` 或 SSH 抑制，自动打开）`http://127.0.0.1:<port>/?token=...`；
-2. 这个 query token 只在 `GET /` 一个入口被接受；命中后 DSH 写入绑定 authority 的签名 cookie，并 303 重定向到不带 token 的干净 `/`；
-3. 之后 RPC、WebSocket 和 index 页面都靠这枚 cookie，URL 里不再带 token。根路径交换之外，HTTP 载体不接受 query token，也不接受 Authorization header token。
-
-启动 token 是每个进程唯一的一枚随机值：43 字符 base64url，只存内存、不落盘，也不因兑换而消耗。`GET /?token=X` 的校验只有一步——把 X 与当前进程这一枚做字符串相等比较（常数时间实现，防时序侧信道）。因此 token 的「有效」就是与当前值相等；进程重启换新后，更早打印过的 token 全部随之失效。
-
-已经认证过则：
-
-- cookie 未过期（默认 30 天，`cookieMaxAgeDays`）且签发时的 hostname:port 与签名密钥未变时，重启 dsh 后仍可用，不必再贴 token——签名密钥是 `$DSH_HOME/.credentials.yaml` 中 `client-connection/browser-session` 拥有的持久凭据记录，不随进程重新生成，启动 token 才是逐进程新生成；
-- URL 里带了已失效的旧 token 但 cookie 仍有效时，DSH 直接 303 清掉 query 进入页面；token 仍有效时则按普通兑换重新铸一张票；
-- 非 index 的静态资源保持公开；能真正操作 Host 的接口都要会话。
-
-cookie 本身是 host-only、`Path=/`、`HttpOnly`、`SameSite=Strict`，确定性名称与签名 payload 都绑定规范化的 hostname 和 port；随附服务器使用 loopback HTTP，因此刻意不设置 `Secure`。没有 logout 操作：清除浏览器站点数据只结束这一个浏览器；删除上述凭据记录并重启 dsh 撤销全部会话。
-
-`cookieMaxAgeDays` 的最小取值是 1，没有永不过期；签发时刻与寿命按安全整数校验，上千天的取值远在界内。`expiresAt` 在签发时写入签名 payload，验证只读票内值，并额外要求票内「签发→过期」跨度不超过**当前配置**的 maxAge。由此方向不对称：调大配置不延长已发的 cookie；调小配置让所有跨度更长的旧票立即作废。无论哪个方向，要按新期限取票都须重新兑换。
-
-调整该值通过 patch 层修改 `connection` 行（`@deepseek-ai/dsh-client-connection`）的 `config`。patch 按 id 定位行并**整段替换**其 `config`，原有的 `trustedHosts` 注入必须一并复述（patch 文件位置与叠加顺序见[持久配置 MCP Server](#mcp-persistent-configuration)）：
-
-```yaml
-- id: connection
-  config:
-    cookieMaxAgeDays: 3650
-    trustedHosts: !!js ctx.webRuntime.trustedHosts
-```
-
-> 把一枚已认证的 cookie 手工放进另一个浏览器，只在浏览器以同一 authority 直接访问 DSH 时有效；经反向代理域名访问时，浏览器不会把 loopback 域名的 cookie 发给公网域名。反代部署换浏览器时，要么用当前进程的启动 token 重新兑换，要么由代理层统一附带会话，见 [Caddy 代持会话 cookie](#caddy-cookie-delegation)。
-
-`dsh web` 一般会自己打印并打开带 token 的 URL，本机用户通常感觉不到这次交换；但设计上连本机浏览器也必须完成它。远程部署时，token 由部署者从启动输出转交给远端浏览器。
-
-systemd 托管时，这条 URL 随标准输出进入 journal（系统服务把 `--user` 去掉）：
-
-```sh
-journalctl --user -u dsh.service -o cat | grep -F 'dsh web: ' | grep -oE 'token=[A-Za-z0-9_-]+' | tail -n 1
-```
-
-grep 须锚定打印行本身：经由同一 dsh 实例执行运维命令时，sudo 等子进程的审计行也会进入该 unit 的 journal，命令文本里形如 `token=…` 的字面量会污染只按 `token=` 匹配的抓取（改用 `_PID=<主进程>` 过滤同样可行）。
-
-token 只随进程重启更换：它以进程的 root context 为键存于内存，修改 patch 等触发的 Connection 热重载沿用同一 token，journal 里已打印的旧 token 仍可兑换。
-
-> 来源：[浏览器认证与请求信任](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/README.zh.md#L32-L39)；[requestRejection](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/src/rpc-host.ts#L96-L98)；[authorizeIndex](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/src/browser-auth.ts#L240-L276)；[cookie 名称与属性](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/src/browser-auth.ts#L107-L122)；[签名密钥的凭据记录](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/src/browser-auth.ts#L12-L16)；[无 logout 的边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/README.zh.md#L59-L63)；[web-app 的启动输出](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/bundle/web-app/README.zh.md#L37)；[maxAge 的下限与默认值](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/index.ts#L88)、[寿命的安全整数校验](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L189-L200)与[跨度不超过当前 maxAge 的验证](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L297-L302)、[启动 token 以 root context 为键、跨 Connection 重载保留](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L202-L209)、[token URL 的 stdout 打印](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/bundle/web-app/src/index.ts#L271-L284)、[进程唯一启动 token 的惰性生成](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L52-L58)与[`?token=` 的常数时间相等比较](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L100-L104)、[patch 按 id 整段替换 config](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/docs/architecture.md#L27)与[web bundle 的 `connection` 行](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/bundle/web-app/cordis.patch.yml#L162-L169)。决策记录：[浏览器令牌认证](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/.agents/notes/implemented/architecture/2026-08-24-browser-token-authentication.zh.md)、[浏览器请求信任](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/.agents/notes/implemented/architecture/2026-07-28-api-browser-trust-boundary.zh.md)。
-
-#### SSH 本地隧道
-
-SSH 本地隧道让远端浏览器通过自己的 loopback authority 访问 DSH：
-
-```sh
-ssh -N -L 3080:127.0.0.1:3080 <host>
-```
-
-浏览器访问 `http://127.0.0.1:3080`。请求携带 loopback `Host` 与 `Origin`，直接通过信任校验；会话校验仍要完成——通过隧道打开启动打印的 `http://127.0.0.1:<port>/?token=...` 一次，之后凭 cookie 继续使用。
-
-当反向代理与 DSH 分处不同节点或网络 namespace 时，可以先用受控 TCP relay 提供私有上游。例如：
-
-```sh
-socat TCP-LISTEN:<relay-port>,bind=<private-address>,fork,reuseaddr TCP:127.0.0.1:3080
-```
-
-该 relay 的绑定地址、主机防火墙和来源 ACL 可以只覆盖反向代理节点；上层域名、TLS、认证和 HTTP header 处理继续由反向代理承担。
-
-#### Caddy 公网入口配置
-
-Caddy 公网入口包含四个组成部分：
-
-1. **私有 DSH 上游。** DSH 继续监听 `127.0.0.1:3080`；Caddy 同机时直接访问该地址，跨节点时通过受控 relay 到达，并用绑定地址、防火墙或来源 ACL 把 relay 限给网关。
-2. **TLS 与用户认证。** Caddy 负责 TLS 终止和面向互联网的用户认证；DSH 的 Host / Origin fence 负责 DNS rebinding 与同源校验，浏览器会话认证独立于 Caddy 生效——远端浏览器仍要持有效会话：由使用者完成一次 token 交换，或由代理统一兑换并代持（见 [Caddy 代持会话 cookie](#caddy-cookie-delegation)）。
-3. **完整的 HTTP 与 WebSocket 代理。** 同一条 `reverse_proxy` route 覆盖整个 DSH 站点，并由 Caddy 处理 WebSocket upgrade。
-4. **自洽的 Host / Origin。** DSH 读取实际收到的 `Host` 与 `Origin`。部署可以保留公网域名及端口并配置匹配的 `--trusted-host`，也可以把两者成对改成同一个 loopback 域名/IP及端口；`X-Forwarded-Host` 继续承担转发元数据记录。
-
-以下示例用 `authorize with <policy>` 表示已经安装并生效的认证模块与策略。部署时将它替换为实际使用的 `authorize`、`basic_auth`、`forward_auth` 或其他认证配置。
-
-##### 保留公网 Host / Origin
-
-假设浏览器访问 `https://dsh.example.com`，其公网 authority 是 `dsh.example.com`。DSH 启动时声明同一个裸 `host[:port]`；标准 HTTPS 端口 443 由 URL 规范化省略，非默认端口显式写入：
-
-```sh
-dsh web --no-open --trusted-host dsh.example.com
-# 公网地址为 https://dsh.example.com:8443 时：
-# dsh web --no-open --trusted-host dsh.example.com:8443
-```
-
-`--trusted-host` 使用裸 `host[:port]` 格式。对普通 HTTP 上游，Caddy 默认透传浏览器的 `Host` 和其他请求 headers；这一路径保持公网 `Host` 与同源公网 `Origin` 原值：
-
-```caddyfile
-https://dsh.example.com {
-	authorize with <policy>
-	reverse_proxy <private-upstream>:3080
-}
-```
-
-这里的 `<private-upstream>:3080` 是 Caddy 的连接地址。DSH 的信任判断使用实际收到的 `Host: dsh.example.com` 和 `Origin: https://dsh.example.com`；匹配的 `--trusted-host dsh.example.com` 让信任校验放行，会话、事件流、其他普通 API 与 WebSocket 能否使用仍取决于浏览器会话。
-
-配置 `--trusted-host dsh.example.com` 后，公网 `Host` 通过信任校验；能否调用 Host API 此后只取决于浏览器会话（见[Host 信任校验与浏览器会话认证](#browser-session-auth)）。Settings 读写、Credentials、Agent preset 管理、宿主文件操作（`host.pickDirectory`、`host.openPath`）、端点探测（`llm.discoverModels`）这组本机管理方法在 `0.1.1-rc.2` 及更早版本被单独圈出，在通用校验之后追加只接受 loopback Host / Origin 的第二层，公网路径上返回 403；统一会话认证（`0.1.2-alpha.1` 起）取消了这层名单，它们与其余 Host RPC 一样只要求同一枚会话 cookie，没有会话时统一返回 401。旧模型的完整描述见[历史模型](#loopback-privilege-history)。
-
-`--trusted-host` 提供 DNS rebinding 与跨站请求防护，Caddy 提供 TLS 与面向互联网的用户认证，浏览器会话认证决定谁能操作 Host；三层各守自己的边界。
-
-##### 改写为 loopback Host / Origin
-
-Caddy 完成强认证后，可以把 DSH 实际收到的 `Host` 与 `Origin` 成对改为相同的 loopback 域名/IP及端口。DSH 在这一路径中直接使用 loopback 校验，无需把公网域名加入 `--trusted-host`：
-
-```caddyfile
-https://dsh.example.com {
-	authorize with <policy>
-	reverse_proxy <private-upstream>:3080 {
-		header_up Host 127.0.0.1:3080
-		header_up Origin http://127.0.0.1:3080
-	}
-}
-```
-
-Caddy 仍可实际连接任意受控的 `<private-upstream>:3080`；DSH 收到的是 `Host: 127.0.0.1:3080` 与 `Origin: http://127.0.0.1:3080`。这两条 `header_up` 作用于普通请求和由同一 `reverse_proxy` 处理的 WebSocket upgrade。
-
-DSH 的 `isTrustedApiRequest()` 按以下顺序校验改写后的请求：
+DSH 的 `isTrustedApiRequest()` 按以下顺序执行信任校验：
 
 1. 解析 `Host`，接受 loopback 域名/IP及端口或 `trustedHosts` 中的值。
 2. 检查 `Sec-Fetch-Site`，值为 `cross-site` 时拒绝请求。
@@ -403,13 +278,183 @@ DSH 的 `isTrustedApiRequest()` 按以下顺序校验改写后的请求：
 
 缺少 `Origin` 的请求由 Host fence 决定结果。浏览器 fetch 和 WebSocket 通常携带 `Origin`；代理保留浏览器产生的 `Sec-Fetch-Site`，同一公网页面发往同源 API 时该值符合非 cross-site 条件。
 
-成对改写为 loopback 只影响信任校验。会话 cookie 的名称与签名 payload 绑定 DSH 实际收到的 authority；代理一致地改写 authority 时，token 交换与 cookie 回传也按改写后的 authority 进行——这条组合路径未在本库做过端到端实测，部署前应先验证。此路径的安全边界由 Caddy 强认证、覆盖完整站点的 route 和私有上游共同构成。
+Settings 读写、Credentials、Agent preset 管理、宿主文件操作、端点探测这组方法在 `0.1.1-rc.2` 及更早版本另有只接受 loopback 的第二层校验；统一会话认证取消了这层名单，版本差异见[旧版本的 loopback 特权](#loopback-privilege-history)。
 
-##### <a id="caddy-cookie-delegation"></a>Caddy 代持会话 cookie
+> 来源：[Host fence、cross-site fence 与 Origin/Host 精确相等检查](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/src/api-request-trust.ts#L91-L118)、[requestRejection](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/src/rpc-host.ts#L96-L98)、[authorizeIndex](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/src/browser-auth.ts#L240-L276)、[浏览器认证与请求信任](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/README.zh.md#L32-L39)。
 
-前两种组合最终都要远端浏览器各自完成一次 token 交换；这一种把交换收进运维侧：Caddy 强认证通过后，代替浏览器携带一枚已兑换的会话 cookie 访问 DSH，公网用户只过 Caddy 的认证层，不接触 DSH 的启动 token。DSH 侧与「保留公网 Host / Origin」的组合相同——声明匹配的 `--trusted-host`，不改写 `Host` / `Origin`，页面的 `isLoopback` 判定也不受影响。
+#### <a id="browser-session-lifecycle"></a>浏览器会话凭据的生命周期
 
-兑换按「浏览器经代理到达 DSH 时呈现的 authority」进行，即公网 `host[:port]`（HTTPS 默认端口不写）；用 `127.0.0.1:<port>` 兑换出的票与公网 Host 对不上。启动 token 从服务日志取得（systemd 部署的抓取命令见 [Host 信任校验与浏览器会话认证](#browser-session-auth)），在本机以公网 Host 兑换（前提是 DSH 已带匹配的 `--trusted-host`，否则兑换请求先被信任校验拒绝）：
+本节按凭据的时间线组织：启动 token 怎样兑换成会话 cookie、cookie 的属性与寿命如何配置、凭据怎样失效，以及 systemd 托管时从哪里取 token。
+
+第一次（或没有 cookie）时，必须完成一次 token 交换：
+
+1. 每个进程在启动时生成一个随机 token，`dsh web` 打印（且除非 `--no-open` 或 SSH 抑制，自动打开）`http://127.0.0.1:<port>/?token=...`；
+2. 这个 query token 只在 `GET /` 一个入口被接受；命中后 DSH 写入绑定 authority 的签名 cookie，并 303 重定向到不带 token 的干净 `/`；
+3. 之后 RPC、WebSocket 和 index 页面都靠这枚 cookie，URL 里不再带 token。根路径交换之外，HTTP 载体不接受 query token，也不接受 Authorization header token。
+
+启动 token 是每个进程唯一的一枚随机值：43 字符 base64url，只存内存、不落盘，也不因兑换而消耗。`GET /?token=X` 的校验只有一步——把 X 与当前进程这一枚做字符串相等比较（常数时间实现，防时序侧信道）。因此 token 的「有效」就是与当前值相等；进程重启换新后，更早打印过的 token 全部随之失效。
+
+已经认证过则：
+
+- cookie 未过期（默认 30 天，`cookieMaxAgeDays`）且签发时的 hostname:port 与签名密钥未变时，重启 dsh 后仍可用，不必再贴 token——签名密钥是 `$DSH_HOME/.credentials.yaml` 中 `client-connection/browser-session` 拥有的持久凭据记录，不随进程重新生成，启动 token 才是逐进程新生成；
+- URL 里带了已失效的旧 token 但 cookie 仍有效时，DSH 直接 303 清掉 query 进入页面；token 仍有效时则按普通兑换流程重新签发一枚会话 cookie；
+- 非 index 的静态资源保持公开；能真正操作 Host 的接口都要会话。
+
+cookie 本身是 host-only、`Path=/`、`HttpOnly`、`SameSite=Strict`，确定性名称与签名 payload 都绑定规范化的 hostname 和 port；随附服务器使用 loopback HTTP，因此刻意不设置 `Secure`。没有 logout 操作：清除浏览器站点数据只结束这一个浏览器；删除上述凭据记录并重启 dsh 撤销全部会话。
+
+cookie 的期限在兑换那一刻封进签名 payload，之后不再变：`issuedAt` 与 `expiresAt` 按兑换时生效的 `cookieMaxAgeDays` 写定，此后每次访问只是出示这枚 cookie，不重算也不改写期限。`cookieMaxAgeDays` 的最小取值是 1，没有永不过期；签发时刻与寿命按安全整数校验，上千天的取值远在界内。验证只读 cookie 内的 `expiresAt`，并额外要求其中「签发→过期」跨度不超过**当前配置**的 maxAge。由此配置变化不追溯已签发的 cookie，且方向不对称：调大配置不延长已发的 cookie；调小配置让所有跨度更长的旧 cookie 立即作废。无论哪个方向，要按新期限取得 cookie 都须重新兑换。兑换时封定的还有 authority——cookie 绑定兑换请求呈现的 `host[:port]`，所以要在实际使用的地址下兑换；经代理部署时按代理呈现的公网 authority 兑换（见[反向代理公网入口](#caddy-public-entry)的代持段）。
+
+> 把一枚已认证的 cookie 手工放进另一个浏览器，只在浏览器以同一 authority 直接访问 DSH 时有效；经反向代理域名访问时，浏览器不会把 loopback 域名的 cookie 发给公网域名。反代部署换浏览器时，要么用当前进程的启动 token 重新兑换，要么由代理层统一附带会话，见[反向代理公网入口](#caddy-public-entry)中的代持段。
+
+##### <a id="cookie-max-age-patch"></a>调整 cookie 寿命的 patch
+
+调整该值通过 patch 覆盖 web-app 已经 insert 的 `connection` 行。insert 与按 id 覆盖的原理见开发篇的 [Loader entry 字段与 patch 文档](dsh-dev.md#loader-entry-patch)。文件位置与叠加顺序见[持久配置 MCP Server](#mcp-persistent-configuration)。
+
+覆盖条目写在 Profile patch 的顶层数组里，与 MCP 的 `- insert:` 平级。`config` 整段替换，须把 `trustedHosts` 一并写出：
+
+```yaml
+- insert:
+    - id: mcp-local-tools
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        # 既有 MCP 行仍在 insert 里
+
+- id: connection
+  config:
+    cookieMaxAgeDays: 3650
+    trustedHosts: !!js ctx.webRuntime.trustedHosts
+```
+
+写入正在监视的 live 文件前，用独立进程检查。`--patch` 叠在现有 Profile patch 之上，草稿里不要再 insert 已经存在的行：
+
+```sh
+dsh --profile web --patch ./draft.cordis.yml --dump-config
+```
+
+核对输出里 `id: connection` 只出现一次，注释含 `patched by`，`config` 同时含 `cookieMaxAgeDays` 与 `trustedHosts`。dump 打印合成树后退出，不占用 Web 端口，也不通知 systemd 那个进程。同一 id 出现两行时 dump 仍以 0 退出；Loader 真正应用时才抛 `duplicate loader entry id`。
+
+要测「整份替换现有 `cordis.patch.yml`」，另拷一份 Harness home，改副本后再 dump：
+
+```sh
+cp -a "${DSH_HOME:-$HOME/.dsh}" /tmp/dsh-check
+DSH_HOME=/tmp/dsh-check dsh --profile web --dump-config
+```
+
+dump 看不到 module 导入和 Config schema 错误。需要实跑时用备用端口，避开正在服务的端口：
+
+```sh
+dsh --profile web --patch ./draft.cordis.yml --no-open --port <spare-port>
+```
+
+检查通过后再把顶层 `- id: connection` 写进 `$DSH_HOME/profiles/web/cordis.patch.yml`。服务仍在运行时，`live` 型 Profile 靠 HMR 热重载生效（机制见 [Patch 热更新的生效机制](#mcp-patch-hot-reload)），不必 restart。
+
+##### <a id="launch-token-journal"></a>启动 token 的转交与 journal
+
+`dsh web` 一般会自己打印并打开带 token 的 URL，本机用户通常感觉不到这次交换；但设计上连本机浏览器也必须完成它。远程部署时，token 由部署者从启动输出转交给远端浏览器。
+
+systemd 托管时，这条 URL 随标准输出进入 journal。用户服务：
+
+```sh
+journalctl --user -u dsh.service -o cat | grep -F 'dsh web: ' | grep -oE 'token=[A-Za-z0-9_-]+' | tail -n 1
+```
+
+系统服务去掉 `--user`。模板实例把 `-u` 换成 `dsh@<user>.service`。
+
+grep 须锚定打印行本身：经由同一 dsh 实例执行运维命令时，sudo 等子进程的审计行也会进入该 unit 的 journal，命令文本里形如 `token=…` 的字面量会污染只按 `token=` 匹配的抓取（改用 `_PID=<主进程>` 过滤同样可行）。
+
+token 只随进程重启更换：它以进程的 root context 为键存于内存，修改 patch 等触发的 Connection 热重载沿用同一 token，journal 里已打印的旧 token 仍可兑换。
+
+> 来源：[cookie 名称与属性](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/src/browser-auth.ts#L107-L122)；[签名密钥的凭据记录](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/src/browser-auth.ts#L12-L16)；[无 logout 的边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/README.zh.md#L59-L63)；[web-app 的启动输出](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/bundle/web-app/README.zh.md#L37)；[maxAge 的下限与默认值](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/index.ts#L88)、[寿命的安全整数校验](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L189-L200)与[跨度不超过当前 maxAge 的验证](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L297-L302)、[启动 token 以 root context 为键、跨 Connection 重载保留](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L202-L209)、[token URL 的 stdout 打印](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/bundle/web-app/src/index.ts#L271-L284)、[进程唯一启动 token 的惰性生成](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L52-L58)与[`?token=` 的常数时间相等比较](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L100-L104)、[patch 按 id 整段替换 config](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/docs/architecture.md#L27)与[web bundle 的 `connection` 行](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/bundle/web-app/cordis.patch.yml#L162-L169)、[applyEntryPatches 对 insert 与 id 覆盖的分流](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/include/src/index.ts#L57-L123)、[`duplicate loader entry id`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/loader/src/config/group.ts#L59-L64)、[dump 与 boot 共用 `applyEntryPatches`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/src/index.ts#L363-L371)。决策记录：[浏览器令牌认证](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/.agents/notes/implemented/architecture/2026-08-24-browser-token-authentication.zh.md)、[浏览器请求信任](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/.agents/notes/implemented/architecture/2026-07-28-api-browser-trust-boundary.zh.md)。
+
+#### <a id="remote-access-methods"></a>远程接入 DSH Web 的方式
+
+远程接入可以由不同层的方法独立完成或按需组合。SSH 本地隧道与受控 TCP relay 在本节展开，反向代理的配置见下一小节。
+
+| 方法 | 建立的路径 | 主要职责 |
+|---|---|---|
+| SSH 本地隧道 | 浏览器本机 `127.0.0.1:3080` → 服务主机 `127.0.0.1:3080` | 为单个操作者提供临时的端到端 loopback 入口 |
+| `socat`、Windows `portproxy` 或 SSH 端口转发 | 受控私网地址 → DSH loopback | 在主机、网络 namespace 或节点之间提供 TCP 接力；绑定地址与来源 ACL 定义可达范围 |
+| 反向代理（以 Caddy 为例） | 稳定域名 → 私有上游 | 提供 TLS、身份认证、域名路由，以及按部署模式设置上游 `Host` / `Origin` |
+
+##### <a id="ssh-tunnel"></a>SSH 本地隧道
+
+SSH 本地隧道让远端浏览器通过自己的 loopback authority 访问 DSH：
+
+```sh
+ssh -N -L 3080:127.0.0.1:3080 <host>
+```
+
+浏览器访问 `http://127.0.0.1:3080`。请求携带 loopback `Host` 与 `Origin`，直接通过信任校验；会话校验仍要完成——通过隧道打开启动打印的 `http://127.0.0.1:<port>/?token=...` 一次，之后凭 cookie 继续使用。
+
+##### <a id="tcp-relay"></a>受控 TCP relay
+
+当反向代理与 DSH 分处不同节点或网络 namespace 时，可以先用受控 TCP relay 提供私有上游。例如：
+
+```sh
+socat TCP-LISTEN:<relay-port>,bind=<private-address>,fork,reuseaddr TCP:127.0.0.1:3080
+```
+
+该 relay 的绑定地址、主机防火墙和来源 ACL 可以只覆盖反向代理节点；上层域名、TLS、认证和 HTTP header 处理继续由反向代理承担。
+
+##### <a id="caddy-public-entry"></a>反向代理公网入口
+
+本节以 Caddy 为例说明反向代理公网入口的组成和三种做法，末尾给出 nginx 的对应操作。讨论放行或拒绝时，均以 **DSH 实际收到的 authority** 为准，而不是以代理连接了哪个 IP 和端口为准：
+
+| 用语 | 示例 | 指什么 |
+|---|---|---|
+| 公网域名及端口（公网 authority） | `dsh.example.com`、`dsh.example.com:8443` | 浏览器地址栏所访问的域名及可选非默认端口 |
+| 代理上游连接地址 | `127.0.0.1:3080`、`10.x.x.x:13080` | 代理在网络层实际连接的 DSH 或 relay 地址 |
+| DSH 收到的 authority | `Host` 与 `Origin` 中最终送到 DSH 的 `host[:port]` | DSH 执行 Host / Origin 校验时真正读取的值 |
+
+后两者不是一回事。例如反向代理可以实际连接 `10.x.x.x:13080`，同时把 DSH 收到的 `Host` 与 `Origin` 改成 `127.0.0.1:3080`。
+
+反向代理公网入口包含四个组成部分：
+
+1. **私有 DSH 上游。** DSH 继续监听 `127.0.0.1:3080`；代理同机时直接访问该地址，跨节点时通过[受控 TCP relay](#tcp-relay) 到达，并用绑定地址、防火墙或来源 ACL 把 relay 限给网关。
+2. **TLS 与用户认证。** 代理负责 TLS 终止和面向互联网的用户认证；DSH 的 Host / Origin fence 负责 DNS rebinding 与同源校验，浏览器会话认证独立于代理生效——远端浏览器仍要持有效会话：由使用者完成一次 token 交换，或由代理统一兑换并代持（见下文代持段）。
+3. **完整的 HTTP 与 WebSocket 代理。** 同一条代理 route 覆盖整个 DSH 站点，并由代理处理 WebSocket upgrade。
+4. **自洽的 Host / Origin。** DSH 读取实际收到的 `Host` 与 `Origin`。部署可以保留公网域名及端口并配置匹配的 `--trusted-host`，也可以把两者成对改成同一个 loopback 域名/IP及端口；`X-Forwarded-Host` 继续承担转发元数据记录。
+
+以下示例用 `authorize with <policy>` 表示已经安装并生效的认证模块与策略。部署时将它替换为实际使用的 `authorize`、`basic_auth`、`forward_auth` 或其他认证配置。
+
+**保留公网 Host / Origin。** 假设浏览器访问 `https://dsh.example.com`，其公网 authority 是 `dsh.example.com`。DSH 启动时声明同一个裸 `host[:port]`；标准 HTTPS 端口 443 由 URL 规范化省略，非默认端口显式写入：
+
+```sh
+dsh web --no-open --trusted-host dsh.example.com
+# 公网地址为 https://dsh.example.com:8443 时：
+# dsh web --no-open --trusted-host dsh.example.com:8443
+```
+
+`--trusted-host` 使用裸 `host[:port]` 格式。对普通 HTTP 上游，Caddy 默认透传浏览器的 `Host` 和其他请求 headers；这一路径保持公网 `Host` 与同源公网 `Origin` 原值：
+
+```caddyfile
+https://dsh.example.com {
+	authorize with <policy>
+	reverse_proxy <private-upstream>:3080
+}
+```
+
+这里的 `<private-upstream>:3080` 是反向代理的连接地址。DSH 的信任判断使用实际收到的 `Host: dsh.example.com` 和 `Origin: https://dsh.example.com`；匹配的 `--trusted-host dsh.example.com` 让信任校验放行，此后的会话、事件流、普通 API 与 WebSocket 能否使用取决于浏览器会话（见[浏览器请求的准入校验](#browser-session-auth)和[浏览器会话凭据的生命周期](#browser-session-lifecycle)）。
+
+**改写为 loopback Host / Origin。** 反向代理完成强认证后，可以把 DSH 实际收到的 `Host` 与 `Origin` 成对改为相同的 loopback 域名/IP及端口。DSH 在这一路径中直接使用 loopback 校验，无需把公网域名加入 `--trusted-host`：
+
+```caddyfile
+https://dsh.example.com {
+	authorize with <policy>
+	reverse_proxy <private-upstream>:3080 {
+		header_up Host 127.0.0.1:3080
+		header_up Origin http://127.0.0.1:3080
+	}
+}
+```
+
+Caddy 仍可实际连接任意受控的 `<private-upstream>:3080`；DSH 收到的是 `Host: 127.0.0.1:3080` 与 `Origin: http://127.0.0.1:3080`。这两条 `header_up` 作用于普通请求和由同一 `reverse_proxy` 处理的 WebSocket upgrade；信任校验的判定顺序见[浏览器请求的准入校验](#browser-session-auth)。
+
+成对改写为 loopback 只影响信任校验。会话 cookie 的名称与签名 payload 绑定 DSH 实际收到的 authority；代理一致地改写 authority 时，token 交换与 cookie 回传也按改写后的 authority 进行——这条组合路径未在本库做过端到端实测，部署前应先验证。此路径的安全边界由代理强认证、覆盖完整站点的 route 和私有上游共同构成。
+
+**Caddy 代持会话 cookie。** 前两种做法最终都要远端浏览器各自完成一次 token 交换；这一种把交换收进运维侧：Caddy 强认证通过后，代替浏览器携带一枚已兑换的会话 cookie 访问 DSH，公网用户只过 Caddy 的认证层，不接触 DSH 的启动 token。DSH 侧与「保留公网 Host / Origin」的做法相同——声明匹配的 `--trusted-host`，不改写 `Host` / `Origin`，页面的 `isLoopback` 判定也不受影响。
+
+兑换按「浏览器经代理到达 DSH 时呈现的 authority」进行，即公网 `host[:port]`（HTTPS 默认端口不写）；用 `127.0.0.1:<port>` 兑换得到的 cookie 绑定的是回环 authority，与公网 Host 对不上。启动 token 从服务日志取得（systemd 部署的抓取命令见[浏览器会话凭据的生命周期](#browser-session-lifecycle)），在本机以公网 Host 兑换（前提是 DSH 已带匹配的 `--trusted-host`，否则兑换请求先被信任校验拒绝）：
 
 ```sh
 curl -sS -D - -o /dev/null \
@@ -429,44 +474,65 @@ https://dsh.example.com {
 }
 ```
 
-- `header_up Cookie` 整段覆盖浏览器的 Cookie 头，普通请求与 WebSocket upgrade 都只带这一张会话票，GitHub 等认证 cookie 留在 Caddy 层。DSH 视角由此只剩代理持有的一个会话，能否进入 DSH 实际由 `authorize` 决定。
-- `header_down -Set-Cookie` 剥掉 DSH 的全部 `Set-Cookie`，会话票不落入公网域名的浏览器——即使有人拿到启动 token 打开 `/?token=…`，兑换响应里的票也会被剥掉。当前版本全服务只有 token 兑换这一个 `Set-Cookie` 来源，剥离不破坏其他功能；升级 DSH 后应复核该前提。
+- `header_up Cookie` 整段覆盖浏览器的 Cookie 头，普通请求与 WebSocket upgrade 都只带这一枚会话 cookie，GitHub 等认证 cookie 留在 Caddy 层。DSH 视角由此只剩代理持有的一个会话，能否进入 DSH 实际由 `authorize` 决定。
+- `header_down -Set-Cookie` 剥掉 DSH 的全部 `Set-Cookie`，会话 cookie 不落入公网域名的浏览器——即使有人拿到启动 token 打开 `/?token=…`，兑换响应里的 cookie 也会被剥掉。当前版本全服务只有 token 兑换这一个 `Set-Cookie` 来源，剥离不破坏其他功能；升级 DSH 后应复核该前提。
 - `{$VAR}` 在 Caddyfile 解析期展开，要求变量已在 Caddy 进程环境中；误写成 `{env.VAR}` 时占位符原样发给上游，只会得到 401。环境文件属于 systemd 在启动时固定的进程环境，改值后须 `restart` Caddy，`reload` 不会重读。
 
 片段与命令中的 `3080` 是默认端口；`--port` 改变监听端口时，兑换命令、上游地址和公网使用非默认端口时的 authority 都要换成实际值。把用户重定向到 `/?token=…` 的自动兑换做法会让 token 进入浏览器历史与访问日志，也与 DSH 兑换后清空 query 的行为相抵触。
 
-代持后，会话票的运维事件集中为：
+代持后，终端用户的每次访问只是带上这枚期限已写定的会话 cookie，不签发新 cookie、也不改变期限；cookie 到期或配置变化后的更新只能由运维重新兑换并更换环境变量完成。会话 cookie 的运维事件集中为：
 
 | 事件 | 影响 | 处置 |
 |---|---|---|
-| 重启 dsh 进程 | 票仍有效（签名密钥持久），启动 token 换新 | 无须重兑 |
+| 重启 dsh 进程 | 会话 cookie 仍有效（签名密钥持久），启动 token 换新 | 无须重新兑换 |
 | 热重载（改 patch 等，未重启进程） | 启动 token 不变 | journal 里的旧 token 仍可兑换 |
-| 票面到期，或调小 `cookieMaxAgeDays` 使票面跨度超限 | 票失效 | 重兑，更新环境后 `restart` Caddy |
-| 调大 `cookieMaxAgeDays` | 旧票按票面期限继续有效 | 需要更长寿命时重兑 |
-| 更换域名、端口或改用 Host 改写 | authority 变化，cookie 名与票都失配 | 重兑 |
-| 删除 `browser-session` 凭据记录 | 全部会话作废 | 重兑 |
+| cookie 到期，或调小 `cookieMaxAgeDays` 使已签发跨度超限 | cookie 失效 | 重新兑换，更新环境后 `restart` Caddy |
+| 调大 `cookieMaxAgeDays` | 已签发的 cookie 按原期限继续有效 | 需要更长寿命时重新兑换 |
+| 更换域名、端口或改用 Host 改写 | authority 变化，cookie 名与已签发的会话均失配 | 重新兑换 |
+| 删除 `browser-session` 凭据记录 | 全部会话作废 | 重新兑换 |
 
-> 🔬 2026-09-03 本机实测：systemd 托管 dsh、Caddy 公网入口的部署按此模式运行（GitHub 认证 + `header_up Cookie` 注入 + `header_down -Set-Cookie` 剥离，保留公网 Host）；公网过认证后直接进入 DSH，本机无票直连返回 401、带注入票返回 200，浏览器不产生 DSH cookie。
+> 🔬 2026-09-03 本机实测：systemd 托管 dsh、Caddy 公网入口的部署按此模式运行（GitHub 认证 + `header_up Cookie` 注入 + `header_down -Set-Cookie` 剥离，保留公网 Host）；公网过认证后直接进入 DSH，本机直连不带会话 cookie 时返回 401、带注入的会话 cookie 时返回 200，浏览器不产生 DSH cookie。
 
-> 来源：[token 兑换入口与 303/Set-Cookie](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L240-L266)、[authority 取自请求 Host](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L69-L78)、[cookie 名由 authority 哈希得出](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L106-L108)、[`?token=` 只与启动 token 做常数时间比较](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L100-L104)、[401 响应](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L304-L312)；[`{$VAR}` 与 `{env.VAR}` 的展开时机](https://caddyserver.com/docs/caddyfile/concepts#environment-variables)见 Caddy 文档。
+代持解决的是进入 DSH 这一层的认证；浏览器端的限制不随代持改变，远程页面仍打不开 Settings 系页面（见[远程页面的浏览器端限制](#client-isloopback)）。
 
-##### 远程页面下浏览器 Client 的 `isLoopback`
+nginx 的对应操作：用 `proxy_pass` 指向私有上游；保留公网 authority 时用 `proxy_set_header Host`（及对应的 `Origin`）维持公网值，成对改写时把两者写成同一个 loopback authority；WebSocket 升级需要 `proxy_http_version 1.1` 并透传 `Upgrade` 与 `Connection` 头；代持会话用 `proxy_set_header Cookie` 注入整段会话 cookie，用 `proxy_hide_header Set-Cookie` 剥离兑换响应。指令语义见 [nginx `ngx_http_proxy_module` 官方文档](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)。
 
-浏览器 Client 仍从页面 hostname 派生 `isLoopback`，且只用于页面自身状态展示；Host 端方法可用性由会话认证统一决定，不再随接入方式区分：
+`--trusted-host` 提供 DNS rebinding 与跨站请求防护，反向代理提供 TLS 与面向互联网的用户认证，浏览器会话认证决定谁能操作 Host；三层各守自己的边界。
 
-| 接入方式 | 浏览器 Client 的 `isLoopback` | 说明 |
+> 来源：[token 兑换入口与 303/Set-Cookie](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L240-L266)、[authority 取自请求 Host](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L69-L78)、[cookie 名由 authority 哈希得出](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L106-L108)、[`?token=` 只与启动 token 做常数时间比较](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L100-L104)、[401 响应](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L304-L312)；[`{$VAR}` 与 `{env.VAR}` 的展开时机](https://caddyserver.com/docs/caddyfile/concepts#environment-variables)见 Caddy 文档，[Caddy `reverse_proxy` 的 header 默认值与 WebSocket 支持](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)。
+
+#### <a id="client-isloopback"></a>远程页面的浏览器端限制
+
+本节说明浏览器端从页面地址派生的 `isLoopback` 判定，以及它对 Settings 系页面的影响。Host 侧的方法可用性由会话认证统一决定（见[浏览器请求的准入校验](#browser-session-auth)）；本节的限制发生在浏览器自己的代码里，相关请求根本没有发往 Host。
+
+浏览器 Client 从页面 hostname 派生 `isLoopback`：页面环境不存在、传输层自持 Host，或 `location.hostname` 是 `localhost`、`127/8`、`[::1]` 之一时为 true。它不只用于页面状态展示：`ui-settings` 用它决定 settings 镜像（`settings.describe` 的共享快照）的 persistence——loopback 页面为 `host`，远程页面为 `memory`；`memory` 在构造时即进入终态 `unavailable`，`load()` 与 `ensure()` 双双短路，连接重置也不会触发补读。Settings 系页面共享这面镜像，远程页面各自降级：
+
+| 页面 | 远程页面（`isLoopback` 为 false）的表现 |
+|---|---|
+| Models | 加载即报错「加载提供方目录失败: settings are unavailable in this browser」；provider 列表 RPC 本身未被拦，失败的是页面依赖的 settings 视图 |
+| General | 进入 `unavailable` 状态 |
+| Plugins | 命名空间不可用的卡片不渲染 |
+| Permission presets | 整段不显示 |
+
+截至 `dsh-v0.1.2-rc.1`，这道客户端门禁没有随 Host 层统一会话一起拆除：`0.1.1-rc.2` 时代镜像注释写明缘由是「settings RPCs are loopback-only」；`0.1.2` 起注释改为「non-loopback pages may remain process-local」，措辞更新、行为未变。因此公网页面即便持有效会话也打不开 Settings 系页面；远程修改配置需通过 [SSH 本地隧道](#ssh-tunnel) 让页面落在 loopback 地址（`0.1.2` 系还需先完成一次 token 兑换）。
+
+| 接入方式 | 浏览器端的 `isLoopback` | Settings 系页面 |
 |---|---|---|
-| SSH 本地隧道，从 `http://127.0.0.1:3080` 打开 | `true` | Host 与页面都具备 loopback 语义 |
-| Caddy 保留公网 Host / Origin | `false` | 页面按公网域名判定 |
-| Caddy 强认证后改写为 loopback Host / Origin | `false` | 改写只影响 Host 收到的请求；页面仍按地址栏的公网域名判定 |
+| SSH 本地隧道，从 `http://127.0.0.1:3080` 打开 | `true` | 可用；`0.1.2` 系先过一次 token 兑换 |
+| 反向代理保留公网 Host / Origin | `false` | 按上表降级；会话有效也一样 |
+| 反向代理改写为 loopback Host / Origin 或代持 cookie | `false` | 改写与代持只影响 Host 收到的请求；页面仍按地址栏公网域名判定，同样降级 |
 
-##### <a id="loopback-privilege-history"></a>历史模型：本机管理方法的 loopback 特权
+> 🔬 2026-09-03 源码核对：`0.1.2-alpha.5` 本机安装树的前端产物中确认 persistence 接线、终态短路与四个页面的降级路径；「加载提供方目录失败: settings are unavailable in this browser」与一份公网部署的用户报告逐字一致。
 
-DSH `0.1.1-rc.2` 及更早版本没有会话认证：通用校验之后，上述本机管理方法再以空 `trustedHosts` 调用 `isTrustedApiRequest()`，构成只接受 loopback Host / Origin 的第二层。于是 `--trusted-host` 公网路径上这些方法返回 403；Caddy 强认证后把 `Host` / `Origin` 成对改写为 loopback 就能让它们通过——loopback 本身即特权，无需任何会话。统一浏览器会话认证在 `0.1.2-alpha.1` 取代了这一层（npm 首个发布为 `0.1.2-alpha.2`）：伪造 loopback `Host` 不再带来任何特权，上述改写路径与按接入方式区分的差异表随之失效。
+> 来源：[Client 从页面 hostname 派生 `isLoopback`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/client/index.ts#L228)、[镜像 persistence 由 `isLoopback` 决定](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/ui-settings/src/client/index.ts#L58-L59)、[构造器按 persistence 初始化终态 `unavailable`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/ui-settings/src/client/settings-mirror.ts#L86-L89)、[`load()` 在 `memory` 下短路](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/ui-settings/src/client/settings-mirror.ts#L115)与[`ensure()` 短路](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/ui-settings/src/client/settings-mirror.ts#L133)、[「terminal non-loopback state」状态注释](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/ui-settings/src/client/settings-mirror.ts#L29-L33)、[Models 页兜底文案](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/ui-settings-models/src/client/store.ts#L190)、[rc.2 注释「settings RPCs are loopback-only」](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.1-rc.2/packages/client/ui-settings/src/client/settings-mirror.ts#L82)与[rc.1 同位置注释](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/ui-settings/src/client/settings-mirror.ts#L82)。
 
-> 来源：[旧版本机管理方法清单与空 trust list 二层校验](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/index.ts#L69-L154)、[对应的 Host / Origin 行为测试](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/tests/api-request-trust.host.spec.ts#L19-L68)；现行统一会话模型的来源见 [Host 信任校验与浏览器会话认证](#browser-session-auth)。
+#### <a id="loopback-privilege-history"></a>旧版本的 loopback 特权
 
-> 来源：[Web CLI 的 `--host`、`--port`、`--trusted-host` 与 `--no-open`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/bundle/web-app/README.zh.md#L41-L54)、[`--host 0.0.0.0` 的启动拒绝](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/bundle/web-app/src/startup.ts#L74-L75)；[Host fence、cross-site fence 与 Origin/Host 精确相等检查](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/src/api-request-trust.ts#L91-L118)；[webserver 的 host 只接受回环与全接口](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/host/webserver/README.zh.md#L39)；[Client 的 loopback 判定只用于页面自身状态](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/client/connection/README.zh.md#L28)；[Caddy `reverse_proxy` 的 header 默认值与 WebSocket 支持](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)。
+本节记录 `0.1.1-rc.2` 及更早版本的访问控制差异，供核对旧部署或旧文档时对照。
+
+这些版本没有会话认证：通用校验之后，Settings 读写（`settings.describe` 等读写方法）、Credentials（`credentials.describe/set/unset`）、Agent preset 管理（`agentPreset.read/copy/openDocument/remove`）、宿主文件操作（`host.pickDirectory`、`host.openPath`）、端点探测（`llm.discoverModels`）这组本机管理方法再以空 `trustedHosts` 调用 `isTrustedApiRequest()`，构成只接受 loopback Host / Origin 的第二层。于是 `--trusted-host` 公网路径上这些方法返回 403；反向代理强认证后把 `Host` / `Origin` 成对改写为 loopback 就能让它们通过——loopback 本身即特权，无需任何会话。统一浏览器会话认证在 `0.1.2-alpha.1` 取代了这一层（npm 首个发布为 `0.1.2-alpha.2`）：伪造 loopback `Host` 不再带来任何特权，按方法区分的这层名单随之失效。
+
+> 来源：[旧版本机管理方法清单与空 trust list 二层校验](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/index.ts#L69-L154)、[对应的 Host / Origin 行为测试](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/tests/api-request-trust.host.spec.ts#L19-L68)；现行统一会话模型的来源见[浏览器请求的准入校验](#browser-session-auth)。
 
 ## <a id="runtime-composition"></a>Cordis 插件框架
 
@@ -716,13 +782,13 @@ systemctl show dsh.service -p EnvironmentFiles -p ActiveState -p SubState
 
 systemd 的 PATH 通常比交互 shell 短，systemd 部署中的 stdio `command` 使用绝对路径可获得一致的命令解析结果。
 
-config 的 schema 校验发生在插件 apply 之前；`failOnStartupError` 只覆盖初始连接与工具同步这类运行期失败，管不到校验层。校验失败的表现按进程状态分两种：冷启动 `dsh --profile web` 时一行配置校验抛错，整棵 plugin tree 加载失败、进程非零退出，错误从 `failed to apply loader entry <id>` 汇总为 `plugin tree failed to load`，不是只跳过这一行；已在运行的进程改 patch 触发 HMR（Hot Module Replacement，热模块替换：监视文件改动、不重启进程就地重载改动部分；机制见 [Patch 热更新的生效机制](#mcp-patch-hot-reload)）时，校验失败的候选被整体丢弃，上一棵可用树继续服务，进程不退出。
+config 的 schema 校验发生在插件 apply 之前；`failOnStartupError` 只覆盖初始连接与工具同步这类运行期失败，管不到校验层。校验失败的表现按进程状态分两种：冷启动 `dsh --profile web` 时一行配置校验抛错，整棵 plugin tree 加载失败、进程非零退出，错误从 `failed to apply loader entry <id>` 汇总为 `plugin tree failed to load`，不是只跳过这一行；已在运行的进程改 patch 触发 HMR（机制见 [Patch 热更新的生效机制](#mcp-patch-hot-reload)）时，校验失败的候选被整体丢弃，上一棵可用树继续服务，进程不退出。
 
 > 来源：[`failOnStartupError` 的作用域](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L67-L72)、[冷启动时 `plugin tree failed to load` 的汇总与退出](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/src/index.ts#L770-L788)、[HMR 候选失败后保留旧树的测试](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/tests/config-reload.spec.ts#L190-L210)。
 
 #### <a id="mcp-patch-hot-reload"></a>Patch 热更新的生效机制
 
-持久 patch 改动不重启进程即生效，运行中的会话也会在下一个模型请求上看到工具集变化。本节沿文件监视到模型请求的顺序展开这条链路。
+持久 patch 改动不重启进程即生效，运行中的会话也会在下一个模型请求上看到工具集变化。这个机制在 Cordis 里叫 HMR（Hot Module Replacement，热模块替换）：监视文件改动、不重启进程就地重载改动部分。本节沿文件监视到模型请求的顺序展开这条链路。
 
 是否安装监视器由 Profile 清单的 `patchReload` 字段决定：出厂模板里 web 是 `live`，acp / headless / sdk / sdk-minimal 是 `startup`（改动等下一次启动生效），自建 Profile 默认 `live`。被监视的是两个文件——`$DSH_HOME/profiles/<profile>/cordis.patch.yml` 和 home 层 `$DSH_HOME/cordis.patch.yml`；`--patch` overlay 只活在当前进程，不在监视范围。Profile 若没有显式启用模块 HMR，启动器会补挂一个 `root: []` 的 watch-only HMR 实例：只做配置文件热更、不替换源码模块——dsh-base 默认关闭模块 reload，patch 编辑走的是配置专线。
 
