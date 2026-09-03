@@ -83,3 +83,13 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 
 - **会话切换模型后，每轮都报 `400 Missing namespace for function_call`** → Copilot CLI 把 Anthropic 产生的 MCP 调用投影进通用历史时保留了 `mcpServerName` 的事件记录，却没有生成 OpenAI Responses 回放所需的 `functionCallNamespaces` 映射；随后请求在模型响应和 MCP 执行前即被 CAPI 拒绝 → [直达](references/copilot-cli.md#mcp-namespace-roundtrip)
   - 关键词：`Missing namespace for function_call`、`Round-trip the model's function_call item`、`functionCallNamespaces`、`mcpServerName`、`toolu_`、`sessionProjectionRewriteChatHistoryForModelJson`、`切换模型后 400`
+
+### DeepSeek Harness（dsh Web GUI）
+
+见 [dsh.md](references/dsh.md)。
+
+- **approval / ask_user_question 弹窗不出现、工具卡在等待，刷新页面才出现** → 重连后 mux 用原 rpcId 重放请求帧并先于 `onConnected` 被重新铸造，随后 `Session.resync()` 的 `pending.clear()` 把它抹掉；叠加无心跳的静默半开 WebSocket 作触发器；0.1.2-alpha.2 起整个机制删除重写 → [直达](references/dsh.md#interaction-card-missing)
+  - 关键词：`approval 不弹出`、`ask_user_question 卡住`、`刷新后才出现`、`resync pending.clear`、`onConnected`、`mux 重放`、`PendingWait`、`WebSocket 无心跳`、`0.1.1-rc.2`
+- **ask_user_question 等待期间一有用户输入就静默死亡（ASK_ABORTED），弹窗从未出现** → 工具把轮次 AbortController 的 signal 转发进问题，用户输入取消运行中轮次连带杀掉 pending 问题；相邻还有 approval 应答者无超时挂起 → [直达](references/dsh.md#related-failure-family)
+  - 关键词：`ASK_ABORTED`、`aborted before the user answered`、`输入即中止`、`时灵时不灵`
+
