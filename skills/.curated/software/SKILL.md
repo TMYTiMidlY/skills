@@ -13,7 +13,7 @@ Git 与 jj 的日常操作、隔离工作区、受限网络获取、发版 / 发
 
 ## SSH
 
-SSH 客户端密钥认证与 agent、主机密钥校验、ControlMaster 连接复用与 RemoteForward 反向转发、远端命令和文件操作，以及 `sshd` 进程模型与配置重载见 [references/ssh.md](references/ssh.md)。
+SSH 客户端密钥认证与 agent、主机密钥校验、ControlMaster 连接复用与 RemoteForward 反向转发、远端命令和文件操作，以及 `sshd` 进程模型、登录来源限制与配置重载见 [references/ssh.md](references/ssh.md)。
 
 ## 包管理器全景 / 分类对比（Nix vs apt、choco/winget/Scoop、npm/pnpm/bun、pip…）
 

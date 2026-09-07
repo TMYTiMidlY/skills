@@ -1,6 +1,6 @@
 # SSH
 
-SSH 同时涉及客户端身份认证、服务端主机身份校验、连接管理、远端操作和 `sshd` 服务端。本文件按这几条边界组织通用配置与排障方法；服务端认证策略与公网加固由 `vps-maintenance` skill 处理。
+SSH 同时涉及客户端身份认证、服务端主机身份校验、连接管理、远端操作和 `sshd` 服务端。本文件按这几条边界组织通用配置与排障方法；服务器初始化与整体加固流程由 `vps-maintenance` skill 处理。
 
 ## 客户端密钥认证
 
@@ -552,7 +552,7 @@ scp host.example:/var/log/example.log /tmp/
 
 ## sshd 服务端
 
-这一部分只解释 `sshd` 的进程模型和配置生效方式。`PasswordAuthentication`、`PermitRootLogin`、`PubkeyAuthentication` 等服务端加固策略由 `vps-maintenance` skill 处理。
+这一部分介绍 `sshd` 的进程模型、登录来源限制和配置生效方式。服务器初始化与整体加固流程由 `vps-maintenance` skill 处理。
 
 ### <a id="sshd-privsep"></a>进程模型与特权分离
 
@@ -571,6 +571,27 @@ root    sshd: <user> [priv]
 ```
 
 systemd socket activation 会把监听 socket 的创建交给 systemd，调试模式或特定单用户部署也可能改变树形；是否正常应结合 unit、启动参数和实际权限判断，不能只套进程名模板。
+
+### <a id="sshd-source-access"></a>登录来源与认证方式
+
+来源限制决定哪些客户端可以登录，认证方式决定它们用密码还是密钥证明身份。仅在 `Match Address` 中启用内网密码认证，仍可能允许其他来源使用密钥登录；要限制所有认证方式的来源，可以用 `AllowUsers` 的 `用户@来源` 模式。
+
+> [OpenSSH 的 `AllowUsers`](https://man.openbsd.org/OpenBSD-7.5/sshd_config.5#AllowUsers) 支持 CIDR（网段地址/前缀长度）；[`Match`](https://man.openbsd.org/OpenBSD-7.5/sshd_config.5#Match) 只对匹配连接覆盖块内指定的选项。
+
+例如，仅允许指定内网来源的普通用户通过密码或密钥登录，可在实际加载的全局配置中设置以下规则，放在任何 `Match` 块之前。将占位符替换为实际网段，并核对已有的认证配置与 `AllowUsers` 条目：重复的 `AllowUsers` 会追加允许项。
+
+```sshconfig
+PermitRootLogin no
+PubkeyAuthentication yes
+PasswordAuthentication yes
+AllowUsers *@<内网网段A/前缀长度> *@<内网网段B/前缀长度>
+```
+
+`*` 匹配任意用户名，来源条目之间用空格分隔。未匹配来源即使持有正确密钥也不能登录，root 则由 `PermitRootLogin no` 单独禁止。未列入的回环地址和 IPv6 来源同样被拒绝；这限制登录资格，不改变监听地址或阻止 TCP 连接建立。
+
+> 来源以 `sshd` 实际看到的客户端地址为准；经过地址转换或跳板转发时，可能是转换后或跳板的地址。示例按 [`AuthenticationMethods`](https://man.openbsd.org/OpenBSD-7.5/sshd_config.5#AuthenticationMethods) 的默认值 `any`（任一种已启用方式即可）理解；若另有该项限制，实际可用方式仍受其约束。
+
+应用前按[配置重载](#sshd-reload)校验并重载，再从允许和不允许的来源分别新建连接验证；已有会话不用于判断新规则是否生效。
 
 ### <a id="sshd-reload"></a>配置重载与服务重启
 
@@ -593,8 +614,7 @@ OpenSSH 收到 SIGHUP 会重新执行主 daemon 并重读配置，已建立连�
 先校验再 reload：
 
 ```bash
-sudo sshd -t
-sudo systemctl reload ssh
+sudo sshd -t && sudo systemctl reload ssh
 ```
 
 > 实测 Ubuntu 24.04 / OpenSSH 9.6 的 `ssh.service`，`ExecReload` 会先运行 `sshd -t` 再发送 HUP，`KillMode=process`。这只是该发行版 unit 的行为；其他系统以 `systemctl show` 输出为准。
