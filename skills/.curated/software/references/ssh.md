@@ -595,6 +595,24 @@ AllowUsers *@<内网网段A/前缀长度> *@<内网网段B/前缀长度>
 
 ### <a id="sshd-reload"></a>配置重载与服务重启
 
+修改 `sshd` 配置时，优先维护 `/etc/ssh/sshd_config.d/` 下的 `.conf` 片段。先检查实际主配置中的包含入口和条件块位置：
+
+```bash
+rg -n '^[[:space:]]*(Include|Match)[[:space:]]' /etc/ssh/sshd_config
+```
+
+确认 `Include /etc/ssh/sshd_config.d/*.conf` 已启用，且位于全局部分、未受 `Match` 条件限制。若服务通过 `-f` 指定其他主配置，检查那个文件；若缺少包含入口，先补齐包含关系，否则新建片段不会生效。
+
+已有本地自定义片段就继续维护；没有更具体的命名需求时，使用 `00-custom.conf` 集中维护本地设置：
+
+```bash
+sudoedit /etc/ssh/sshd_config.d/00-custom.conf
+```
+
+文件名会影响读取顺序：`Include` 的通配符按字典序展开，所以 `00-custom.conf` 通常早于 `50-cloud-init.conf`、`99-custom.conf`。对 `PasswordAuthentication` 等通常取首次读取值的选项，较早读取的设置优先；主配置中位于 `Include` 之前的赋值仍可能先命中，`00-` 并不保证绝对最高优先级。
+
+> [OpenSSH 的配置取值规则](https://man.openbsd.org/OpenBSD-7.5/sshd_config.5#DESCRIPTION)与 [`Include` 顺序](https://man.openbsd.org/OpenBSD-7.5/sshd_config.5#Include)共同决定优先级。`AllowUsers` 等可累加选项以及 `Match` 条件覆盖按各自规则处理，不能一概套用“先读优先”。
+
 改配置前先确认发行版服务名、reload 实现和进程杀伤范围：
 
 ```bash
