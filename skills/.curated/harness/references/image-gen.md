@@ -226,6 +226,33 @@ OpenAI 于 2026-09-08 公布 ChatGPT Images 2.5，并宣布覆盖 ChatGPT、Chat
 
 > 前者依据当日留存的脱敏验收记录；后者见 [Codex Desktop 用户报告](https://github.com/openai/codex/issues/33050)。这些有限观察不能确定实际模型映射、证明模型做不到目标尺寸，或代表当前 2.5 的参数遵从程度；也未进行同条件的画质或性能比较。
 
+## <a id="component-examples"></a>订阅生图接入项目的对照
+
+这些项目都涉及订阅生图，但提供给调用方的接口不同。下表用于理解现成服务、程序包和宿主插件的区别，不是安装清单或项目排名；选用 CPA 时，不需要再安装其余项目。具体的 DSH／脚本操作继续看[通过 CPA 接入](#components)。
+
+| 项目及所核版本 | 怎样使用 | 订阅图片的实际调用 | 生成 | 编辑输入 | 登录由谁处理 |
+|---|---|---|---|---|---|
+| CPA v7.2.155，`7fac6b15` | 运行服务，脚本或 DSH 的连接工具向它发送 HTTP 请求 | 指定模型走专用 Images 请求，另有 Responses 分支 | 支持 | 可接收 JSON 图片引用或 multipart 文件上传 | CPA 使用其配置的认证来源；接入前明确刷新责任 |
+| openai-oauth，`ec7dab2f` | Node.js 软件包，供程序调用现成函数；另有开发服务器 | 专用 Images 请求 | 支持 | 所核对外编辑入口要求 multipart | 可读取 Codex 文件并提供刷新选项；共享授权需协调 |
+| pi-gpt-image，`181adf16` | 安装到 pi 中，由 pi 使用插件工具 | 专用 Images 请求 | 支持 | 所核插件没有编辑工具 | 向 pi 取得宿主管理的订阅身份 |
+| Sub2API，`98d86915` | 运行网关，调用其 HTTP 接口 | 所核 OAuth 图片分支通过 Responses 的主模型调用图片工具 | 支持 | 有生成和编辑的请求转换 | 网关管理账户认证 |
+
+> 源码：[CPA 图片分支](https://github.com/router-for-me/CLIProxyAPI/blob/7fac6b15bcfe5ea55c18c9eaec8e5b7e6457d974/internal/runtime/executor/codex_openai_images.go#L84-L120)、[openai-oauth 图片入口](https://github.com/EvanZhouDev/openai-oauth/blob/ec7dab2fcd8dab9da970a7a2b5dc34046c94905e/packages/openai-oauth/src/images.ts#L4-L39)、[pi 工具及认证](https://github.com/drgnchan/pi-gpt-image/blob/181adf16902eae2bc69a348ef588e58fb905b72b/extensions/index.ts#L74-L158)、[Sub2API 请求转换](https://github.com/Wei-Shaw/sub2api/blob/98d86915becae9fe9491a91ffc6defd5235c8d2b/backend/internal/service/openai_images_responses.go#L358-L444)。表中的支持范围来自所核源码，不表示已对每个项目完成真实生成、编辑或全部参数测试。
+
+接入成本和验证程度另行比较，避免把“有这个功能”和“已经可靠跑通”混为一谈。
+
+| 项目 | 接入时的主要条件或限制 | 许可证 | 验证范围 |
+|---|---|---|---|
+| CPA | 需要运行实例、配置身份并连接调用方；并发行为需区分独立实例、Home 和插件 | MIT | 有指定条件下的生成及两种提交方式的编辑实测，见[历史记录](#cpa-observations) |
+| openai-oauth | 与 Node.js 环境及认证处理衔接；库支持 Request.signal，但所核 Node 适配器没有把下游断开接入该信号 | Apache-2.0 | 阅读源码，未完成应用集成或真实生图验收 |
+| pi-gpt-image | 与 pi 的工具、认证和附件接口绑定；不是供任意脚本直接调用的独立图片服务 | MIT | 阅读源码，未进行真实图片调用 |
+| Sub2API | 包含完整网关功能，还需处理主模型和图片工具的参数及事件；不能当成只转发图片的轻量服务 | LGPL-3.0 | 阅读图片转换源码，未进行真实图片调用 |
+
+> [openai-oauth 的 Node 请求适配](https://github.com/EvanZhouDev/openai-oauth/blob/ec7dab2fcd8dab9da970a7a2b5dc34046c94905e/packages/openai-oauth/src/shared.ts#L138-L216)；许可证见 [CPA](https://github.com/router-for-me/CLIProxyAPI/blob/7fac6b15bcfe5ea55c18c9eaec8e5b7e6457d974/LICENSE#L1-L22)、[openai-oauth](https://github.com/EvanZhouDev/openai-oauth/blob/ec7dab2fcd8dab9da970a7a2b5dc34046c94905e/LICENSE#L1-L25)、[pi-gpt-image](https://github.com/drgnchan/pi-gpt-image/blob/181adf16902eae2bc69a348ef588e58fb905b72b/LICENSE#L1-L21)、[Sub2API](https://github.com/Wei-Shaw/sub2api/blob/98d86915becae9fe9491a91ffc6defd5235c8d2b/LICENSE#L1-L24)。软件许可不代替上游服务条款；有 SDK 或源码，也不证明可以低成本抽出独立图片模块。
+
+<a id="component-routes"></a><a id="component-maintenance"></a>
+这些是版本化的比较记录。升级或替换时，核对实际请求路径、相关修复、测试及发布包对应关系；star 和提交数量只作线索，不代替功能与维护质量判断。下文仍以 CPA 为具体操作主线，不展开其他项目的安装和开发教程。
+
 ## <a id="components"></a>DSH 和脚本通过 CPA 使用订阅生图
 
 CPA 负责使用已配置的 Codex 订阅身份请求画图；DSH 或脚本负责提交画图要求、原图和其他参数，再取得返回的图片。这里的图片服务地址，就是接收生成或编辑请求的 HTTP 网址，不是另一个需要开发的应用。
@@ -259,21 +286,6 @@ DSH → 调用 CPA 的生图插件或 MCP 工具 ─┘
 这个 MCP server 需要实际实现 CPA 调用；仅启动 CPA 不会让 DSH 自动出现这些工具，也不是启动 Codex 自带的 MCP server 就会改走 CPA。应配置并检查 CPA 地址、调用 key、原图输入和图片返回方式，再确认 DSH 中工具可见、生成及编辑都能完成。
 
 > [MCP 工具结果](mcp.md#tool-result-blocks)说明客户端如何处理返回内容。MCP 这一层负责把 DSH 的工具调用接到 CPA，不需要再启动完整 Codex Agent 来执行相同的图片请求。
-
-### <a id="component-examples"></a>现有项目的接入条件
-
-下面仅保留其他接入方式的简短对照。CPA 是上述 DSH／脚本连接方式的具体后端；其余项目用于区分宿主专用插件和其他代理，不是完成 CPA 接入还需要安装的组件。
-
-| 项目及版本 | 应用怎样接入 | 图片操作及实际路径 | 需要承担的接入工作 |
-|---|---|---|---|
-| CPA v7.2.155，`7fac6b15` | 脚本或 DSH 的连接工具调用 HTTP 接口 | 指定模型走原生 Images；支持生成和接收不同格式的编辑请求，另有 Responses 分支 | 配置实例及认证、连接调用方、处理返回图片 |
-| pi-gpt-image，`181adf16` | pi 宿主扩展 | 原生 Images；所核工具仅生成，没有编辑工具 | 依赖 pi 的认证和附件接口，不是独立 HTTP 图片服务 |
-| Sub2API，`98d86915` | 网关 HTTP 接口 | 所核 OAuth 图片请求转 Responses，可处理生成和编辑 | 引入网关及主模型／图片工具事件处理；抽出模块成本未验证 |
-
-<a id="component-routes"></a><a id="component-maintenance"></a>
-升级或替换这些组件时，沿处理函数核对实际端点、模型路由和回退行为，再确认对应发布包、图片相关修复和测试。star 或提交数量只能提供线索，不证明接入可靠性。代码复用还需分别遵守许可证：上述项目依次为 MIT、MIT、LGPL-3.0；软件许可不代替上游服务条款。
-
-> [CPA 执行器](https://github.com/router-for-me/CLIProxyAPI/blob/7fac6b15bcfe5ea55c18c9eaec8e5b7e6457d974/internal/runtime/executor/codex_openai_images.go#L84-L120)、[pi 插件](https://github.com/drgnchan/pi-gpt-image/blob/181adf16902eae2bc69a348ef588e58fb905b72b/extensions/index.ts#L74-L158)、[Sub2API 转换](https://github.com/Wei-Shaw/sub2api/blob/98d86915becae9fe9491a91ffc6defd5235c8d2b/backend/internal/service/openai_images_responses.go#L358-L444)。许可见 [CPA](https://github.com/router-for-me/CLIProxyAPI/blob/7fac6b15bcfe5ea55c18c9eaec8e5b7e6457d974/LICENSE#L1-L22)、[pi-gpt-image](https://github.com/drgnchan/pi-gpt-image/blob/181adf16902eae2bc69a348ef588e58fb905b72b/LICENSE#L1-L21)、[Sub2API](https://github.com/Wei-Shaw/sub2api/blob/98d86915becae9fe9491a91ffc6defd5235c8d2b/LICENSE#L1-L24)。除[注明的 CPA 历史验收](#cpa-observations)外，不声称这些组件均已真实调用验证。
 
 ## <a id="lifecycle"></a>图片请求的运行管理
 
