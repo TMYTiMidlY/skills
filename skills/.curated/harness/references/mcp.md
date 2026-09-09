@@ -384,6 +384,62 @@ env = { GITHUB_OAUTH_CALLBACK_PORT = "8085" }
 
 > 依据：[OpenAI MCP 官方文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)；`openai/codex@4ef836f` 的[配置层发现](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/config/src/loader/mod.rs#L103-L121)、[MCP 子命令与参数](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L46-L98)、[list 的枚举边界](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L627-L700)及[用户级写入](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L349-L441)；1810 实测 Codex CLI `0.149.1`。
 
+#### <a id="codex-github-auth-helper"></a>GitHub HTTP MCP 的凭据 helper
+
+Codex 官方提供 `http_headers_helper` 配置，可在连接 HTTP MCP 时调用本地命令生成认证请求头。已有 `gh` 登录时，helper 可以调用 `gh auth token` 复用凭据；下文给出这套接法的配置与实测结果。
+
+出现 `Environment variable GITHUB_PAT_TOKEN for MCP server 'github' is not set`，首先检查有效配置中的 `bearer_token_env_var`：这个字段要求 **Codex 进程自身**能读到指定变量。改用 helper 时应替换该字段；`[mcp_servers.github.env]` 供本地 STDIO 子进程使用，不能给 HTTP 客户端补齐环境变量。
+
+> 版本依据：Codex CLI `0.153.4` 实测能识别该字段；配置定义见 [MCP 配置 schema](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/config.schema.json#L3184-L3186)。适用范围的滚动阅读入口：[OpenAI MCP 文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)（2026-09-09 核）：helper 用于从本地环境连接的 HTTP MCP，不适用于 STDIO 或经远端执行环境发起的连接。
+
+先用 `gh auth status --hostname github.com` 确认账号、权限和凭据来源。`gh auth token --hostname github.com` 默认选择该 host 的活动账号；需固定身份时可加 `--user <account>`。还要检查是否存在 `GH_TOKEN` / `GITHUB_TOKEN` 等环境凭据，避免把继承的 token 误当成保存的登录。
+
+`gh auth login` 默认优先使用系统凭据库，不可用时会退回明文文件。状态若指向 `~/.config/gh/hosts.yml`，接入 helper 后仍沿用该存储；迁移到系统凭据库需要单独配置 `gh`。
+
+> 来源：[gh 2.100.0 的登录与存储说明](https://github.com/cli/cli/blob/v2.100.0/pkg/cmd/auth/login/login.go#L62-L74)、[token 命令的账号选择](https://github.com/cli/cli/blob/v2.100.0/pkg/cmd/auth/token/token.go#L27-L46)。
+
+在本机创建可执行的 helper 后，将有效配置中的 GitHub HTTP 条目改为下面的形式；路径替换成实际绝对路径：
+
+```toml
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+http_headers_helper = "/absolute/path/github-mcp-headers"
+```
+
+helper 的 stdout 只返回请求头 JSON，诊断写 stderr；取凭据失败时以非零状态退出。下面的 Bash 核心实现通过管道传递 token，避免写入配置、导出到环境或放进 `jq --arg` 等进程参数。先确认 Bash、`gh`、`jq` 的可执行路径；桌面端的 PATH 与交互 shell 不同时，在脚本中使用确认过的绝对路径。
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+gh auth token --hostname github.com |
+  jq -Rse '
+    sub("[\\r\\n]+$"; "")
+    | if length == 0 or test("[\\r\\n]") then
+        error("gh did not return a valid single-line token")
+      else
+        {Authorization: ("Bearer " + .)}
+      end
+  '
+```
+
+不要将 helper 输出直接打印到终端、对话或日志。只验证 JSON 结构时，把输出继续管道给 `jq -e`，仅输出布尔结果；完整验证按以下顺序进行：
+
+1. 用 `bash -n <helper>` 检查语法，并确认脚本可执行、依赖可被目标 Codex 进程找到。
+2. 用 `codex mcp get github` 检查合并后的配置，确认凭据来源已改为 `http_headers_helper`；网络连接在下一步单独验证。
+3. 用 helper 生成的头执行只读 MCP 握手：`initialize` → `notifications/initialized` → `tools/list`。请求设置超时，按服务端响应携带会话 ID 与协商的协议版本；只记录状态、server 名称和工具数量。最后重启 Codex，再用 `/mcp` 检查宿主中的实际加载结果。
+
+> 2026-09-10 实测：Linux、Codex CLI `0.153.4`、gh `2.100.0`；相关 token 环境变量未设置，复用 `gh` 文件凭据。配置解析通过，独立 HTTP 检查协商协议 `2025-06-18`，server 为 `github-mcp-server`，`tools/list` 返回 47 个工具、无后续分页。本次验证覆盖配置解析、helper 取凭据与服务端握手；宿主重新加载需在重启 Codex 后用 `/mcp` 验证。工具数量随账号权限与服务端配置变化。
+
+若在受限沙箱中看到 `gh auth status` 报 token invalid，先保留已有登录，在获准联网的执行环境复核，区分网络访问失败与服务端认证拒绝后，再判断是否需要重新登录。上述实测中，沙箱内两个已存账号都报 invalid，正常网络权限下两者均通过，后续 MCP 握手也成功。
+
+Codex 会缓存 helper 返回的头；同源 POST 收到 `401` / `403` 后最多刷新一次，且只有头发生变化才重试。已有显式 Authorization、Bearer 或 OAuth 凭据优先于 helper 的 Authorization，排查时应按此优先级确定最终采用的认证来源。
+
+> 来源：[Codex 0.153.4 的 helper 缓存刷新与认证头优先级](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/rmcp-client/src/http_headers.rs#L218-L285)。
+
+OAuth（浏览器授权）是另一条认证路径。GitHub 的远程接入说明支持 OAuth 获取的访问令牌，也接受 PAT；其 OAuth 接入需要预先注册应用。使用 `codex mcp login github` 前，应核对客户端与 GitHub 应用的认证配置。`mcp_oauth_credentials_store = "keyring"` 用于将 Codex 的 MCP OAuth 凭据存入系统凭据库，`gh` 的凭据存储由 `gh` 独立管理。
+
+> 来源：[GitHub 远程 MCP 的令牌要求](https://github.com/github/github-mcp-server/blob/a00dc319edcb5f8a10f118b1dad649c94928aac4/docs/host-integration.md#L71-L84)、[客户端注册与应用配置](https://github.com/github/github-mcp-server/blob/a00dc319edcb5f8a10f118b1dad649c94928aac4/docs/host-integration.md#L126-L138)、[Codex 0.153.4 的 MCP OAuth 存储配置](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/config.schema.json#L6506-L6514)。
+
 ### Gemini CLI
 
 Gemini CLI 把 server 定义放在各层 `settings.json` 的 `mcpServers`。持久配置从低到高是系统 defaults、用户 `~/.gemini/settings.json`、项目根 `.gemini/settings.json`、系统 override；Linux 的两个系统文件分别是 `/etc/gemini-cli/system-defaults.json` 和 `/etc/gemini-cli/settings.json`，Windows / macOS 使用官方文档列出的平台目录。同名 server 由更高层定义覆盖。Extension 也能提供 MCP，本地 settings 可覆盖其标量和环境字段，工具 allow / deny 列表按“更严格者生效”的规则合并。
