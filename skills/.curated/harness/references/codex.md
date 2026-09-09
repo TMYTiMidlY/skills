@@ -1,6 +1,6 @@
 # Codex 运行时笔记
 
-本篇介绍 Codex 的上下文配置、协作模式、内置生图工具和订阅登录凭据。图片接口的接入方式、公共 API 对照、组件评估及 CLIProxyAPI 操作用法见 [Codex 订阅生图接入](image-gen.md)。
+本篇介绍 Codex 的上下文配置、协作模式、内置生图工具和订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
 
 ## 上下文窗口与自动压缩
 
@@ -187,7 +187,7 @@ Codex 的思考程度控制主模型的推理过程。分析它对生图的影�
 
 > 所核实现先执行 `request_for_call_args(...).await`，随后才发出图片开始事件并请求后端。因此从该开始事件计时，不包含此前的参考图准备，见 [事件发出位置](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/ext/image-generation/src/tool.rs#L141-L171)。
 
-记录耗时时应同时说明入口、计时点、图片请求次数和实际发送参数。网络中断、上游排队以及结果丢失的处理见 [图片请求的执行过程](image-gen.md#lifecycle)；本地停止计时不能证明上游任务已经停止。
+记录耗时时应同时说明入口、计时点、图片请求次数和实际发送参数。网络中断、上游排队以及结果丢失的处理见 [图片请求的运行管理](image-gen.md#lifecycle)；本地停止计时不能证明上游任务已经停止。
 
 ### <a id="image-api-fallback"></a>API-key fallback 入口
 
