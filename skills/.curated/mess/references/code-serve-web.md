@@ -165,13 +165,70 @@ rmdir ~/.vscode/cli/serve-web/$C.staging 2>/dev/null
 
 - 完整性双校验：tar.gz 的 sha256 对照官方 API；植入后 `node` 二进制应为 123,656,816 字节。
 - 本案用该法批量修了 3 个用户实例（root 代做播种后 `chown` 回各用户，端口下一个请求立即 200）；另一家在播种时恰好撞上健康边缘自愈——**等自愈不可预期，续传植入才是可控手段**。
-- 备选：`code serve-web --commit-id <hash>`（1.12x CLI 支持）pin 到已缓存 commit，配 systemd drop-in；需要 root。
+- 此次播种的完整 commit 为 `a44adf7f53e00964ab890f9f8758a334f1fc15bc`（1.136.1），**只恢复当次缓存，没有根治跟踪 latest 时的自动更新下载问题**。控制版本选择的方式见[固定 CLI 启动版本](#web-pin-launch)与[固定旧版本访问入口](#web-pin-entry)。
 - 多用户实例巡检：各实例端口逐个 `curl` 探测，返回 202 即中招。
+
+### <a id="web-latest-recurrence"></a>复发记录（2026-09-09）
+
+六用户的新入口全部返回 202；CLI 仍为 1.129.1，却已经追踪 latest 1.137.0 / commit `645f29cc3176500b4b5762ba887cf2a7f0ffdf2c`。六人的旧 `a44adf7f53e00964ab890f9f8758a334f1fc15bc` 缓存都在，部分实例当天还已下载 1.136.2，因此不能归因为上次播种遗漏；CLI 版本与其选择的 Web Server 版本也不能混为一谈。
+
+> 2026-09-09 现场巡检：同一多用户服务器的六个实例，核对各用户缓存、CLI 版本、HTTP 响应与服务 PID；下述测速和固定入口验证来自同次排查。
+
+本次 curl 测的是 exact web 构件，总长 **233,510,790 字节**：开始约 10 MiB/s，随后降到个位至几十 KiB/s，150 秒只收到约 78 MB，最终由测试设置的 `max-time` 终止。这个结果证明该次下载显著变慢，**不能据此认定新版也是 CDN 坏对象**；新版下载变慢的根因未定，上文的坏对象结论仅对应 2026-09-03 旧案例。
+
+源码中的 latest checker 每小时查询一次；设置 `commit_id` 会禁用这个检查器。只有**版本查询失败**才回退旧记录，**构件下载失败不会回退**到已缓存旧版本；下载端使用 create 新文件，没有断点续传。因此旧缓存仍在与新入口一直 202 可以同时成立。
+
+> 源码依据：[serve_web.rs 的版本检查、固定 commit 与回退分支](https://github.com/microsoft/vscode/blob/8a7abeba6e03ea3af87bfbce9a1b7e48fed567b8/cli/src/commands/serve_web.rs)、[http.rs 的下载文件创建逻辑](https://github.com/microsoft/vscode/blob/8a7abeba6e03ea3af87bfbce9a1b7e48fed567b8/cli/src/util/http.rs)。依据限定于所链接源码版本。
+
+### <a id="web-pin-launch"></a>可选方案：固定 CLI 启动版本
+
+改启动配置，不动现有进程：在现有 `code serve-web` 命令中加入 `--commit-id <已缓存完整commit>`，保留其他参数，等待下次正常启动或经确认的重启生效。选定 commit 前，要逐用户确认对应缓存完整可用；本次可用的共同旧版本是 `a44adf7f53e00964ab890f9f8758a334f1fc15bc`。系统级 systemd 单元可由有权限者通过 drop-in 更新 `ExecStart`。
+
+`systemctl daemon-reload` 只让 systemd 重读单元配置，**不会改变现存 CLI 的启动参数**；该 CLI 没有热修改 `--commit-id` 的接口。这里的下次启动指 CLI / 服务单元重新启动，内部 Server 空闲退出再启动不算。这一方案生效后不再跟踪 latest，但在现有 CLI 退出前不解决当前入口等待新版的问题，后续升级需另行选择和验证 commit。
+
+**不要为了使参数立即生效而未经确认重启。** 本次机器的 systemd 配置为 `KillMode=control-group`，直接 restart 会终止单元控制组内的进程，包括其中的终端、Codex、Claude 等任务，不只是浏览器断线。`nohup` 或被收养为 PPID 1 都不能使进程脱离控制组；也不能把改成 `KillMode=process` 当成任务安全保证。
+
+> 其他机器应核对实际单元、控制组归属和任务状态，不能照搬本机配置结论。
+
+### <a id="web-pin-entry"></a>可选方案：固定旧版本访问入口
+
+保留现有 CLI 进程，将访问入口指向已缓存的旧版本，例如 `/stable-a44adf7f53e00964ab890f9f8758a334f1fc15bc/`，让新打开的页面不必等待新版下载。**CLI 后台仍会检查新版本，已经进行的下载也不保证取消**。这与[固定 CLI 启动版本](#web-pin-launch)相互独立，可以单独使用，也可以先恢复入口，再等待启动配置生效。
+
+若需让域名首页自动使用旧版本，把规则放在**各 code 域名自己的配置文件**中，不另建跨域名的全局规则。在该域名的 `route` 内，按 `authorize → rewrite → reverse_proxy` 排列；已有 `handle` 包裹域名规则时，将 `route` 放在其中。这样既能固定认证与改写的执行顺序，也能保留原域名的匹配范围。只增加首页匹配器与内部 rewrite（服务端改写请求路径），不改变原认证策略、上游及其他参数。
+
+下面仅示意插入位置，`example.com`、认证策略名与上游均为通用示例，不能用它覆盖整份现有配置：
+
+```caddyfile
+example.com {
+    route {
+        authorize with existing_policy
+
+        @cached_home {
+            path /
+            method GET HEAD
+            not {
+                header_regexp Upgrade (?i)websocket
+            }
+        }
+        rewrite @cached_home /stable-a44adf7f53e00964ab890f9f8758a334f1fc15bc/
+
+        reverse_proxy 127.0.0.1:8080
+    }
+}
+```
+
+匹配严格限定首页 `/` 的普通 GET/HEAD，排除 `Upgrade: websocket`；已经带版本前缀的资源和 WebSocket 请求都不改。rewrite 目标**不要加问号**，只替换路径，保留原来的 `?folder=...` 等 query。认证仍先于 rewrite 执行；未认证首页请求不会先经过这条改写，检查固定路径的认证回跳时应直接请求固定入口。
+
+修改后先校验完整 Caddy 配置（使用现场实际的 Caddy 二进制及认证插件），确认匹配范围、认证顺序和上游未变，再由**明确获授权的人** reload。用户要求自行 reload 时，只交付已校验的文件；后续获得明确授权后才能代为执行。Caddy reload 不重启 VS Code，也不终止其任务，但可能让 WebSocket 重连，不能承诺零断线。
+
+> reload 超时不一定代表新规则未生效。2026-09-09 至 10 日，Caddy 2.11.4 两次在清理旧 WebSocket 时卡于 `writeCloseControl → netFD.Write`，同时持有配置锁；业务新路由已生效，管理接口却等锁超时。现场按 TCP 四元组断开已确认长期发送阻塞的连接后，管理接口恢复、配置加载完成，Caddy 与 VS Code 主进程均未重启。这类处置也须先获准短暂重连，不能批量杀进程代替定位；诊断流程由 `network` skill 覆盖。对应源码：[同步发送关闭帧及清理连接](https://github.com/caddyserver/caddy/blob/v2.11.4/modules/caddyhttp/reverseproxy/streaming.go#L400-L444)。
+
+本轮现场验证：六个用户固定路径的 HTML 和 CSS 均为 200；固定入口认证返回的 302 中，`redirect_url` 包含固定路径并保留 `folder`；服务 PID 均未变化。后续复用时仍需逐实例验证这些项目，并确认已有版本资源和 WS 路径不被改写，不能仅凭首页 200 推定全部正常。
 
 ### 教训
 
 - **先搞清"卡在下载"的到底在下载哪个对象**。update 服务对不同 product（`server-linux-x64` vs `server-linux-x64-web` vs `cli`）给的是不同 URL；curl 测错构件会得出"CDN 正常"的假阴性。CLI trace 里 `Downloading server: X/TOTAL` 的 TOTAL 就是 Content-Length 指纹，拿它去 HEAD 各候选构件对尺寸，一步锁定真实对象。
 - **"curl 正常" ≠ 链路正常**：URL、边缘 IP（DNSPod 调度每次可能不同）、请求头要逐字节等同才有对照意义。
-- 本故障的日志指纹：service `running` + journal 只有反复的 `Downloading server <commit>`、无任何 error + 页面 202。见到即按此案处理。
+- 本故障的日志指纹：service `running` + journal 只有反复的 `Downloading server <commit>`、无任何 error + 页面 202。见到先核对目标 commit、exact web 构件与旧缓存，再按本案区分下载故障和入口选择；仅凭指纹不能认定 CDN 坏对象。
 - 顺带小坑：`pkill -f` 的模式若出现在自己命令行里会**把自己杀掉**；杀特定端口进程先 `ss -tlnp` 拿 PID 或运行时拼 pattern。
 
