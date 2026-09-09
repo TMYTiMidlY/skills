@@ -679,23 +679,27 @@ Skill 支持 `<name>/SKILL.md` 目录 bundle 和 `<name>.md` 平铺文件；发�
 
 ### <a id="mcp"></a>MCP
 
-内置 MCP client 是运行在 DSH Host 进程中的 Plugin，支持 `stdio` 和 `streamable-http`；每个配置实例负责连接一个 MCP server，并把它的工具注册进 `ctx.tools`。公开名称中的 server namespace 区分不同 server 的同名工具。
+DSH 通过内置 MCP client Plugin 接入外部工具。插件运行在 DSH Host 进程中，每个配置实例连接一个 MCP server，并将它的工具注册到 `ctx.tools`；工具公开名称中的 server namespace（服务器命名空间）用于区分不同 server 提供的同名工具。
 
-client 插件和 server 程序要分开看：使用 `stdio` 时，DSH 根据配置的 `command` 和 `args` 另行启动 MCP server 程序。DSH 是父进程，MCP server 是它启动的独立子进程，两者有各自的进程 ID 和环境变量，通过标准输入、标准输出管道通信；MCP server 并不是 DSH 进程内部的另一个 Agent。使用 `streamable-http` 时，DSH 只连接 `url` 指向的服务，不为它启动本地子进程。
+MCP client 支持 `stdio` 和 `streamable-http` 两种连接方式。`stdio` 模式下，DSH 按 `command` 和 `args` 启动独立的 MCP server 子进程：DSH 是父进程，server 是子进程，各自拥有进程 ID 和环境变量，通过标准输入、标准输出管道通信。`streamable-http` 模式下，client 通过网络连接 `url` 指向的现有服务，本地只运行 DSH 中的 client 插件。
 
-多个 Session 是否共用 MCP server，取决于 client 实例挂载在哪里，不由会话数量决定。同一 DSH Host 中，顶层 Profile/Home patch 插入的 MCP client 属于 Host 层：所有能看到该工具的会话共用这一个连接，stdio 对应共用该实例启动的 server 子进程，新建会话不会另外启动一份。
+> 来源：[MCP client 的工具注册职责](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L1-L14)；[stdio 子进程与 HTTP 连接的创建](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/transport.ts#L25-L49)。
 
-| MCP client 的挂载位置 | 同一 Host 内的共享范围 |
+本节将 MCP client 写在 web profile 的 `$DSH_HOME/profiles/web/cordis.patch.yml` 中，通过顶层 `insert` 列表为每台 server 添加一个实例，由 DSH 统一加载和管理。同一 DSH 进程中可使用相应工具的多个会话共享这些连接；使用 `stdio` 时，也共享对应的 MCP server 子进程。不同配置与加载方式的共享范围如下：
+
+| MCP client 的配置与加载方式 | 实例与连接的共享范围 |
 |---|---|
-| Host 顶层配置 | 可使用该工具的多个 Session/Agent 共用实例与连接 |
-| Agent preset 的共享挂载 | 当前版本按 preset 的配置版本挂载一次；加入同一版本的多个 Agent 共用实例，并非每个 Agent 一份 |
-| 自定义代码在每个 `agent.ctx` 单独挂载 | 各自挂载的实例分别建立连接；stdio 分别启动子进程 |
+| 写入 Profile/Home patch，由 DSH 统一加载（本节采用） | 同一 DSH 进程中可使用该工具的会话共用实例、连接及对应的 stdio 子进程 |
+| 写入 Agent preset | 同一 preset 配置版本只加载一次，使用该版本的多个 Agent 共用实例与连接 |
+| 通过自定义代码在每个 `agent.ctx` 单独加载 | 每个 Agent 各有实例与连接；stdio 各自启动 server 子进程 |
 
-结束一个会话不会卸载 Host 层的 MCP client；连接生命周期由其插件实例管理，停用、配置重载、Host 关闭或断线重连才涉及连接销毁或重建。另一独立 DSH Host 进程即使使用同一个 Profile，也会建立自己的 client 连接、启动自己的 stdio 子进程，不共用前一个 Host 的子进程。HTTP 连接可以指向同一个远端服务，其服务端状态如何共享由远端实现决定。
+> 来源：[MCP 实例的注册作用域](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L137-L190)；[多个 Agent 共用 preset 插件实例](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/preset/agent-presets/src/index.ts#L1-L22)。
 
-共用 MCP 连接不等于合并 DSH 会话历史，但同一 server 的内存状态、认证身份和外部资源可能被多个会话共同使用；DSH 不会仅凭 Session 不同就自动把它们隔离。
+按本节方式配置的 MCP client，其连接由 DSH 中的插件实例管理：新会话接入已有连接，会话结束后连接继续供其他会话使用；插件停用、配置重载、Host 关闭或断线重连时，连接相应销毁或重建。每个独立 DSH Host 进程都持有自己的 client 连接和 stdio 子进程，包括使用同一 Profile 启动的多个 Host。多个 HTTP client 可以连接同一远端服务，服务端状态的共享方式由该服务实现决定。
 
-> 来源：[MCP 实例的作用域与连接生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L137-L190)；[Agent preset 按共享作用域挂载、供多个 Agent 加入](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/preset/agent-presets/src/index.ts#L1-L22)；[每个 stdio transport 按配置启动子进程](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/transport.ts#L25-L49)。
+DSH 按 Session 分别保留会话历史。共用 MCP 的会话可能共同使用 server 的内存状态、认证身份和外部资源；这些状态与资源的会话级隔离需要 server 或部署方案显式提供。
+
+> 来源：[MCP 连接的插件级生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L137-L190)。
 
 配置由 `transport` 字段的值决定取哪个分支，两个分支构成判别联合（discriminated union，由一个共用字段决定取哪个分支的联合类型），字段不共用：
 
