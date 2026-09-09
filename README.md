@@ -12,7 +12,7 @@
 | `harness` | Coding agent 编排框架（harness）知识库：介绍 agent loop、工具注入、配置发现、权限、会话与进程/SDK 接口，以及 model / tool / skill 在 runtime 中的位置；含 Agent Skills 官方规范、跨 harness 加载差异与 Kimi Code `has-sub-skill` 私有扩展 |
 | `tool` | Agent tool 的能力边界与执行契约：schema、权限与副作用、错误/重试/取消、CLI / API / MCP adapter；含 Lark CLI 实例 |
 | `git` | Git/jj 提交与历史、隔离工作区、受限网络获取、发版 CI 与 forge/静态站 |
-| `software` | 本地软件、CLI 与自托管服务：终端和包管理工具、数据库、对象存储、Docker/PaaS、Overleaf、文档处理与桌面系统排障 |
+| `software` | 本地软件、CLI 与自托管服务：终端和包管理工具、数据库、对象存储、Docker/PaaS、Overleaf、文档处理与 Windows/WSL/macOS/HarmonyOS 环境排障 |
 | `io` | 沿内存、文件系统、挂载、介质和网络块存储定位 I/O 与换页瓶颈 |
 | `network` | OpenWrt 设备、外部 Wi-Fi 接入本地网络、客户端代理、泄漏防护、远程接入及 WSL/远端网络管道 |
 | `vps-maintenance` | VPS 初始化、安全加固、网络质量检查、反向代理与基础服务部署 |
