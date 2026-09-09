@@ -1,6 +1,149 @@
 # Codex 运行时笔记
 
-本篇介绍 Codex 的上下文配置、协作模式、内置生图工具和订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
+本篇介绍 Codex 的 app-server 启动与生命周期、升级排障、上下文配置、协作模式、内置生图工具和订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
+
+## <a id="app-server-lifecycle"></a>app-server 与客户端启动
+
+app-server 承载会话和模型请求；TUI 是终端交互界面；daemon 管理器负责特定后台进程的启动和停止。这些对象要分别识别：**某个 app-server 可以被 TUI 发现和连接，却不受 daemon 管理器控制**。仅确认 `codex --version` 是新版，不能判断实际处理会话的后台版本。
+
+> 本节以事故时的稳定版 [`0.153.4`](https://github.com/openai/codex/tree/rust-v0.153.4)（提交 `3d2ee51ca2d5db578f328aa75e20aa22c0197c9a`）解释现场，并对照本次抓取的主线 `87cf20ee491a035036f2d905926df4a0d35951cc`。主线代码不代表这些行为都已发布到稳定版；历史结论来自 2026-09-09 Linux 会话及对应 systemd journal 的回读，不是本轮重新关停生产服务的实测。
+
+### <a id="app-server-routing"></a>客户端连接的选择
+
+“有没有开启 app-server”不足以描述启动方式。TUI 可以运行进程内 app-server，也可以连接既有服务；共享模式使多个新终端继续使用同一个后台的版本和启动环境。
+
+| 入口 | 所核版本中的选择 | 排障时的含义 |
+|---|---|---|
+| 普通 TUI，满足自动复用条件，默认控制 socket 可连接 | 连接本地既有 app-server | 新终端可能继续连旧后台；发现过程不要求有效 daemon PID 记录 |
+| TUI 未指定远端，也没有可复用的默认 socket，或启动覆盖项不满足复用条件 | 启动进程内 app-server | 使用当前启动的程序，与共享路径要分开验收 |
+| 显式 `--remote` | 使用指定的 app-server 端点 | 应检查该端点，而不是另一个默认本地 daemon |
+| `codex exec` | 此处核对的稳定版和主线均启动 `InProcessAppServerClient` | 一次 exec 成功不能证明普通 TUI 所连接的后台已修好 |
+
+> 源码：[0.153.4 的 socket 探测及客户端创建](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/tui/src/lib.rs#L447-L509)、[连接选择与复用条件](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/tui/src/lib.rs#L860-L930)、[稳定版 exec 入口](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/exec/src/lib.rs#L811-L816)、[主线 exec 入口](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/exec/src/lib.rs#L973-L979)。不能将这些入口的实现扩展成所有 SDK、IDE 和自定义客户端的统一规则。
+
+0.153.4 常规路径的自动复用检查包括 `-c` 覆盖、配置加载覆盖、strict config 和不可重放的启动项；`-m` 本身并不等于强制启动新后台，`--agents` 的选择路径也有例外。因此比较测试应保持入口和参数一致，不要一边用普通 TUI、一边用额外 `-c` 或 exec，却把差异全归因于模型权限。
+
+> [0.153.4 的启动编排](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/tui/src/startup_orchestration.rs#L138-L190)。主线另加入 `CODEX_EXEC_SERVER_URL` 阻止隐式复用的条件，并在隐式 daemon 初始化连接失败时回退到进程内服务；显式远端失败仍报错，见 [主线目标选择](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/tui/src/lib.rs#L926-L953)和 [连接失败分支](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/tui/src/lib.rs#L495-L538)。这里没有把“后台较旧但能初始化”自动视为连接失败。
+
+模型菜单沿实际连接取得数据：TUI 向所选 app-server 请求 `model/list`，不是单纯显示新装 CLI 附带的目录。模型管理器请求远端目录时使用自身编译版本，并按版本校验文件缓存。换二进制、清缓存、改默认模型是不同层面的动作，均不能自动替换已经运行的旧进程；目录仍受认证、可见性和刷新结果影响，也不能认为菜单缺一项必定是旧进程。
+
+> 源码：[TUI 取得模型目录](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/tui/src/app_server_session.rs#L574-L629)、[稳定版目录请求的版本参数](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/src/manager.rs#L412-L434)、[缓存版本检查](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/src/manager.rs#L478-L510)、[编译版本来源](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/models-manager/src/lib.rs#L18-L26)。
+
+### <a id="app-server-ownership"></a>版本与进程归属
+
+先在获准访问目标宿主的执行环境中，确认命令路径和同一个 `CODEX_HOME` 的状态：
+
+```bash
+command -v codex
+codex --version
+codex app-server daemon version
+```
+
+| 输出字段 | 实际含义 | 不足以证明的事情 |
+|---|---|---|
+| `cliVersion` | 正在执行管理命令的 CLI 版本 | 长期运行的后台已升级 |
+| `managedCodexPath` / `managedCodexVersion` | 管理器解析的安装路径及文件版本 | 既有进程正在执行该文件的新内容 |
+| `appServerVersion` | 从控制 socket 的 initialize 握手取得的后台版本 | 管理器拥有该进程，或其他 WS 服务版本相同 |
+| `backend: "pid"` | 管理器检测到对应 PID backend 状态 | 它是 systemd 服务、具备开机自启，或独立 WS 服务也受它管理 |
+| `status: "running"` 但没有 `backend` | socket 可响应，但管理器未识别到有效 PID backend | daemon restart 能接管并替换现有服务 |
+
+> 源码：[可选字段省略规则](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-daemon/src/lib.rs#L55-L73)、[version 的两路检测](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-daemon/src/lib.rs#L438-L448)、[握手版本的来源](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-daemon/src/client.rs#L34-L60)。`pid` 字段在 version / alreadyRunning 中也可能省略，不能把“无 pid”与“无 backend”混同。PID 记录和 socket 响应独立检测，现场仍需把记录与实际监听者、UID、启动时间和可执行文件对应起来。
+
+在 0.153.4 中，start 发现 socket 已能握手，就可以返回 `alreadyRunning`，即使没有 PID backend；restart 和 stop 则显式拒绝这个未受管的服务：
+
+```text
+app server is running but is not managed by codex app-server daemon
+```
+
+所以“能连上”“start 成功返回”和“能由 daemon 停止”是不同条件。反复调用 start 不会自动接管旧监听者；不能伪造 PID 文件或删除正在使用的 socket 来掩盖归属问题。探测失败也不能证明没有监听者，应继续区分权限、握手失败与服务无响应。
+
+> 源码：[稳定版 start / restart](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-daemon/src/lib.rs#L297-L359)、[stop](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-daemon/src/lib.rs#L408-L448)。主线仍保留拒绝条件，见 [restart](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/app-server-daemon/src/lib.rs#L372-L390)及 [stop](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/app-server-daemon/src/lib.rs#L489-L518)。
+
+> 🔬 本次隔离验证：本机 `codex-cli 0.153.4`、临时 `CODEX_HOME`、仅实现 initialize 的模拟 Unix WebSocket 服务。模拟服务报告 0.149.0，未登记 PID backend；version / start 返回 0 且省略 backend，restart / stop 返回 1 和上述拒绝信息，最后 version 仍可连接。该测试验证管理边界，没有运行真实 0.149.0 后台、发起模型请求或操作既有服务。
+
+### <a id="app-server-upgrades"></a>后台升级与关停
+
+安装升级更新磁盘文件，实际会话使用的进程需要另行换版。对于确认受管、且允许中断其活动工作的实例，可以执行并逐步核验：
+
+```bash
+codex app-server daemon restart
+codex app-server daemon version
+```
+
+检查两条命令各自的退出状态、stderr 和 JSON；重启报错时先解释错误，不能把后面一次探测成功当作重启成功。未受管的监听者应先找到原启动入口或管理者。需要按 PID 停止时，先确认授权范围、宿主 PID、UID、启动时间和可执行文件；不要用宽泛的全用户匹配替代实例识别。
+
+关停信号还要区分管理器与 app-server 自身的处理：
+
+| 核对对象 | 0.153.4 | 主线 `87cf20ee` |
+|---|---|---|
+| PID backend 的停止 | 向登记的 app-server PID 发 SIGTERM；60 秒后仍活动则 SIGKILL，停止等待总期限 70 秒 | 默认宽限仍为 60 秒，可配置 0–300 秒，之后有 10 秒强制退出检查窗口 |
+| app-server 收到第一次终止信号 | 等运行中的 assistant turn 排空；此阶段仍接收请求 | 开始 drain，同时关闭新的 turn 准入，等待运行 turn 和已准入请求排空 |
+| app-server 收到第二次可强制的终止信号 | 若还在该信号处理循环中，标记强制退出，跳过正常线程清理 | 保留该强制退出路径；它不同于管理器到期发送 SIGKILL |
+
+> 源码：[稳定版停止时限和循环](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-daemon/src/backend/pid.rs#L22-L25)、[TERM / 强制停止分支](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-daemon/src/backend/pid.rs#L240-L283)、[SIGTERM / SIGKILL 实现](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-daemon/src/backend/pid.rs#L517-L544)、[稳定版信号状态机](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server/src/lib.rs#L205-L283)、[主线宽限设置](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/app-server-daemon/src/settings.rs#L14-L15)、[主线停止循环](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/app-server-daemon/src/backend/pid.rs#L145-L225)、[主线 drain 准入](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/app-server/src/lib.rs#L246-L299)。稳定版 README 的“第二次 termination signal”不能覆盖代码实际使用 SIGKILL 的事实。
+
+正常会话 shutdown 会尝试结束执行任务、code-mode 服务和 MCP 连接；管理器强杀 app-server PID 不等于递归、可靠地清理所有后代进程。强杀不会运行该进程的异步清理逻辑，应另行核对相关子进程和业务连接。长期存在的 code-mode-host 本身也不足以证明 agents 功能发生了进程泄漏。
+
+> [稳定版会话清理](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/core/src/session/handlers.rs#L402-L432)、[强制退出与正常线程清理的区别](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server/src/lib.rs#L1178-L1189)。主线还改进了对 zombie 的识别，见 [PID 活动状态检查](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/app-server-daemon/src/backend/pid.rs#L537-L559)；没有现场证据时，不能把该修正倒推为本次事故的原因。
+
+自动更新也随版本和安装渠道变化：0.153.4 单独 start 不启动更新循环，bootstrap 才启动；主线 start / restart / bootstrap 会在自动更新开启、安装器记录 stable latest 渠道且二进制支持时维护更新循环，并另有 `daemon update`。两者都不能概括为“始终监视任意可执行文件变化”，`backend: "pid"` 本身不等于已启用自动更新。
+
+> [稳定版更新行为](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-daemon/README.md#L47-L82)、[主线更新入口](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/app-server-daemon/README.md#L48-L74)及 [渠道与外部更新边界](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/app-server-daemon/README.md#L113-L144)。
+
+独立 WebSocket app-server，例如聊天桥使用的专用服务，不会随默认 Unix socket 后台重启而自动换版。应分别核对版本、健康检查、桥接重连和后续业务；停止后台与删除配置、历史会话没有必然关系，不应把删数据当作升级步骤。
+
+> 🔬 2026-09-09 现场同时存在普通 TUI 的共享服务和 Cyberboss 的独立 WS 服务。最终记录验证两个后台均为 0.153.4、桥重新建立连接并排入 check-in。这是当时的恢复证据，不是本轮对其现状的保证，也不能仅由 TCP 连接推导全部业务正常。
+
+### <a id="app-server-maintenance-executor"></a>维护命令的执行环境
+
+会话停止承载自己的后台，确实存在执行器随目标退出、后续恢复和核验失去执行渠道的风险。维护执行器需要同时满足：有目标宿主权限、能识别目标进程、生命周期独立于目标、命令完整传递、会话断开后仍可核对结果。这可以是授权的 SSH 执行器或经验证的服务管理任务，并不要求一定由人手敲命令。
+
+先区分宿主与工具沙箱的视图。若进程列表只显示 PID 1 的 `codex-linux-sandbox`，或控制 socket 返回 EPERM，不能据此断言宿主没有 Codex 进程。需要通过获准的宿主执行途径核对，不得自行绕过权限拒绝。`nohup` 也不能单独证明进程已脱离原任务的进程组、沙箱或清理范围。
+
+> [稳定版 Linux bubblewrap 参数](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/linux-sandbox/src/bwrap.rs#L327-L343)包含 `--die-with-parent`、PID namespace 隔离及条件性的 `/proc` 挂载。历史会话确有受限探测和随后获准的宿主探测，但后述 systemd 任务失败已有脚本传递证据，不能再归因于沙箱看不到进程。
+
+通过 `systemd-run … /bin/bash -c '…'` 调度内联脚本时，调用 shell、systemd 和最终 Bash 分别处理命令；外层单引号不会关闭 systemd 的环境替换。systemd 会展开参数内的 `${FOO}`，未知变量变为空字符串，`$$` 变成一个字面 `$`。Bash 的 `${path##*/}`、`${!array[@]}` 等表达式可能在 Bash 运行前就被破坏。
+
+> [systemd v239 的环境变量替换规则](https://github.com/systemd/systemd/blob/v239/man/systemd.service.xml#L1008-L1067)。裸 `$FOO` 作为独立参数还会进行分词，与嵌在整个 `bash -c` 参数里的形式不同；不能只靠换一层 shell 引号猜测最终 argv。
+
+脚本包含这些表达式时，可以将经审阅的脚本保存为独立文件，让 systemd 只传路径，而不把脚本文本写进 ExecStart 参数：
+
+```bash
+systemd-run --user --on-active=30s --unit=codex-refresh \
+  /bin/bash /absolute/path/restart-codex.sh
+```
+
+该文件需事先准备、语法检查并确认操作范围；上面的调度命令本身不包含关停逻辑。较新 systemd 的关闭环境展开选项要先检查目标版本是否支持，不能无条件用于没有该选项的 239。若仍用内联形式，要核验每层转义及最终脚本语义。通用服务管理与执行环境知识归 `software` skill。
+
+### <a id="app-server-incident-verification"></a>升级事故的证据与验收
+
+2026-09-09 的问题包含后台版本、进程归属、脚本传递和结果报告几个独立错误。将原始对话的承诺与工具输出、历史 journal 对齐后，可作如下判断：
+
+| 现场证据 | 可得结论 | 不能据此声称 |
+|---|---|---|
+| CLI / managed binary 为 0.153.4，socket 后台为 0.149.0，version JSON 没有 backend | 新客户端连接旧服务，管理器未识别 PID backend | 仅重开终端会换版，或该实例一定能由 daemon restart 停止 |
+| 第一次 nohup 延迟 restart 将所有 stdout / stderr 丢到 `/dev/null`，只见发起 shell 返回 0 | 提交过尝试，结果没有保留 | restart 已成功，或已取证到确定的失败原因 |
+| 后续定时 refresh 的 journal 返回 alreadyRunning，随后 version 仍为 0.149.0 | 定时任务执行了，但未完成换版 | 定时器没有触发，或任务执行等于升级成功 |
+| 全量终止任务的 TERM 目标、KILL 残留列表均为空，却打印“全部终止” | 脚本走过流程，但没有选中目标 | 已杀掉全部 Codex |
+| journal 的 `_CMDLINE` 中 `process_pid="${proc_path#/proc/}"`、`process_name="${process_exe##*/}"` 均变成赋空值，数组表达式也消失 | systemd 在 Bash 之前展开了脚本，空进程名使匹配失败 | 此次失败只能由“杀自己”或 PID namespace 解释 |
+| 用户外部操作后确认版本一致，后续检查出现 backend: pid | 最终切换为新版，管理器识别到 PID backend | 同样权限、正确传参的独立 agent 执行器不可能完成 |
+
+> 🔬 依据为原始会话工具记录和两个定时任务的历史 journal。“全量终止”任务有被改写的实际 argv 直接证据；前一 refresh 脚本有同类表达式且未换版，但没有保留完整变换后的 shell argv。第一次 nohup 的错误输出已丢失：源码可解释未受管状态会拒绝 restart，不能把推断伪称为当时捕获的 stderr。终止脚本还潜藏双引号 awk 程序把 `$1` / `$2` 交给 Bash 展开的错误，但空目标使该分支未执行，不能将它写成本次已触发的原因。
+
+现场还曾把下面的日志误当成“重启等待子进程退出超时”的直接证据：
+
+```text
+codex_models_manager::manager:
+failed to refresh available models: timeout waiting for child process to exit
+```
+
+它的上下文是**模型目录刷新**。0.153.4 的 `/models` 请求把传输构造和 HTTP 请求包在 5 秒超时中，超时映射到通用 `CodexErr::Timeout`；该错误的显示文本恰好写着 child process。这条代码路径不需要发生子进程等待，更不是 daemon 停止日志。真正的 PID backend 停止超时文本是 `timed out waiting for pid-managed app server {pid} to stop`。
+
+> 源码：[目录刷新 5 秒期限](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/model-provider/src/models_endpoint.rs#L39-L40)、[请求与错误映射](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/model-provider/src/models_endpoint.rs#L103-L116)、[模型管理器记录位置](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/src/manager.rs#L339-L370)、[通用 Timeout 文本](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/protocol/src/error.rs#L108-L112)。这是所核源码中的传播路径；并未据此确定现场旧版那次请求的底层网络原因。
+
+维护验收应依次保留：**任务已接收 → 实际执行参数正确 → 目标已退出 → 新实例就绪 → 原客户端路径和所需业务可用**。`systemd-run` 返回 timer 名称只确认调度；计时从调度起算，不是从助手回复送达起算。脚本退出 0 仍需核对目标和版本等后置条件。瞬态 unit 已被 `--collect` 回收时，当前 `LoadState=not-found` 下默认的 `Result=success` 不能替代历史 journal。
+
+未核验后置条件时，只能报告“已安排”或“执行到某一步”。可复用的经验是识别实际后台及管理归属、正确传递独立维护任务、保留端到端证据；把整个事件缩写成“agents 造成进程泄漏”或“必须由用户手工 kill”，都会掩盖已经查明的问题。
 
 ## 上下文窗口与自动压缩
 
