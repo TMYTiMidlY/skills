@@ -2,7 +2,7 @@
 
 本篇重点说明 DSH 或脚本怎样通过 CLIProxyAPI（CPA）使用 Codex 订阅生成、编辑图片：先区分操作和输入，再说明调用路径、遮罩和图片参数，随后介绍 DSH／脚本怎样连接 CPA，并给出请求写法和并发处理说明。公共 OpenAI Images API 只作明确标注的对照，其参数规范不自动成为订阅端点的承诺。
 
-Codex 内置工具的启用条件、请求构造、思考程度和耗时统计见 [Codex 生图运行时](codex.md#image-runtime)；登录材料的读取、刷新和跨程序复用见[订阅登录凭据](codex.md#subscription-auth)。
+Codex 内置工具的启用条件、请求构造、思考程度和耗时统计见 [Codex 生图运行时](codex.md#image-runtime)；登录材料的读取、刷新和跨程序复用见[订阅登录凭据](codex.md#subscription-auth)。参考素材准备、构图、定向修订和透明拆图的方法见 docs-writer skill 的 GPT Image 生图经验。
 
 ## <a id="image-operations"></a>图片生成和编辑
 
@@ -57,6 +57,41 @@ Codex 内置工具的启用条件、请求构造、思考程度和耗时统计�
 应用通过 CLI、SDK 或 MCP 包装启动或连接 Codex，由它理解任务、组织提示词、调用内置图片工具并检查结果。一次外层调用可能包含多次生图。
 
 这种接入可以复用 Agent 的任务处理能力，也会带入其运行过程。外层总耗时不等于图片服务耗时，具体区别见 [Codex 思考程度](codex.md#image-reasoning)和[生图计时边界](codex.md#image-timing)。
+
+### <a id="routes-public-api"></a>公共 OpenAI API
+
+公共 Images API 使用 `https://api.openai.com/v1/images/generations` 生成图片，使用 `/v1/images/edits` 编辑图片；公共 Responses API 则由顶层语言模型调用 `image_generation` 工具。选择图像模型、填写输出参数和提供图片输入时，分别遵循对应接口。
+
+公共 API 使用 API 凭据和独立计费。Codex 订阅任务切换到此入口前应取得用户同意；SDK 只是请求客户端，实际身份和计费路径取决于目标地址及所用凭据。调用 CPA 的写法见 [CPA Python 客户端](#cpa-sdk)。
+
+下面以产品参考图为输入，展示公共 Images API 的单图透明编辑。显式指定官方地址，避免 `OPENAI_BASE_URL` 环境变量改变请求目标；`OPENAI_API_KEY` 由运行环境提供。
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://api.openai.com/v1",
+    api_key=os.environ["OPENAI_API_KEY"],
+    max_retries=0,
+    timeout=180.0,
+)
+with open("<PRODUCT_REFERENCE_PNG>", "rb") as source:
+    result = client.images.edit(
+        model="gpt-image-2",
+        image=source,
+        prompt="提取产品，保留外形、比例和标签文字；背景完全透明，不绘制棋盘格。",
+        size="2048x1152",
+        quality="high",
+        background="transparent",
+        output_format="png",
+        n=1,
+    )
+```
+
+此例只展示请求写法，未执行生图验收。结果按 [图片内容校验](#artifact-validation) 解码检查，再按 [文件保存](#artifact-persistence) 保留原始输出。参数被拒绝或返回尺寸、透明度不符时，应报告实际结果；180 秒是客户端等待上限。
+
+> 来源：[公共 Images API](https://developers.openai.com/api/reference/resources/images)、[GPT Image 参数说明](https://developers.openai.com/api/docs/guides/image-prompting?model=gpt-image-2.5)。示例使用 GPT Image 2；其他模型按各自支持的参数调整。
 
 ## <a id="edit-inputs"></a>图片输入的提交方式
 
@@ -217,6 +252,20 @@ OpenAI 于 2026-09-08 公布 ChatGPT Images 2.5，并宣布覆盖 ChatGPT、Chat
 | CPA 原生 JSON 分支 | 保留调用方字段，不保证订阅后端接受或遵从全部档位 |
 
 > [公共质量枚举](https://github.com/openai/openai-openapi/blob/21cb7e98d8166a691a0eb8679a90419eb816cf35/openapi.json#L26449-L26476)。官方 API-key fallback 脚本还有自身的参数和本地校验，见 [fallback 入口](codex.md#image-api-fallback)；其旧限制不等于公共模型能力上限。
+
+### <a id="public-background"></a>背景和输出格式
+
+公共 API 的 `background` 可设为 `auto`、`opaque` 或支持时的 `transparent`，分别表示自动选择、不透明背景和透明背景。`output_format` 支持 PNG、JPEG、WebP；透明输出使用 PNG 或 WebP。返回文件仍需检查实际 alpha，参数名和预览外观均不能代替验证。
+
+OpenAI 的 2026-08-20 更新日志为 GPT Image 2 增加了透明背景预览支持，覆盖 Images API 和 Responses API 生图工具；GPT Image 2.5 指引也包含透明输出。旧版客户端或脚本可能仍拒绝这一组合，具体见 [fallback 本地校验](codex.md#image-api-fallback)。
+
+> 来源：[2026-08-20 API 更新日志](https://developers.openai.com/api/docs/changelog)、[公共图像输出选项](https://developers.openai.com/api/docs/guides/image-prompting?model=gpt-image-2.5)。订阅代理是否接受或遵从这些选项，需按实际分支验证。
+
+### <a id="public-input-fidelity"></a>参考图保真参数
+
+GPT Image 2 以高保真方式处理输入图片，调用时省略早期模型使用的 `input_fidelity` 参数。输入保真、输出 `quality` 和外层推理强度分别作用于不同环节，迁移模型时不要直接复用旧参数组合。
+
+> 来源：[GPT Image 2 参数说明](https://developers.openai.com/api/docs/guides/image-prompting?model=gpt-image-2)。参数支持范围随模型变化；高保真输入也不保证所有元素或像素保持不变。
 
 ### <a id="subscription-output"></a>请求参数和实际输出的核对
 

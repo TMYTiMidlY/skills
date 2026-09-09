@@ -291,6 +291,10 @@ Codex 的主模型负责理解任务、组织提示词和选择工具，内置 `
 
 Codex 的思考程度控制主模型的推理过程。分析它对生图的影响时，要把主模型准备、选择和检查图片任务的工作，与图片请求自身的参数分开。
 
+公共 Responses API 中，GPT-5.6 支持 `standard` 和 `pro` 两种 reasoning mode（推理模式），默认 `standard`。官方将 `pro` 用于需要更多模型计算、能够接受更高延迟和 token 用量的困难任务；`reasoning.effort` 独立控制所选模式中的推理强度。这是语言模型的 API 配置，Codex 或 ChatGPT 的选项仍需按各自客户端核对。
+
+> 来源：[官方推理模式说明](https://developers.openai.com/api/docs/guides/reasoning)。图像输出档位见 [图片质量参数](image-gen.md#public-quality)。
+
 在上述实现中，图片请求结构没有 `reasoning_effort`；`model_reasoning_effort=max` 不会被自动转换为 `quality=high`，也不是发给图片模型的计算档位。
 
 | 情况 | 可以判断的影响 | 不能直接得出的结论 |
