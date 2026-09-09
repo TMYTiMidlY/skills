@@ -679,7 +679,23 @@ Skill 支持 `<name>/SKILL.md` 目录 bundle 和 `<name>.md` 平铺文件；发�
 
 ### <a id="mcp"></a>MCP
 
-内置 MCP client 支持 `stdio` 和 `streamable-http`。每个 server 以独立 Plugin 连接并把远端工具注册进 `ctx.tools`，公开名称中的 server namespace 区分不同 server 的同名工具。
+内置 MCP client 是运行在 DSH Host 进程中的 Plugin，支持 `stdio` 和 `streamable-http`；每个配置实例负责连接一个 MCP server，并把它的工具注册进 `ctx.tools`。公开名称中的 server namespace 区分不同 server 的同名工具。
+
+client 插件和 server 程序要分开看：使用 `stdio` 时，DSH 根据配置的 `command` 和 `args` 另行启动 MCP server 程序。DSH 是父进程，MCP server 是它启动的独立子进程，两者有各自的进程 ID 和环境变量，通过标准输入、标准输出管道通信；MCP server 并不是 DSH 进程内部的另一个 Agent。使用 `streamable-http` 时，DSH 只连接 `url` 指向的服务，不为它启动本地子进程。
+
+多个 Session 是否共用 MCP server，取决于 client 实例挂载在哪里，不由会话数量决定。同一 DSH Host 中，顶层 Profile/Home patch 插入的 MCP client 属于 Host 层：所有能看到该工具的会话共用这一个连接，stdio 对应共用该实例启动的 server 子进程，新建会话不会另外启动一份。
+
+| MCP client 的挂载位置 | 同一 Host 内的共享范围 |
+|---|---|
+| Host 顶层配置 | 可使用该工具的多个 Session/Agent 共用实例与连接 |
+| Agent preset 的共享挂载 | 当前版本按 preset 的配置版本挂载一次；加入同一版本的多个 Agent 共用实例，并非每个 Agent 一份 |
+| 自定义代码在每个 `agent.ctx` 单独挂载 | 各自挂载的实例分别建立连接；stdio 分别启动子进程 |
+
+结束一个会话不会卸载 Host 层的 MCP client；连接生命周期由其插件实例管理，停用、配置重载、Host 关闭或断线重连才涉及连接销毁或重建。另一独立 DSH Host 进程即使使用同一个 Profile，也会建立自己的 client 连接、启动自己的 stdio 子进程，不共用前一个 Host 的子进程。HTTP 连接可以指向同一个远端服务，其服务端状态如何共享由远端实现决定。
+
+共用 MCP 连接不等于合并 DSH 会话历史，但同一 server 的内存状态、认证身份和外部资源可能被多个会话共同使用；DSH 不会仅凭 Session 不同就自动把它们隔离。
+
+> 来源：[MCP 实例的作用域与连接生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L137-L190)；[Agent preset 按共享作用域挂载、供多个 Agent 加入](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/preset/agent-presets/src/index.ts#L1-L22)；[每个 stdio transport 按配置启动子进程](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/transport.ts#L25-L49)。
 
 配置由 `transport` 字段的值决定取哪个分支，两个分支构成判别联合（discriminated union，由一个共用字段决定取哪个分支的联合类型），字段不共用：
 
@@ -728,11 +744,25 @@ MCP server 采用显式启用方式：部署在 patch 中加入 server 对应的
             process.env.REMOTE_MCP_TOKEN && `Bearer ${process.env.REMOTE_MCP_TOKEN}`
 ```
 
-`id` 是 Cordis 配置行的稳定标识，只需在组合中保持唯一，不要求以 `mcp` 开头。为了让 MCP 行在 patch、日志和排障输出中容易识别，推荐使用 `mcp-<serverName>` 形式；`mcp-` 是配置可读性约定，模型工具名仍由 `serverName` 决定。`serverName` 对应模型所见的 `mcp__<serverName>__<rawName>` namespace；它匹配 `[A-Za-z0-9_-]{1,32}`，并在存活的 MCP client 实例中唯一。
+`id` 是 Cordis 配置行的稳定标识，只需在组合中保持唯一，不要求以 `mcp` 开头。为了让 MCP 行在 patch、日志和排障输出中容易识别，推荐使用 `mcp-<serverName>` 形式；`mcp-` 是配置可读性约定，模型工具名仍由 `serverName` 决定。`serverName` 对应模型所见的 `mcp__<serverName>__<rawName>` namespace；它匹配 `[A-Za-z0-9_-]{1,32}`；在同一注册作用域内，存活的 MCP client 实例不能使用相同的 `serverName`。
 
-`!!js` 是 Cordis 的 YAML 标签：挂载配置时把该处当 JS 表达式求值，不是字面字符串。上例里 stdio 的 `env` 直接引用变量，HTTP 的 `Authorization` 多两层写法——`>-` 是 YAML 折行标量（`>` 折行、`-` 去掉末尾换行），只是把长表达式折行；`a && b` 短路求值，token 未设置时整个表达式的值为 `undefined`。
+上例中的环境变量读取与 MCP 凭据配置分属不同位置，需结合 `transport` 一起看：
 
-缺 token 时 `a && b` 求值成什么，直接决定这一行能否通过加载，而两种 transport 的默认行为不同。`env` 和 `headers` 都按字符串字典校验：stdio 的裸引用在缺 token 时得到 `undefined`，加载期即校验失败；HTTP 若照官方 README 的直写形式 `` !!js '`Bearer ${process.env.MCP_TOKEN}`' ``，模板字符串会把 `undefined` 拼成字符串 `Bearer undefined`，schema 放行，插件带着假凭据启动。上例的短路写法让 HTTP 与 stdio 行为一致：token 未设置时表达式值为 `undefined`，同样在加载期失败。要让某个 HTTP server 在缺 token 时照常启动，拿掉整行 header 或给表达式一个真正的字符串默认值，而不是依赖 `Bearer undefined`。
+| 写法 | 含义 | 上例中的用途 |
+|---|---|---|
+| `process.env` | Node.js 提供的当前进程环境变量对象，不是文件 | YAML 的 `!!js` 在 DSH Host 中求值，因此从 Host 环境取 token |
+| `config.env` | 这条 stdio MCP client 配置中的 `env` 字典 | 明确补充或覆盖交给 `local-tools` 子进程的变量 |
+| `config.headers` | 这条 HTTP MCP client 配置中的请求头字典 | 把 Host 取出的 token 构造成发给 `remote-tools` 的认证头，不创建子进程 |
+
+在 stdio 配置 `LOCAL_MCP_TOKEN: !!js process.env.LOCAL_MCP_TOKEN` 中，左侧是交给 MCP 子进程的变量名；右侧的 `!!js` 是 Cordis 的 YAML 标签，让 Host 在挂载配置时把后面的内容当作 JS 表达式求值。这里直接取出 Host 环境中的 token，而不是把 `process.env.LOCAL_MCP_TOKEN` 当字面字符串传给 MCP。两侧可以使用不同变量名，但左侧必须符合该 MCP server 的要求。
+
+`config.env` 不会自动读取某个 `.env` 文件：由 shell 或 systemd 把环境文件加载进 Host 的方式见下文。若 MCP server 本身也用 Node.js，它启动后代码里的 `process.env` 指它自己的子进程环境，已不是 Host 的那个对象。
+
+stdio MCP 的 `config.env` 在 DSH 完成[子进程环境过滤](#child-process-environment)后合并，因此上例必须显式转发 `LOCAL_MCP_TOKEN`；它不会仅因存在于 Host 中就被默认继承。普通变量仍可能从 Host 继承，`config.env` 不是完整环境白名单；具体筛选、覆盖顺序及安全限制统一见该节。
+
+HTTP 配置中的 `Authorization: !!js >-` 则用 Host 取出的 token 构造请求头。`!!js` 同样要求把内容当 JS 表达式求值；`>-` 是 YAML 的折行标量写法，其中 `>` 把普通折行合为空格，`-` 去掉末尾换行，只负责长表达式的排版，不提供认证或过滤。表达式中的 `a && b` 是 JS 短路求值：上例仅在 `process.env.REMOTE_MCP_TOKEN` 为真值时拼接 `Bearer …`；变量未设置时直接得到 `undefined`。
+
+表达式的结果随后接受 MCP 配置校验。`env` 和 `headers` 都要求字符串字典，因此上例的 stdio 直接引用与 HTTP 短路表达式在变量未设置时都会因 `undefined` 而加载失败。若 HTTP 照官方 README 的直写形式 `` !!js '`Bearer ${process.env.MCP_TOKEN}`' ``，模板字符串会把缺失值拼成 `Bearer undefined`，字符串校验反而放行。显式空字符串也能通过字符串校验，`a && b` 在 token 为空时同样返回空字符串；这些写法都不验证凭据是否有效。允许匿名访问的 HTTP server 可以省略认证头；设字符串默认值只能避免缺值的类型错误，不能代替有效凭据。
 
 > 来源：[官方 README 的 HTTP header 直写示例](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/README.zh.md#L45-L60)、[`env` 与 `headers` 的字符串字典校验](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L113-L134)。
 
@@ -745,7 +775,7 @@ dsh --profile web --patch ./mcp-test.cordis.yml --no-open --port 3081
 
 `--patch <path>` 的作用域是当前进程，测试进程结束时该 overlay 的运行生命周期随之结束。测试通过后，把同一 `insert` 合并进持久 patch：单个 Profile 使用 `$DSH_HOME/profiles/<profile>/cordis.patch.yml`，所有 Profile 共用则使用 `$DSH_HOME/cordis.patch.yml`。配置层按 bundle、Profile patch、home patch、各个 `--patch` 的顺序叠加，后面的同 id 修改优先。
 
-Web 部署通常把 server 定义写进 `$DSH_HOME/profiles/web/cordis.patch.yml`，并把该 Profile 使用的启动环境集中在相邻的 `$DSH_HOME/profiles/web/mcp.env`。编辑 patch 时保留现有顶层数组内容，把新的 `insert` 与已有条目合并。Profile 环境文件使用一行一个 `KEY=value` 的格式，YAML 通过 `process.env` 引用对应值：
+Web 部署通常把 server 定义写进 `$DSH_HOME/profiles/web/cordis.patch.yml`，并把该 Profile 使用的启动环境集中在相邻的 `$DSH_HOME/profiles/web/<env-file>`。编辑 patch 时保留现有顶层数组内容，把新的 `insert` 与已有条目合并。Profile 环境文件使用一行一个 `KEY=value` 的格式，YAML 通过 `process.env` 引用对应值：
 
 ```dotenv
 LOCAL_MCP_TOKEN=<token>
@@ -753,14 +783,14 @@ REMOTE_MCP_TOKEN=<token>
 ```
 
 ```sh
-chmod 600 "$DSH_HOME/profiles/web/mcp.env"
+chmod 600 "$DSH_HOME/profiles/web/<env-file>"
 ```
 
-`mcp.env` 是部署约定的启动环境文件，加载责任属于启动方式。直接从 shell 启动 dsh 时，先把变量导入当前 shell，再启动目标 Profile：
+`<env-file>` 表示部署自行选定的环境文件名；下文的 shell 命令与 systemd `EnvironmentFile=` 都应替换成实际路径。这个文件由启动方式加载，DSH 不会因为它与 patch 相邻便自动读取；上例的 MCP 表达式引用的是 Host 中已经存在的变量。直接从 shell 启动 dsh 时，先把变量导入当前 shell，再启动目标 Profile：
 
 ```sh
 set -a
-. "$DSH_HOME/profiles/web/mcp.env"
+. "$DSH_HOME/profiles/web/<env-file>"
 set +a
 dsh --profile web
 ```
@@ -769,10 +799,10 @@ dsh --profile web
 
 ```ini
 [Service]
-EnvironmentFile=<absolute-dsh-home>/profiles/web/mcp.env
+EnvironmentFile=<absolute-dsh-home>/profiles/web/<env-file>
 ```
 
-system service 把 drop-in 保存到 `/etc/systemd/system/dsh.service.d/20-mcp-environment.conf`；user service 把它保存到 `~/.config/systemd/user/dsh.service.d/20-mcp-environment.conf`，并使用对应的 `systemctl --user` 命令。drop-in 变更通过 `daemon-reload` 和 restart 生效；`mcp.env` 值变更通过 restart 进入新进程：
+system service 把 drop-in 保存到 `/etc/systemd/system/dsh.service.d/20-mcp-environment.conf`；user service 把它保存到 `~/.config/systemd/user/dsh.service.d/20-mcp-environment.conf`，并使用对应的 `systemctl --user` 命令。drop-in 变更通过 `daemon-reload` 和 restart 生效；环境文件中的值变更通过 restart 进入新进程：
 
 ```sh
 sudo systemctl daemon-reload
@@ -800,9 +830,9 @@ Loader 对新列表做事务式对账：`EntryGroup.update` 逐行 `create`，�
 
 > 来源：[watchUserPatches 与 patch 文件重读](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/src/index.ts#L235-L267)、[Profile 模板的 patchReload 取值与自建默认](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/boot/app-boot/src/profile.ts#L137-L169)、[live 判定与 watch-only HMR 实例](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/apps/cli/src/profile-boot.ts#L270-L296)、[registerConfig 的确切路径监视与串行刷新](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/hmr/src/index.ts#L134-L187)、[Include 对 internal/update 的重应用](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/include/src/index.ts#L206-L213)、[EntryGroup 的事务对账与回滚](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/loader/src/config/group.ts#L59-L106)、[Entry.update 的三种分叉](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/loader/src/config/entry.ts#L142-L246)、[Fiber.update 默认 restart](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/vendor/cordis/src/fiber.ts#L736-L753)、[MCP 插件「HMR 换实例、名称不变」的约定](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/index.ts#L7-L11)、[agent loop 每 step 重新 assemble](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/core/agent-loop/src/agent.ts#L234-L296)、[ToolRuntime 注册为 tools provider](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/core/tools/src/index.ts#L825)与[view 的 live 层遍历](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/core/tools/src/index.ts#L1143-L1184)。
 
-无论采用 shell 还是 systemd 启动，上述热更新对 live 型 Profile 同样成立（startup 型 Profile 的 patch 改动在下次启动时生效）。进程环境在启动时形成快照，因此环境文件更新通过重新启动进入 Host。stdio transport 以清理后的父环境为基底，再合并 `config.env`；部署在 `config.env` 中显式转发各 server 所需的变量。HTTP header 由配置表达式从 Host 环境构造。
+无论采用 shell 还是 systemd 启动，上述热更新对 live 型 Profile 同样成立（startup 型 Profile 的 patch 改动在下次启动时生效）。Patch 热更新只重读配置，不重读启动环境文件；systemd 的 `EnvironmentFile=` 值变更须通过重启服务进入 Host，shell 部署则重新导入环境后再启动。随后按[持久配置 MCP Server](#mcp-persistent-configuration)中的 `config.env` 或 `config.headers` 转发给对应 server。
 
-环境变量是整个 Host 进程的共享状态，每个 Host Plugin 都具备读取能力。`0600` 把环境文件的磁盘读写权限授予文件所有者；Host Plugin 信任范围同时构成这些凭据的读取范围。完成持久配置后，通过服务状态和新 Session 的工具清单验收；新 Session 中应能看到 `mcp__<serverName>__...` 工具。
+完成持久配置后，通过服务状态和新 Session 的工具清单验收；新 Session 中应能看到 `mcp__<serverName>__...` 工具。
 
 > 来源：[Profile 配置层顺序、`--patch` 与 `--dump-config`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.zh.md#L7-L39)、[Profile 与 home patch 的监视和 MCP 启用方式](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.zh.md#L81-L93)、[MCP Plugin 配置、命名和环境字段](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/mcp/mcp-client/README.zh.md#L7-L60)，以及[stdio 环境构造和持久 patch 位置](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/examples/mcp-memory/README.zh.md#L9-L33)。systemd 的 `EnvironmentFile=` 解析与生效时机见 [`systemd.exec`](https://www.freedesktop.org/software/systemd/man/255/systemd.exec.html#EnvironmentFile=)。
 
@@ -869,6 +899,39 @@ Host Plugin、Agent 工具、MCP server 和遥测处理的是不同权限主体�
 不希望用户授权构建脚本时，应发布已经包含产物的 npm package 或 tarball。具体流程见开发篇的 [打包与安装](dsh-dev.md#packaging-and-installation)。
 
 > 来源：[Git 安装的构建脚本与授权边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L153-L178)；[动态 Cordis VM 的信任立场](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/extensions/cordis-host-runner/README.zh.md#L26-L32)。
+
+### <a id="child-process-environment"></a>子进程环境与凭据过滤
+
+子进程是 DSH Host 另行启动的程序进程，例如 Shell 命令或 stdio MCP server；Host 是父进程，两者的环境变量分别属于各自的进程。DSH 的环境过滤发生在为子进程准备继承环境时，控制的是从 Host 默认复制哪些变量，不是清理 DSH 自己的环境。它由 `dsh-subprocess` 的 `scrubbedParentEnv()` 定义，本地子进程服务使用它构造执行环境；stdio MCP transport 虽由 Host 中的 MCP SDK 启动进程，也复用同一个过滤函数。HTTP MCP 没有这条子进程路径，认证配置见[MCP](#mcp-persistent-configuration)。
+
+`process.env` 是当前 Node.js 进程的环境变量对象。过滤函数每次遍历 Host 当前的 `process.env`，建立一个新对象；它既不修改 Host 的原环境，也不把任何值替换成脱敏字符串。名称筛选等价于下面的代码：
+
+```js
+const sensitiveName = /KEY|PASSWORD|SECRET|TOKEN/i
+const inheritedEnv = {}
+for (const [name, value] of Object.entries(process.env)) {
+  if (value === undefined || sensitiveName.test(name) || name.toUpperCase().startsWith('DSH_')) continue
+  inheritedEnv[name] = value
+}
+```
+
+这段筛选依次排除没有值的项、名称包含 `KEY` / `PASSWORD` / `SECRET` / `TOKEN` 任一片段的项，以及名称以 `DSH_` 开头的项。两类名称匹配都不区分大小写；匹配的是任意子串，不要求词边界，所以名称中偶然含有 `KEY` 的普通变量也会被移除。其余变量保留原值，包括空字符串。
+
+| Host 中的变量名示例 | 默认继承结果 | 原因 |
+|---|---|---|
+| `DEEPSEEK_API_KEY`、`LOCAL_MCP_TOKEN` | 移除 | 名称含 `KEY` 或 `TOKEN` |
+| `db_password`、`APP_SECRET` | 移除 | 名称含 `PASSWORD` 或 `SECRET`，大小写不影响匹配 |
+| `DSH_HOME`、`dsh_session_id` | 移除 | 名称以 `DSH_` 开头，避免继承旧的 Harness 身份与运行事实 |
+| `PATH`、`HOME`、`LANG`、`HTTPS_PROXY` | 原值保留 | 名称未匹配过滤规则 |
+| `CODEX_HOME`、`PORTAL_ALLOW_LOCAL_EXEC`、`SSH_AUTH_SOCK` | 原值保留 | 同样未匹配；不是仅传给名字所指的某个工具 |
+
+筛选后的对象只是子进程环境的基底。调用方显式提供的 `env` 随后补充或覆盖它：本地子进程服务取 `spec.env`，stdio MCP 取已经求值的 `config.env`。因此，显式指定的 token 或当前 `DSH_*` 运行事实可以重新加入，不会再被这次继承过滤删除。本地子进程服务合并时，POSIX 按区分大小写的键覆盖，Windows 按不区分大小写的键覆盖；该服务还允许显式 `undefined` 删除一个变量，而 MCP 的 `config.env` 只接受字符串值。
+
+> 来源：[继承环境过滤函数与名称规则](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/subprocess/subprocess/src/index.ts#L37-L66)；[本地子进程的显式环境合并](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/subprocess/subprocess-local/src/spawn.ts#L29-L47)；[MCP 复用过滤函数并合并配置](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/transport.ts#L15-L49)。上述规则已与 `0.1.2-rc.1` 安装产物核对。
+
+这是一种按名称避免凭据被默认继承的启发式过滤，不是环境变量白名单，也不检查变量值。秘密若存放在不匹配的名称下，仍可能被继承；例如代理 URL 内的认证信息不会仅因其值包含密码就被删除。普通 Host Plugin 仍可读取共享环境，in-process subagent 也不因创建新 Session 获得独立进程环境。第三方程序自行启动后代进程或读取其他凭据来源，不受这次环境构造约束。
+
+环境过滤与文件访问、模型输入脱敏也是不同机制。文件权限 `0600` 不能阻止同一用户身份下有相应访问权限的程序读取凭据文件；工具若把读出的原文作为结果返回，内容仍可能进入模型上下文和 Session 日志。清理子进程的继承环境既不禁止这条文件读取路径，也不脱敏工具输出。
 
 ### Agent 工具执行
 
