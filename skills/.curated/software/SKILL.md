@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的配置和排障知识库。用于 SSH/systemd、终端与包管理工具、语言工具链、PostgreSQL、S3 对象存储、Docker/PaaS、Overleaf/OpenList、文档处理与发布，以及 Windows/WSL/macOS 日常软件问题。
+description: 本地软件、CLI 工具与自托管服务的配置和排障知识库。用于 SSH/systemd、终端与包管理工具、语言工具链、PostgreSQL、S3 对象存储、Docker/PaaS、Overleaf/OpenList、文档处理与发布，以及 Windows/WSL/macOS/HarmonyOS 日常软件问题。
 ---
 
 # Software
@@ -76,6 +76,10 @@ MAS（`irm https://get.activated.win | iex`；HWID / Ohook / TSforge / Online KM
 ## macOS 小问题集锦
 
 推荐应用（VMware Fusion、Mounty + macFUSE NTFS 读写）、应用无法打开的权限修复、外置存储隐藏文件（`.DS_Store` / `.Spotlight-V100` / `.Trashes`）阻止与清理见 [references/macos.md](references/macos.md)。
+
+## HarmonyOS / HiShell 开发环境
+
+以应用身份与目录空间、文件所有权与权限语义、数据存放与程序适配为主线，见 [references/harmonyos.md](references/harmonyos.md)。涵盖 [应用标识与进程归属](references/harmonyos.md#bundle-identification)、UID 与用户名查询的区别、配置属主检查、私有持久目录与软链接迁移、`TMPDIR` 和分层验证；SSH、Make、Zellij 作为案例说明。另保留 Harmonybrew 的社区定位、安装路径与工具链关系，以及开发能力和短时性能快照，区分历史实测、上游机制与未定位原因。
 
 ## 飞书文档中的公式与矢量图
 
