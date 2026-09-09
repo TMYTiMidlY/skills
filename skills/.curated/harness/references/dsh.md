@@ -549,6 +549,25 @@ DSH 把模型、工具、策略、存储和界面等能力做成可以组合的 
 
 > 来源：[Plugin package、Profile 与安装命令](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/user/develop/basic/publish.md#L9-L128)；[安装、移除与重启边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L41-L64)；[插件框架的整体结构](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/architecture.zh.md#L15-L37)。
 
+#### <a id="local-plugin-deployment"></a>本地插件构建与部署
+
+源码 fork 的修改、打包产物、Profile 已安装副本和运行进程是四个不同对象。在源码目录构建不会更新服务；包安装成功也不代表旧进程已经重新导入代码。更新前保存目标 Profile 的 manifest、lockfile、workspace 配置和 patch，并保留旧 tarball；更新过程安排在可中断该实例会话的时段。
+
+```sh
+cd <plugin-root>
+pnpm run build
+pnpm pack --pack-destination <unique-artifact-directory>
+DSH_HOME=<harness-home> dsh plugin --profile <profile> add <absolute-tarball-path>
+```
+
+版本号暂未改变时，使用新的产物目录，使 Profile 依赖指向新的文件路径，旧包仍可用于回滚。安装后核对实际副本的 Host/Client bundle 与本地构建一致、Bundle 列表没有重复，然后按[实际 systemd 管理层级](#systemd-system-service)重启对应实例；不要另开一个服务器代替正在使用的 Web 地址。
+
+> 🔬 2026-09-09 本地 tarball 更新：插件自带门禁解析 `npm pack --dry-run --json` 的数组输出，而 npm 12.0.2 返回按包名索引的对象，导致门禁 JSON 解析失败。临时通过 PATH 选择已安装的 npm 11.19.0 后门禁通过；全局 npm 和门禁源码均未改动。这是打包工具输出格式差异，不是插件编译或模型请求失败。
+
+> 无法非交互使用 sudo 重启时，向**已确认属于当前用户**的主进程发送 `SIGTERM`，也可能使 `Restart=always` 的现有服务重新拉起。使用前须核对实例、UID、实时 `MainPID` 和重启策略，接受在途会话被中断的影响；不能照抄历史 PID、对其他用户实例发信号或按进程名批量终止。常规管理入口仍是该实例对应的 `systemctl`。[systemd 的 Restart 语义](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#Restart=)
+
+部署后的检查可以只读取服务状态、使用当前启动 token 换取 loopback cookie，再访问页面、插件 `hello` 和指定模型目录；这些检查不需要再生成一次模型回复。取得 cookie 的过程见[浏览器会话凭据](#browser-session-lifecycle)，日志中不输出 token 或 cookie。新增兼容路由时还需核对 picker 白名单和会话实际选择，原 route id 不会自动迁移。
+
 ### <a id="agent-preset"></a>Agent preset
 
 Agent preset（智能体预设）是创建 Agent 时选择的工作模式，决定该 Agent 可见的工具、角色说明、提示内容、压缩策略、workflow 和 Subagent 入口。Profile 决定整个 DSH 服务启用哪些共享能力，preset 决定单个 Agent 怎样使用这些能力。
@@ -668,6 +687,30 @@ npm install --prefix "$DSH_PACKAGE_ROOT" \
 ```
 
 override 会影响 Host 中所有共享 pi-ai 的适配器和 Plugin。正式升级仍应由 DSH 发布新的依赖范围，并对 catalog、事件流、工具调用、reasoning 和 replay 做完整回归；本地 override 是一条可明确撤销的过渡路径。
+
+#### <a id="copilot-model-routing"></a>Copilot 端点与模型协议适配
+
+Copilot 需要分别匹配账号主机和模型协议。凭据的处理及已知端点见[Copilot 账号端点](auth.md#copilot-endpoints)；DSH 的 Model Hub 登录成功只表示凭据已保存，不能证明默认主机或打包目录中的 API 分类适合该账号与模型。
+
+pi-ai 0.85.1 的生成器用 `gpt-5*` 判断哪些 Copilot 模型走 Responses，导致 `gpt-6-astra` 被分到 Chat Completions，并附加 `supportsReasoningEffort: false`。因此错误主机产生的 421 被消除后，仍可能遇到 `unsupported_api_for_model`；旧路径即使在界面选择了 effort，也不发送该档位。修正后的请求通过 `reasoning.effort` 传递 `low`、`medium`、`high`、`xhigh` 或 `max`。
+
+> 📖 [0.85.1 的协议分类及兼容开关](https://github.com/earendil-works/pi/blob/v0.85.1/packages/ai/scripts/generate-models.ts#L2087-L2137)。[PR #9253](https://github.com/earendil-works/pi/pull/9253) 于 2026-09-07 合并，将判断扩展为 `gpt-*`；[修复提交](https://github.com/earendil-works/pi/blob/7d8ab31a477ecc07b36f56ffcae58c79307a68be/packages/ai/scripts/generate-models.ts#L2094-L2108)。2026-09-09 核对时最新已发布包仍是 0.85.1，不能把“已合并”视为“已安装版本已修复”。上游报告 [#9209](https://github.com/earendil-works/pi/issues/9209)、[#9277](https://github.com/earendil-works/pi/issues/9277) 与该 400 对应。
+
+DSH 0.1.2-rc.1 的模型协议选择是 `request.api ?? base?.api ?? routeApi`，不读取 `modelOverrides.<id>.api`。provider 级 `api` 又会作用于该路由下所有模型；把混有 Claude 等模型的整条 Copilot 路由强制设为 Responses，会破坏其他协议。插件也不能再次注册宿主已占用的 provider 名称。
+
+> 📖 [DSH 的协议与主机选择](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/llm/llm-pi-ai/src/catalog.ts#L848-L860)、[适配器重复注册保护](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/llm/llm/src/index.ts#L417-L426)、[目录重复注册保护](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/llm/llm/src/index.ts#L491-L498)。
+
+一个不修改宿主安装文件的实现方式是由 Model Hub fork 注册独立兼容路由，对外使用新 route id，内部复用 pi 的 `github-copilot` provider 语义及宿主 `PiAiAdapter`。在内存模型描述上仅纠正误分到 Completions 的 GPT，保留 Claude、Gemini 等模型的协议；当前 0.85.1 目录中实际命中修正的是 Astra。账号端点发现适用于该兼容路由的所有直接 key 请求，已有 OAuth 凭据仍由 pi 刷新和推导端点。
+
+外部 route id 与内部 pi provider id 分离时，请求和历史消息的 provider 来源也要一致转换，并保留 `finish.replayState`、工具调用关联和附件桥接，否则首轮能回答并不能证明工具往返可用。登录复用宿主的 `llm-pi-ai/github-copilot` 记录及 flow，不复制凭据；若两条路由共享登录，界面须说明登出影响两者，并保护使用任一共享路由的全局默认模型。原路由的配置、白名单与会话选择不因增加兼容路由而自动迁移。
+
+> 🔬 2026-09-09，一个本地 Model Hub fork 的 `github-copilot-hub` 路由按上述方式完成了构建产物的 `xhigh` 流式工具调用、工具结果回传和续答；宿主使用 pi-ai 0.85.1。该描述记录本地扩展的实现与边界，不表示官方 DSH 或所有已发布 Model Hub 包内置此路由。
+
+兼容实现的端点缓存应按凭据身份隔离，凭据变更或实际 HTTP 421 后失效，并拒绝把 bearer 转发到未经允许的主机。421 要在 HTTP 响应层观察：pi 将异常转换为文本后可能不再保留状态码，匹配错误消息前缀并不可靠。DSH 实际调用 `streamSimple`，在这条调用的 fetch 注入点观察状态可保留原始信号。
+
+> 📖 [宿主的 streamSimple 分派](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/llm/llm-pi-ai/src/adapter.ts#L375-L384)。上述本地实现的直接 key 分支只发现 github.com 账号，并只接受 HTTPS `api[.<分区>].githubcopilot.com`；它没有因此获得对 `*.ghe.com` 数据驻留实例的支持。
+
+复现时可在独立 Node 进程中导入实际安装的库、创建适配器，再只修改内存中的模型字段；这不需要复制安装树、另起 Web 服务或改运行中配置。API key 复现采用只读凭据桥接，错误分支先用模拟 HTTP 覆盖；真实调用仅做一个有界成功路径。该次构建产物的在线检查限定为一次账号发现、两次模型请求，覆盖 `xhigh` 和工具回放，没有逐档位、逐模型试错，也没有验证图片或接近上下文上限的负载。模型接受 effort 参数不保证每次回答的耗时或长度都明显变化。
 
 ### Skills
 
