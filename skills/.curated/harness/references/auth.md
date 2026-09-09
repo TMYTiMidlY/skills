@@ -2,9 +2,9 @@
 
 **当前范围**：本文目前只覆盖 **GitHub Copilot**（Copilot CLI / Copilot SDK / pi 的 `github-copilot` provider）；文件名 `auth.md` 是通用的，后续其他厂商（Codex / Anthropic 等）的登录鉴权可按厂商分节续写进来。
 
-Copilot 订阅的登录态在 Copilot CLI、Copilot SDK、pi（`github-copilot` provider）三处各自怎么存、怎么读，以及能不能把一台机上的 Copilot 登录搬到另一台机 / 另一个系统用户 / 另一个客户端。一句话结论：**环境变量 token 是唯一干净的可移植方式**；但"哪个 token 直接喂进去能用"取决于 token 类型——标准 GitHub OAuth token（如 `gh auth token` 给的）能被 Copilot API 直接接受，而 Copilot CLI 自己存的那个 `gho_` 必须先经内部交换才可用（见 [env 变量接受的 token 类型](#token-type)）。
+本文说明 Copilot CLI、Copilot SDK、pi 的登录态怎样保存、读取和跨环境复用。环境变量 token 适合非交互注入，但接入其他客户端时还要分别核对**凭据类型、账号端点和模型请求协议**；仅凭 `gho_` 前缀或一次请求失败，不能判断 token 必须经过交换。
 
-> 置信度：🔬 = 跨机实测（独立 `COPILOT_HOME` / 全新客户端状态）｜ 📖 = 读源码（pi / copilot-sdk 锁 commit；Copilot CLI 闭源、锁 bundle 版本并用字面量锚点）。个人主机名 / 账号已隐去为 `<login>` 等占位符。
+> 置信度：🔬 = 实测，并就近说明版本与覆盖范围；📖 = 读源码，公开代码锁定版本，Copilot CLI 闭源产物用版本和稳定字面量定位。个人主机名、账号与路径使用占位符。
 
 ## <a id="cli-storage"></a>Copilot CLI 登录凭据的存储（app.js）
 
@@ -82,39 +82,75 @@ await client.start();
 const s = await client.createSession({ onPermissionRequest: approveAll });
 ```
 
-🔬 SDK 不设 `baseDirectory` + 注入 `COPILOT_GITHUB_TOKEN`（同一 `gho_`）→ `claude-sonnet-5` 回 `AUTH_OK`（官方 runtime 内部完成 github→copilot 交换）。SDK 的接入形态、API 形状本身见 [sdk.md](sdk.md)。
+🔬 SDK 不设 `baseDirectory`，注入同一 `gho_` 为 `COPILOT_GITHUB_TOKEN` 后，`claude-sonnet-5` 返回 `AUTH_OK`。这证明该凭据能由官方 runtime 使用；仅凭成功结果不能判定内部是否发生 token 交换。SDK 的接入形态见 [sdk.md](sdk.md)。
 
 📖 copilot-sdk 锁 `0d563bd`：[`types.ts` baseDirectory `:296`](https://github.com/github/copilot-sdk/blob/0d563bdd181fd82b6563f40cefd9f5074f0c0472/nodejs/src/types.ts#L296)、[`gitHubToken`/`useLoggedInUser` `:314-322`](https://github.com/github/copilot-sdk/blob/0d563bdd181fd82b6563f40cefd9f5074f0c0472/nodejs/src/types.ts#L305-L322)、[`configDirectory` `:1954`](https://github.com/github/copilot-sdk/blob/0d563bdd181fd82b6563f40cefd9f5074f0c0472/nodejs/src/types.ts#L1949-L1955)、[`client.ts` COPILOT_HOME + DISABLE_KEYTAR `:2341-2348`](https://github.com/github/copilot-sdk/blob/0d563bdd181fd82b6563f40cefd9f5074f0c0472/nodejs/src/client.ts#L2335-L2350)、[empty-mode 强制持久化校验 `:743`](https://github.com/github/copilot-sdk/blob/0d563bdd181fd82b6563f40cefd9f5074f0c0472/nodejs/src/client.ts#L733-L748)、[multi-tenancy 文档](https://github.com/github/copilot-sdk/blob/0d563bdd181fd82b6563f40cefd9f5074f0c0472/docs/setup/multi-tenancy.md)。clone：`git clone https://github.com/github/copilot-sdk.git`。
 
 ## <a id="pi-copilot"></a>pi 的 Copilot 鉴权路径（env apiKey vs /login oauth）
 
-pi 的 `github-copilot` provider 有**两个互不相干的 auth 成员**：
+pi 的 `github-copilot` provider 提供 API key 和 OAuth 两种认证处理器；选择哪条路径由实际凭据类型决定：
 
 ```ts
 apiKey: envApiKeyAuth("GitHub Copilot token", ["COPILOT_GITHUB_TOKEN"]),
 oauth:  lazyOAuth({ name: "GitHub Copilot", load: loadGitHubCopilotOAuth }),
 ```
 
-- **env / apiKey 路径**：`envApiKeyAuth.resolve` 只返回 `{ apiKey: <env值> }`——**原样当 bearer 打 `baseUrl: https://api.individual.githubcopilot.com`，不做任何交换、不落盘**（`copilot_internal` 只出现在 oauth 路径）。所以"pi 会换凭据、写 auth.json 盖过 env"是**错的**：env 路径既不交换也不持久化。
-- **oauth `/login` 路径**：设备码（CLIENT_ID 是 base64 解出的 **VSCode Copilot client_id** `Iv1.b507a08c87ecfe98`，scope `read:user`）→ `refreshGitHubCopilotAccessToken` 打 `api.github.com/copilot_internal/v2/token` 换 **Copilot token**（`tid=…;exp=…;proxy-ep=…`）→ `getBaseUrlFromToken` 取每账号 proxy 端点 → `enableAllGitHubCopilotModels`（逐模型 POST `/models/{id}/policy {state:"enabled"}`，注释 "required for some models (like Claude, Grok)"）→ 落 `~/.pi/agent/auth.json`。
-- **解析顺序**：stored `auth.json` 凭据 > 环境变量（已存凭据盖过 env）。
-- 坑：`pi -p`（非交互）不接 `</dev/null` 会**挂起等 stdin**，表现为无输出的假死。
+- **API key / 环境变量**：`envApiKeyAuth.resolve` 返回原值作为 bearer，不交换 token，也不查询账号端点。0.85.1 的 provider 默认主机仍是 `api.individual.githubcopilot.com`。环境变量解析本身不写盘；通过 `/login` 的 API key 选项输入值，则会保存为 `api_key` 凭据。
+- **OAuth 登录与刷新**：设备码流程取得 GitHub token，再访问 `copilot_internal/v2/token` 取得短时 Copilot token，并从其中的 `proxy-ep` 推导 API 主机。登录时读取账号模型目录、按需启用模型策略，保存 OAuth 凭据及 `availableModelIds`；以后刷新继续沿 OAuth 路径处理。
+- **解析顺序**：请求级 key 覆盖 → 已存凭据 → 环境变量。已存 OAuth 凭据刷新失败不会静默回退到环境变量。
 
-📖 pi 锁 `8479bd8`：[provider 两个 auth 成员 `providers/github-copilot.ts:13-17`](https://github.com/earendil-works/pi/blob/8479bd84743e8889f728acb21a62794102db0529/packages/ai/src/providers/github-copilot.ts#L13-L17)、[`envApiKeyAuth` 只回 `{apiKey}` `auth/helpers.ts:9-26`](https://github.com/earendil-works/pi/blob/8479bd84743e8889f728acb21a62794102db0529/packages/ai/src/auth/helpers.ts#L9-L26)、[CLIENT_ID `:17` / copilotTokenUrl `:66` / getBaseUrlFromToken `:75-92` / 换取 `:251-286` / enableGitHubCopilotModel（Claude·Grok 注释）`:301-327`](https://github.com/earendil-works/pi/blob/8479bd84743e8889f728acb21a62794102db0529/packages/ai/src/utils/oauth/github-copilot.ts#L251-L327)。pi runtime 全貌见 [pi.md](pi.md)。
+> 📖 [pi 0.85.1 的 provider](https://github.com/earendil-works/pi/blob/v0.85.1/packages/ai/src/providers/github-copilot.ts#L9-L17)、[API key 登录与解析](https://github.com/earendil-works/pi/blob/v0.85.1/packages/ai/src/auth/helpers.ts#L9-L29)、[凭据优先级和刷新](https://github.com/earendil-works/pi/blob/v0.85.1/packages/ai/src/auth/resolve.ts#L35-L112)。pi 的交互与非交互入口见 [pi reference](pi.md#copilot-sub)。
 
-## <a id="token-type"></a>env 变量接受的 token 类型
+> 非交互实测还曾遇到 `pi -p` 等待 stdin 结束而没有输出；没有管道输入时显式接 `</dev/null`，避免把输入未结束误判成认证失败。
 
-同一账号、同为 40 字符 `gho_`，喂给依赖 env 的客户端（pi 的 apiKey 路径 / 任何直连 Copilot API 的调用）结果却相反：
+## <a id="copilot-endpoints"></a>Copilot 账号端点
 
-| token 来源 | 直接当 `COPILOT_GITHUB_TOKEN` | 结果 🔬 |
-|---|---|---|
-| `gh auth token`（gh CLI 的 GitHub OAuth token，scopes `repo/read:org/gist/admin:public_key`） | 直连 bearer | ✅ pi 补全通（`claude-haiku-4.5` → AUTH_OK） |
-| Copilot CLI 存的 `gho_` | 直连 bearer | ❌ 全模型 `model_not_supported` |
+`endpoints.api` 是账号元数据里的 API 根地址，与 `copilot_plan`、账号组织身份、token 前缀分别记录。连接时采用账号返回的地址；不能根据“个人”“企业”或 `internal` 标签拼出主机名。`endpoints.proxy`、`telemetry` 等字段也不能直接当成模型 API 地址。
 
-- `api.individual.githubcopilot.com` **直接接受标准 GitHub OAuth token**（无需 copilot 专属 scope，服务端按用户身份判 Copilot 权益）；Copilot CLI 存的那个 token 设计上**要先经 `copilot_internal/v2/token` 交换**（官方 CLI / SDK 内部就是这么做，所以它们能用同一个 token），直接当 bearer 不被接受。
-- `gh api copilot_internal/v2/token`、以及用任一 `gho_` 裸 `curl` 打该端点，都返回 **403 Forbidden（ToS / scraping）**——GitHub 挡非官方客户端直接访问内部换取端点；gh 的 OAuth app token 也无权换。所以**没有干净的 gh / curl 一行命令能在官方客户端之外 mint 出那个短时 Copilot token**，别在这上面绕。
-- 实用：`gh auth token` 给的是**相对长期有效**的会话 token（不像 `tid=…` 那种约 30 分钟过期），因此 "`gh auth login` 后取 `gh auth token` → 设 `COPILOT_GITHUB_TOKEN`" 是让 pi 用上 Copilot 的可持续姿势，无需在 pi 里跑 `/login`。它是广权限 GitHub token，当机密对待、别进世界可读文件。
-- `model_not_supported` 有两种成因，别混：① token 类型不对（需交换 / 非直接可用，如上）；② 该模型账号没开（Claude / Grok 需 policy enable，pi 仅在 `/login` 路径做，env 路径不做）。
+已知地址不止 individual 和 enterprise。下表区分正式主机、元数据样本、客户端默认值和连接观察，不把它们混成 `/copilot_internal/user` 的完整返回值枚举：
+
+| API 根地址 | 证据与含义 |
+|---|---|
+| `https://api.individual.githubcopilot.com` | GitHub 正式列出的 Individual 主机；另有[公开 `/user` 响应样本](https://github.com/NousResearch/hermes-agent/issues/27836)包含此 `endpoints.api` |
+| `https://api.business.githubcopilot.com` | GitHub 正式列出的 Business 主机；[账号端点发现实现报告](https://github.com/can1357/oh-my-pi/pull/8510)描述 `/user` 返回此地址 |
+| `https://api.enterprise.githubcopilot.com` | GitHub 正式列出的 Enterprise 主机；下文 2026-09-09 实测的 `/user` 返回值 |
+| `https://api.githubcopilot.com` | 官方客户端底层库的通用默认/回退地址；本次成功访问不证明它就是该账号元数据的返回值 |
+| `https://copilot-api.<tenant>.ghe.com` | GHE.com 数据驻留租户的客户端连接地址形式，见[官方 CLI 仓库中的连接日志报告](https://github.com/github/copilot-cli/issues/4527)；该报告不是 `/user` 返回字段的完整规范 |
+
+> 📖 [GitHub 文档列出的三类 API 主机](https://github.com/github/docs/blob/59a4d1dbb271848f66c5bc141b1047950a329f8e/data/reusables/copilot/cloud-agent-required-hosts.md#L3-L5)。通用默认值来自 [`@vscode/copilot-api` 0.2.19](https://unpkg.com/@vscode/copilot-api@0.2.19/dist/index.js)，其 `_getCAPIUrl` 使用元数据中的 `endpoints.api`，缺失时回退到 `https://api.githubcopilot.com`；[VS Code 的接入位置](https://github.com/microsoft/vscode-copilot-chat/blob/5863f5a7088958050792b5dccbe8b46c6e13eccc/src/platform/endpoint/common/capiClient.ts#L6-L20)。表中的第三方响应和实现报告只证明对应样本，不据此推广其其他认证结论。
+
+Business 和 Enterprise 是不同的 Copilot 订阅。一个 GitHub enterprise account 可以同时包含使用两种订阅的组织，因此“属于企业”不唯一决定 API 主机。官方 VS Code 客户端的 `isInternal` 与 `endpoints` 也是分别读取的属性，前者不承担主机选择职责。
+
+> 📖 [GitHub 关于混用 Business/Enterprise 与网络隔离的说明](https://github.com/github/docs/blob/59a4d1dbb271848f66c5bc141b1047950a329f8e/data/reusables/copilot/sku-isolation.md#L13-L34)、[独立的 isInternal 与 endpoints 属性](https://github.com/microsoft/vscode-copilot-chat/blob/5863f5a7088958050792b5dccbe8b46c6e13eccc/src/platform/authentication/common/copilotToken.ts#L117-L130)。
+
+公开客户端将端点的 `api` 建模为字符串，而不是固定枚举；配置覆盖也可能替代元数据地址。扩展需要明确处理字段缺失、无效 URL 和不受信任的主机，不能把“能连接某地址”“防火墙列出了某地址”和“账号实际返回某地址”视为同一事实。
+
+> 📖 [Endpoints 类型](https://github.com/microsoft/vscode-copilot-chat/blob/5863f5a7088958050792b5dccbe8b46c6e13eccc/src/platform/authentication/common/copilotToken.ts#L286-L291)、[字符串校验](https://github.com/microsoft/vscode-copilot-chat/blob/5863f5a7088958050792b5dccbe8b46c6e13eccc/src/platform/authentication/common/copilotToken.ts#L400-L405)、[配置覆盖与元数据的优先级](https://github.com/microsoft/vscode-copilot-chat/blob/5863f5a7088958050792b5dccbe8b46c6e13eccc/src/platform/endpoint/node/domainServiceImpl.ts#L45-L64)。这里的 Endpoints 类型关联 `/copilot_internal/v2/token` 的响应，不是 GitHub 发布的 `/copilot_internal/user` 完整 schema，不能据此声称已证明该接口的所有可能值。
+
+在 github.com 账号场景，可以用现有 GitHub 凭据读取 `https://api.github.com/copilot_internal/user` 的 `endpoints.api`。这次读取是账号元数据发现，不是铸造或交换短时 Copilot token。接入带数据驻留的企业实例时，还需核对其 GitHub API 根地址，不能沿用 github.com 的发现入口。
+
+GHE.com 数据驻留属于 GitHub Enterprise Cloud 的租户域场景。GitHub 文档要求放行 `https://<tenant>.ghe.com` 和 `https://*.<tenant>.ghe.com`，并将其 GitHub API 根地址示例写为 `https://api.<tenant>.ghe.com`；`copilot-proxy.<tenant>.ghe.com` 是另一类服务，不能拿来替代 `endpoints.api`。支持这类实例需要受信任的租户配置、对应的账号发现入口和返回地址校验，不能靠关闭主机校验或退回公共默认地址来实现。
+
+> 📖 [Copilot on GHE.com 的主机范围](https://github.com/github/docs/blob/59a4d1dbb271848f66c5bc141b1047950a329f8e/content/copilot/reference/copilot-allowlist-reference.md#L59-L76)、[数据驻留实例的 GitHub API 根地址](https://github.com/github/docs/blob/59a4d1dbb271848f66c5bc141b1047950a329f8e/content/admin/data-residency/about-github-enterprise-cloud-with-data-residency.md#L87-L99)。这些是租户域约束，不是可以按地区名称自行拼接的模型 API 地址表。
+
+> 🔬 2026-09-09：同一枚由 Copilot CLI 环境变量使用的 `gho_`，账号发现返回 `endpoints.api = https://api.enterprise.githubcopilot.com`。📖 CLI 1.0.83 的 bundle 使用配置覆盖、`COPILOT_API_URL`、`copilotUser.endpoints.api` 选择地址；native 产物包含 `endpoint_refresh.rs` 和 `re-resolved CAPI endpoint after 421`。这些证据说明该版本具有账号端点选择及 421 重发现路径，不是所有账号的地址枚举。
+
+## <a id="token-type"></a>Token 类型与请求失败的判定
+
+`gho_` 只能说明 GitHub OAuth token 的格式，不能单独决定它在哪个 Copilot 主机、哪种客户端流程下可用。排障时分别读取账号端点、模型目录的 `supported_endpoints`、策略状态和原始 HTTP 错误：
+
+| 现象 | 优先核对 |
+|---|---|
+| `421 Misdirected Request` | 凭据对应的账号端点是否与请求主机一致 |
+| `400 unsupported_api_for_model` | 模型要求 `/responses`、`/chat/completions` 还是其他协议 |
+| `401` / `403` | 凭据、权限、账号准入及被调用接口；不能只凭状态码判定必须交换 token |
+| `model_not_supported` | 模型可用性、策略、客户端和认证上下文；不是单一根因的证明 |
+
+> 🔬 2026-09-09，DSH 0.1.2-rc.1、pi-ai 0.85.1、Copilot CLI 1.0.83：同一凭据请求 individual 主机得到 421；采用账号返回的 enterprise 主机后，Astra 请求 `/chat/completions` 得到 400；改为 `/responses` 后成功。通用主机也可用，但该次账号返回值是 enterprise，不能把通用主机的成功记成账号发现结果。插件实现随后以原凭据、既有请求头和 `xhigh` 完成一次流式工具往返。
+
+> 旧环境中曾观察到不同 `gho_` 的直连结果不同，以及直接请求 `copilot_internal/v2/token` 返回 403。这些样本不足以支持“Copilot CLI 的所有 `gho_` 必须先交换”或“第三方客户端普遍无法调用”的结论；应保留请求条件，而非据此推广认证规则。
+
+真实模型请求只覆盖最小成功路径；凭据错误、端点失配、超时、取消等分支用模拟响应验证，避免轮询多个错误主机或反复制造失败请求。Astra 的目录分类、effort 传参及插件隔离方法见 [DSH Copilot 适配](dsh.md#copilot-model-routing)。
 
 ## <a id="matrix"></a>客户端 × 复用方式速查
 

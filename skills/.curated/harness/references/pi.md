@@ -302,7 +302,7 @@ v0.84.3 选择 OAuth 后会列出下列 provider：
 | Provider | OAuth 登录 | API key / token 登录 | 计费 / 额度关系 |
 |---|---|---|---|
 | [Anthropic (`anthropic`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/anthropic.ts#L43-L58) | Claude Pro/Max 账号；`isSubscription: true` | `ANTHROPIC_API_KEY` | 分开：OAuth 使用 Claude 账号的 Extra Usage，key 使用 Anthropic API 账单 |
-| [GitHub Copilot (`github-copilot`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/github-copilot.ts#L9-L17) | GitHub 设备码登录，再换 Copilot token；`isSubscription: true` | `COPILOT_GITHUB_TOKEN`（须已是可用的 Copilot token） | 同一套 Copilot 订阅权益；差别在 token 的获取和存储 |
+| [GitHub Copilot (`github-copilot`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/github-copilot.ts#L9-L17) | GitHub 设备码登录，再换 Copilot token；`isSubscription: true` | `COPILOT_GITHUB_TOKEN` 原样作为 bearer；还需使用[匹配账号的端点](auth.md#copilot-endpoints) | 同一套 Copilot 订阅权益；差别在 token 的获取和存储 |
 | [Kimi For Coding (`kimi-coding`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/kimi-coding.ts#L8-L22) | Kimi Code 设备码登录；`isSubscription: true` | `KIMI_API_KEY` | 不能只看凭据类型判断：Coding 分发 key 也可使用 Coding plan / booster 额度，以 [`/usages` 返回](kimi.md#usages) 为准 |
 | [OpenAI Codex (`openai-codex`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/openai-codex.ts#L8-L20) | ChatGPT Plus/Pro；`isSubscription: true` | 该 provider 不支持；OpenAI API key 走 `openai` provider | 使用 ChatGPT 账号的 Codex 权益 |
 | [OpenRouter (`openrouter`)](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/src/providers/openrouter.ts#L8-L21) | PKCE 登录后铸造用户可控的 API key | `OPENROUTER_API_KEY` | 都从 OpenRouter credits 扣费；OAuth 只是代你生成 key |
@@ -357,7 +357,7 @@ token 换取后写入 `auth.json`（含 JWT 提取的 `accountId`），base URL 
 4. base URL 从 token 的 `proxy-ep` 动态解析（如 `api.individual.githubcopilot.com`），过期用存下的 GitHub token 刷新。
 5. 用：`pi --model github-copilot/gpt-5.5` 或 `/model`。若报 "model not supported"，去 VS Code 的 Copilot Chat 模型选择器 Enable。
 
-**headless**：设环境变量 `COPILOT_GITHUB_TOKEN`——它被**直接当作 Copilot 凭据使用**（须已是可用的 Copilot token）；上面 device-code→copilot token 的交换只发生在交互 `/login` 那条路。可用模型（快照，随账号）：GPT 系、Claude 系（sonnet-5/opus-4.8/haiku-4.5…）、Gemini 系、kimi-k2.7-code 等；登录后 pi 把账号实际可用模型存进凭据 `availableModelIds`。
+**headless**：`COPILOT_GITHUB_TOKEN` 被原样作为 bearer，不经过 OAuth 处理器的 token 交换；不能仅凭 `gho_` 前缀判断是否可直连。API key 路径的固定 individual 默认主机可能与账号不符，需同时核对[账号端点](auth.md#copilot-endpoints)。OAuth 登录会把账号可用模型 ID 存入 `availableModelIds`，但这不等于实时纠正打包目录中的协议映射；pi-ai 0.85.1 的 Astra 分类问题见 [DSH Copilot 适配](dsh.md#copilot-model-routing)。
 
 > `packages/ai/src/utils/oauth/github-copilot.ts`:251-280；`providers/github-copilot.ts:13-17`；`packages/ai/src/auth/helpers.ts:16-21`；`providers/github-copilot.models.ts`。
 
