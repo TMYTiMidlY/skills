@@ -357,7 +357,7 @@ token 换取后写入 `auth.json`（含 JWT 提取的 `accountId`），base URL 
 4. base URL 从 token 的 `proxy-ep` 动态解析（如 `api.individual.githubcopilot.com`），过期用存下的 GitHub token 刷新。
 5. 用：`pi --model github-copilot/gpt-5.5` 或 `/model`。若报 "model not supported"，去 VS Code 的 Copilot Chat 模型选择器 Enable。
 
-**headless**：`COPILOT_GITHUB_TOKEN` 被原样作为 bearer，不经过 OAuth 处理器的 token 交换；不能仅凭 `gho_` 前缀判断是否可直连。API key 路径的固定 individual 默认主机可能与账号不符，需同时核对[账号端点](auth.md#copilot-endpoints)。OAuth 登录会把账号可用模型 ID 存入 `availableModelIds`，但这不等于实时纠正打包目录中的协议映射；pi-ai 0.85.1 的 Astra 分类问题见 [DSH Copilot 适配](dsh.md#copilot-model-routing)。
+**headless**：`COPILOT_GITHUB_TOKEN` 被原样作为 bearer，不经过 OAuth 处理器的 token 交换；不能仅凭 `gho_` 前缀判断是否可直连。API key 路径的固定 individual 默认主机可能与账号不符，需同时核对[账号端点](auth.md#copilot-endpoints)。OAuth 登录会把账号可用模型 ID 存入 `availableModelIds`，但这不等于实时纠正打包目录中的协议映射。
 
 > `packages/ai/src/utils/oauth/github-copilot.ts`:251-280；`providers/github-copilot.ts:13-17`；`packages/ai/src/auth/helpers.ts:16-21`；`providers/github-copilot.models.ts`。
 
