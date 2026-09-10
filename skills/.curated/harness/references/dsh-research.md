@@ -310,44 +310,51 @@ Model Hub 的浏览器端在建立连接前读取 `ctx.connection.isLoopback`。
 
 若所有官方 OAuth 模型服务都要共用官方登录流程、凭据记录、Token 刷新与模型适配器，Model Hub 可复用的是模型服务目录、凭据记录 key 绑定、无 API Key 配置激活和 UI 组织。其内建 `codex` 仍是插件自建链路，不能作为官方链路已被复用的证据。判断归属时需要查看模型路由 key，显示名称“OpenAI Codex”不足以区分两条路由。
 
-## <a id="2026-08-27-file-transfer-artifacts"></a>2026-08-27 · 浏览器文件传输与产物交付
+## <a id="2026-08-27-file-transfer-artifacts"></a>浏览器文件传输与产物交付
 
-本轮从 DSH `0.1.1-rc.2` 的官方文件链路出发，核对“模型能读取工作区文件但 Web 不能拖入普通文件”和“模型生成文件后 Web 没有浏览器下载链接”这两个现象，并对社区中的文件上传、路径定位、工作区浏览、产物预览和聊天下载 Plugin 做源码审计。这里把模型输入模态、Agent 文件工具、浏览器上传和浏览器下载分开记录；四者共享“文件”一词，但不是同一能力。
+本章区分浏览器上传、模型按需读取、会话内文件交付和浏览器下载，结合官方版本演进与社区 Plugin 源码确定采用方式。目标是普通文件只附加引用、由模型随后自行读取；上传阶段不自动提取正文、OCR 或请求外部视觉服务。图片作为原生模型输入时另有能力检查，不能用“支持任意文件”概括两条不同流程。
 
-**调研时间：** 2026-08-27（Asia/Shanghai）
+> **核对口径：** 首次调研于 2026-08-27，复核于 2026-09-10（Asia/Shanghai）。本章官方能力说明以 2026-09-10 发布的 `dsh-v0.1.5-rc.1` 为源码依据，commit `183f08e9c6dde7e36cd2318eaee70b0da08fb35e`；功能引入时间另按对应 Release 标注。
 
-**调研目标：**
+**最终决策：** 上传采用官方通用附件；输出采用官方 `present` 文件交付，不再把 Plik 上传后返回 URL 作为默认方案，也不额外安装社区上传或产物插件。这个选择以“在会话中收到文件交付卡并打开或预览”为交付目标；`present` 不提供浏览器下载链接、不保存文件副本，不能据此宣称已替代所有跨设备下载或外部分发需求。若后续明确要求下载到访问端设备，需单独确认传输方式；下文社区项目保留为比较证据，不作为最终决策。
 
-- 解释 Sol 能用文件工具读取文件，却不能通过 DSH Web 接收任意文件拖入的原因。
-- 核对内置 Produced 文件行和模型回复中的文件引用最终执行什么动作。
-- 搜索并固定社区中与文件拖入、工作区读取、原生打开、产物预览和下载有关的仓库。
-- 比较每个 Plugin 的字节落点、模型可见形式、会话持久性、下载覆盖、容量边界、路径约束和 `0.1.1-rc.2` 兼容性。
-
-> **证据边界：** 官方 DSH 源码固定到 `deepseek-ai/deepseek-harness@b150a551`，该 checkout 的 lock 解析 pi-ai `0.82.1`；本轮实际运行的 npm 安装树则因依赖范围解析到 pi-ai `0.84.3`。下文 Sol metadata 属于后一个运行时快照，不是前一个源码 checkout 的固定目录。社区仓库固定到下表 commit；十一份仓库均以完整、非 shallow、非 partial clone 复核，HEAD 与远端默认分支一致、对象完整且工作区干净。源码审计不能替代安装后的真实 Web 组合测试；本轮只对少数无需安装依赖的 Host 测试做了本地执行。Stars 是 2026-08-27 的 GitHub API 快照，只表示当时关注度。
+> **证据边界：** 官方参考仓库已 fetch 并检出上述 tag，工作区干净、非 shallow；未升级运行中的 `0.1.2-rc.1` 服务。2026-09-10 的候选发现使用 xAI、Z.AI、Codex 三路搜索，关键结论回到固定源码和 npm 元数据复核，未安装插件或进行真实浏览器上传验收。旧审计以 `0.1.1-rc.2@b150a551` 为基线；旧 Stars、测试次数与兼容性判断仍按 2026-08-27 标注，不推及其他版本。来源：[0.1.5-rc.1 发布说明](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.1.5-rc.1)。
 
 ### <a id="file-transfer-official-chain"></a>官方文件链路
 
-Sol 的“读取文件”来自 Agent 的文件系统 Tool：文件先存在于 Host 或当前工作区，模型再请求 `read` 等操作。Provider 输入是另一层；本轮运行时解析到的 pi-ai `v0.84.3` 为 `openai-codex/gpt-5.6-sol` 声明的输入只有文本和图片，而 DSH 的浏览器 prompt wire 也只接受 `text` 与 `image`。因此，模型能读工作区文件不等于模型 API 或 Web composer 已实现任意文件传输。
+官方自 2026-09-04 发布的 `0.1.3-alpha.1` 起支持通用文件上传：浏览器拖拽、粘贴或选择文件，后台上传支持进度、取消和会话切换续显；文件保存完成后，发送消息引用该 Session 的上传回执，再形成持久 `FileBlock`。文件正文不会因为上传而进入模型请求，所有模型路由都把 `FileBlock` 转为文件名、字节数、哈希摘要和只读路径的一行文字，模型需要时才调用文件工具。这里的“摘要”是 SHA-256 内容摘要，不是自动生成的内容总结。
 
-DSH Web 的拖拽入口明确接到图片链路：document drop 把 `DataTransfer.files` 交给 `onAddImages()`，browser draft attachment 固定为 `kind: 'image'`，Host prompt part 只有文本和图片两个分支。普通文件在到达模型或文件工具前就被 composer 的图片 MIME 门禁拒绝。
+> 来源：[通用上传的发布说明](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.1.3-alpha.1)、[上传服务与回执生命周期](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/client/file-upload/README.md#L10-L52)、[文件回执随消息提交](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/client/ui-conversation/src/client/service.ts#L240-L295)、[所有模型统一接收路径文字](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/llm/llm/src/content.ts#L146-L204)。
 
-> 来源：[DSH b150 的 pi-ai `0.82.1` lock](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/pnpm-lock.yaml#L5535-L5543)、[pi-ai `v0.84.3` 中 `openai-codex/gpt-5.6-sol` 的 text/image metadata](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/scripts/generate-models.ts#L2680-L2689)、[drop 转入 `onAddImages`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/ui-attachment/src/client/ComposerAttachments.tsx#L60-L66)、[composer 的图片 MIME 门禁](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx#L510-L535)、[浏览器 draft 固定为 image](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/ui-conversation/src/client/service.ts#L62-L69)、[Host prompt wire 的 text/image union](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/host/apiproxy/src/api/sessions.ts#L90-L94)。
+TXT、PDF、Office、ZIP、音视频及未知二进制均可原样保存，通用文件没有类型白名单或应用层大小上限，零字节文件也被存储实现接受。对象按内容寻址并设为只读，保留原文件名的安全形式；会话恢复与 fork 可引用相同对象。存储实现不自动清理文件，实际上传受磁盘容量、网络、代理和运行环境限制；“可附加”不承诺模型能解析所有格式。执行环境不能映射附件路径时，模型收到明确的不可读取提示；只共享 Host 的附件库不等于远程沙箱自动获得文件。
 
-模型回复侧已经有文件引用提示：成功创建或修改文件后，应在最终回复用 Markdown 行内代码写准确路径或唯一 basename。Produced 行不依赖模型是否照做，而是从成功 mutation Tool 的 `locations` 推导路径。两种入口最终都调用 `openFile()`，再转到 Host 的 `workspaces.openPath()`；Produced chip 本身是 `<button>`，不是带 `href` 或 `download` 的链接。
+> 来源：[通用文件的存储与保留说明](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/attachment/attachment/README.md#L38-L71)、[原样流式保存和安全文件名](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/attachment/attachment-local/src/file-store.ts#L35-L137)、[零字节文件用例](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/attachment/attachment-local/tests/file-store.spec.ts#L73-L95)、[无法映射读取路径时的提示](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/llm/llm/src/content.ts#L154-L160)。
 
-> 来源：[模型文件引用提示](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/ui-deliverables/src/index.ts#L14-L27)、[Produced chip 调 `openFile`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/ui-deliverables/src/client/ProducedFiles.tsx#L115-L139)、[对话把路径转给 `workspaces.openPath`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/ui-conversation/src/client/apply.ts#L391-L403)。
+PNG/JPEG/WebP/GIF 按浏览器 MIME 自动进入原生图片流程，而不是通用文件流程。图片会规范化后直接进入模型请求；发送时仍拒绝明确不支持图片的模型。普通文件没有这个视觉能力门禁，因此文本模型可以附加 TXT、PDF 等，但默认 UI 不提供“把这张图片仅作为普通文件附加”的选择。这个例外不构成继续安装通用上传插件的理由；若需要所有图片也延迟读取，应单独设计明确的文件输入模式。
 
-`host.openPath` 操作的是运行 DSH 的 Host 桌面；它不是把字节返回浏览器。当前官方 Downloads API 只有 Session 日志 ZIP，没有工作区文件下载。当 Host description 报告 `canOpenPath:false` 时，Produced 行不会显示“在文件夹中显示”，文件 chip 也没有浏览器下载兜底；本轮现场正好命中这个条件。
+> 来源：[按 MIME 创建图片或文件草稿](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/client/ui-conversation/src/client/service.ts#L298-L325)、[仅对图片检查模型能力](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/api/session-controller/src/commands.ts#L335-L375)。
 
-> 来源：[Downloads API 只有 Session 日志](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/host/apiproxy/src/api/downloads.ts#L10-L24)、[Produced 行按 loopback 与 `canOpenPath` 决定 Host 操作](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/ui-deliverables/src/client/ProducedFiles.tsx#L49-L78)。
+官方自 2026-09-09 发布的 `0.1.5-alpha.2` 起提供 `present` 文件交付，Web `standard`、`ptc`、`cordis` preset 挂载该工具。模型创建文件后调用它，普通文件不按扩展名筛选，默认每次最多八个；路径必须存在、是会话文件系统可访问的普通文件，目录、最终符号链接和被文件策略拒绝的路径不能交付。示例调用：
+
+```json
+{"files":[{"path":"out/report.pdf","description":"报告"},{"path":"out/data.xlsx","description":"数据表"}]}
+```
+
+成功调用记录 `deliverables/presented`，聊天显示文件卡；支持的格式可在右侧 Sidebar 预览，也可请求在 Host 默认应用中打开或定位文件。`present` 只记录路径和说明，不读取或复制正文，不生成公网 URL，也不触发浏览器下载。修改源文件会改变后来打开的内容；删除源文件会让交付失效；Session ZIP 只带交付声明，不带源文件字节。文件工具产生的“Files changed”行与显式交付不同，Bash 创建的最终产物也应调用 `present`。
+
+> 来源：[文件交付的发布说明](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.1.5-alpha.2)、[`present` 参数、文件门禁与默认数量](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/fs/tool-present/src/index.ts#L38-L106)、[preset 与交付内容保留范围](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/fs/tool-present/README.md#L25-L92)、[文件卡、Sidebar 和 Host 打开动作](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/client/ui-deliverables/README.md#L28-L55)。
+
+> **旧版本对照：** `0.1.1-rc.2` 和本次检查的安装版 `0.1.2-rc.1` 仍只有图片上传，旧 Produced 行主要交给 Host opener；这些限制适用于上述两个版本，不能据此判断 `0.1.3` 及后续版本的上传能力。`0.1.3-alpha.1` 有 GitHub Release，2026-09-10 查询 npm 时没有该版本条目，不能把“首次写入发布说明”当成可安装包已存在；部署前应核对选定版本实际发布状态、Session 格式迁移和现有 Plugin 兼容性。
 
 ### <a id="file-transfer-repository-snapshot"></a>仓库快照
 
-下表按本轮源码快照记录版本、Stars 和验证面。“测试”只表示仓库里存在的测试或本轮实际执行结果，不代表真实 DSH Web 组合已经通过。
+下表记录社区项目的源码版本、功能范围和发布情况，供比较实现方式；最终采用方案仍是官方上传与文件交付。
+
+> **表格口径：** 版本、Stars 和测试信息采集于 2026-08-27。2026-09-10 复查时，`l541402398/dsh-file-uploads` 与 `WJZ-P/dsh-attachments` 的仓库 HEAD 仍是表中 SHA，未发现修复旧审计问题的后续提交；其余行保留原快照。测试文件或 CI 的存在不代表插件已通过真实 DSH Web 组合验收。
 
 | 仓库 | 版本 / commit | Stars | 主要范围 | 测试与发布信号 |
 |---|---|---:|---|---|
-| [`dsh-file-upload`](https://github.com/HongMing-Huang/dsh-file-upload/tree/ce4ca943da592be36a784a5648d36a600aeda136) | `0.5.2` / `ce4ca94` | 20 | 拖入、粘贴、选择、文档转换 | 4 个测试文件；Node 22/24 CI；npm 最新仍是 `0.4.3` |
+| [`dsh-file-upload`](https://github.com/HongMing-Huang/dsh-file-upload/tree/ce4ca943da592be36a784a5648d36a600aeda136) | `0.5.2` / `ce4ca94` | 20 | 拖入、粘贴、选择、文档转换 | 4 个测试文件；Node 22/24 CI；当时 npm 版本为 `0.4.3` |
 | [`dsh-drag-and-drop`](https://github.com/akiracod/dsh-drag-and-drop/tree/c20646ad6d4ee4c4a0ef12163a074716e17a7ba5) | `0.2.0` / `c20646a` | 7 | 同机文件路径定位 | 9 个测试文件；无 CI |
 | [`dsh-file`](https://github.com/chengzhi43/dsh-file/tree/1a94663da7eb81e31701b342a1e51f58616bd04d) | `0.1.3` / `1a94663` | 6 | 工作区浏览与编辑 | 5 个测试文件；无 CI；源码 clone 不含运行所需 `dist` |
 | [`dsh-attachments`](https://github.com/WJZ-P/dsh-attachments/tree/c94ec8b38a126b8ab919dd3849cd88560f0063a6) | package `dsh-attachment@1.0.1` / `c94ec8b` | 5 | 文件与目录拖入、历史附件 | Linux/Windows CI；Host/package 测试 9 项通过 |
@@ -359,27 +366,75 @@ DSH Web 的拖拽入口明确接到图片链路：document drop 把 `DataTransfe
 | [`dsh-file-pane`](https://github.com/trungtaottn/dsh-file-pane/tree/f6e211f71e8ddad8cfe8ddf3a738b8831d6310cb) | manifest `0.1.0` / `f6e211f` | 1 | 远程浏览器只读预览 | 4 个测试文件与 CI；README 自称 `v0.3.0`，与 manifest/tag 不一致 |
 | [`dsh-reveal-files`](https://github.com/yumm007/dsh-reveal-files/tree/328917ff210ed2ec7f674dda386f2de39fd59bfb) | `0.1.0` / `328917f` | 0 | Host 原生打开、定位与终端 | 无测试、无 CI |
 
-GitHub API 的 `created_at` 显示，这十一份仓库均创建于 2026-08-14 至 2026-08-25；部分项目继承的完整 Git 历史更早。最高 20 Stars 仍只是早期关注度快照，不能替代安全、兼容和持久性审计。
+旧表十一份仓库的 GitHub `created_at` 均在 2026-08-14 至 2026-08-25；部分项目继承的完整 Git 历史更早。Stars 只是早期关注度快照，不能替代安全、兼容和持久性审计。
+
+补充候选覆盖仅附加路径、原生图片分流和文档读取工具等不同路线，功能与适用场景见[浏览器文件输入 Plugin](#file-transfer-input-plugins)。
+
+> **补充候选口径：** 下表于 2026-09-10 核对。版本列分别记录源码包声明和 npm 发布元数据；仓库版本、README 安装示例或搜索目录的“可安装”标记均不等于实际安装验收。
+
+| 候选与源码 | manifest 版本 | 发布与适配证据 |
+|---|---|---|
+| [`Johnny-xuan/dsh-paste-to-path`](https://github.com/Johnny-xuan/dsh-paste-to-path/tree/5c831284cb4474a7d942dd09eaabdabb228c701d) | `0.0.6` | npm `dsh-paste-to-path@0.0.6`；声明 DSH peers `>=0.1.2-rc.1 <0.2.0`，发布包未逐字节比对 |
+| [`CocoSgt/dsh-attachments`](https://github.com/CocoSgt/dsh-attachments/tree/70c0b7e81d7d6a2707e282457bd92f2577bd6629) | `0.1.1` | npm `dsh-attachments@0.1.1` 的 `gitHead` 为 `a293f9f`，与仓库 HEAD 不同；两个提交的 intake 均为全部文件落盘，旧 DSH 依赖仍需组合验证 |
+| [`demacia1314/dsh-airdrop`](https://github.com/demacia1314/dsh-airdrop/tree/08e40f217ef80ceb96ead9e22d09499e8c0d5f69) | `0.2.1` | 源码声明适配 rc.1；npm `dsh-airdrop` 返回 404，旧包 `dsh-universal-attachments@0.1.2` 的 peers 不覆盖 `0.1.2-rc.1` |
+| [`loudMore/dsh-drop-to-path`](https://github.com/loudMore/dsh-drop-to-path/tree/a00a5a2e18fd89e829b1c96f2f2e85af67366e10) | `0.1.0`，private | 只确认源码；发送包装与 rc.1 返回值不兼容 |
+| [`Mooling0602/dsh-web-file-uploader`](https://github.com/Mooling0602/dsh-web-file-uploader/tree/eafb06649a540f8292e230738ac2179f87acd48e) | `0.3.2` | 只确认该源码的模型分流与 HTTP 入口 |
+| [`GLFzr/dsh-file-upload`](https://github.com/GLFzr/dsh-file-upload/tree/dc23ac42271fd93814924cd5822992501f7fb654) | `2.1.0` | 原 `dsh-drop-file-to-path` 地址重定向到此；npm `dsh-file-upload@0.4.3` 属于 HongMing-Huang，不能按同名包安装本项目 |
+| [`hyper-dsh-plugins/dsh-open-file`](https://github.com/hyper-dsh-plugins/dsh-open-file/tree/39636d198993c5980da0091056d307bb5a8a48c5) | `0.1.2-rc.1` | npm 同版本存在，DSH peers 精确匹配该版本；未在运行中的 Profile 验收 |
+| [`xzyonline/dsh-file-attachments`](https://github.com/xzyonline/dsh-file-attachments/tree/7a0f0f47358366ed084de7a065d892fe6206e434) | `0.3.0`，private | 仓库更名为 `dsh-chat-files`，内部包名仍为 `@dsh-external/dsh-file-attachments`；旧 peers 不证明 rc.1 兼容 |
+| [`liznee/dsh-file-resource`](https://github.com/liznee/dsh-file-resource/tree/17650ab1b7ceb08b19338f81ff8f7f9b4f5cf86f) | `0.4.9` | npm 同版本；本轮核对 README 与发布信息，未重做完整源码审计 |
+| [`sharkymew/dsh-utility-tools`](https://github.com/sharkymew/dsh-utility-tools/tree/d8ee3a77aed2c5446942073470faaa9de9ecd98a) | `1.0.5` | npm 同版本与 `gitHead`；核对 README 和 Host 实现 |
+
+> **安装名不能混用：** `CocoSgt/dsh-attachments` 的 npm 包名是 `dsh-attachments`，`WJZ-P/dsh-attachments` 的包名是 `dsh-attachment`；`l541402398/dsh-file-uploads` 是第三个独立项目。2026-09-10 查询 registry 时，前两个包分别发布为 `0.1.1`、`1.0.1`，第三个同名包返回 404。版本元数据不替代发布包与真实会话验收；`dsh-attachments@0.1.1` 对应提交的[文件接收实现](https://github.com/CocoSgt/dsh-attachments/blob/a293f9fff1b808aa4644f7ef1a1b9ec51ae4d4b5/src/client/intake.ts#L118-L139)也将图片作为普通文件暂存。
 
 ### <a id="file-transfer-input-plugins"></a>浏览器文件输入 Plugin
 
-输入类实现可分成两种：把浏览器 `File` 的字节复制到 Host，或者不复制字节、只尝试恢复原文件路径。模型最终仍要通过路径或额外 Tool 读取内容。
+输入插件主要采用两种方式：把浏览器文件真正上传到 Host，或寻找 Host 上已经存在的文件并引用其路径。只有前者能接收远程浏览器所在设备上的新文件。比较时还要看图片是否直接发送给模型、文档是否自动解析，以及附件能否随会话恢复。
+
+> 下表依据 2026-08-27 的源码审计，兼容性基线为 DSH `0.1.1-rc.2`。
 
 | Plugin | 浏览器入口与字节落点 | 模型如何取得文件 | 下载覆盖 | 关键边界与 rc.2 状态 |
 |---|---|---|---|---|
-| `dsh-file-uploads` | 只有 picker；raw body 流式写入全局 `$DSH_HOME/uploads` | submit 时把 Host 绝对路径作为普通文本写进用户消息 | Settings 中可下载输入文件；无逐消息附件下载；无产出下载 | Host/Origin/Sec-Fetch-Site fence、100 MiB 单文件、1 GiB 总量、临时文件、fsync、同名编号与流式下载均有实现；所有 Session 共享可枚举目录，且没有 TTL、GC 或 Session 删除联动，手动删除可使旧消息路径失效。`0.1.1-rc.2` 静态接口匹配，但没有真实组合测试 |
-| `dsh-attachments` | document capture drop；普通文件和目录流式写入私有 object store，提交时复制到 `.deepseek-harness/attachments/` | 把工作区副本路径和附件 metadata 追加进用户消息 | 历史普通文件可按 Session 下载；目录不能下载；无产出下载 | 无单文件、数量或总容量上限；路由无 Host/Origin fence；工作区复制缺少 realpath/no-follow。rc.2 的 `conversation.input.attachments` 已被官方 single occupant 占用，插件同优先级注册会冲突，组件 props 也不符合当前 Slot owner，静态判定不能直接使用 |
-| `dsh-file-fix` | drop、paste、picker；FileReader 转 base64，经 Typert 写入内容寻址附件库 | pre-step 注入 attachment id；`read_attachment` 读文本，`place_attachment` 复制二进制到工作区 | 历史输入附件有下载；无产出下载 | 50 MiB 单文件在 Host 强制，20 文件/200 MiB 批量限制主要靠客户端；上传和下载全量缓冲。下载、Remote 与 Tool 没有 Session ownership；直接 Node 写入有 symlink/TOCTOU；自定义 `filefix/files` 不是官方已知且不能写 `ignorable`，rc.2 恢复会拒绝该事件；无测试/CI |
-| `dsh-file-upload` | picker、drop、paste、目录展开；整包缓冲后写入 `<cwd>/.dsh-uploads/<sessionId>` | 发送 Host 绝对路径，并引导调用 `read_document`；图片可走官方 `read_image` 或外部视觉描述 | 无输入下载；无产出下载 | DELETE 只做字符串前缀校验，`<storage>/../../victim` 可越界删除，属于 Critical；route 绕过标准 `/api` fence，只有可伪造 Host regex；无总容量，上传和转换放大内存。text-only 路由可能在没有逐文件确认时把图片发到自动发现的 OpenAI-compatible 视觉端点；`read_document` 的 renderer 只向模型展示两行；client scoped event、错误状态、相对路径和清理器还有确定性缺陷。仓库 0.5.2 无构建产物，npm 0.4.3 又是旧代码，peer rc.6 不覆盖 rc.2 |
-| `dsh-drag-and-drop` | 不复制普通文件；从 URI 或 Host 搜索恢复绝对路径，必要时比较 metadata、结构与摘要；纯图片仍走官方图片链 | 发送绝对路径普通文本，模型再自行调用文件 Tool | 无输入或产出下载 | 只适合同一文件系统命名空间；远程浏览器、容器、WSL 或异构 OS 会失配。裸 locator route 无 trust fence，roots、candidates 与 phase 由客户端控制，可做路径 oracle 和 I/O DoS；唯一 name+size/name 候选可能错认，同一 pending 队列还可跨 Session 发送 |
+| `l541402398/dsh-file-uploads` | 只有文件选择器；raw body 流式写入全局 `$DSH_HOME/uploads` | submit 时把 Host 绝对路径作为普通文本写进用户消息 | Settings 中可下载输入文件；无逐消息附件下载；无产出下载 | Host/Origin/Sec-Fetch-Site fence、100 MiB 单文件、1 GiB 总量、临时文件、fsync、同名编号与流式下载均有实现；所有 Session 共享可枚举目录，且没有 TTL、GC 或 Session 删除联动，手动删除可使旧消息路径失效。`0.1.1-rc.2` 静态接口匹配，但没有真实组合测试 |
+| `WJZ-P/dsh-attachments` | 页面级拖拽；普通文件和目录流式写入私有 object store，提交时复制到 `.deepseek-harness/attachments/` | 把工作区副本路径和附件 metadata 追加进用户消息 | 历史普通文件可按 Session 下载；目录不能下载；无产出下载 | 无单文件、数量或总容量上限；路由无 Host/Origin fence；工作区复制缺少 realpath/no-follow。rc.2 的 `conversation.input.attachments` 已被官方 single occupant 占用，插件同优先级注册会冲突，组件 props 也不符合当前 Slot owner，静态判定不能直接使用 |
+| `re-ITRT/dsh-file-fix` | 拖拽、粘贴、文件选择器；FileReader 转 base64，经 Typert 写入内容寻址附件库 | pre-step 注入 attachment id；`read_attachment` 读文本，`place_attachment` 复制二进制到工作区 | 历史输入附件有下载；无产出下载 | 50 MiB 单文件在 Host 强制，20 文件/200 MiB 批量限制主要靠客户端；上传和下载全量缓冲。下载、Remote 与 Tool 没有 Session ownership；直接 Node 写入有 symlink/TOCTOU；自定义 `filefix/files` 不是官方已知且不能写 `ignorable`，rc.2 恢复会拒绝该事件；无测试/CI |
+| `HongMing-Huang/dsh-file-upload` | 文件选择器、拖拽、粘贴、目录展开；整包缓冲后写入 `<cwd>/.dsh-uploads/<sessionId>` | 发送 Host 绝对路径，并引导调用 `read_document`；图片可走官方 `read_image` 或外部视觉描述 | 无输入下载；无产出下载 | DELETE 只做字符串前缀校验，`<storage>/../../victim` 可越界删除，属于 Critical；route 绕过标准 `/api` fence，只有可伪造 Host regex；无总容量，上传和转换放大内存。text-only 路由可能在没有逐文件确认时把图片发到自动发现的 OpenAI-compatible 视觉端点；`read_document` 的 renderer 只向模型展示两行；client scoped event、错误状态、相对路径和清理器还有确定性缺陷。仓库 0.5.2 无构建产物，npm 0.4.3 又是旧代码，peer rc.6 不覆盖 rc.2 |
+| `akiracod/dsh-drag-and-drop` | 不复制普通文件；从 URI 或 Host 搜索恢复绝对路径，必要时比较 metadata、结构与摘要；纯图片仍走官方图片链 | 发送绝对路径普通文本，模型再自行调用文件 Tool | 无输入或产出下载 | 只适合同一文件系统命名空间；远程浏览器、容器、WSL 或异构 OS 会失配。裸 locator route 无 trust fence，roots、candidates 与 phase 由客户端控制，可做路径 oracle 和 I/O DoS；唯一 name+size/name 候选可能错认，同一 pending 队列还可跨 Session 发送 |
 
 > 来源：[`dsh-file-uploads` 的 trust fence、原子写入和下载](https://github.com/l541402398/dsh-file-uploads/blob/3ea46e1583eac426cc34e191ea811e71b0c8347e/index.js#L109-L221)、[`dsh-file-uploads` 的配额与流式响应](https://github.com/l541402398/dsh-file-uploads/blob/3ea46e1583eac426cc34e191ea811e71b0c8347e/index.js#L304-L425)、[`dsh-attachments` 的上传、工作区复制和下载](https://github.com/WJZ-P/dsh-attachments/blob/c94ec8b38a126b8ab919dd3849cd88560f0063a6/src/index.mjs#L202-L254)、[`dsh-attachments` 的文件 route](https://github.com/WJZ-P/dsh-attachments/blob/c94ec8b38a126b8ab919dd3849cd88560f0063a6/src/index.mjs#L283-L460)、[`dsh-file-fix` 的模型注入](https://github.com/re-ITRT/dsh-file-fix/blob/64ab40fe6a2bc91ea50ca57d67137ec6a7410d00/src/attach.ts#L25-L31)、[`dsh-file-fix` 的无 Session 下载 route](https://github.com/re-ITRT/dsh-file-fix/blob/64ab40fe6a2bc91ea50ca57d67137ec6a7410d00/src/http.ts#L23-L59)、[`dsh-file-upload` 的缓冲上传与落盘](https://github.com/HongMing-Huang/dsh-file-upload/blob/ce4ca943da592be36a784a5648d36a600aeda136/src/upload.ts#L117-L230)、[`dsh-file-upload` 的 DELETE 校验](https://github.com/HongMing-Huang/dsh-file-upload/blob/ce4ca943da592be36a784a5648d36a600aeda136/src/upload.ts#L241-L277)、[`dsh-file-upload` 的视觉端点自动发现与传输](https://github.com/HongMing-Huang/dsh-file-upload/blob/ce4ca943da592be36a784a5648d36a600aeda136/src/vision.ts#L60-L121)、[`dsh-drag-and-drop` 的客户端权威搜索范围](https://github.com/akiracod/dsh-drag-and-drop/blob/c20646ad6d4ee4c4a0ef12163a074716e17a7ba5/src/locator.ts#L79-L109)。
 
-这些项目说明“文件路径进入 prompt”与“附件字节成为持久 Session 输入”仍是两个不同状态。`dsh-file-uploads`、`dsh-file-upload` 和 `dsh-attachments` 主要依赖文件继续存在于 Host；`dsh-file-fix` 另建附件库和读取 Tool，但其自定义事件与官方 Session 格式没有完整扩展面。
+**社区方案的取舍：** 如果能够使用官方通用附件和 `present`，优先采用官方方案，减少重复的存储、会话恢复和界面适配。必须保留 DSH `0.1.2-rc.1`，或要求图片也仅按文件附加时，社区候选才值得进一步验证：
+
+- **仅附加路径：优先验证 `dsh-paste-to-path`。** 拖拽、粘贴和选择器齐全，图片也只生成路径引用，且声明适配 `0.1.2-rc.1`，与目标最接近。图片预览接口、目录授权和待发送状态恢复仍有缺口，应先修正并验证，不能直接视为可靠的生产方案。
+- **同类备选：`CocoSgt/dsh-attachments`。** 同样把所有类型当作文件，功能方向合适；旧依赖、写入保护和状态恢复需要更多适配。它可作为全类型接收流程的参考，优先级低于 `dsh-paste-to-path`。
+- **只需文件选择器：考虑 `dsh-file-uploads`。** 功能较少，但上传大小与总量限制、避免覆盖的写入方式较明确。适合简单上传需求；缺少拖拽和会话级存储隔离，不作为完整交互方案。
+- **大文件和文件夹：`dsh-airdrop` 的传输管理较完整。** 分块上传、续传、目录处理、配额和待发送状态恢复覆盖较多，适合研究这类能力；但它会自动发送图片块，因此不适合“所有文件只附加路径”的严格要求。
+- **按需文档处理：`dsh-open-file` 的工具范围较完整。** 提供检查、读取、本地 OCR 和页面渲染，并有工作区与资源限制，适合另外需要这些工具的场景；常见图片走原生输入、部分格式被拒绝，不能替代纯粹的任意文件暂存。
+
+> **比较口径：** 以下依据 2026-09-10 的源码审计，兼容性重点为 DSH `0.1.2-rc.1`。这些倾向用于选择后续验证对象，不改变本章采用官方方案的决策；未安装候选或完成浏览器验收，安全问题也未对运行服务作利用测试。
+
+| Plugin | 上传与模型可见内容 | 关键限制或不采用原因 |
+|---|---|---|
+| `Johnny-xuan/dsh-paste-to-path` | 拖拽、粘贴、无类型限制的文件选择器；所有文件原样上传，引用 codec 只生成路径文字，图片预览仅在浏览器，不自动解析或请求模型 | 默认 25 MiB/文件，路由复用 `connection.requestRejection`，文件 `0600`；但目录仍取客户端参数，缺少完整 Session-cwd 和符号链接防护，无总量配额或磁盘 GC，索引主要在内存。图片预览引用 rc.1 未导出的 `ImageLightbox`，静态判断点击预览可能失败；未做浏览器复现 |
+| `CocoSgt/dsh-attachments` | 拖拽、粘贴、文件选择器；所有类型含图片均 `stashFile`，在 pre-step 追加标准文本消息中的路径和元数据，无图片块或自动解析 | 32 MiB/文件、30 个待发送项；通过 DSH Typert 通道传输。客户端提供的目录未与真实 Session 绑定，写入缺少充分的原子发布和 no-follow 防护；重启丢待发送状态，无配额/GC，旧依赖及 DOM 假设需验收 |
+| `demacia1314/dsh-airdrop` | 文件和目录分块直传会话工作区，普通文档保留路径；**pre-step 会自动验证、保存常见栅格图片并追加 `ImageBlock`**，没有发现仅按文件附加的开关 | 图片分支没有模型能力检查，不符合全部类型延迟读取。路径保护、文件权限、流式配额和待发送状态恢复覆盖较多；图片输入方式与只附加目标不同，源码与 npm 发布状态也不一致 |
+| `loudMore/dsh-drop-to-path` | 图片与普通附件通常转为工作区路径，但存在扩展名白名单；图片上传失败会回退原生图片发送 | 不支持所有格式，上传失败还可能改为直接发送图片；修改 `sendSession` 后成功分支返回 `undefined`，rc.1 输入机需要 `SubmitOutcome.kind`，静态确认不兼容；全局文件队列、客户端目录和裸路由还有隔离问题 |
+| `Mooling0602/dsh-web-file-uploader` | 文件选择器上传；文本模型得到路径，视觉模型在 pre-step 自动得到原生图片块 | 不满足统一的延迟读取；48 MiB 且拒绝空文件；自定义删除入口把调用者路径传给 `unlinkSync`，未见约束到登记附件的检查，未作利用测试 |
+| `GLFzr/dsh-file-upload` | 只有拖拽；文本按扩展名解码，二进制保留成 `.b64`，全局暂存和队列 | 不是原样文件路径交付；无 Session 绑定，路由仅检查可缺省的 Origin，拒绝零字节，存在同名 npm 项目混淆 |
+| `hyper-dsh-plugins/dsh-open-file` | 普通文件按原始字节上传，发送时附带插件文件引用；上传时做类型识别和容器校验，`file_read`、`file_ocr`、`file_render` 由模型显式调用 | 读取和 OCR 是按需工具；常见图片仍走原生链路，旧 OLE Office 在提交校验中被拒绝，因此不满足严格的所有类型只附加。已有会话工作区、路径与资源限制，仍未作运行组合验收 |
+| `xzyonline/dsh-chat-files` | 普通文件保存到内容寻址库，上传只做类型检测；pre-step 通知文件 ID，模型再调受限读取/压缩包工具 | 没有自动正文提取或 OCR；图片被交还原生入口或拒绝，不满足所有类型统一附加；旧依赖与 DSH `0.1.2-rc.1` 的兼容性未验收 |
+| `liznee/dsh-file-resource` | README 声明文档上传时本地解析成资源，正文按需由工具读取；图片仍原生 | “不立即把正文给模型”与“不进行任何预处理”不同；本次只核对文档和 registry，不据此确认完整安全性 |
+| `sharkymew/dsh-utility-tools` | 普通文件发送时写入系统临时目录后给路径；图片仍原生 | 临时目录可能被系统清理；Host 把字节数组传给 `writeText` 后以异常和文件大小兜底，且请求体无服务端大小上限、未见统一请求检查，不作为可靠上传基础 |
+
+> 来源：[`dsh-paste-to-path` 的上传/引用与 Host 路由](https://github.com/Johnny-xuan/dsh-paste-to-path/tree/5c831284cb4474a7d942dd09eaabdabb228c701d)、[CocoSgt 全类型 intake](https://github.com/CocoSgt/dsh-attachments/blob/70c0b7e81d7d6a2707e282457bd92f2577bd6629/src/client/intake.ts#L118-L139)、[CocoSgt 目录与存储参数](https://github.com/CocoSgt/dsh-attachments/blob/70c0b7e81d7d6a2707e282457bd92f2577bd6629/src/index.ts#L311-L353)、[AirDrop 图片保存与注入](https://github.com/demacia1314/dsh-airdrop/blob/08e40f217ef80ceb96ead9e22d09499e8c0d5f69/src/index.ts)、[AirDrop 人类消息附件组装](https://github.com/demacia1314/dsh-airdrop/blob/08e40f217ef80ceb96ead9e22d09499e8c0d5f69/src/server/injection.ts)、[loudMore 的发送包装与失败回退](https://github.com/loudMore/dsh-drop-to-path/blob/a00a5a2e18fd89e829b1c96f2f2e85af67366e10/lib/client.js#L329-L377)、[Mooling 原生图片分流](https://github.com/Mooling0602/dsh-web-file-uploader/blob/eafb06649a540f8292e230738ac2179f87acd48e/src/core/host-core.js#L467-L502)、[Mooling 删除入口](https://github.com/Mooling0602/dsh-web-file-uploader/blob/eafb06649a540f8292e230738ac2179f87acd48e/lib/index.js#L203-L226)、[GLFzr 字节与暂存实现](https://github.com/GLFzr/dsh-file-upload/blob/dc23ac42271fd93814924cd5822992501f7fb654/lib/index.js)。
+
+> 来源：[Open File 提交只带引用](https://github.com/hyper-dsh-plugins/dsh-open-file/blob/39636d198993c5980da0091056d307bb5a8a48c5/src/client/submit-adapter.ts#L34-L77)、[Open File 图片走原生入口](https://github.com/hyper-dsh-plugins/dsh-open-file/blob/39636d198993c5980da0091056d307bb5a8a48c5/src/client/file-intake.ts#L23-L63)、[Chat Files 的按需工具](https://github.com/xzyonline/dsh-file-attachments/blob/7a0f0f47358366ed084de7a065d892fe6206e434/src/tools.ts#L79-L105)、[Chat Files 的图片过滤](https://github.com/xzyonline/dsh-file-attachments/blob/7a0f0f47358366ed084de7a065d892fe6206e434/src/client/store.ts#L55-L65)、[File Resource 文档](https://github.com/liznee/dsh-file-resource/blob/17650ab1b7ceb08b19338f81ff8f7f9b4f5cf86f/README.md)、[Utility Tools Host 实现](https://github.com/sharkymew/dsh-utility-tools/blob/d8ee3a77aed2c5446942073470faaa9de9ecd98a/lib/index.js)。
+
+这些实现中的路径文字能随普通消息保留，但文件和附件索引是否恢复、fork 是否可读、清理是否误删仍需分别验证。采用官方通用附件可以复用持久文件引用和统一请求投影，因此不再额外安装社区上传插件；只有“图片也必须仅作为普通文件附加”等独立差异值得另行处理。
 
 ### <a id="file-transfer-workspace-plugins"></a>工作区与产物界面 Plugin
 
-工作区浏览器能让人看到文件，不一定提供下载；Host 原生打开动作也不会把字节送到远程浏览器。下表按真实传输动作区分这些界面。
+工作区浏览器能让人看到文件，不一定提供下载；Host 原生打开动作也不会把字节送到远程浏览器。下表保留 2026-08-27 的社区界面审计，不把它们列为官方 Sidebar 和 `present` 之外必须安装的组件。
 
 | Plugin | 用户界面与字节通道 | 对模型的影响 | 路径与兼容边界 |
 |---|---|---|---|
@@ -391,31 +446,33 @@ GitHub API 的 `created_at` 显示，这十一份仓库均创建于 2026-08-14 �
 
 > 来源：[`dsh-reveal-files` 的路径解析和原生命令](https://github.com/yumm007/dsh-reveal-files/blob/328917ff210ed2ec7f674dda386f2de39fd59bfb/lib/index.js#L38-L146)、[`dsh-reveal-files` 的裸 route](https://github.com/yumm007/dsh-reveal-files/blob/328917ff210ed2ec7f674dda386f2de39fd59bfb/lib/index.js#L154-L251)、[`dsh-workspace-files` 的 caller-supplied root](https://github.com/sqfcyily/dsh-workspace-files/blob/68a322f9884cfa4ec5552e3116ab769c97ec9c47/lib/index.js#L206-L230)、[`dsh-file` 的 path 解析与文件操作](https://github.com/chengzhi43/dsh-file/blob/1a94663da7eb81e31701b342a1e51f58616bd04d/src/index.ts#L59-L193)、[`dsh-file` 的无约束 `setRoot`](https://github.com/chengzhi43/dsh-file/blob/1a94663da7eb81e31701b342a1e51f58616bd04d/src/index.ts#L280-L297)、[`dsh-artifact-library` 的任意路径登记与文件流](https://github.com/wyq183/dsh-artifact-library/blob/ad3c6ee6fadba7a7de7a9eb3e842994259be24c8/lib/http.js#L99-L130)、[`dsh-file-pane` 的配置 root 与 inline raw route](https://github.com/trungtaottn/dsh-file-pane/blob/f6e211f71e8ddad8cfe8ddf3a738b8831d6310cb/lib/index.js#L99-L173)、[`dsh-file-pane` 的 realpath 前缀检查与完整文件缓冲](https://github.com/trungtaottn/dsh-file-pane/blob/f6e211f71e8ddad8cfe8ddf3a738b8831d6310cb/lib/view-core.mjs#L92-L127)、[`dsh-file-pane` 的远程 Produced 接管](https://github.com/trungtaottn/dsh-file-pane/blob/f6e211f71e8ddad8cfe8ddf3a738b8831d6310cb/client/index.tsx#L370-L403)。
 
-### <a id="file-transfer-rich-artifacts"></a>聊天产物下载
+### <a id="file-transfer-rich-artifacts"></a>聊天产物交付与下载
 
-`dsh-rich-artifacts` 是本轮发现中唯一明确实现“模型发布工作区文件 → 聊天下载卡 → 浏览器 attachment response”的独立仓库。它向模型注册 `publish_artifact` 并加入 system prompt；Tool 使用 `ctx.fs.lstat/resolve/stat/contains` 把路径约束到 Session workspace，拒绝最终 symlink，按 magic bytes 判断 MIME，将文件复制到 SHA-256 内容寻址 blob store，再把 metadata 追加为 `artifact/published` 事件。浏览器对普通文件渲染 `/api/artifacts/:id/download` 链接，对安全栅格图片同时提供 inline preview；Host 下载 route 设置 `Content-Disposition: attachment`、`nosniff` 和长度，并用 `createReadStream` 传输。
+输出端最终采用[官方 `present`](#file-transfer-official-chain)：任意格式的可访问普通文件可成为交付卡，具体格式是否能预览由 Sidebar 读取器决定。早期的 Plik 工具上传文件再返回 URL 可以解决浏览器下载，Markdown 图片 URL 也可以直接显示；确认官方文件交付可满足本次目标后，不再把 Plik 作为默认步骤，不为了展示文件自动外发副本。这不等于 `present` 已生成下载 URL；源文件存续、访问端下载和对外分享仍是不同需求。
+
+`dsh-rich-artifacts` 是 2026-08-27 候选集合中唯一明确实现“模型发布工作区文件 → 聊天下载卡 → 浏览器 attachment response”的独立仓库，下面保留其旧审计，不再作为选型建议。它向模型注册 `publish_artifact` 并加入 system prompt；Tool 使用 `ctx.fs.lstat/resolve/stat/contains` 把路径约束到 Session workspace，拒绝最终 symlink，按 magic bytes 判断 MIME，将文件复制到 SHA-256 内容寻址 blob store，再把 metadata 追加为 `artifact/published` 事件。浏览器对普通文件渲染 `/api/artifacts/:id/download` 链接，对安全栅格图片同时提供 inline preview；Host 下载 route 设置 `Content-Disposition: attachment`、`nosniff` 和长度，并用 `createReadStream` 传输。
 
 > 来源：[workspace 约束与发布存储](https://github.com/Inkotake/dsh-rich-artifacts/blob/44f39793ce383330c781b38893d516e50cfab397/src/index.ts#L353-L459)、[`publish_artifact` Tool 与模型提示](https://github.com/Inkotake/dsh-rich-artifacts/blob/44f39793ce383330c781b38893d516e50cfab397/src/index.ts#L546-L634)、[HTTP content/download route](https://github.com/Inkotake/dsh-rich-artifacts/blob/44f39793ce383330c781b38893d516e50cfab397/src/index.ts#L475-L540)、[图片预览与文件下载卡](https://github.com/Inkotake/dsh-rich-artifacts/blob/44f39793ce383330c781b38893d516e50cfab397/src/client.ts#L102-L147)。
 
-这条链路与内置 Produced 行仍有几处差异和缺口：
+这条社区链路在 `0.1.1-rc.2` 基线下有以下差异和缺口：
 
 - 它不会自动发布所有 `write` / `edit` 产物。模型必须额外调用 `publish_artifact`；system prompt 只能提高调用概率，不能成为执行保证。
 - client 在 `conversation.chat.turnTail` 注册时没有指定 priority，内置 `ui-deliverables` 同样使用默认 `0`。rc.2 的 chain 在同优先级下保持注册顺序并取首个非 null selector：若内置行先注册且本轮已有 mutation 产物，下载画廊会被遮蔽；若该 Plugin 先注册，则由它胜出。本轮没有运行真实 Web composition，实际注册顺序未验证；`dsh-file-pane` 显式使用 `priority:-1`，说明该 Slot 需要由 Plugin 自己确定接管顺序。
 - `artifact/published` 通过修改内部 `KNOWN_SESSION_EVENT_TYPES` Set 注册，而 `Session.append()` 没有把第三方事件写成 `ignorable` 的公开面。插件安装期间可以识别该事件；插件移除并重启后，持久日志可能因 unknown、non-ignorable event 被拒绝。
 - `/api/artifacts` 作为 Plugin 自己注册的更长 prefix route，不经过标准 `/api` fence；handler 不检查 Host、Origin、`Sec-Fetch-Site`、身份或 Session，只验证随机 artifact id。`maxTurnBytes` 尚未强制，blob 没有 GC；发布会先把完整文件读入内存，默认单文件上限 100 MiB，下载本身是流式。
-- 仓库只有一个 store 测试、没有 CI，也没有发布到 npm。当前 commit 未提供真实 rc.2 Profile、历史恢复、卸载后重放或 turn-tail 组合测试。
+- 仓库只有一个 store 测试、没有 CI，也没有发布到 npm。所审提交未提供真实 rc.2 Profile、历史恢复、卸载后重放或 turn-tail 组合测试。
 
 > 来源：[未指定 priority 的画廊注册](https://github.com/Inkotake/dsh-rich-artifacts/blob/44f39793ce383330c781b38893d516e50cfab397/src/client.ts#L191-L217)、[rc.2 chain 的排序与首个非 null 语义](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/ui-slots/src/index.ts#L247-L252)、[内置 Produced 的默认优先级注册](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/ui-deliverables/src/client/index.ts#L37-L52)、[无请求 fence 的 artifact handler](https://github.com/Inkotake/dsh-rich-artifacts/blob/44f39793ce383330c781b38893d516e50cfab397/src/index.ts#L494-L540)、[直接注册 `/api/artifacts` prefix](https://github.com/Inkotake/dsh-rich-artifacts/blob/44f39793ce383330c781b38893d516e50cfab397/src/index.ts#L636-L642)、[内部事件 Set 修改](https://github.com/Inkotake/dsh-rich-artifacts/blob/44f39793ce383330c781b38893d516e50cfab397/src/index.ts#L22-L30)、[rc.2 恢复拒绝未知非 ignorable 事件](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/session/session-persistence/src/coordinator.ts#L1051-L1065)。
 
-因此，“存在直接下载模型产出的社区仓库”和“已经存在可透明接管所有原生 Produced 文件的成熟 Plugin”是两个不同判断。`dsh-rich-artifacts` 证明前一条链路已经有人实现；当前固定 commit 仍依赖模型显式发布，并存在 Slot 组合、Session 格式、授权和生命周期缺口。`dsh-file-pane` 解决远程预览而非下载，`dsh-artifact-library` 只有不安全且不完整的原文件流，不能替代聊天下载链。
+这份旧审计只能证明当时已有社区下载实现，不能证明其可安全接管所有 Produced 文件。所审 `dsh-rich-artifacts` 仍依赖显式发布，并存在 Slot 组合、Session 格式、授权和生命周期缺口；`dsh-file-pane` 面向预览，`dsh-artifact-library` 的原文件流也不构成完整下载方案。这些差异用于解释未采用原因，不能据此判断官方 `present` 的能力。
 
 ### <a id="file-transfer-security-boundaries"></a>传输与下载的安全边界
 
-DSH 默认 Web bind 是 loopback，且标准 `/api` carrier 对 Host、Origin 和 `Sec-Fetch-Site` 做请求栅栏；这组检查不是用户认证。社区 Plugin 直接向 `webServer` 注册 exact 或更长 prefix route 时会先于标准 `/api` handler 命中，因而不会自动继承该栅栏。只有 Plugin 自己复用官方连接层或实现等价检查时，这些请求边界才存在。
+Host、Origin 和 `Sec-Fetch-Site` 请求检查与用户身份认证承担不同职责；社区 Plugin 自注册路由不会自动获得官方连接层的检查。官方通用上传通过 Connection 注册经过身份验证的流式入口，并将上传回执绑定到真实 Session。评估社区插件时，应核对路由实际使用的认证和授权方式，不能仅凭 `/api` 前缀或“同源请求”的描述判断安全性。
 
-> 来源：[标准 API 的 Host/Origin/Fetch-Metadata 检查](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/api-request-trust.ts#L90-L123)、[WebServer exact 与 longest-prefix 路由顺序](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/host/webserver/src/index.ts#L256-L265)。
+> **版本对照：** `0.1.1-rc.2` 的标准 `/api` carrier 用于核对旧插件的请求栅栏，`0.1.5-rc.1` 的 Connection 上传入口用于核对官方通用上传；两者不能混用。来源：[0.1.1-rc.2 API 的请求检查](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/api-request-trust.ts#L90-L123)、[旧 WebServer 路由顺序](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/host/webserver/src/index.ts#L256-L265)、[Connection 上传入口](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/client/file-upload/src/http-route.ts#L16-L66)、[Session 回执与投递事务](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/client/file-upload/README.md#L44-L52)。
 
-一条完整的工作区上传或下载链需要同时拥有以下边界；其中任一项不能由模型提示或前端隐藏按钮代替：
+评估上传或下载实现时，按下列项目检查；这些是审计标准，不表示官方或任一候选已经全部具备。通用文件的大小配额、保留周期和磁盘容量应由部署明确控制，访问权限也须单独核对：
 
 - Host 根据 `sessionId` 解析 authoritative cwd，不能接受浏览器自行声明根目录。
 - 对目标做 canonical realpath、regular-file 与 no-follow 检查，并把 symlink 和 TOCTOU 纳入实现与测试。
@@ -429,11 +486,15 @@ DSH 默认 Web bind 是 loopback，且标准 `/api` carrier 对 Host、Origin �
 
 ### <a id="file-transfer-validation-boundary"></a>验证范围
 
-本轮执行了 `dsh-file-uploads` Host 测试 7 项、`dsh-attachments` Host/package 测试 9 项和 `dsh-file` Host-facing 测试 5 项；其余仓库因缺少依赖、构建产物、测试或真实组合入口，只做固定 commit 的静态审计。没有把任何候选安装进当前 Web Profile，也没有用真实浏览器完成上传、刷新、fork、Session 恢复、下载和卸载后的端到端验证。
+> **测试记录：** 2026-08-27 执行了 `l541402398/dsh-file-uploads` 的 7 项 Host 测试、`WJZ-P/dsh-attachments` 的 9 项 Host/package 测试和 `chengzhi43/dsh-file` 的 5 项 Host-facing 测试；2026-09-10 没有重跑这些测试。旧表其他仓库只做源码审计。
 
-发布状态还有几处会改变“按 README 安装”得到的实际代码：`dsh-file-upload` 仓库是 0.5.2，npm 最新 0.4.3 对应更早 commit；`dsh-workspace-files` 仓库为 0.1.1，npm 仍是 0.1.0；`dsh-file-fix` 与 `dsh-attachment` 的 npm 版本对应本轮 commit；`dsh-file-uploads`、`@omdsh-dev/dsh-drag-and-drop`、`dsh-reveal-files`、`dsh-file-pane`、`dsh-rich-artifacts` 和 `@dsh-external/dsh-artifact-library` 未发布 npm。`dsh-file-upload` 与 `dsh-file` 的源码 clone 不含运行入口构建物且没有自动 prepare，不能把源码审计直接等同于 Git URL 安装可用。
+> **源码验证范围：** 2026-09-10 对官方 `dsh-v0.1.5-rc.1` 回读了 composer 分流、Session 接收、文件存储、请求投影、`present` 和文件卡源码；还读取了零字节文件等测试用例，但未执行这些测试。增量候选检查了固定提交、npm 元数据和部分已安装 rc.1 模块导出；`ImageLightbox` 缺失及发送返回值不匹配属于静态兼容性发现，未进行浏览器复现。部分候选仅达到 README 和发布信息核对，已在表内标明；没有全面比较 npm tarball 与仓库字节。
 
-因此，本章保留的是官方能力边界、固定源码事实、明确故障和未验证项。后续版本若改变 PromptContentPart、通用附件 Session event、Downloads API 或 Produced Slot，需要重新核对本章对官方缺口和社区兼容性的判断。
+> **发布信息范围：** 2026-08-27，`HongMing-Huang/dsh-file-upload` 的源码版本为 `0.5.2`、npm 包为 `0.4.3`，`sqfcyily/dsh-workspace-files` 的源码版本为 `0.1.1`、npm 包为 `0.1.0`；部分候选未发布 npm 或缺少构建产物。2026-09-10 另核对了两个 `dsh-attachments` 仓库的不同 npm 包名、`GLFzr/dsh-file-upload` 的同名包冲突、`dsh-airdrop` 更名后的发布差异，以及 `dsh-file-uploads` 的 registry 404。安装前仍应核对明确的仓库、版本和产物，不能把快照表格或搜索目录当作实时安装清单。
+
+> **部署验证范围：** 2026-09-10 的复核未安装社区候选或升级运行服务，也未对 `dsh-v0.1.5-rc.1` 完成上传、刷新、fork、恢复、文件交付和访问端下载的端到端验收。采用官方上传与 `present` 是选型决策，不代表部署已经完成。
+
+使用或继续评估这些方案时，始终区分原样输入副本、模型路径引用、输出源文件声明和浏览器下载。
 
 ## <a id="2026-08-28-read-image-quota"></a>2026-08-28 · `read_image` 的请求与额度归属原理
 
