@@ -663,24 +663,65 @@ Web 的 **Settings → Models** 可以配置 DeepSeek、已安装 catalog provid
 
 > 来源：[`dsh-llm-pi-ai` 的 pi-ai 依赖范围](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/package.json#L45-L47)、[已知 provider 只读取安装目录](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/discovery.ts#L1-L14)、[目录优先分支](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/discovery.ts#L195-L210)，以及 [npm caret range 规则](https://github.com/npm/node-semver/blob/v7.7.2/README.md#caret-ranges-123-025-004)。
 
-DSH 的 `openai-codex` provider 由 `dsh-llm-pi-ai` 直接驱动，不读取 Codex CLI 的 `~/.codex/config.toml`。当已安装的 pi-ai 目录仍把 `gpt-5.6-sol` 的 `contextWindow` 记为 272000，而部署希望 DSH 按 1,000,000 tokens 预算时，应在 `$DSH_HOME/settings.yaml` 覆盖该模型的目录元数据：
+**API 规格与 Codex 订阅目录。** 配置上下文前先区分 API 模型规格、Codex 产品目录与 DSH 客户端预算。下面是 2026-09-08 核验的快照：API 页面公布模型的总窗口和最大输入；Codex `0.153.4` 的目录则另列默认工作窗口与配置覆盖上限，四款模型的默认工作窗口均为 272,000 tokens。
+
+| 模型与 API 文档 | API 总窗口 | API 最大输入 | Codex `max_context_window` |
+|---|---:|---:|---:|
+| [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra.md) | 1,050,000 | 922,000 | 872,000 |
+| [GPT-5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol.md) | 1,050,000 | 922,000 | 872,000 |
+| [GPT-5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra.md) | 1,050,000 | 922,000 | 872,000 |
+| [GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna.md) | 1,050,000 | 922,000 | 872,000 |
+
+> 2026-09-08 官方模型页原文摘录（四款相同）：`1,050,000 context window`、`Maximum input tokens: 922,000`、`128,000 max output tokens`。本节就近保存当日关键原文，表中在线链接保留为阅读入口，不以网页后续变更回填当日记录。
+>
+> Codex 数值是发布目录中直接写出的字段，不是由 API 规格推算：[Astra](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/models.json#L4-L33)、[Sol](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/models.json#L173-L200)、[Terra](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/models.json#L304-L331)、[Luna](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/models.json#L430-L457)。字段定义明确为[允许配置覆盖到的最大窗口](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/protocol/src/openai_models.rs#L431-L446)。
+
+四款 API 模型页同时列出最大输出 128,000，数值上 `1,050,000 − 128,000 = 922,000`；总窗口包含输入、输出与推理 token，不能把 1.05M 总窗口当成允许输入 1.05M。`922,000 − 872,000 = 50,000` 只是两个已公布数值的差，本次未找到这 50,000 的官方用途说明，不能自行解释成系统提示、工具或压缩预留。Codex 的目录上限也不等于已经验证的服务端硬上限。
+
+> [OpenAI 上下文管理文档](https://developers.openai.com/api/docs/guides/conversation-state.md)的 2026-09-08 原文摘录：“The **context window** is the maximum number of tokens that can be used in a single request. This max tokens number includes input, output, and reasoning tokens.” API Key 接入与 ChatGPT 订阅接入的可用模型、窗口和额度分别受各自服务约束；API 规格不能直接作为订阅账号的容量承诺。
+
+Codex CLI 的顶层 `model_context_window` 和 `model_auto_compact_token_limit` 对当前活动模型生效，不绑定同文件中 `model = ...` 指定的单个模型。以配置 1,000,000 / 800,000 为例，上述版本先把窗口截断为 `min(1,000,000, 872,000) = 872,000`，再按目录的 95% 计算可用窗口 828,400；压缩阈值也截断为 `min(800,000, 872,000 × 90%) = 784,800`。因此配置能解析、界面显示大窗口和服务端成功处理超长输入，是不同的验证结果。
+
+> 来源：[Codex 配置覆盖与窗口截断](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/src/model_info.rs#L25-L37)、[可用窗口及自动压缩阈值的计算](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/protocol/src/openai_models.rs#L487-L511)；CLI 配置入口见 [Codex 运行时笔记](codex.md)。
+
+> 🔬 2026-09-08 本机核验：从 `codex-cli 0.153.4` 的 Linux musl 二进制内嵌 JSON 提取到四款模型的 `max_context_window: 872000`，与发布目录一致；ChatGPT 订阅登录的同版本 `models_cache.json` 当日快照也给出相同值。已有 Astra 会话的 `token_count.info.model_context_window` 为 828400，与 95% 计算一致。这验证了目录及客户端实际使用的预算，没有验证接近 872K 或 922K 的服务端请求。
+
+复核其他账号或版本时，读取 `${CODEX_HOME:-$HOME/.codex}/models_cache.json` 的 `fetched_at`、`client_version` 和目标模型的 `context_window`、`max_context_window`、`effective_context_window_percent`，再与对应版本及会话记录对照；缓存中的数值不应跨账号、跨版本当成永久规则。其他模型也不能一律改成 1M：Spark 的目录窗口为 128,000；GPT-5.4 mini 的 API 总窗口为 400,000、最大输入 272,000；GPT-5.5 即使 API 总窗口为 1,050,000，Codex `0.153.4` 的配置覆盖上限仍为 272,000。
+
+> 2026-09-08 API 原文摘录：[GPT-5.4 mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini.md)为 `400,000 context window`、`Maximum input tokens: 272,000`；[GPT-5.5](https://developers.openai.com/api/docs/models/gpt-5.5.md)为 `1,050,000 context window`、`128,000 max output tokens`，该页没有单列最大输入。Codex 目录见 [mini](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/models.json#L1019-L1046) 与 [5.5](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/models-manager/models.json#L786-L813)；Spark 数值来自同次本机订阅目录核验。
+>
+> [Codex 官方模型文档](https://learn.chatgpt.com/docs/models.md)的 2026-09-08 原文摘录：“GPT-5.4 and GPT-5.4 mini retire from Codex on August 31, 2026.” 同段明确 “If you sign in with ChatGPT” 的用户需要更换模型，并说明 “The OpenAI API and Codex authenticated with your own API key aren't affected.” 因此该次退役针对 ChatGPT 登录的 Codex；本地目录残留条目不能证明账号仍可调用。
+
+**DSH 上下文覆盖。** DSH 的 `openai-codex` provider 由 `dsh-llm-pi-ai` 直接驱动，不读取 Codex CLI 的 `config.toml` 或模型缓存，也不执行上述截断规则。若部署选择参考 Codex 当前目录，给这四款模型设置 872,000 的客户端预算，在 `$DSH_HOME/settings.yaml` 合并以下片段：
 
 ```yaml
 llm-pi-ai:
   providers:
     openai-codex:
       modelOverrides:
+        gpt-6-astra:
+          contextWindow: 872000
+        gpt-5.6-luna:
+          contextWindow: 872000
+        gpt-5.6-terra:
+          contextWindow: 872000
         gpt-5.6-sol:
-          contextWindow: 1000000
+          contextWindow: 872000
 ```
 
-`modelOverrides` 只改指定模型的容量，保留同一 provider 的其余目录字段；settings provider 会热重载文件，`dsh-llm-pi-ai` 在后续操作重新读取 profile，因此不需要重启服务或新建 Session。目标是 1M 时应写 `1000000`；Codex CLI 的 `max_context_window` 等元数据属于另一套运行时，换成较小数值会直接缩小 DSH 的预算，并非等价配置。使用 dsh-model-hub 的部署还需确认选择的是官方 `openai-codex`，而不是插件自带的 `codex`；两条路由的归属区别见[调研记录](dsh-research.md#2026-08-27-installed-source-followup)。
+这里的 872,000 是部署选择的预算，不是 DSH 强制要求或服务端能力声明。`modelOverrides` 按模型 ID 合并字段；片段只设置 `contextWindow`，保留其余模型元数据，以及文件中的其他 provider、凭据引用、默认模型和选择器设置。已配置 `models` 列表的路由应在该列表的对应条目中改容量，不能同时添加 `modelOverrides`；覆盖的 ID 也必须存在于已安装目录。使用 Model Hub 时，确认目标为官方 `openai-codex`，而不是插件内建 `codex`，两者的适配器与凭据归属见 [Model Hub 的 Codex 路由](dsh-research.md#model-hub-codex-routes)。
 
-自动压缩由 DSH 的 `compaction-basic` 负责，并按解析后的 `contextWindow` 计算预算。默认在窗口的 80% 触发压缩，逐字保留最近 16%；窗口设为 1,000,000 后，对应 800,000 tokens 触发、保留 160,000 tokens。若要改变比例、绝对保留量或摘要模型，应修改 Agent preset 中的 compaction 配置，而不是 Codex CLI 的 `model_auto_compact_token_limit`。
+> 来源：[`contextWindow` 与 `modelOverrides` 配置字段](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/config.ts#L283-L335)、[模型覆盖的约束与解析优先级](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/catalog.ts#L790-L880)。
 
-> 🔬 2026-08-27 本机实测：把正在使用的 `openai-codex/gpt-5.6-sol` profile 从空配置改为上述 override 后，Web 页面即时显示 1M，当前 Session 的后续请求也继续成功；这验证了热重载和路由可用，不是向服务端发送接近 1M 输入的压力测试。`contextWindow` 是客户端容量声明，不能扩大服务端实际能力。
+DSH 的 `compaction-basic` 按解析后的 `contextWindow` 计算压力预算，默认在窗口的 80% 触发压缩，最近原文的保留预算为 16%。窗口为 872,000 时，对应 697,600 tokens 触发、139,520 tokens 原文保留预算；不再套用 Codex 的 95% 或 90% 系数。自定义比例、绝对保留量或摘要模型由 Agent preset 的 compaction 配置决定，Codex CLI 的压缩参数不控制 DSH。
 
-> 来源：[`contextWindow` 与 `modelOverrides` 配置字段](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/config.ts#L283-L335)、[模型覆盖的解析优先级](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/catalog.ts#L790-L880)、[settings 动态配置的生效时机](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/README.zh.md#L115-L119)，以及 [compaction 默认比例与按模型策略](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/compaction/compaction-basic/src/types.ts#L9-L43)。
+> 来源：[compaction 默认比例与按模型策略](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/compaction/compaction-basic/src/types.ts#L9-L43)；这里给的是默认策略的预算计算，不能代替对部署实际 preset 的检查。
+
+**热加载与验收。** 修改前备份目标文件并保留所有者及私有权限，只合并目标字段。文件监听开启时，settings provider 会重读配置，适配器在后续操作读取更新后的 profile；修改上下文预算不需要重启服务或新建 Session。修改后刷新现有 Models 页面，或通过已认证的 Model Hub `catalog.list` 查询 `provider: openai-codex`，检查四款模型的原始 `contextWindow` 为 872000，并确认未修改的字段与模型保持原值。页面格式化后的 K/M 标签可能按 1024 换算，精确验收看原始数值。若仍是旧值，检查 settings 的加载错误和目录刷新状态，不以重启代替诊断。
+
+> 🔬 2026-09-08 本机实测：DSH `0.1.2-rc.1`、Model Hub `0.2.4-rc.1` 的两个独立用户实例，分别原子合并上述覆盖后，现有进程的目录接口均返回四款模型 `contextWindow: 872000`；服务 PID 不变、HTTP 返回 200，其他模型窗口、输入模态和思考档位保持不变。该次验收没有发起模型推理请求，只证明配置热加载与目录更新，不证明服务端长输入容量。
+
+> 来源：[settings 动态配置的生效时机](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/README.zh.md#L115-L119)。下述 pi-ai 依赖升级涉及进程加载的代码，须按升级流程重新启动；不要与只改 settings 的热加载混为一项操作。
 
 > 🔬 2026-08-27 本机实测：Z.AI 和 xAI 的真实 `/models` 请求都返回 200，并分别列出 `glm-5.3` 和 `grok-4.6`；同机 DSH 实际解析的 pi-ai `0.82.1` 却只列到 `glm-5.2` 和 `grok-4.5`。pi-ai `0.84.3` 同时补齐两项：xAI 内置模型改走 Responses API，并把 Grok 4.6 设为默认；Z.AI Coding Plan 的 GLM-5.3 推理档位补全为 low、high 和 max。
 
