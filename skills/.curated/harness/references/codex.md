@@ -1,6 +1,6 @@
 # Codex 运行时笔记
 
-本篇介绍 Codex app-server 的运行形态、CLI 启动行为、进程管理、上下文配置、协作模式、内置生图工具和订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
+本篇介绍 Codex app-server 的运行形态、CLI 启动行为、进程管理、用量与额度统计、上下文配置、协作模式、内置生图工具和订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
 
 ## <a id="app-server-lifecycle"></a>Codex app-server
 
@@ -104,6 +104,34 @@ codex app-server daemon version
 使用 systemd 通过 `bash -c` 执行 app-server 管理脚本时，脚本文本会先经过 systemd 的参数处理，再交给 Bash。启用环境替换时，`${…}` 可能被提前展开；调用方加单引号不能阻止这一层处理。把复杂脚本放进独立文件、只向服务管理器传递文件路径，可以减少多层展开的干扰。
 
 > 来源：[systemd 命令参数的环境替换](https://github.com/systemd/systemd/blob/v239/man/systemd.service.xml#L1008-L1067)。内联脚本需要核对每层转义，关闭展开的选项也应先确认可用性。通用服务管理知识归 `software` skill。
+
+## <a id="usage-accounting"></a>用量与额度
+
+Codex 的账号 token 活动图、剩余额度窗口和各客户端的本地会话统计是不同读数。本节以 `codex-cli 0.153.4` 为基线；DSH 输入区的轮／步数、计时、缓存和输入输出口径见 [DSH 会话统计条](dsh.md#session-statistics)。
+
+### <a id="usage-profile"></a>账号活动图
+
+裸 `/usage` 先打开菜单；选择 **Show usage**，或直接输入 `/usage daily`、`/usage weekly`、`/usage cumulative`，才显示 Token activity。图表通过 `account/usage/read` 请求所连接的 app-server，服务使用自己的 `AuthManager` 身份向 ChatGPT 后端查询 profile；通常是 `GET https://chatgpt.com/backend-api/wham/profiles/me`，另一种后端路径为 `/api/codex/profiles/me`。
+
+图中的 lifetime 和每日 token 桶来自服务端响应，**不是扫描当前系统用户的本地会话目录或 SQLite 得出的总数**。这里的“账号”是上游认证身份及所选账号／工作区上下文；切换 Linux 用户、`CODEX_HOME` 或客户端实例，不会自动获得另一份 ChatGPT 身份。同一上游身份可以在不同本地用户下看到相同统计。
+
+> 源码：[Usage 菜单](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/tui/src/chatwidget/usage.rs#L48-L72)、[用量和额度的 RPC](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/tui/src/app/background_requests.rs#L799-L823)、[app-server 选择认证身份并取得 profile](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server/src/request_processors/account_processor.rs#L1216-L1308)、[profile HTTP 路径](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/backend-client/src/client.rs#L351-L363)。
+
+每次打开活动图会发起查询，但认证另有内存缓存；改磁盘上的登录材料不等于既有后台立即换号。图表按服务端日期字符串合并 token 桶，前端不按模型价格或缓存折扣加权；前端使用 UTC 判断“今天”，不能据此推定服务端每日桶的完整划分规则、更新延迟或计数公式。
+
+> 源码：[认证缓存读取及外部身份重载](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/login/src/auth/manager.rs#L2341-L2361)、[日期桶求和](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/tui/src/chatwidget/tokens/chart.rs#L384-L420)、[前端日期基准](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/tui/src/chatwidget/tokens.rs#L74-L75)。本地日志与云端数字不一致时，还需对齐时间范围、缓存是否已含在输入中、继承／重试去重，以及其他客户端和设备的调用范围。
+
+`/status` 中的**账号额度窗口**另走 `account/rateLimits/read` → `/wham/usage`，返回已用比例、窗口长度和重置时间；`/usage` 菜单中的额度重置功能也不是 token 活动图。不能用活动图的累计 token 直接换算某档订阅还剩百分之几，更不能把 API 价格权重当成已公开的订阅扣额公式。
+
+> 源码：[额度查询分支](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/tui/src/app/background_requests.rs#L799-L810)、[额度 HTTP 路径](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/backend-client/src/client/rate_limit_resets.rs#L83-L88)。这里限定 `/status` 的额度字段，不把它同时展示的会话配置和会话 token 数都归为账号统计。
+
+### <a id="usage-third-party"></a>第三方客户端调用
+
+第三方客户端调用订阅后端时，额度归属取决于实际使用的上游账号；它维护的本地统计与 OpenAI 的账号活动图是两套记录。客户端名称、本地系统用户或代理访问 key，都不能单独证明最终使用哪个账号。
+
+**第三方调用是否完整显示在 `/usage` 活动图中，公开客户端源码不足以确定。** 使用相同后端和账号不能证明每笔都被收录；活动图未显示或尚未更新，也不能当作请求不消耗订阅额度的证据。
+
+> 源码：[Codex 读取云端 profile](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/backend-client/src/client.rs#L351-L363)。客户端只取得聚合结果，未给出服务端的入账、去重和第三方覆盖规则，因此不能将 `/usage` 概括为“只统计官方客户端”，也不能保证它完整覆盖所有第三方调用。
 
 ## 上下文窗口与自动压缩
 
