@@ -597,6 +597,54 @@ Session 是只追加的事件日志。模型历史、Trajectory、恢复、分�
 
 > 来源：[官方轮次流程与会话日志](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/architecture.zh.md#L65-L100)；[默认 Profile 的 JSONL provider](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/bundle/base/cordis.patch.yml#L98-L101)；[JSONL 的每 Session 布局与默认压缩](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/session/session-persistence-jsonl/README.zh.md#L5-L17)；[SQLite provider 的启用边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/session/session-persistence-sqlite/README.zh.md#L5-L7)。
 
+### <a id="session-statistics"></a>会话统计条
+
+Web 输入区旁的统计描述**当前 Session 的完整已记录历史**。主会话打开时看主会话，子代理会话打开时看那个子会话；它不会递归合并后代，也不按整台机器或模型登录账号汇总。因此这里用“当前会话”比“主线程”准确——是否运行在同一个系统线程，不决定统计归属。切换模型也不会清空之前的累计值。
+
+> 本节逐字段对应 `dsh-v0.1.2-rc.1` 的文本统计条；另核对 `dsh-v0.1.5-rc.1` 的展示变化，见[界面版本](#session-statistics-ui)。源码：[当前会话的统计入口](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/ui-chat/src/client/chat/StatsLine.tsx#L163-L208)、[按 Session ID 分开的投影存储](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/api/session-controller/src/client/sessions/manager.ts#L334-L348)。投影是从日志计算出的累计读数；正常装配读取 `sessionStats` 和 `tokenUsage`，缺少 `sessionStats` 的自定义装配才回退到当前已加载消息窗口。
+
+#### <a id="session-statistics-fields"></a>字段与计算方法
+
+例如下面这行信息，所有字段都以当前会话为范围，但各自的计数单位和计时区间不同：
+
+```text
+11 轮 · 146 步 | LLM 41分32秒 · 工具调用 4分52秒 | 首 token 平均 14秒 · 150 tok/s | 缓存命中 98% | 输入 28.7M tok · 输出 69.7K tok
+```
+
+| 显示项 | 源码中的计算口径 | 怎样理解示例 |
+|---|---|---|
+| `11 轮` | `turns`：至少含一个已关闭步骤的不同 turn 数；在该轮第一次 `step/end` 时加一 | 11 个有实际步骤结束的响应过程，不一定等于 11 条用户消息；未进入步骤的空轮不计 |
+| `146 步` | `steps`：`step/end` 数；成功、失败、取消、达到输出上限的步骤都计入 | 146 个已结束的 agent 步骤，不等于 146 次成功 HTTP 请求，也不等于工具调用次数；同一步可重试或调用多个工具 |
+| `LLM 41分32秒` | `llmMs`：将匹配的 `step/start → assistant/message` 墙钟间隔逐步相加 | 是步骤开始至模型消息组装完成的累计耗时，包含首 token 前等待，不是纯解码时间；没有组装出消息的中断步骤不贡献这一项 |
+| `工具调用 4分52秒` | `toolMs`：按 `callId` 匹配 `tool/call → tool/result`，逐项相加 | 是工具配对耗时总和，不是调用次数；并行工具的重叠时间仍各计一次，因此不等于任务的真实经过时间 |
+| `首 token 平均 14秒` | `ttftMs / ttftSteps`：有首 token 且组装出消息的步骤，其 `step/start → 首个有效流式增量` 延迟的算术平均 | 首个有效增量可以是文本、推理或工具调用名称／参数，不限于用户看到的第一句正文；分母只取有计时样本的步骤，不能直接假定为 146 |
+| `150 tok/s` | `decodeTokens / (decodeMs / 1000)`：对同时有首 token 和有效输出用量的步骤，输出 token 总和除以首 token 至消息完成的时间总和 | 是合并后的解码吞吐量，不是各步速度的简单平均，也不能用 `69.7K / 41分32秒` 复算 |
+| `缓存命中 98%` | `cacheReadTokens / (uncachedInputTokens + cacheReadTokens + cacheWriteTokens)`，再格式化百分比 | 按输入 token 数加权的缓存读取占比，不是 98% 的请求命中、跳过了 98% 的步骤或节省了 98% 的费用 |
+| `输入 28.7M tok` | `uncachedInputTokens + cacheReadTokens + cacheWriteTokens` | 当前会话累计约 2870 万输入 token，**已经包含缓存读取和缓存写入**；上下文在多次请求中出现时会多次计入，不是当前上下文长度或用户新输入字数 |
+| `输出 69.7K tok` | 累计提供方上报并经适配器映射的 `outputTokens` | 当前会话累计约 6.97 万输出 token；不是可见正文字符数。pi-ai 路由把推理用量包含在输出中，不应再额外加一次推理 token |
+
+> 源码：[轮／步与时间累计](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/session/session-stats/src/projection.ts#L146-L208)、[首 token 增量判定](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/session/session-stats/src/projection.ts#L32-L43)、[平均值和吞吐量展示](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/ui-chat/src/client/chat/StatsLine.tsx#L174-L204)、[输入与命中率公式](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/ui-chat/src/client/chat/StatsLine.tsx#L96-L115)、[pi-ai 用量映射](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/llm/llm-pi-ai/src/stream.ts#L18-L31)。`K`、`M` 分别按 1000、1000000 缩写并四舍五入；显示的 98% 和 28.7M 不能反推出精确缓存数，见[格式化实现](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/ui-chat/src/client/chat/token-format.ts#L3-L15)与[百分比舍入](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/ui-chat/src/client/chat/token-format.ts#L59-L98)。
+
+#### <a id="session-statistics-scope"></a>子代理、重试与历史范围
+
+主会话的输入、输出、命中率、轮／步数和模型计时都不自动加上子代理内部的对应统计。子代理返回的文本在主会话后续模型请求中成为输入时，会作为**那次主会话请求的输入**计量；这与把子代理内部所有请求并入父统计不同。父会话自身的委派工具仍按工具起止配对计时：同步等待子代理的时间可能落进父 `toolMs`，后台启动调用则不代表子代理运行全程。因此汇总耗时不能把父工具等待和子代理模型时间无条件相加。
+
+用量按调用尝试去重，而不是每个流式片段都加一次：同一次尝试的早期 usage 样本被最终样本替换；`llm/retry-started` 结束这个替换范围，下一次尝试再增加用量。失败前已经上报的 usage 可以保留；没有上报 usage 的处理成本无法从该读数还原。这也是“步骤数”“成功响应数”“上游物理请求数”不能互换的原因。
+
+> 源码：[usage 样本替换与重试累计](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/llm/token-meter/src/usage-projection.ts#L111-L158)。token 投影只消费指定的 usage 事件，不会自动遍历工具内部请求；标题生成、外部搜索、图片服务等辅助调用是否入账，要核对各自记录位置，不能将统计条当成账号的完整账单。
+
+分页和 compact 改变可见历史或下次请求上下文，**不扣减已经累计的用量与步骤数**；压缩触发线是另一项上下文压力预算，见[上下文窗口配置](#pi-ai-catalog-version)。因此 200k 的单次上下文预算与几千万累计输入并不矛盾。
+
+分叉（fork）还需单独处理：它可能把父会话已完成轮次的整个日志前缀作为 seed 带进新会话。所核版本的统计投影遍历该会话完整日志，不自行扣除继承前缀；所以跨父子／分叉会话对账时，应按 `inheritedEventCount`（JSONL header 的 `seedLength`）排除重复继承记录，不能简单相加各页面累计数。普通子代理的独立运行不会反向增加父会话统计。
+
+> 源码：[fork 捕获已完成轮次前缀](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/subagent/subagent-fork-in-process/src/index.ts#L40-L89)、[完整日志的投影重放](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/session/session-projection/src/index.ts#L602-L624)、[JSONL 的继承前缀字段](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/session/session-persistence-jsonl/src/format.ts#L59-L112)。
+
+#### <a id="session-statistics-ui"></a>界面版本
+
+`dsh-v0.1.5-rc.1` 已把文本统计条改成时间／速度和 token 用量两个按钮，仍读取当前 Session 的 `sessionStats` 与 `tokenUsage`。用量按钮外侧显示的是**全部输入加输出的总数**；展开后把未缓存输入、缓存读取、非零缓存写入和输出分别列出。不能把新版明细中的未缓存输入，与旧版统计条含缓存的“输入”直接比较。新版流式事件也从独立 chunk 改为消息／尝试内嵌 stream；解析原始日志应对应版本，不要固定只找旧的 `assistant/chunk`。
+
+> 源码：[新版 token 按钮及明细](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/client/ui-chat/src/client/chat/StatsPills.tsx#L236-L327)、[新版 usage 来源与尝试累计](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.5-rc.1/packages/llm/token-meter/src/usage-projection.ts#L81-L150)。
+
 ## <a id="builtin-extensions"></a>内置扩展
 
 这些能力在实现上仍是 Plugin，但本节只讲部署者和使用者看到的行为。对应 package 的开发模式会在开发篇作为 Tool、Provider 或协议驱动案例出现。
