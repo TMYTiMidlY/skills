@@ -197,9 +197,14 @@ DSH 凭据记录
 
 `pi2dsh` 是 Pi Plugin ABI 到 DSH 的通用兼容层，不只是登录 Plugin。它能运行未修改的 Pi Plugin，并把 Pi 模型服务的登录流程注册到 DSH Authorization 接口；真实 Token 仍由 pi2dsh 自己保存，DSH 凭据记录只承担“由 pi2dsh 管理”的状态标记。这说明官方交互界面可以启动第三方登录流程，但登录后的凭据和模型请求并未交给官方 `llm-pi-ai`。
 
-`dsh-model-hub` 会对官方模型服务调用 `authorization.begin()`，使用官方凭据记录 key，并写入空的无 API Key 配置来激活官方路由；同时它替换官方 Models 页面、模型选择器和目录管理，还自建 `qwen-code` 与 `codex` 模型路由。
+`dsh-model-hub` 的实现可以分成两类：
 
-`qwen-code` 当时不在 Pi 内置模型目录中，手工添加的模型服务又只能使用 API Key，因此需要自建登录流程、凭据记录和模型适配器。自建 `codex` 则与官方 `openai-codex` 重复，用于自行控制 Fast Mode、模型元数据和 OAuth 错误行为；这条路由需要重复维护 OAuth 常量、Token 刷新、模型表和适配器，而且当时只声明文本输入。
+| 实现 | 代表路由 | 登录、凭据与请求归属 | Model Hub 的职责 |
+|---|---|---|---|
+| **官方 pi-ai 路由** | `openai-codex` | 使用 DSH 官方 `llm-pi-ai` 的登录流程、凭据记录、Token 刷新和 `PiAiAdapter` | 替换 Models 页面，调用 `authorization.begin()`，展示交互状态，并写入空的无 API Key 配置激活官方路由 |
+| **插件 native 路由** | `qwen-code`；当时快照还包括内建 `codex` | Model Hub 自己实现 OAuth、凭据记录和 Native Adapter | 维护官方 Pi 目录之外的模型服务，或对特定路由自行控制模型目录和错误行为 |
+
+两类路由可以共用同一个 UI，但不能混淆归属：第一类主要复用官方链路，第二类需要由插件维护登录流程、Token 生命周期和模型适配器。`qwen-code` 不在当时的 Pi 内置目录中，因此属于第二类；内建 `codex` 则与官方 `openai-codex` 并存，属于另写链路的历史例子。
 
 > 来源：[Model Hub 为目录外 OAuth 模型服务自建适配器的原因](https://github.com/yhyfhgs/dsh-model-hub/blob/f55ac188ef24f9604e77ed127a025962c8a37c2f/src/provider/native/catalog.ts#L1-L16)、[自建 `codex` 与官方 `openai-codex` 并存](https://github.com/yhyfhgs/dsh-model-hub/blob/f55ac188ef24f9604e77ed127a025962c8a37c2f/src/provider/native/catalog.ts#L220-L280)、[官方模型服务的 Authorization 桥接](https://github.com/yhyfhgs/dsh-model-hub/blob/f55ac188ef24f9604e77ed127a025962c8a37c2f/src/auth/bridge.ts#L337-L366)。
 
@@ -282,33 +287,6 @@ dsh-model-hub 的凭据记录 key 绑定与无 API Key 配置激活
 | 使用成熟终端产品与自有生态 | `dsh-TUI` |
 
 这仍是阶段性路线，实现前还需要完成：官方六类登录流程的枚举测试、每种交互输入的无凭据单元测试、少量非主账号的真实登录与刷新基本测试、登录后的模型请求验证，以及供应商条款风险确认。
-
-## <a id="2026-08-27-installed-source-followup"></a>2026-08-27 · Model Hub 安装与源码复核
-
-本轮在 DSH `0.1.1-rc.2` 的 Web Profile 中实际安装 `@fhxgs/dsh-model-hub@0.2.3`，并以仓库 commit `6897374e90b2f383a797e6597c011e076594f3e7` 复核主进程入口、浏览器客户端、OAuth、凭据绑定、适配器注册与基本验证清单。安装、配置合成结果导出和 Web 启动成功；没有使用真实订阅账号完成外部 OAuth 与模型请求，因此下面结论只包含运行时装载验证和源码归属判断，不代表账号端到端验证。
-
-### <a id="model-hub-codex-routes"></a>Model Hub 的 Codex 路由
-
-Model Hub 同时保留 DSH 官方 `openai-codex` 和插件内建 `codex`，页面搜索 `codex` 时会同时显示这两个模型路由：
-
-| 模型路由 key | OAuth 与凭据归属 | 模型请求归属 | 页面含义 |
-|---|---|---|---|
-| `openai-codex` | DSH 官方 `llm-pi-ai` 注册登录流程，使用 `recordKeyFor()` 对应的官方凭据记录 | 官方 `PiAiAdapter` 与 Pi 模型目录 | DSH 的官方路由；Model Hub 只负责启动 `authorization.begin()`、显示状态与激活无 API Key 配置 |
-| `codex` | Model Hub 自己实现 authorization-code + PKCE，写入 `model-hub` 范围的独立凭据记录 | 插件自己的 `NativeOAuthAdapter` 与静态模型表 | 显示名为 **OpenAI Codex** 的内建路由；OAuth 授权结果、凭据、模型表与错误行为均由插件维护 |
-
-内建 `codex` 的 client id、OpenAI OAuth endpoints、scope 和非标准参数取自同版本 pi-ai 的公开实现。实际登录仍由插件自己的 OAuth 骨架执行，`createNativeFlow()` 写入插件凭据记录，`NativeOAuthAdapter` 再使用该记录发起模型请求。因此，常量来自官方依赖，并不改变登录流程、Token 生命周期和模型请求的归属。
-
-> 来源：[内建 `codex` 与官方 `openai-codex` 并存及独立归属](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/native/catalog.ts#L269-L410)、[官方与 Model Hub 的两套凭据绑定](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/bindings.ts#L69-L82)、[插件自建登录流程与凭据记录范围](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/native/flows.ts#L43-L60)、[自建适配器与登录流程注册](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/provider/native/registration.ts#L69-L77)、[Codex 路由的人工基本验证清单](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/scripts/smoke-p1.zh.md#L55-L68)。
-
-### Model Hub Web 页面的本机地址限制
-
-Model Hub 的浏览器端在建立连接前读取 `ctx.connection.isLoopback`。页面地址不是 `localhost`、`127/8` 或 `[::1]` 这些本机回环地址时，它只注册说明页，不调用 `/model-hub`。反向代理可以改变发往 DSH 的 HTTP 请求头，但不能改变浏览器地址栏中的公网主机名。这个限制由 Model Hub 客户端自己判断，与 DSH 主进程是否接受代理后的 Host/Origin 是两层独立检查。
-
-> 来源：[非本机回环地址时客户端降级且不建立连接](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/client/index.ts#L334-L358)、[DSH 客户端以页面主机名计算 `isLoopback`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/client/connection/src/client/index.ts#L80-L89)。
-
-### Model Hub 与官方 OAuth 链路的边界
-
-若所有官方 OAuth 模型服务都要共用官方登录流程、凭据记录、Token 刷新与模型适配器，Model Hub 可复用的是模型服务目录、凭据记录 key 绑定、无 API Key 配置激活和 UI 组织。其内建 `codex` 仍是插件自建链路，不能作为官方链路已被复用的证据。判断归属时需要查看模型路由 key，显示名称“OpenAI Codex”不足以区分两条路由。
 
 ## <a id="2026-08-27-file-transfer-artifacts"></a>浏览器文件传输与产物交付
 
@@ -544,7 +522,7 @@ Model Hub 管理模型目录、路由和凭据入口，不会把不同供应商�
 | DeepSeek provider key | 对应 DeepSeek Adapter | 该 DeepSeek 路由绑定的 API 凭据与供应商规则 |
 | 其他 provider key | 该 key 注册的 Adapter | 该路由自己的凭据、限流与计费规则 |
 
-归档会话的持久 `assistant/message.source` 显示 `provider: openai-codex`、`model: gpt-5.6-sol`，这只能确认解释该问题的模型请求走 `openai-codex`。用户粘贴的 Tool card 不携带原始 `request/header`，所以原始图片调用仍需回到其来源 Session 核对：若相关 step 的 provider 是 `openai-codex`，前后模型请求归该 Codex 路由；若是 DeepSeek provider，则归 DeepSeek。两者之间的 Harness-side `read_image` Tool 执行都不会自行切换 Provider。Model Hub 同时存在的两条 Codex 路由及其凭据归属见 [Model Hub 的 Codex 路由](#model-hub-codex-routes)。
+归档会话的持久 `assistant/message.source` 显示 `provider: openai-codex`、`model: gpt-5.6-sol`，这只能确认解释该问题的模型请求走 `openai-codex`。用户粘贴的 Tool card 不携带原始 `request/header`，所以原始图片调用仍需回到其来源 Session 核对：若相关 step 的 provider 是 `openai-codex`，前后模型请求归该 Codex 路由；若是 DeepSeek provider，则归 DeepSeek。两者之间的 Harness-side `read_image` Tool 执行都不会自行切换 Provider。Model Hub 同时存在的两条 Codex 路由及其凭据归属见 [Model Hub 的 Codex 路由](#2026-08-26-bridges-and-model-hub)。
 
 > 来源：[每 step 解析 Adapter 与最终 request config](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/core/agent-loop/src/agent.ts#L426-L489)、[request context 与 Provider 请求](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/core/agent-loop/src/agent.ts#L491-L513)、[assistant message 记录实际 provider/model](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/core/agent-loop/src/agent.ts#L392-L409)。
 
@@ -824,7 +802,7 @@ DeepSeek API 文档独立印证了从源码推出的计费模型：
 
 ### <a id="model-hub-and-search"></a>Model Hub 与搜索提供方
 
-[`dsh-model-hub`](https://github.com/yhyfhgs/dsh-model-hub)（`yhyfhgs/dsh-model-hub`，社区 Plugin）替换官方 Models 页面与模型选择器，为官方模型服务桥接 OAuth 并写入无 API Key 配置，同时自建 `codex`、`qwen-code` 等模型路由；其双 Codex 路由与凭据归属见[订阅登录调研](#2026-08-26-subscription-auth-surfaces)与[Model Hub 安装与源码复核](#2026-08-27-installed-source-followup)。本节只看它与搜索的关系。
+[`dsh-model-hub`](https://github.com/yhyfhgs/dsh-model-hub)（`yhyfhgs/dsh-model-hub`，社区 Plugin）替换官方 Models 页面与模型选择器，为官方模型服务桥接 OAuth 并写入无 API Key 配置，同时提供官方 pi-ai 路由与插件 native 路由两类实现；其登录、凭据和适配器归属见[订阅登录调研](#2026-08-26-subscription-auth-surfaces)。本节只看它与搜索的关系。
 
 Model Hub 的 Host `inject` 是 `connection` 与 `settings`。它注册模型目录、Authorization 与两条 Codex 对话路由，不调用 `ctx.web.registerSearchProvider`。显示名「OpenAI Codex」不能区分下面两行：
 
@@ -835,7 +813,7 @@ Model Hub 的 Host `inject` 是 `connection` 与 `settings`。它注册模型目
 
 两条路由的 token 分属不同记录范围，不能交叉刷新。
 
-> 来源：[Model Hub 的两条 Codex 路由](#model-hub-codex-routes)、[Host `inject` 为 `connection` 与 `settings`](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/index.ts#L89-L90)。
+> 来源：[Model Hub 的两条 Codex 路由](#2026-08-26-bridges-and-model-hub)、[Host `inject` 为 `connection` 与 `settings`](https://github.com/yhyfhgs/dsh-model-hub/blob/6897374e90b2f383a797e6597c011e076594f3e7/src/index.ts#L89-L90)。
 
 若在 Model Hub 进程内再注册搜索提供方：搜索 registry 的 id 与 LLM 路由 id 是两套表；搜索 id 写成 `openai-codex` 时，与 [`dsh-codex` 使用同一搜索 id](https://github.com/Yan-Zero/dsh-codex/blob/e3e54e206f7c829503c7e6eed378643ba0416792/src/search.ts#L19-L26) 并存会触发 `WEB_DUPLICATE_PROVIDER`。LLM 侧再注册 `openai-codex` 适配器会与官方 / Hub 已占路由冲突。默认组合已钉 `deepseek-official`，不改 `web.searchProvider` 则新提供方不会被选中。
 
