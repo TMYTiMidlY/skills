@@ -23,6 +23,10 @@ SSH 客户端密钥认证与 agent、主机密钥校验、ControlMaster 连接�
 
 Go 的包生态是**去中心化**的：没有 PyPI/npm/crates.io 那样的中心注册仓库，import 路径**就是**源码地址（`github.com/…`、`gitea.com/…`、`codeberg.org/…/v2`），`go install pkg@version` 直接从对应 VCS host 拉源码编译成二进制丢进 `$GOBIN`；`proxy.golang.org` 只是惰性缓存镜像不是注册中心，"发版"= 推一个 git tag。覆盖：`go` 无中心仓库的事实与对 PyPI/npm 的对照、原生装法 `go install` / `go run pkg@version`（`@latest`/`@vX`/`@commit` 版本选择、`GOBIN`/`GOPATH`、`@ver` 时忽略当前 `go.mod` 不污染项目依赖、Go 1.16 起装工具专用它、`/vN` 主版本进路径）、**导入路径→仓库的解析机制**（已知托管站规则 / `.git` 后缀 / vanity 路径 `?go-get=1` + `<meta name="go-import">` 重定向 + Go 1.25 subdir + `mod` 代理变体）、**版本模型**（SemVer、`/vN` 共存、伪版本、MVS 最小版本选择）、`go.mod`/`go.sum`/模块缓存、GOPROXY/GOSUMDB/GOPRIVATE（默认 `proxy.golang.org` + `sum.golang.org`、`direct` 回落、私有模块绕过、墙内换 `goproxy.cn`）、`go install` 遇 `replace` 指令为何失败（replace 只对主模块生效）、从 module proxy 装 vs 本地 clone build 的 `vcs.*` 戳/`+dirty` 判别、以及 **`pixi global install go`（conda-forge 包）的 cgo 坑**（`DefaultCC=x86_64-conda-linux-gnu-cc` 被编译期烧进 go 二进制、缺配套编译器致 cgo 构建失败，判别四连 + 修法 `pixi global install --environment go c-compiler`）见 [references/go.md](references/go.md)。
 
+## Lean 4（VS Code 扩展 Setup Guide 中译）
+
+Lean 4 官方 VS Code 扩展首次启动的 Setup Guide 向导，六页正文（Windows / Linux / macOS 安装、设置项目、学习文档、问题与排障）的完整中文翻译，每节附英文原文引用块，核对自上游 v0.0.240；含各平台自动安装实际执行的脚本（winget / PowerShell、apt / dnf + pkexec、softwareupdate + elan-init）、向导外壳与正文的边界（`command:` 内部命令链接、`${elanStableChannel}` 占位符）、manual.md 完整手册的定位，以及受限环境替代方案（Gitpod、自然数游戏、浏览器单文件 Lean）。见 [references/lean.md](references/lean.md)。
+
 ## pixi（全局环境 / trampoline / 升级与临时环境）
 
 pixi 自身的操作模型：`pixi global` 的真相源是清单 `~/.pixi/manifests/pixi-global.toml`（`[envs.X]` 的 `dependencies` / `exposed` / `channels` 各管什么、手改后 `pixi global sync` 对齐、子命令按"改清单哪一部分"分工）；一个包默认独占一个同名环境、`-e/--environment` 才是塞进同一环境的开关；`~/.pixi/bin/<命令>` **不是软链而是同一个 trampoline 二进制的硬链接**，真实目标与注入的 `CONDA_PREFIX`/`PATH` 写在 `trampoline_configuration/<命令>.json` 里（排障别用 `readlink`）；`pixi global upgrade` **已被移除**、改用 `pixi global update <环境名>`；`pixi search` 一次回答"能不能 pixi 装"和"版本落后多少"；`pixi exec -s <包> -- <命令>` 是不留常驻环境的临时跑法（`uv run --with` 的 conda 版）。见 [references/pixi.md](references/pixi.md)。conda-forge 版 go 的 cgo 坑仍在 [references/go.md](references/go.md#cgo-pitfall)。
