@@ -204,6 +204,17 @@ new_sheet['A1'] = 'Data'
 wb.save('modified.xlsx')
 ```
 
+### Merged-cell formatting
+
+Plan the merged ranges and preserve the template's intended layout before changing cells. Set the merged value, font, and alignment on the top-left cell; these settings can be assigned before or after merging.
+
+- For a new, clean range, assigning its outer border to the top-left cell before `merge_cells()` populates the corresponding edge cells during the merge.
+- When replacing or removing an existing uniform rectangular outline, clear the covered cells' border attributes, assign the complete target border to the top-left cell, and call that `MergedCellRange.format()` to rebuild the edges. Apply this procedure only to a range whose outline is intentionally being rebuilt; preserve other template formatting and handle intentionally different edge styles individually.
+- Before changing a merge layout, preserve the required values and formatting. Merging replaces the covered cells, and unmerging creates space for new cells without restoring their previous contents. Check the old top-left cell, the new top-left cell, and the new bottom-right cell when rebuilding the range.
+- Validate the saved worksheet/style XML and the workbook reloaded by openpyxl separately, checking every cell along all four edges. Use the target spreadsheet application for visual layout checks.
+
+> Verified with openpyxl 3.1.5 using ordinary workbooks: covered cells retain font/alignment assignments in the saved XML; reloading reconstructs those cells with default font/alignment. Updating only the top-left border can leave old edge borders in the first saved XML; `format()` adds missing borders while retaining existing border styles. The bottom-right cell's right/bottom borders can feed back into the top-left cell on reload, including after clearing only the top-left border. See [merged-cell styling](https://foss.heptapod.net/openpyxl/openpyxl/-/blob/3.1.5/doc/styles.rst), [merge handling](https://foss.heptapod.net/openpyxl/openpyxl/-/blob/3.1.5/openpyxl/worksheet/merge.py#L73-133), and [cell reconstruction](https://foss.heptapod.net/openpyxl/openpyxl/-/blob/3.1.5/openpyxl/worksheet/worksheet.py#L594-638).
+
 ## Recalculating formulas
 
 Excel files created or modified by openpyxl contain formulas as strings but not calculated values. Use the provided `scripts/recalc.py` script to recalculate formulas:
