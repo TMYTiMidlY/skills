@@ -125,9 +125,9 @@ git commit -m "add new.txt" -- new.txt
 2. **要删别用裸 `stash@{0}`**：先 `-m` 打唯一标记 → `git stash list` 认准那条**当前**的 `stash@{n}` → 立刻删（更稳可先 `git rev-parse` 记 SHA、删前比对没变再删）。
 3. **多人共享 worktree 别碰共享栈**：改临时 commit（独立 SHA），或 `git stash create`——只生成快照 commit、**不入栈、不动 `stash@{0}`、也不回滚工作区**，自己记返回的 SHA（`git stash apply <sha>` 取用）；它是**游离对象、不再需要时由 gc 自动回收、压根没有 drop 这一步**，天然免疫上面的误删。
 
-#### safety net 拦截危险的 Git 命令（实测）
+#### hook 拦截的危险 Git 命令（实测）
 
-safety net 的 `preToolUse` hook 按命令名拦截危险的 Git 命令，实测：`git restore`（含只 unstage 的 `--staged`，属误拦）与 `git stash drop` 被拦，`git stash push` / `pop`、`git reset -- <path>` 放行。所以此类环境里**丢弃走 stash、撤出用 `git reset -- <path>`**，最后 drop 交人做。
+agent 环境的命令拦截 hook（如 `preToolUse`）按命令名拦截危险的 Git 命令，实测：`git restore`（含只 unstage 的 `--staged`，属误拦）与 `git stash drop` 被拦，`git stash push` / `pop`、`git reset -- <path>` 放行。所以此类环境里**丢弃走 stash、撤出用 `git reset -- <path>`**，最后 drop 交人做。
 
 ### `--` 分隔符：加不加提交结果相同，但推荐带上
 
