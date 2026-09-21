@@ -17,15 +17,15 @@ description: 定位内存、文件系统、挂载、存储介质或网络块存�
 
 ## 远端存储的接入方式
 
-把远端目录挂成本地路径 = 在层次里插一层网络协议，数据面尚可、**元数据面每个操作一次独立往返**。三条路的取舍（`drvfs`/9p 免 root 但最慢、内核 CIFS 要 root 但最快、rclone SMB FUSE 免 root 用于装不了 `cifs-utils` 的受限环境）、CIFS 凭据与 `mount.cifs` 参数与常见报错、**WSL2 NAT 下用 hostname 挂 CIFS 为什么扛不住 IP 漂移**（Windows 走 mDNS 出不了 NAT、WSL DNS 中继会读 Windows hosts，所以只是把硬编码从 fstab 挪到 hosts）、rclone 的 systemd user service 模板与挂载专有排障（`fusermount3` vs `fusermount`、`host=` 写 IP literal 导致 ~100 s 一轮重启、`MOUNT_DIR` 不存在导致 ~10 s 一轮，**用重启间隔区分根因**）、VFS cache 模式与磁盘占用，以及两条对 FUSE 和内核挂载都成立的通用纪律：`find`/`rg --no-ignore`/`du` 等 walk 类工具会一头扎进挂载点卡死（`-prune` / `--glob` 模板），挂载点里删文件用 `trash-put` 落到卷内 `.Trash-<UID>/` 而非跨 filesystem 拷贝。见 [references/mount.md](references/mount.md)。
+把远端目录挂成本地路径 = 在层次里插一层网络协议，数据面与元数据面要分别测量，缓存和批处理会影响实际往返次数。三条路的取舍（`drvfs`/9p 免 root 但最慢、内核 CIFS 要 root 但最快、rclone SMB FUSE 免 root 用于装不了 `cifs-utils` 的受限环境）、CIFS 凭据与 `mount.cifs` 参数与常见报错、**WSL2 NAT 下用 hostname 挂 CIFS 为什么扛不住 IP 漂移**（Windows 走 mDNS 出不了 NAT、WSL DNS 中继会读 Windows hosts，所以只是把硬编码从 fstab 挪到 hosts）、rclone 的 systemd user service 模板与挂载专有排障（`fusermount3` vs `fusermount`、`host=` 写 IP literal 导致 ~100 s 一轮重启、`MOUNT_DIR` 不存在导致 ~10 s 一轮，**用重启间隔区分根因**）、VFS cache 模式与磁盘占用，以及两条对 FUSE 和内核挂载都成立的通用纪律：`find`/`rg --no-ignore`/`du` 等 walk 类工具会一头扎进挂载点卡死（`-prune` / `--glob` 模板），挂载点里删文件用 `trash-put` 落到卷内 `.Trash-<UID>/` 而非跨 filesystem 拷贝。见 [references/mount.md](references/mount.md)。
 
 ## 存储后端：介质、阵列与网络链路
 
-最底下那一层，也是差距最大的一层（三个数量级）。**硬 RAID 卡后面 `ROTA` 不可信**，要用 `storcli` 问介质类型与缓存保护模块（BBU 坏会静默降级 WriteThrough）；校验型 RAID 的写惩罚解释读写不对称；**写缓存打穿前后 fsync 差 64 倍**，并解释了一次 checkpoint 单文件 fsync 565 秒的事故——附「`Ds` 状态 + BlockIO 计数器不变**无法区分**卡死与巨慢、观察窗口要匹配单次操作量级」的诊断纪律；SSD 镜像 / HDD 阵列 / 网络 LUN 横向实测（fsync 差 1600 倍而顺序带宽反向）；固态与机械混用时按负载形状分层的判据。网络段讲千兆 iSCSI 的完整链路构成与理论上限，**精简置备空洞读法**把网络与磁盘瓶颈分开（据此定出"顺序读卡网络、随机读卡磁盘、存储端 CPU 有 15 倍余量"），以及队列深度扫描（`dd`/`hdparm` 相当于 QD=1，会低估 36%）。见 [references/backend.md](references/backend.md)。
+最底下那一层，也是差距最大的一层（三个数量级）。**硬 RAID 卡后面 `ROTA` 不可信**，要用 `storcli` 问介质类型与缓存保护模块（BBU 坏会静默降级 WriteThrough）；校验型 RAID 的写惩罚解释读写不对称；历史测试中不同写入条件下的同步读数相差约 64 倍，并记录了一次 checkpoint 单文件 fsync 565 秒的事故——附「`Ds` 状态 + BlockIO 计数器不变**无法区分**卡死与巨慢、观察窗口要匹配单次操作量级」的诊断纪律；SSD 镜像 / HDD 阵列 / 网络 LUN 横向实测（fsync 差 1600 倍而顺序带宽反向）；固态与机械混用时按负载形状分层的判据。网络段讲千兆 iSCSI 的完整链路构成与理论上限，**精简置备空洞读法**把网络与磁盘瓶颈分开（据此定出"顺序读卡网络、随机读卡磁盘、存储端 CPU 有 15 倍余量"），以及队列深度扫描（该次 fio 顺序读随并发增加约 36%，不据此给 `dd`/`hdparm` 统一归类或校正）。见 [references/backend.md](references/backend.md)。
 
 ## 测法与瓶颈归因
 
-`fsync 延迟 > 随机 IOPS > 顺序带宽` 的指标口径与为什么 `hdparm`/`dd` 不适合选盘、三条 fio 基线命令与参数语义（`--direct=1` 不加就是在测内存、`--fsync=1` 才是真实提交行为、`--bs=8k` 对齐数据库页）、队列深度的语义与"提 QD 涨得动 = 卡延迟 / 涨不动 = 撞带宽"的判读、写缓存对 fsync 读数的干扰与两条规避、以及 fio 量不到的小文件元数据基准（200 个空文件的 create/delete 计时脚本）。全篇实测环境的占位符定义也在这里。见 [references/benchmark.md](references/benchmark.md)。
+按工作负载选择同步延迟、随机 IOPS、顺序吞吐或元数据指标；区分缓冲 I/O、direct I/O 和持久化同步；在获准目录准备实际写入的数据，再核对 fio 引擎、实际队列深度及延迟分布。吞吐平台期只是定位线索，不单独证明带宽耗尽；具备有效掉电保护的缓存也不能一概视为“虚假刷盘”。测量流程、样例与历史结果的适用边界见 [references/benchmark.md](references/benchmark.md)。
 
 ## 边界
 

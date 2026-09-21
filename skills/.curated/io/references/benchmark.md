@@ -1,103 +1,117 @@
 # 测法与瓶颈归因
 
-量存储的第一个陷阱是**量错了维度**：一般人测盘只看顺序读写速度（`hdparm -t`、`dd` 跑出来的 MB/s），而那恰好是数据库最不在乎的那个数。第二个陷阱是**量到了缓存**：不绕过页缓存、随机范围不够大，读数会漂亮两个数量级。
+先定义要测的工作负载，再选择指标。顺序吞吐、随机 IOPS、同步延迟和元数据操作回答的是不同问题，不能预先给它们排一个适用于所有数据库的次序。缓存也不是天然的测量错误：要分清测的是应用可见的缓存路径，还是尽量绕过客户端页缓存后的存储路径。
 
-本篇给出一套能把各层单独量出来的方法：先讲[该看哪些指标](#io-metrics)，再讲 [fio 基线命令](#fio-baseline)与两个最容易读错的变量（[队列深度](#queue-depth)、[写缓存](#write-cache-bias)），最后是 fio 量不到的[小文件元数据](#smallfile-bench)。把结果落到具体后端上见 [backend.md](backend.md)。
+本篇先讲[指标选择](#io-metrics)，再讲 [fio 基线](#fio-baseline)、[队列深度](#queue-depth)、[写缓存](#write-cache-bias)和[小文件元数据](#smallfile-bench)。后端案例见 [backend.md](backend.md)；这里修正测量方法，不把历史数字当成对当前机器的保证。
 
 ## <a id="testbed"></a>实测环境
 
-本篇与 [backend.md](backend.md) 的实测数字出自同一次迁移：把一个 428 GB、含向量索引的 PostgreSQL 库从网络存储搬到本地 SSD，顺带把三套存储横着量了一遍。两个占位符指代该环境：
+本篇与 [backend.md](backend.md) 的历史数字出自仓库记录的一次迁移：把一个 428 GB、含向量索引的 PostgreSQL 库从网络存储搬到本地 SSD，并比较三套存储。两个占位符指代该环境：
 
 | 占位符 | 指代 |
 |---|---|
-| `<NAS>` | 千兆以太网接入的商用 NAS，导出一个精简置备 iSCSI LUN（名义 3 TB、实用 435 GB），后端是带校验的机械盘阵列。**它不是直连块设备**，完整访问链路见 [链路的完整构成](backend.md#link-composition) |
-| `<多盘服务器>` | 迁移目标机：一张 LSI 系硬 RAID 卡下挂 2 片企业级 SATA SSD（RAID1）与 8 片大容量 HDD（RAID50）；125 GiB 内存 / 48 线程 |
+| `<NAS>` | 千兆以太网接入的商用 NAS，导出一个精简置备 iSCSI LUN（名义 3 TB、实用 435 GB），后端是带校验的机械盘阵列。完整访问链路见[链路的完整构成](backend.md#link-composition) |
+| `<多盘服务器>` | 一张 LSI 系硬 RAID 卡下挂 2 片企业级 SATA SSD（RAID1）与 8 片大容量 HDD（RAID50）；125 GiB 内存 / 48 线程 |
+
+复测应记录 fio / 内核版本、文件系统与挂载、测试文件实际写入范围、缓存状态、I/O 引擎、并发、块大小、持续时间和原始输出。历史记录缺少的条件标为未记录，不用新命令反向补造旧测试的条件。
 
 ## <a id="io-metrics"></a>数据库敏感的 I/O 指标
 
-一般人测盘只看一个数：顺序读写速度（`hdparm -t`、`dd` 跑出来的 MB/s）。**对数据库来说这个数几乎没用。**
+指标随任务选择，不从“数据库”三个字直接推导优先级：
 
-数据库真正吃的是另外三个：
-
-| 指标 | 通俗解释 | 影响什么 |
+| 任务 | 首先观察 | 不能单独推导什么 |
 |---|---|---|
-| **fsync 延迟** | 「确认这笔数据真落盘了」要等多久 | 每次事务提交，**最关键** |
-| **随机 IOPS** | 每秒能处理多少个零散的小块读写 | 索引查找、随机扫描 |
-| 顺序带宽 | 连续大块数据的传输速度 | 全表扫描、备份、恢复 |
+| 小事务同步提交慢 | 事务延迟、WAL 写入 / 同步等待、并发和锁等待 | `1 / fsync 延迟` 不是整库 TPS 上限 |
+| 索引访问或随机扫描慢 | 缓存命中、实际读取量、随机读延迟和 IOPS | 高随机写 IOPS 不代表随机读一定快 |
+| 大表扫描、备份或恢复慢 | 顺序吞吐、读写量、CPU、压缩和网络 | 顺序带宽不是“对数据库没用” |
+| 文件遍历、创建、删除慢 | 元数据操作延迟与缓存状态 | 大文件吞吐不能代表元数据性能 |
 
-fsync 延迟排第一，是因为**每提交一次事务都要等一次 fsync**——这个延迟直接乘在每秒事务数上。顺序带宽排最后，是因为数据库很少真在做纯顺序 I/O。
+PostgreSQL 的 WAL 顺序写入，事务提交不要求同步刷出所有被修改的数据页；多个并发事务还可能共享一次 WAL 刷盘。存储微基准用于分解成本，最终需用代表性的数据库负载复核。
 
-这个排序不是修辞：本次实测里，8 盘 HDD 阵列的顺序读比 SSD 镜像还快一倍，fsync 却慢 83 倍（数据见[后端横向实测](backend.md#media-benchmark)）。只看带宽会直接得出「用 HDD 阵列」的错误结论。
+> 依据：[PostgreSQL 17 · WAL](https://www.postgresql.org/docs/17/wal-intro.html)及[组提交](https://www.postgresql.org/docs/17/wal-configuration.html)。数据库参数与 pgbench 的使用边界由 `software` skill 负责。
 
-> 也因此 `hdparm -t` 和 `dd` 这类工具不适合给数据库选盘——它们量的正好是数据库最不在乎的那个维度。
+历史案例中，HDD 阵列的顺序读高于 SSD 镜像，而记录的同步延迟更高。这说明两者适合的访问模式可能不同，不构成对所有数据库负载的统一介质排名。
 
 ## <a id="fio-baseline"></a>fio 基准命令与参数语义
 
-`fio` 是唯一能把上面三个数分开量的常用工具。三条命令覆盖全部：
+下面是 Linux 文件系统上的独立微基准，不是 PostgreSQL 事务模拟器。**写测试只允许在获准的专用临时目录运行，不得指向现有业务文件、PGDATA 或裸块设备。** 先确认空间、负载窗口和实际 `fio --version`；同名的其他程序不能代替 Flexible I/O Tester。
+
+先把 `BENCH_ROOT` 设置为已存在、允许测试的目录。样例使用 1 GiB，只用于展示方法；它不保证超过机器或存储端的缓存容量。准备阶段必须成功后，才能单独运行后面的测量：
 
 ```bash
-# ① fsync 延迟（最重要）：单线程 8K 随机写，每写一笔就 fsync
-#    模拟的就是数据库提交事务
-fio --name=commit --filename=/path/testfile --size=2G \
-    --bs=8k --rw=randwrite --ioengine=libaio \
-    --iodepth=1 --fsync=1 --direct=1 \
-    --runtime=25 --time_based
-
-# ② 随机写 IOPS：深队列并发
-fio --name=wiops --filename=/path/testfile --size=4G \
-    --bs=8k --rw=randwrite --ioengine=libaio \
-    --iodepth=32 --numjobs=4 --direct=1 \
-    --runtime=25 --time_based --group_reporting
-
-# ③ 随机读 IOPS
-fio --name=riops --filename=/path/testfile --size=4G \
-    --bs=8k --rw=randread --ioengine=libaio \
-    --iodepth=32 --numjobs=4 --direct=1 \
-    --runtime=25 --time_based --group_reporting
+bench=$(mktemp -d "${BENCH_ROOT:?请先设置获准的测试目录}/.fio-bench.XXXXXX") || exit 1
+fio --name=prepare --filename="$bench/data" --rw=write --bs=1m \
+    --size=1G --ioengine=psync --direct=0 --end_fsync=1 || exit 1
 ```
 
-几个参数的意思，因为选错了结果会完全不同：
+准备阶段实际写入文件，不能只用 `truncate` / `fallocate` 创建逻辑大小后就拿空洞读数当磁盘读取能力。压缩、去重或精简置备后端还需核对物理分配与数据可压缩性；实际写过不等于已经排除所有服务端缓存。
 
-- `--direct=1`：绕过操作系统的页缓存。**不加这个测的就是内存速度**，数字漂亮但没意义。
-- `--iodepth`：同时压多少个请求，见[队列深度的语义与瓶颈判读](#queue-depth)。
-- `--fsync=1`：每写一笔就强制落盘，这才是数据库提交的真实行为。
-- `--bs=8k`：对齐 PostgreSQL 的默认页大小，量出来的数才和数据库行为对得上。
-- 测试文件写在要评估的那个文件系统上，测完记得删。
+```bash
+# 小块顺序写 + 每次写后 fsync；观察 write 和 sync 各自的延迟
+fio --name=sync-write --filename="$bench/sync-data" --size=1G \
+    --rw=write --bs=8k --ioengine=psync --direct=0 --fsync=1 \
+    --runtime=60 --time_based --output-format=json
+
+# 随机读：单 job，名义最大 32 个在途请求；不允许创建新文件
+fio --name=randread --filename="$bench/data" --size=1G \
+    --rw=randread --bs=8k --ioengine=libaio --direct=1 --iodepth=32 \
+    --numjobs=1 --readonly --allow_file_create=0 \
+    --runtime=60 --time_based --output-format=json
+
+# 顺序读：与随机读是不同工作负载，不混为一个“磁盘速度”
+fio --name=seqread --filename="$bench/data" --size=1G \
+    --rw=read --bs=1m --ioengine=libaio --direct=1 --iodepth=8 \
+    --numjobs=1 --readonly --allow_file_create=0 \
+    --runtime=60 --time_based --output-format=json
+```
+
+需要随机写吞吐时，另在专用测试文件运行 `rw=randwrite`；没有逐次同步的写吞吐不得标为“持久化提交吞吐”。保存各次原始输出，预热后重复运行，并同时比较吞吐、平均延迟和尾延迟。
+
+| 参数 | 含义与边界 |
+|---|---|
+| `direct=1` | 请求非缓冲 I/O，通常使用 `O_DIRECT`；不等于绕过设备、控制器或服务端所有缓存，也不等于持久化 |
+| `direct=0` | 走缓冲 I/O；结果可能包含缓存命中，也可能受实际磁盘、回写或同步限制，不能一概叫“只测内存” |
+| `fsync=1` | 请求每次写后同步；fio 文档提醒非缓冲 I/O 下可能不执行该同步，所以同步样例使用 `psync` + `direct=0`，并核对输出中确有 sync 统计 |
+| `iodepth` / `numjobs` | 每个 job 的目标在途请求数 / job 数；实际并发需看输出，不是只看命令行 |
+| `bs=8k` | 一种小块访问尺寸；与 PostgreSQL 常见页大小相同，不代表复现了 WAL、组提交或查询行为 |
+
+> 参数依据：[fio 3.39 · HOWTO](https://github.com/axboe/fio/blob/fio-3.39/HOWTO.rst)，其中 [fsync 与非缓冲 I/O](https://github.com/axboe/fio/blob/fio-3.39/HOWTO.rst#L1403-L1419)说明了同步边界。`libaio` 或 direct I/O 不受目标平台支持时，报告不适用；不要悄悄换引擎或缓存模式后继续横比。
 
 ## <a id="queue-depth"></a>队列深度的语义与瓶颈判读
 
-`--iodepth` 是「同时在飞的请求数」。`dd` 和 `hdparm` 默认都是发一个等一个（相当于 QD=1），所以它们的读数在高延迟设备上会被严重低估——同一套网络存储，QD 从 1 提到 8，顺序读涨了 36%（数据见[队列深度扫描下的顺序读](backend.md#qd-sweep)）。
+`iodepth` 是每个 fio job 的目标在途 I/O 数。例如 `iodepth=32,numjobs=4` 的名义总上限是 128，而不是 32；引擎、内核和提交方式可能让实际深度低于目标。同步引擎不会因为把 `iodepth` 调大就变成异步引擎，先看 fio 输出的 I/O depth 分布。
 
-反过来，扫一遍队列深度也能告诉你瓶颈在哪：
+提高深度后吞吐上升，只说明此前并发没有充分利用整条路径；吞吐不再上升，只说明这组条件下出现平台期。平台期可能来自链路带宽、设备 IOPS、CPU、锁、限速或根本没有达到设定深度，要结合带宽、设备和 CPU 计数定位。排队还可能继续抬高尾延迟，因此最高吞吐点不一定适合业务。
 
-- **提高 QD 速度明显上升** → 之前卡在**延迟**上（在等往返，不是带宽不够）
-- **提高 QD 速度几乎不变** → 已经**撞到带宽天花板**
+`dd` 的同步用户态调用不等于底层设备始终 QD=1：预读、回写和内核拆分请求也会影响设备队列。历史案例里 QD=1 到 QD=8 的顺序读增加约 36%，只能说明那组 fio 条件下增加并发有效，不能把所有 `dd` 测量统一“校正”36%。
 
-## <a id="write-cache-bias"></a>写缓存对 fsync 读数的干扰
+> 依据：[fio 3.39 · I/O depth](https://github.com/axboe/fio/blob/fio-3.39/HOWTO.rst)。对应历史数值见[队列深度扫描](backend.md#qd-sweep)。
 
-存储设备（RAID 卡、NAS 控制器）都有写缓存。数据量小又是顺序的时候，缓存全吃下，立刻回一句「写好了」，fsync 看起来飞快；一旦进入持续随机写，缓存被打穿，每一笔都得真等磁盘，性能直接塌方。本次实测里同样是「8K 写 + fsync」，两种测法差了 64 倍（数据与事故见[写缓存打穿与 checkpoint 停滞](backend.md#write-cache-breakdown)）。
+## <a id="write-cache-bias"></a>写缓存、同步与稳态
 
-规避办法只有两条：
+这里要分别回答“这次确认是否满足持久化契约”和“持续写入能维持什么吞吐”。具备有效掉电保护、正确处理 flush 的控制器缓存可以合法地使同步写很快；不能因为数据还在缓存中就认定 fsync 是假的。反之，普通易失性缓存忽略或虚假确认 flush 是可靠性问题，增大测试文件也证明不了断电安全。
 
-- 随机写的范围要**大到打穿缓存**（远超缓存容量，比如上面命令里的 `--size=4G` 起步，缓存大就再加）
-- 或者干脆在真实负载下观察，别在空闲时随手测一发就下结论
+> 设备缓存、掉电保护与刷盘语义见 [PostgreSQL 17 · Reliability](https://www.postgresql.org/docs/17/wal-reliability.html)。
+
+历史记录中，小量顺序写与大范围随机写的同步读数差约 64 倍，但两者同时改变了访问模式和工作集。它支持“测试条件会显著影响结果”，不单独证明只有缓存容量造成差异，更不能把随机数据文件的同步延迟当作 WAL 提交延迟。
+
+评估稳态时固定读写模式和并发，记录时间序列，再逐项改变工作集和持续时间。写入速率相对于后端回写速率、设备预处理、数据分布及其他负载都会影响结果；“文件大于缓存”既不是充分条件，也不是通用的固定 4 GiB 门槛。
 
 ## <a id="smallfile-bench"></a>小文件元数据基准
 
-fio 量的是数据面。**远端接入层真正的瓶颈通常在元数据面**——创建、`stat`、遍历、删除，每个操作一次网络往返，fio 一个字都不告诉你。用固定数量的空文件做相对比较即可：
+常规块读写任务不能替代创建、`stat`、遍历和删除测试。元数据操作可能由客户端缓存、服务端缓存或协议批处理完成，不能一概折算为“一次操作一次网络往返”。
 
-小文件基准可以用固定数量文件做相对比较：
+下面仅测专用临时目录中的创建耗时。命令失败时不报告成功耗时；GNU `date` 的纳秒格式不适用的平台应换用本机单调时钟计时工具。
 
 ```bash
-base=<mount-point>/<sub-path>
-d="$base/.mount-bench-$$"
-mkdir -p "$d"
+d=$(mktemp -d "${BENCH_ROOT:?请先设置获准的测试目录}/.mount-bench.XXXXXX") || exit 1
 start=$(date +%s%N)
-i=1; while [ $i -le 200 ]; do touch "$d/f$i"; i=$((i+1)); done
-mid=$(date +%s%N)
-rm -rf "$d"
+for i in $(seq 1 200); do touch "$d/f$i" || exit 1; done
 end=$(date +%s%N)
-echo "create_ms=$(( (mid-start)/1000000 )) delete_ms=$(( (end-mid)/1000000 ))"
+echo "create_ms=$(( (end-start)/1000000 ))"
+trash-put "$d"
 ```
 
-一次实际案例：同一 SMB share 在 WSL `drvfs/9p` 下创建 200 个空文件约 1912ms、删除约 624ms；改成 CIFS 后创建约 613ms、删除约 364ms。
+回收站移动不是永久删除基准，不把 `trash-put` 的时间当成 `unlink` 的时间。异常中止遗留的测试目录按输出路径核对后再移至回收站；所有测试结束后，同样用 `trash-put "$bench"` 清理 fio 目录。
+
+仓库保留的一次历史 SMB 对照为：WSL `drvfs/9p` 创建 200 个空文件约 1912 ms、永久删除约 624 ms；CIFS 创建约 613 ms、永久删除约 364 ms。这些删除数来自旧的永久删除测试，不是上面的回收站操作，也不保证在其他挂载或缓存条件下复现。
