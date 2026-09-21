@@ -1608,6 +1608,8 @@ systemd drop-in `/etc/systemd/system/caddy.service.d/<app>-env.conf`，把凭据
 EnvironmentFile=/etc/caddy/<app>.env
 ```
 
+> 拆成两个文件是刻意的：drop-in 属 systemd 单元配置、通常 0644（`systemctl cat` 可见），所以只写路径；凭据值单独放 0600 的 env 文件。把值直接写进 drop-in 的 `Environment=` 既暴露给所有能读单元配置的本地用户，轮换时还得 `daemon-reload`。
+
 站点分片里的注入与剥离：
 
 ```caddyfile
