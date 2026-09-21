@@ -331,21 +331,13 @@ zellij.<user>.<zone>
 code.<user>.<zone>
 ```
 
-路由片段由内网 Caddy 显式导入，并通过 `{env.*}` 引用 secret；不要把 token 或 JWT key 写进 route。环境文件或 systemd credential 应限制为服务账号可读。
+路由片段由内网 Caddy 显式导入，并通过 `{env.*}` 引用 secret，不把 token 或 JWT key 写进 route。环境文件权限、变量展开和更新方式统一见 [服务凭据与环境变量](caddy.md#service-environment)；systemd credential 是另一种文件交付机制，不会自动变成 `{env.*}`。
 
 ### <a id="zellij-token"></a>Zellij token 迁移
 
-Zellij login token 是长期凭据，session token 默认只有数周。无人值守反代可定期兑换新 session token；自用场景也可以在备份 SQLite 后延长相应记录的 `expires_at`，但这是绕过上游设计的维护性取舍。
+从旧路由中迁出明文凭据时，按每个用户、每个实例分别兑换新的 session token。兑换、续期和撤销方式见 `software` skill 的 Zellij 主题；不要把多个用户改成共用一枚 token。
 
-旧配置中可能存在：
-
-```caddyfile
-header_up Cookie "session_token=<literal-token>"
-```
-
-这种配置把 Zellij token 直接写入 Caddyfile，并会随文件复制进入历史备份。只要 token 仍有效，能读取当前配置或旧备份的人就能以浏览器身份访问 Zellij。
-
-迁移时先生成新 token，把它放入 root-only 环境文件或 systemd credential，再把 route 改为 `{env.ZELLIJ_USER_SESSION_TOKEN}` 一类引用。验证新 token 后撤销旧 token；由于历史备份仍含旧值，只改当前 Caddyfile 不够，旧 token 也必须轮换。
+将新值放入受保护的环境文件，route 使用 `{env.ZELLIJ_USER_SESSION_TOKEN}` 一类独立变量，按 [服务凭据与环境变量](caddy.md#service-environment)使其生效。验证新凭据与用户策略后再撤销旧凭据。旧 Caddyfile 的历史备份仍可能含有效明文，所以只删除当前文件中的值不等于完成撤销；其他仍依赖旧凭据的客户端也应纳入轮换。
 
 ## <a id="multi-user"></a>多用户 Web 服务
 
@@ -361,7 +353,7 @@ UID 公式和 system manager specifier 的完整语义见 `software` skill 的 S
 
 ### <a id="zellij-web"></a>Zellij Web
 
-Zellij 只绑定 localhost，外层 OAuth 通过后，Caddy 向上游注入每用户独立的 `session_token`：
+Zellij 只绑定 localhost，外层 OAuth 通过后，Caddy 向上游注入每用户独立的 `session_token`。以下只展示本网络栈的 Host、用户策略和上游端口映射；Cookie 处理与验收按 [上游会话代持](caddy.md#session-holding)，令牌和监听要求见 `software` skill 的 Zellij 主题：
 
 ```caddyfile
 @zellij_user host zellij.<user>.<zone>

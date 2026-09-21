@@ -45,6 +45,44 @@ sudo systemctl reload caddy
 
 `reload` 通过 Admin API 的 `POST /load` 应用整份配置；加载失败时继续运行旧配置。细粒度运行态修改见 [Admin API 运行态配置](#admin-runtime-config)，配置锁诊断见 [Admin API 与 pprof 诊断](#admin-diagnostics)和 [reload 配置锁阻塞](#reload-lock)。Caddyfile 使用 systemd 注入的环境变量时，验证方式见 [service 环境变量下的配置验证](#validate-service-environment)。
 
+### <a id="service-environment"></a>服务凭据与环境变量
+
+OAuth 密钥和上游会话都可以经 systemd 的 `EnvironmentFile=` 提供。这里统一说明文件权限、变量展开和更新方式；各应用负责生成自己的凭据。下面的 `<app>` 与 `APP_SESSION` 是示例名称，多应用、多用户部署应分别命名，避免互相覆盖。
+
+先在受保护目录创建 `/etc/caddy/<app>.env`，设为 `0600 root:root` 后再写入真实值，不把凭据放进命令行、聊天或版本库：
+
+```dotenv
+APP_SESSION=<有效的上游会话值>
+```
+
+systemd drop-in `/etc/systemd/system/caddy.service.d/<app>-env.conf` 只记录路径：
+
+```ini
+[Service]
+EnvironmentFile=/etc/caddy/<app>.env
+```
+
+> drop-in 通常是 `0644`，能通过 `systemctl cat` 读取；把值直接写进 `Environment=` 会暴露给能读 unit 的本地用户。系统级 systemd 负责读取 `0600` 文件，Caddy 服务用户不必有文件读取权。环境文件不是加密存储，凭据仍会进入进程；解析期展开的值还会进入适配后的 JSON、Admin API 配置和配置快照，这些也按凭据保护。
+
+`header_up` 支持下面两种语法，但读取环境的进程不同：
+
+| 写法 | 展开时机与取值位置 | 只修改已有 EnvironmentFile 内容后的生效方式 |
+|---|---|---|
+| `{$APP_SESSION}` | Caddyfile 解析前，由执行适配的进程读取环境，替换结果写入 JSON | 若 `ExecReload` 启动继承该 EnvironmentFile 的 `caddy reload --config <Caddyfile>`，新进程可读到新值并通过 reload 提交；其他启动方式另查 |
+| `{env.APP_SESSION}` | 在支持 placeholder 的字段中运行期展开；`header_up` 每次请求读取常驻 Caddy 进程环境 | 普通配置 reload 不刷新常驻进程环境，更新此环境通常须 restart |
+
+> Caddy v2.11.2 的 `reverse_proxy` 请求头处理调用 `HeaderOps.ApplyToRequest`，其 Set 值经 `ReplaceKnown` 展开；全局 replacer 将 `env.*` 映射到 `os.Getenv`，未定义的环境变量得到空值，不是原样透传。见 [请求头处理](https://github.com/caddyserver/caddy/blob/v2.11.2/modules/caddyhttp/reverseproxy/reverseproxy.go#L628-L652)、[header 替换](https://github.com/caddyserver/caddy/blob/v2.11.2/modules/caddyhttp/headers/headers.go#L220-L256)、[环境变量 provider](https://github.com/caddyserver/caddy/blob/v2.11.2/replacer.go#L368-L373)。其他模块是否支持运行期 placeholder，要按字段核实。
+>
+> 解析前替换与运行期 placeholder 的区别见 [Caddyfile 环境变量](https://github.com/caddyserver/website/blob/15ac087cfd9c21a53b2ddfa10359fdc63d5ec9b6/src/docs/markdown/caddyfile/concepts.md#L788-L824)。`cmdReload` 先适配配置再提交 `/load`，而 systemd 在启动 unit 的新进程前读取 EnvironmentFile。见 [reload 实现](https://github.com/caddyserver/caddy/blob/v2.11.2/cmd/commandfuncs.go#L360-L400)与 [EnvironmentFile 读取时机](https://github.com/systemd/systemd/blob/v219/man/systemd.exec.xml#L261-L294)。在普通 shell 里运行 `caddy reload` 不会自动继承 systemd 的 EnvironmentFile；只发信号或提交预制 JSON 的 ExecReload 也不能套用表中第一行。
+
+应用更新前检查实际 unit：
+
+```bash
+systemctl show caddy --property=ExecStart --property=ExecReload --property=EnvironmentFiles --no-pager
+```
+
+首次增加或修改 drop-in 定义后先 `systemctl daemon-reload`；只改已有 env 文件内容无需这一步。`daemon-reload` 本身不更新已经运行的 Caddy 进程环境。根据上表选择 reload 或 restart，正式应用前按 [service 环境变量下的配置验证](#validate-service-environment)验证，再检查实际业务；不要只凭配置能解析就认定凭据有效。
+
 ## <a id="admin-runtime-config"></a>Admin API 运行态配置
 
 本节说明如何通过 Admin API 修改 HTTP 路由和 caddy-security，并在验证后回滚或固化。Caddy 的写入、回滚、ID 索引与 autosave 流程按 v2.11.2 核验，见 [Caddy 源码](https://github.com/caddyserver/caddy/blob/v2.11.2/caddy.go#L150-L403)。caddy-security 的 JSON 结构属于安装版本的内部 schema，操作前必须以同一二进制的适配结果和实时配置为准。
@@ -700,14 +738,14 @@ https://panel.example.com {
 
 典型场景（都是"边缘鉴权 + 注入后端凭据"）：
 
-- **要 token 的控制台**：后端 REST/API 设了 secret，就注入 `Authorization: Bearer <secret>`。比如把 mihomo 控制器暴露成公网面板——见 `network` skill 的 mihomo Web 面板章节。
-- **认 cookie / 头的 web 服务**：后端要一个登录 cookie / 头才放行，就注入对应的 `Cookie` / 自定义头。比如 zellij Web——见 `software` skill 的 zellij 章节。
+- **要 token 的控制台**：后端 REST/API 设了 secret，就注入 `Authorization: Bearer <secret>`。控制器的凭据与权限见 [Mihomo](mihomo.md)。
+- **认会话 cookie 的 Web 服务**：统一模板、响应 cookie 处理和验收见 [上游会话代持](#session-holding)；应用自己的兑换入口和失效条件留在各应用说明。
 
 要点：
 
 - **方向别混**：`header_up` 是改**发往上游**的头（本节，给后端补凭据）；caddy-security 的 `inject headers with claims` 是把**登录者身份** claim 注入给下游后端（`X-Token-*`，见下文），两者无关。
 - **边缘鉴权是前提**：注入 = 把后端凭据托管在 Caddy 侧，**任何过了边缘 `authorize` 的人都自动带着这份凭据访问后端**。所以那道边缘鉴权不能省，注入的凭据强度也不再是后端的独立防线。
-- **凭据用占位符 / `{env.*}`**，别把真实 secret 写死进版本库。
+- **凭据不写死进版本库**；环境变量语法、文件权限与生效条件统一见 [服务凭据与环境变量](#service-environment)。
 
 ### 基础反代常见坑
 
@@ -1051,16 +1089,7 @@ portal（`authenticate with <portal>` 那个站点）按 path 分发（`go-authc
 
 ### 配置 OAuth 环境变量
 
-把实际值放进只有 root 能读的环境文件：
-
-```bash
-sudo touch /etc/caddy/caddy.env
-sudo chown root:root /etc/caddy/caddy.env
-sudo chmod 600 /etc/caddy/caddy.env
-sudoedit /etc/caddy/caddy.env
-```
-
-文件内容：
+按 [服务凭据与环境变量](#service-environment)配置环境文件、权限和 drop-in。OAuth 的 `/etc/caddy/caddy.env` 包含：
 
 ```dotenv
 GITHUB_CLIENT_ID=<你的ID>
@@ -1068,34 +1097,7 @@ GITHUB_CLIENT_SECRET=<你的密钥>
 JWT_SHARED_KEY=<你的JWT密钥>
 ```
 
-再用 systemd drop-in 引用该文件：
-
-```bash
-sudo systemctl edit caddy
-```
-
-添加：
-
-```ini
-[Service]
-EnvironmentFile=/etc/caddy/caddy.env
-```
-
-然后重载并重启：
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart caddy
-sudo systemctl show caddy --property=EnvironmentFiles
-```
-
-说明：
-
-- `systemctl edit caddy` 默认写入 `/etc/systemd/system/caddy.service.d/override.conf`。drop-in 通常是 `0644`；如果直接写 `Environment="KEY=明文"`，普通用户可通过 `systemctl cat caddy` 看到值。`EnvironmentFile=` 让 drop-in 只暴露文件路径，实际值由 `600 root:root` 的文件保护。
-- systemd 负责读取环境文件并把值传给 Caddy；`caddy` 用户本身不需要拥有该文件的读取权限。环境变量不是加密，值仍存在于环境文件和 Caddy 进程内存中，root 可以读取。
-- 首次添加或修改 drop-in 后需要 `daemon-reload`；之后若只修改 `/etc/caddy/caddy.env` 的内容，直接 `restart caddy` 即可让新进程读取新值。
-- `JWT_SHARED_KEY` 填一串足够长的随机字符串即可。
-- 为什么必须显式配 `JWT_SHARED_KEY`，见上一节的 `crypto key sign-verify` 说明。
+`JWT_SHARED_KEY` 使用足够长的随机值；显式固定签名密钥的作用见上文 `crypto key sign-verify` 说明。这里的 caddy-security 示例使用 `{env.*}`，轮换后须让新值进入 Caddy 主进程环境，再验证 OAuth 登录与授权。
 
 ### GitHub OAuth 与 callback 踩坑经验
 
@@ -1591,42 +1593,34 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 - **不要绕过 forgejo / rclone sync 直接 mc cp 写桶**——下次 sync `--remove` 会把它抹掉，除非你**确实**在做“对齐桶到 main HEAD” 这种 hot-fix（见 `~/TiMidlY-projects/docs-share/.github/copilot-instructions.md` 的 rerun 覆盖事故说明）。
 - **不要对早 sha 的 forgejo Actions run 做 rerun**——`rclone sync --remove` 会按那个 sha 的 tree mirror，覆盖更新 commit 的产物。要重新对齐桶用：rerun **当前 HEAD 对应那条 run**，或 push 一个空 commit。
 
-## <a id="session-holding"></a>会话代持：反代自带一次性 token 会话的本地应用
+## <a id="session-holding"></a>上游会话代持
 
-适用场景：上游应用自带"一次性 token 兑换 cookie"的会话认证，token 只存进程内存、重启即清零；公网入口已在 caddy-security 后面。做法：Caddy 过完自己的认证后，代替浏览器携带一枚已兑换的上游会话 cookie，公网用户不接触上游的启动 token。需要三样东西，文件名里的 `<app>` 按应用替换：
+上游需要会话 cookie、而公网入口已有独立认证时，可以由运维侧先兑换会话，再交给代理代持：Caddy 先验证访问者，再向上游附带有效 cookie，用户不必再登录应用。应用认证仍在工作，只是凭据由代理持有；是否使用一次性 token、是否持久化会话、何时失效，都由应用决定。
 
-凭据文件 `/etc/caddy/<app>.env`（0600 root，一行）：
+代持前先从应用说明确认 cookie 的名称和值、兑换入口、Host/Origin 约束、失效和撤销条件。上游只允许受控代理访问，认证与授权覆盖整个站点及 WebSocket；同一份代持凭据的访问者共享其上游权限，不会自动获得应用内的多用户隔离。各用户需隔离时，使用独立实例、凭据和入口策略，组合示例见 [多用户 Web 服务](setup.md#multi-user)。
 
-```dotenv
-<APP>_SESSION=<兑换得到的会话 cookie 值>
-```
-
-systemd drop-in `/etc/systemd/system/caddy.service.d/<app>-env.conf`，把凭据放进 Caddy 进程环境：
-
-```ini
-[Service]
-EnvironmentFile=/etc/caddy/<app>.env
-```
-
-> 拆成两个文件是刻意的：drop-in 属 systemd 单元配置、通常 0644（`systemctl cat` 可见），所以只写路径；凭据值单独放 0600 的 env 文件。把值直接写进 drop-in 的 `Environment=` 既暴露给所有能读单元配置的本地用户，轮换时还得 `daemon-reload`。
-
-站点分片里的注入与剥离：
+按 [服务凭据与环境变量](#service-environment)保存凭据并选择更新方式；以下示例用解析期变量 `{$APP_SESSION}`。替换实际变量名、cookie 名和上游地址后，应用的额外约束仍按其说明补齐：
 
 ```caddyfile
-<app.example.com> {
+app.example.com {
 	authorize with <policy>
 	reverse_proxy 127.0.0.1:<port> {
-		header_up Cookie "<session_cookie>={$<APP>_SESSION}"
+		header_up Cookie "<session_cookie>={$APP_SESSION}"
 		header_down -Set-Cookie
 	}
 }
 ```
 
-- 上游若校验 Host 或 Origin（只认 loopback 地址、严格同源这类守卫），按需补 `header_up Host <上游认的写法>` / `header_up -Origin`；`reverse_proxy` 默认透传原始 Host（[header 默认值](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers)），这两条只是过守卫的手段。
-- `header_up Cookie` 整段覆盖浏览器的 Cookie 头：上游只见到这一枚会话，Caddy 层的认证 cookie 不会发给上游。
-- `header_down -Set-Cookie` 剥离上游全部 Set-Cookie，会话 cookie 不落进公网域名；上游将来若新增依赖 Set-Cookie 的功能要复核这条。
-- `{$VAR}` 在 Caddyfile 解析期展开、值来自 Caddy 进程环境：**改 env 文件后必须 `systemctl restart caddy`，`reload` 不重读**；误写成 `{env.VAR}` 会把占位符原样发给上游。改 drop-in 还要先 `systemctl daemon-reload`。
-- 上游重启后内存会话清零、代持 cookie 随之失效：页面表现为上游自己的"会话未建立"提示，Caddy 的 OAuth 与磁盘数据不受影响。恢复 = 重跑一次兑换、写回 env、restart Caddy；兑换走上游自己的 token API。
+- `authorize with <policy>` 表示已经安装并生效的 caddy-security 策略；使用其他认证方式时，替换为等价的入口认证与授权，不省略这一层。
+- `header_up Cookie` 覆盖整段浏览器 Cookie，普通请求与 WebSocket upgrade 都附带代持会话；浏览器的入口认证 cookie 不再发给上游。若应用依赖其他 cookie，需核实并调整，不能盲目覆盖。
+- `header_down -Set-Cookie` 剥离上游的全部 Set-Cookie，避免会话下发到公网浏览器；应用若有其他依赖 Set-Cookie 的功能，应按实际响应精确处理。升级应用后复核此条件。
+- 普通 HTTP 上游默认收到浏览器原始 Host。优先按应用支持的受信域名配置保持 Host/Origin；必须改写时，兑换和后续访问要使用自洽的值。不要把删除 Origin 当通用开关，具体约束和已验证写法留在应用文档。
+
+> nginx 的对应操作是 `proxy_set_header Cookie` 与 `proxy_hide_header Set-Cookie`；另需显式处理上游 Host 与 WebSocket 的 Upgrade/Connection。它们与 Caddy 的环境变量语法不是一套机制，见 [nginx 代理指令](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)。
+
+验收按层分开：未通过入口认证或没有所需角色时被阻挡；授权后能访问应用的受保护接口；在受控后端以正确 Host/Origin 对照有效、无效 cookie，确认会话校验确实生效；需要 WebSocket 的应用另外验证升级和实际交互。只访问公开首页或版本接口不能证明代持有效，也不要把真实 cookie 打进日志。
+
+凭据到期、被撤销或应用绑定条件改变时，按应用流程重新兑换并更新代理。应用重启是否需要重新兑换应按其会话存储与签名密钥规则判断；不要仅因进程重启就轮换。按应用说明验证相应事件后的行为，入口登录态与上游会话分别检查。
 
 ## 排障与诊断
 
@@ -1716,9 +1710,9 @@ grep -nE 'changeConfig|rawCfgMu|ManageSync|tls.obtain|Shutdown|io\.Copy|streamin
 
 ### <a id="validate-service-environment"></a>service 环境变量下的配置验证
 
-**`caddy validate` 读不到 systemd 注入的环境变量**。无论是 `sudo` shell 下的 env placeholder，还是 drop-in 里的 `Environment=...` / `EnvironmentFile=...`，`validate` 都是命令行直接启动的，不会经过 systemd。
+**从独立 shell 启动的 `caddy validate` 不会自动继承 systemd 的服务环境**。先为验证进程提供所需变量；解析期变量与运行期变量的区别见 [服务凭据与环境变量](#service-environment)。`header_up` 的 `{env.*}` 在请求时才展开，validate 通过不代表它已取得有效凭据。
 
-如果 Caddyfile 里用了 `{env.XYZ}`，先在当前 shell 里手动 `export`（或命令前置）一遍即可；值随便填，`validate` 只检查占位符能否解析。例如带 caddy-security 的配置：
+dummy 值仅用于隔离配置语法或模块加载问题，不能验证真实 OAuth 密钥、上游会话或运行期变量。下面是 caddy-security 的隔离示例；实际配置使用了其他变量时也须逐项核对：
 
 ```bash
 GITHUB_CLIENT_ID=x GITHUB_CLIENT_SECRET=x \

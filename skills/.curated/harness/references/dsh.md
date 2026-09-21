@@ -302,7 +302,7 @@ Settings 读写、Credentials、Agent preset 管理、宿主文件操作、端�
 
 cookie 本身是 host-only、`Path=/`、`HttpOnly`、`SameSite=Strict`，确定性名称与签名 payload 都绑定规范化的 hostname 和 port；随附服务器使用 loopback HTTP，因此刻意不设置 `Secure`。没有 logout 操作：清除浏览器站点数据只结束这一个浏览器；删除上述凭据记录并重启 dsh 撤销全部会话。
 
-cookie 的期限在兑换那一刻封进签名 payload，之后不再变：`issuedAt` 与 `expiresAt` 按兑换时生效的 `cookieMaxAgeDays` 写定，此后每次访问只是出示这枚 cookie，不重算也不改写期限。`cookieMaxAgeDays` 的最小取值是 1，没有永不过期；签发时刻与寿命按安全整数校验，上千天的取值远在界内。验证只读 cookie 内的 `expiresAt`，并额外要求其中「签发→过期」跨度不超过**当前配置**的 maxAge。由此配置变化不追溯已签发的 cookie，且方向不对称：调大配置不延长已发的 cookie；调小配置让所有跨度更长的旧 cookie 立即作废。无论哪个方向，要按新期限取得 cookie 都须重新兑换。兑换时封定的还有 authority——cookie 绑定兑换请求呈现的 `host[:port]`，所以要在实际使用的地址下兑换；经代理部署时按代理呈现的公网 authority 兑换（见[反向代理公网入口](#caddy-public-entry)的代持段）。
+cookie 的期限在兑换那一刻封进签名 payload，之后不再变：`issuedAt` 与 `expiresAt` 按兑换时生效的 `cookieMaxAgeDays` 写定，此后每次访问只是出示这枚 cookie，不重算也不改写期限。`cookieMaxAgeDays` 的最小取值是 1，没有永不过期；签发时刻与寿命按安全整数校验，上千天的取值远在界内。验证只读 cookie 内的 `expiresAt`，并额外要求其中「签发→过期」跨度不超过**当前配置**的 maxAge。由此配置变化不追溯已签发的 cookie，且方向不对称：调大配置不延长已发的 cookie；调小配置让所有跨度更长的旧 cookie 立即作废。无论哪个方向，要按新期限取得 cookie 都须重新兑换。兑换时封定的还有 authority——cookie 绑定兑换请求呈现的 `host[:port]`，所以要在实际使用的地址下兑换；经代理部署时按代理最终向 DSH 呈现的 authority 兑换（见[反向代理公网入口](#caddy-public-entry)的代持段）。
 
 > 把一枚已认证的 cookie 手工放进另一个浏览器，只在浏览器以同一 authority 直接访问 DSH 时有效；经反向代理域名访问时，浏览器不会把 loopback 域名的 cookie 发给公网域名。反代部署换浏览器时，要么用当前进程的启动 token 重新兑换，要么由代理层统一附带会话，见[反向代理公网入口](#caddy-public-entry)中的代持段。
 
@@ -352,13 +352,15 @@ dsh --profile web --patch ./draft.cordis.yml --no-open --port <spare-port>
 
 `dsh web` 一般会自己打印并打开带 token 的 URL，本机用户通常感觉不到这次交换；但设计上连本机浏览器也必须完成它。远程部署时，token 由部署者从启动输出转交给远端浏览器。
 
-systemd 托管时，这条 URL 随标准输出进入 journal。用户服务：
+systemd 托管时，这条 URL 随标准输出进入 journal。用户服务可把 token 读入当前 shell 的普通变量，供后续兑换使用，不回显凭据：
 
 ```sh
-journalctl --user -u dsh.service -o cat | grep -F 'dsh web: ' | grep -oE 'token=[A-Za-z0-9_-]+' | tail -n 1
+set +x
+DSH_LAUNCH_TOKEN="$(journalctl --user -u dsh.service -o cat | grep -F 'dsh web: ' | grep -oE 'token=[A-Za-z0-9_-]+' | tail -n 1 | cut -d= -f2)"
+test -n "$DSH_LAUNCH_TOKEN"
 ```
 
-系统服务去掉 `--user`。模板实例把 `-u` 换成 `dsh@<user>.service`。
+系统服务去掉 `--user`。模板实例把 `-u` 换成 `dsh@<user>.service`。不要 `echo` 或导出该变量；兑换命令在同一 shell 中执行，用完后 `unset DSH_LAUNCH_TOKEN`。
 
 grep 须锚定打印行本身：经由同一 dsh 实例执行运维命令时，sudo 等子进程的审计行也会进入该 unit 的 journal，命令文本里形如 `token=…` 的字面量会污染只按 `token=` 匹配的抓取（改用 `_PID=<主进程>` 过滤同样可行）。
 
@@ -398,7 +400,7 @@ socat TCP-LISTEN:<relay-port>,bind=<private-address>,fork,reuseaddr TCP:127.0.0.
 
 ##### <a id="caddy-public-entry"></a>反向代理公网入口
 
-本节以 Caddy 为例说明反向代理公网入口的组成和三种做法，末尾给出 nginx 的对应操作。讨论放行或拒绝时，均以 **DSH 实际收到的 authority** 为准，而不是以代理连接了哪个 IP 和端口为准：
+本节以 Caddy 为例说明 DSH 的 Host / Origin 适配、会话兑换与验证要求；公网入口认证、上游凭据注入及代理维护转用 `network` skill。讨论放行或拒绝时，均以 **DSH 实际收到的 authority** 为准，而不是以代理连接了哪个 IP 和端口为准：
 
 | 用语 | 示例 | 指什么 |
 |---|---|---|
@@ -452,54 +454,45 @@ Caddy 仍可实际连接任意受控的 `<private-upstream>:3080`；DSH 收到�
 
 成对改写为 loopback 只影响信任校验。会话 cookie 的名称与签名 payload 绑定 DSH 实际收到的 authority；代理一致地改写 authority 时，token 交换与 cookie 回传也按改写后的 authority 进行——这条组合路径未在本库做过端到端实测，部署前应先验证。此路径的安全边界由代理强认证、覆盖完整站点的 route 和私有上游共同构成。
 
-**Caddy 代持会话 cookie。** 前两种做法最终都要远端浏览器各自完成一次 token 交换；这一种把交换收进运维侧：Caddy 强认证通过后，代替浏览器携带一枚已兑换的会话 cookie 访问 DSH，公网用户只过 Caddy 的认证层，不接触 DSH 的启动 token。DSH 侧与「保留公网 Host / Origin」的做法相同——声明匹配的 `--trusted-host`，不改写 `Host` / `Origin`，页面的 `isLoopback` 判定也不受影响。
+**Caddy 代持会话 cookie。** 会话由浏览器各自持有还是由代理统一代持，与上面的 Host / Origin 选择是两个问题。通用的 Cookie 注入与响应剥离、凭据存放、环境变量语法和配置更新流程见 `network` skill 的 Caddy 会话代持主题。本节保留 DSH 专有的兑换参数与验证条件；下面的代持实例保留公网 `Host` / `Origin`，声明匹配的 `--trusted-host`，公网用户不接触 DSH 的启动 token，页面的 `isLoopback` 判定也不受影响。
 
-兑换按「浏览器经代理到达 DSH 时呈现的 authority」进行，即公网 `host[:port]`（HTTPS 默认端口不写）；用 `127.0.0.1:<port>` 兑换得到的 cookie 绑定的是回环 authority，与公网 Host 对不上。启动 token 从服务日志取得（systemd 部署的抓取命令见[浏览器会话凭据的生命周期](#browser-session-lifecycle)），在本机以公网 Host 兑换（前提是 DSH 已带匹配的 `--trusted-host`，否则兑换请求先被信任校验拒绝）：
+兑换按「代理最终向 DSH 呈现的 authority」进行；本例是公网 `host[:port]`（HTTPS 默认端口不写）。用 `127.0.0.1:<port>` 兑换得到的 cookie 绑定的是回环 authority，与本例公网 Host 对不上。先按[启动 token 的转交与 journal](#launch-token-journal)把当前 token 读入 `DSH_LAUNCH_TOKEN`，再在同一 Bash shell 中以公网 Host 兑换。前提是 DSH 已带匹配的 `--trusted-host`，否则兑换请求先被信任校验拒绝：
 
-```sh
-curl -sS -D - -o /dev/null \
-  -H 'Host: dsh.example.com' \
-  'http://127.0.0.1:3080/?token=<launch-token>'
+```bash
+(
+set -euo pipefail
+set +x
+umask 077
+cookie_jar="$(mktemp)"
+status="$(printf 'url = "http://127.0.0.1:3080/?token=%s"\n' "${DSH_LAUNCH_TOKEN:?先取得当前启动 token}" |
+  curl --disable --noproxy '*' --fail --silent --show-error --max-time 10 \
+    --config - --header 'Host: dsh.example.com' \
+    --cookie-jar "$cookie_jar" --output /dev/null --write-out '%{http_code}')"
+test "$status" = 303
+printf 'HTTP %s；会话保存在 %s\n' "$status" "$cookie_jar"
+)
+unset DSH_LAUNCH_TOKEN
 ```
 
-期望 `303`、`location: /` 和 `set-cookie: dsh-auth-<hash>=v1.…`，cookie 名按前文规则由该 authority 决定。兑换只认启动 token，把 `.credentials.yaml` 里的签名密钥贴进 `?token=` 只会得到 401。把值（`v1.` 起的整段）放进 Caddy 的进程环境——例如 systemd unit 经 `EnvironmentFile=` 加载的 `0600` 文件——站点片段：
+命令通过标准输入传递带 token 的 URL，不把凭据放进 curl 参数或打印响应头；cookie 保存在新建的 `0600` 文件中。仅在确认输出 `HTTP 303` 后使用该文件，完成凭据转存后按敏感文件流程处理临时文件；不要把内容贴进聊天或普通日志。兑换响应应为 `303`、`Location: /`，签发的 cookie 名为 `dsh-auth-<hash>`，值为 `v1.` 起的整段；名称按该 authority 决定。兑换只认启动 token，把 `.credentials.yaml` 里的签名密钥当作 query token 会得到 401。
 
-```caddyfile
-https://dsh.example.com {
-	authorize with <policy>
-	reverse_proxy 127.0.0.1:3080 {
-		header_up Cookie "dsh-auth-<hash>={$DSH_BROWSER_COOKIE}"
-		header_down -Set-Cookie
-	}
-}
-```
+代理侧要同时使用这枚 cookie 的实际名称和完整值。若所选方案使用环境变量，`DSH_BROWSER_COOKIE` 可作为值的变量名；凭据存放位置与更新生效方式按 `network` skill 的方案选择，不由 DSH 限定。
 
-- `header_up Cookie` 整段覆盖浏览器的 Cookie 头，普通请求与 WebSocket upgrade 都只带这一枚会话 cookie，GitHub 等认证 cookie 留在 Caddy 层。DSH 视角由此只剩代理持有的一个会话，能否进入 DSH 实际由 `authorize` 决定。
-- `header_down -Set-Cookie` 剥掉 DSH 的全部 `Set-Cookie`，会话 cookie 不落入公网域名的浏览器——即使有人拿到启动 token 打开 `/?token=…`，兑换响应里的 cookie 也会被剥掉。当前版本全服务只有 token 兑换这一个 `Set-Cookie` 来源，剥离不破坏其他功能；升级 DSH 后应复核该前提。
-- `{$VAR}` 在 Caddyfile 解析期展开，要求变量已在 Caddy 进程环境中；误写成 `{env.VAR}` 时占位符原样发给上游，只会得到 401。环境文件属于 systemd 在启动时固定的进程环境，改值后须 `restart` Caddy，`reload` 不会重读。
+> 本节所引版本的 DSH 只有 token 兑换会设置 cookie；采用剥离上游 `Set-Cookie` 的代持方式时，升级后应复核这一前提。
 
-片段与命令中的 `3080` 是默认端口；`--port` 改变监听端口时，兑换命令、上游地址和公网使用非默认端口时的 authority 都要换成实际值。把用户重定向到 `/?token=…` 的自动兑换做法会让 token 进入浏览器历史与访问日志，也与 DSH 兑换后清空 query 的行为相抵触。
+片段与命令中的 `3080` 是默认端口；`--port` 改变监听端口时，兑换命令与上游地址要同步调整，公网使用非默认端口时的 authority 也要换成实际值。把用户重定向到 `/?token=…` 的自动兑换做法会让 token 进入浏览器历史与访问日志，也与 DSH 兑换后清空 query 的行为相抵触；上面的本机兑换命令只避免终端回显与进程参数泄露，不会替请求经过的服务禁用日志。
 
-代持后，终端用户的每次访问只是带上这枚期限已写定的会话 cookie，不签发新 cookie、也不改变期限；cookie 到期或配置变化后的更新只能由运维重新兑换并更换环境变量完成。会话 cookie 的运维事件集中为：
-
-| 事件 | 影响 | 处置 |
-|---|---|---|
-| 重启 dsh 进程 | 会话 cookie 仍有效（签名密钥持久），启动 token 换新 | 无须重新兑换 |
-| 热重载（改 patch 等，未重启进程） | 启动 token 不变 | journal 里的旧 token 仍可兑换 |
-| cookie 到期，或调小 `cookieMaxAgeDays` 使已签发跨度超限 | cookie 失效 | 重新兑换，更新环境后 `restart` Caddy |
-| 调大 `cookieMaxAgeDays` | 已签发的 cookie 按原期限继续有效 | 需要更长寿命时重新兑换 |
-| 更换域名、端口或改用 Host 改写 | authority 变化，cookie 名与已签发的会话均失配 | 重新兑换 |
-| 删除 `browser-session` 凭据记录 | 全部会话作废 | 重新兑换 |
+代持不改变[浏览器会话凭据的生命周期](#browser-session-lifecycle)：正常访问不续期，进程重启与热重载对启动 token、会话 cookie 的不同影响，以及 cookie 到期、寿命配置或签名密钥变更后的处置，均按该节判断。需要更新会话时由运维重新兑换，再按代理所选方案更新代持凭据。代理侧还需单独留意：**若域名、端口或 Host 改写的变更使 DSH 实际收到的 authority 改变，cookie 名与已签发会话就会失配**，须按新的 authority 重新兑换，同时更新代理持有的 cookie 名和值。
 
 > 🔬 2026-09-03 本机实测：systemd 托管 dsh、Caddy 公网入口的部署按此模式运行（GitHub 认证 + `header_up Cookie` 注入 + `header_down -Set-Cookie` 剥离，保留公网 Host）；公网过认证后直接进入 DSH，本机直连不带会话 cookie 时返回 401、带注入的会话 cookie 时返回 200，浏览器不产生 DSH cookie。
 
 代持解决的是进入 DSH 这一层的认证；浏览器端的限制不随代持改变，远程页面仍打不开 Settings 系页面（见[远程页面的浏览器端限制](#client-isloopback)）。
 
-nginx 的对应操作：用 `proxy_pass` 指向私有上游；保留公网 authority 时用 `proxy_set_header Host`（及对应的 `Origin`）维持公网值，成对改写时把两者写成同一个 loopback authority；WebSocket 升级需要 `proxy_http_version 1.1` 并透传 `Upgrade` 与 `Connection` 头；代持会话用 `proxy_set_header Cookie` 注入整段会话 cookie，用 `proxy_hide_header Set-Cookie` 剥离兑换响应。指令语义见 [nginx `ngx_http_proxy_module` 官方文档](https://nginx.org/en/docs/http/ngx_http_proxy_module.html)。
+使用 nginx 等其他反向代理时，仍须满足本节的 Host / Origin 一致性、私有上游和完整 HTTP / WebSocket 覆盖要求；入口认证与上游凭据代持的通用边界转用 `network` skill。
 
 `--trusted-host` 提供 DNS rebinding 与跨站请求防护，反向代理提供 TLS 与面向互联网的用户认证，浏览器会话认证决定谁能操作 Host；三层各守自己的边界。
 
-> 来源：[token 兑换入口与 303/Set-Cookie](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L240-L266)、[authority 取自请求 Host](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L69-L78)、[cookie 名由 authority 哈希得出](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L106-L108)、[`?token=` 只与启动 token 做常数时间比较](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L100-L104)、[401 响应](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L304-L312)；[`{$VAR}` 与 `{env.VAR}` 的展开时机](https://caddyserver.com/docs/caddyfile/concepts#environment-variables)见 Caddy 文档，[Caddy `reverse_proxy` 的 header 默认值与 WebSocket 支持](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)。
+> 来源：[token 兑换入口与 303/Set-Cookie](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L240-L266)、[authority 取自请求 Host](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L69-L78)、[cookie 名由 authority 哈希得出](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L106-L108)、[`?token=` 只与启动 token 做常数时间比较](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L100-L104)、[401 响应](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/client/connection/src/browser-auth.ts#L304-L312)；[Caddy `reverse_proxy` 的 header 默认值与 WebSocket 支持](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)。
 
 #### <a id="client-isloopback"></a>远程页面的浏览器端限制
 

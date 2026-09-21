@@ -78,7 +78,7 @@ web_sharing "on"
 
 如果 Web server 使用独立配置（例如 systemd service 通过 `zellij -c ~/.config/zellij/web.kdl web` 启动），而普通交互式 `zellij` 读取的是默认配置，则要分别确认两份配置。否则可能出现 Web server 已运行，但普通 `zellij` 新建的 session 没有自动共享、Web 页面看不到的情况。
 
-## login token 与 session token
+## <a id="web-session-tokens"></a>login token 与 session token
 
 zellij web 的认证是**两层 token**：
 
@@ -89,24 +89,23 @@ zellij web 的认证是**两层 token**：
 
 login token 丢了**只能 revoke 后重建**——管理工具只剩 `--list-tokens`（看名字 + 创建时间，没值）、`--revoke-token <name>` / `--revoke-all-tokens`。反代注入 Cookie 时要**针对目标端口重新登录并提取对应的 `session_token`**，不要复用其它端口或其它实例的 token。
 
-以下示例使用本机 HTTP 端口；目标端口走 HTTPS 时把 URL 改为 `https://127.0.0.1:<PORT>`：
+以下示例使用本机 HTTP 端口；目标端口走 HTTPS 时，URL 使用与证书匹配的地址，并按需用 `--cacert <CA文件>` 信任其 CA。示例在 Bash 中运行，不开启 `set -x`；Zellij 生成的 login token 是 UUID，字符集固定，因此可用内置 `printf` 构造 JSON，经标准输入交给 curl，避免凭据进入 curl 的命令行参数：
 
 ```bash
 PORT=<PORT>
 ZELLIJ_WEB_BASE_URL="http://127.0.0.1:${PORT}"
 
 TOKEN_OUTPUT=$(zellij web --create-token)
-AUTH_TOKEN=$(echo "$TOKEN_OUTPUT" | tail -1 | awk -F': ' '{print $2}')
-echo "登录令牌: $AUTH_TOKEN"
-
-RESPONSE=$(curl -sk "${ZELLIJ_WEB_BASE_URL}/command/login" \
-  -H "Content-Type: application/json" \
-  -d "{\"auth_token\":\"$AUTH_TOKEN\",\"remember_me\":true}" \
-  -i)
-
-SESSION_TOKEN=$(echo "$RESPONSE" | grep -oP 'session_token=\K[^;]+')
-echo "会话令牌: $SESSION_TOKEN"
+AUTH_TOKEN=$(printf '%s\n' "$TOKEN_OUTPUT" | tail -1 | awk -F': ' '{print $2}')
+RESPONSE=$(printf '{"auth_token":"%s","remember_me":true}' "$AUTH_TOKEN" |
+  curl --noproxy '*' --fail --silent --show-error \
+    "${ZELLIJ_WEB_BASE_URL}/command/login" \
+    -H 'Content-Type: application/json' --data-binary @- -i)
+SESSION_TOKEN=$(printf '%s\n' "$RESPONSE" | grep -oP 'session_token=\K[^;]+')
+test -n "$SESSION_TOKEN"
 ```
+
+令牌只保存在 shell 变量中，不打印到终端或日志；取得 `SESSION_TOKEN` 后按[反向代理接入约束](#proxy-access)接入。
 
 ### session_token 的过期机制
 
@@ -174,40 +173,17 @@ c = sqlite3.connect(db); c.execute(
   ('2099-12-31 00:00:00', h)); c.commit(); c.close()
 ```
 
-### systemd timer 自动续期
+### <a id="session-token-renewal"></a>systemd timer 自动续期
 
-如果不想动 DB schema 直接挂死，正路是定期用还活着的 login token 重新跑 `/command/login` 拿新 `session_token` → 写回 Caddy（或其它反代）→ reload。login token 永久有效是这套方案的前提。坑：reload Caddy 通常要 sudo / root 写 Caddyfile，得给 timer 一条窄 sudoers 口子（`NOPASSWD: /bin/systemctl reload caddy, /usr/bin/sed …`），或把这条 Cookie 拆到非 root 的 include 文件里再让 timer 自己改。
+定期在会话到期前，用仍有效的 login token 调用 `/command/login`，按[令牌兑换流程](#web-session-tokens)取得新 `session_token`，再更新代理持有的对应凭据。login token 没有时间期限，但被撤销后不能继续兑换。Caddy 凭据的保存位置、更新权限与生效方式转用 `network` skill 的 Caddy 上游会话代持主题。
 
-## Caddy 反代（Caddyfile 示例）
+## <a id="proxy-access"></a>反向代理接入约束
 
-Caddy 反代 Zellij Web 时，常见场景分为两类：本机部署和远程部署。`header_up Cookie "session_token=..."` 仅用于把登录后得到的 `session_token` 透传给 Zellij，本身不决定反代拓扑。
+Zellij 接收的会话 Cookie 名为 `session_token`，值须由[目标实例的登录流程](#web-session-tokens)取得。它只用于通过 Zellij 自身认证，外层代理仍应保留独立访问控制，例如 caddy-security OAuth；Caddy 的注入模板、凭据维护和会话代持机制转用 `network` skill 的 Caddy 上游会话代持主题。
 
-本机部署：Caddy 与 Zellij 在同一台机器上。此时通常保持 `zellij web` 的默认本地监听方式，即仅监听 `127.0.0.1:8082`，由本机 Caddy 负责外层 HTTPS 与访问控制：
-
-```caddyfile
-zellij.<HOST> {
-	authorize with admin
-
-	reverse_proxy localhost:8082 {
-		header_up Cookie "session_token=<SESSION_TOKEN>"
-	}
-
-	import error_pages
-}
-```
-
-远程部署：Zellij 在另一台机器上，当前这台 Caddy 仅作为对外入口。此时 upstream 指向远程主机；如果远程 Zellij 自己已经启用 HTTPS，可使用以下配置：
-
-```caddyfile
-reverse_proxy https://<REMOTE_ZELLIJ_HOST>:<PORT> {
-	transport http {
-		tls_insecure_skip_verify
-	}
-	header_up Cookie "session_token=<SESSION_TOKEN>"
-}
-```
-
-如果远程 Zellij 暴露的是普通 HTTP，则将 upstream 改为 `http://<REMOTE_ZELLIJ_HOST>:<PORT>`，并删除 `transport http { tls_insecure_skip_verify }`。该配置仅适用于上游本身就是 HTTPS 的场景；如果上游实际是 `localhost:8082` 这类 HTTP 服务却仍保留该段，Caddy 会报 `upstream address scheme is HTTP but transport is configured for HTTP+TLS`。无论采用哪种写法，`session_token` 都只用于通过 Zellij 自身认证，外层反代仍应保留独立访问控制，例如 caddy-security OAuth。
+- **本机代理**：Zellij 保持监听 `127.0.0.1:8082`，本地 HTTP 上游不需要 Zellij 自己配置 HTTPS；公网 HTTPS 与访问控制由代理承担。
+- **跨机代理**：上游连接地址指向远程入口；若 Zellij 本身绑定非 loopback 地址，必须配置 `web_server_cert` 和 `web_server_key`，由它提供 HTTPS。自签证书场景按 CA 信任与证书名称匹配校验，不默认跳过验证。
+- **协议匹配**：上游实际为 HTTP 时使用 `http://<HOST>:<PORT>`（或省略 scheme），不要保留 TLS transport；上游实际为 HTTPS 时使用 `https://<HOST>:<PORT>`。把 `localhost:8082` 这类 HTTP 上游与 TLS transport 混用，会报 `upstream address scheme is HTTP but transport is configured for HTTP+TLS`。
 
 ## remote attach
 
@@ -260,7 +236,7 @@ WantedBy=multi-user.target
 - `web_server_ip "0.0.0.0"` 绑定非 localhost，所以必须配置证书和私钥。
 - 未设置 `web_server_port` 时仍用默认 `8082`。
 
-如需新增端口，可使用独立 config，或在配置中显式设置 `web_server_port <PORT>`。反代前应先对该端口重新生成并登录，拿到新的 `session_token` 后再写入 `header_up Cookie`。
+如需新增端口，可使用独立 config，或在配置中显式设置 `web_server_port <PORT>`。反代前应先按[令牌兑换流程](#web-session-tokens)对该端口重新生成并登录，再按[反向代理接入约束](#proxy-access)使用新的 `session_token`。
 
 重启这个 service 前先掂量代价：systemd 默认 `KillMode=control-group`，一重启会杀掉该 service cgroup 内的**所有**进程——不只是 web-server，还有它下面挂的每个会话/pane/agent。而且多数 `web.kdl` 改动其实不需要重启（新开会话即生效），详见 [web.kdl 改动的生效时机](#reload-timing)。
 

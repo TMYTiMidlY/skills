@@ -9,7 +9,7 @@ description: 配置或排查 Caddy 反向代理与 caddy-security、OpenWrt、�
 
 ## Caddy 与 caddy-security
 
-Caddy 安装、域名/IP 站点、反向代理、证书、Caddyfile 更新、Admin API、caddy-security OAuth/角色/cookie、LE 限额的 ZeroSSL 兜底、会话代持模板与运行态排障见 [references/caddy.md](references/caddy.md)。修改 Caddy 或认证配置前先读该 reference。
+Caddy 安装、域名/IP 站点、反向代理、证书、Caddyfile 更新、Admin API、caddy-security OAuth/角色/cookie、LE 限额的 ZeroSSL 兜底与运行态排障见 [references/caddy.md](references/caddy.md)。公网入口统一认证、让应用免二次登录时读 [上游会话代持](references/caddy.md#session-holding)；凭据文件、变量展开与 reload/restart 的区别见 [服务凭据与环境变量](references/caddy.md#service-environment)。修改 Caddy 或认证配置前先读对应章节。
 
 ## OpenWrt 设备管理
 
