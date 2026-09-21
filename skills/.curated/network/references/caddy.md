@@ -1593,7 +1593,7 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 
 ## <a id="session-holding"></a>会话代持：反代自带一次性 token 会话的本地应用
 
-适用场景：上游是本地单用户应用，自己带一层"一次性 token 兑换 cookie"的会话认证，且 token 只存进程内存、重启即清零（tavotto、DSH 的浏览器会话都属于这一类）；它的公网入口已经在 caddy-security 后面。做法：Caddy 过完自己的认证后，代替浏览器携带一枚已兑换的上游会话 cookie——公网用户只见 Caddy 的 OAuth，从不接触上游的启动 token。需要三样东西，文件名里的 `<app>` 按应用替换：
+适用场景：上游应用自带"一次性 token 兑换 cookie"的会话认证，token 只存进程内存、重启即清零；公网入口已在 caddy-security 后面。做法：Caddy 过完自己的认证后，代替浏览器携带一枚已兑换的上游会话 cookie，公网用户不接触上游的启动 token。需要三样东西，文件名里的 `<app>` 按应用替换：
 
 凭据文件 `/etc/caddy/<app>.env`（0600 root，一行）：
 
@@ -1616,19 +1616,17 @@ EnvironmentFile=/etc/caddy/<app>.env
 <app.example.com> {
 	authorize with <policy>
 	reverse_proxy 127.0.0.1:<port> {
-		header_up Host 127.0.0.1:<port>
-		header_up -Origin
 		header_up Cookie "<session_cookie>={$<APP>_SESSION}"
 		header_down -Set-Cookie
 	}
 }
 ```
 
-- `header_up Host` 改写与 `header_up -Origin` 剥离按上游的守卫取舍：tavotto 的会话守卫对 Host 做严格等值校验（只认 `127.0.0.1:<port>` 这一种写法）、带 Origin 的请求要求严格同源，代理域名不改写会被 403（[security.py](https://github.com/Tavotto/Tavotto/blob/62eb7f7a8746e99ce6ed59e1086ce79cb7509508/src/tavotto/security.py)）。
+- 上游若校验 Host 或 Origin（只认 loopback 地址、严格同源这类守卫），按需补 `header_up Host <上游认的写法>` / `header_up -Origin`；`reverse_proxy` 默认透传原始 Host（[header 默认值](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers)），这两条只是过守卫的手段。
 - `header_up Cookie` 整段覆盖浏览器的 Cookie 头：上游只见到这一枚会话，Caddy 层的认证 cookie 不会发给上游。
 - `header_down -Set-Cookie` 剥离上游全部 Set-Cookie，会话 cookie 不落进公网域名；上游将来若新增依赖 Set-Cookie 的功能要复核这条。
 - `{$VAR}` 在 Caddyfile 解析期展开、值来自 Caddy 进程环境：**改 env 文件后必须 `systemctl restart caddy`，`reload` 不重读**；误写成 `{env.VAR}` 会把占位符原样发给上游。改 drop-in 还要先 `systemctl daemon-reload`。
-- 上游重启后内存会话清零、代持 cookie 随之失效：页面表现为上游自己的"会话未建立"提示，Caddy 的 OAuth 与磁盘数据不受影响。恢复 = 重跑一次兑换、写回 env、restart Caddy；兑换走各应用自己的 token API（tavotto 的实例命令在 software skill 的 Tavotto 文档）。DSH 的同款代持实例（含 nginx 对应写法）见 harness skill 的 dsh 运行时参考。
+- 上游重启后内存会话清零、代持 cookie 随之失效：页面表现为上游自己的"会话未建立"提示，Caddy 的 OAuth 与磁盘数据不受影响。恢复 = 重跑一次兑换、写回 env、restart Caddy；兑换走上游自己的 token API。
 
 ## 排障与诊断
 
