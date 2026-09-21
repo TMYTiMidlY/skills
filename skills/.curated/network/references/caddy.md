@@ -652,14 +652,13 @@ LE 对每个注册域限 50 张 / 7 天；签满后再加新 host，首签收到
 		}
 		on_demand
 	}
-	reverse_proxy <private-upstream>:<port> {
-		header_up Host {host}
-		header_up X-Forwarded-Proto https
-	}
+	reverse_proxy <private-upstream>:<port>
 }
 ```
 
 显式站点块优先于同 host 的泛域名块匹配。改完带上 service 环境变量 `caddy validate` → reload；首次握手会现场签发，耗时数秒到数十秒，别把验证用的 curl 超时设太短。Caddy 后台对 LE 的重试仍会按 `retry after` 继续，但该 host 已不依赖它。
+
+> `reverse_proxy` 默认透传原始 Host、按连接 scheme 自动设置 `X-Forwarded-Proto`（[header 默认值](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers)）——本层直接终结 TLS 时无需显式 `header_up Host {host}` / `header_up X-Forwarded-Proto https`，那是 nginx `proxy_pass` 的习惯（nginx 默认把 Host 改写成上游地址，才需要 `proxy_set_header Host $host`）。仅当这层 Caddy 前面还有另一层 TLS 终结、它自己收到的是明文 http 时，才需要显式 `header_up X-Forwarded-Proto https`。
 
 ### 可复用的错误页 snippet
 
