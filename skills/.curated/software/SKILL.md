@@ -127,6 +127,6 @@ Ubuntu 上装 Docker Engine 的**官方推荐方式**（apt 仓库法，非 `get
 
 [Coolify](https://coolify.io) 与 [Dokploy](https://dokploy.com) 的宿主约束、端口所有权、上游反代、控制面/工作负载边界、分层清理及产品专有架构统一见 [references/coolify-dokploy.md](references/coolify-dokploy.md)。其中 Coolify 部分按 v4.1.2 源码覆盖运行架构、实时路由、配置持久性和对外应用发布；Dokploy 部分区分 v0.29.8 锁定源码、滚动安装脚本、官方默认入口与非官方 socat workaround。WSL/mesh 入站 portproxy 相关见 `network` skill 的 WSL 章节；边缘 Caddy 服务端配置由 `network` skill 覆盖。
 
-## Tavotto（论文图可视化编辑器：部署与公网访问）
+## Tavotto（论文图可视化编辑器：安装与本地运行）
 
-matplotlib 论文图的可视化编辑器（改动存 override、源脚本不动、出版规范预检、矢量导出）在本机的部署与恢复：`uv tool install "tavotto[worker]"` + systemd 系统服务（普通用户跑、崩溃 5 秒自愈、绝不用 root——它的渲染 worker 会执行图库里的 Python）；公网走双层 Caddy（边缘 VPS 用 ZeroSSL EAB 签发绕开 Let's Encrypt 注册域 50 张 / 7 天限额，内网 `admin_access` GitHub OAuth 门），反代必须改写 Host 为 `127.0.0.1:5089` 并剥 Origin 才能过它的会话守卫；公网免 dnonce 靠 Caddy 代持会话 cookie（`header_up Cookie` 注入 + `header_down -Set-Cookie` 剥离，值在 `/etc/caddy/tavotto.env`，`{$VAR}` 解析期展开故改值要 restart 而非 reload）。会话 token 只存进程内存，tavotto 重启后代持即失效——恢复命令（读凭据文件 → relaunch 换 nonce → bootstrap 换 cookie → 写 env → restart caddy）整段写在文内，见 [references/tavotto.md](references/tavotto.md)。
+matplotlib 论文图的可视化编辑器（改动存 override、源脚本不动、出版规范预检、矢量导出），本机以 `uv tool install "tavotto[worker]"` + systemd 系统服务部署（普通用户跑、崩溃 5 秒自愈）；会话 token 只存进程内存，服务重启后需按文内命令重铸，见 [references/tavotto.md](references/tavotto.md)。公网入口（Caddy 反代、TLS 签发、会话代持）转 `network` skill。

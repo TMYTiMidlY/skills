@@ -639,6 +639,28 @@ echo | openssl s_client -connect <edge_ip>:443 -servername <host> 2>/dev/null \
 
 **实测坑（on-demand 特有）**：on-demand 证书是"首次握手现签"，签发失败时，触发它的首次握手会直接失败（`curl` 退出码 35 = SSL 握手错）而非超时。**触发连接与 ACME 验证是两条独立链路**：`curl --resolve <host>:443:127.0.0.1` 只把这次客户端连接钉到本机、用正确 SNI 触发签发；CA 随后仍按公网 DNS 独立访问该域名的 80/443 完成 HTTP-01 / TLS-ALPN-01。只要公网 DNS 指向这台 Caddy、验证端口可达，本地环回触发也能成功；若失败，应查 Caddy 的 ACME 日志、公网 DNS、80/443 入站与 challenge 是否被其他服务截走，**不能归因于 `--resolve` 本身把挑战带进了环回路径**。换公网访问后成功，说明当时公网验证链路已可用，不代表 CA 会沿着 curl 的连接路径验证。通配证书无此首访问题（证书早在缓存里，与连接从哪来无关）。
 
+### <a id="zerossl-eab-issuer"></a>Let's Encrypt 注册域限额签满时换 ZeroSSL EAB
+
+LE 对每个注册域限 50 张 / 7 天；签满后再加新 host，首签收到 429、TLS 握手直接失败——症状是 `curl` 退出码 35 / fetch failed（连接层错误，不是 HTTP 响应），Caddy journal 里能看到 `too many certificates (50) already issued for "<注册域>" ... retry after <UTC 时刻>`。解法：给这个 host 单独加显式站点块，issuer 换 ZeroSSL ACME，on-demand 照用。EAB 凭据从 ZeroSSL 控制台获取，同一对凭据可给多个 host 反复用：
+
+```caddyfile
+<app.example.com> {
+	tls {
+		issuer acme {
+			dir https://acme.zerossl.com/v2/DV90
+			eab <eab-kid> <eab-hmac>
+		}
+		on_demand
+	}
+	reverse_proxy <private-upstream>:<port> {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+	}
+}
+```
+
+显式站点块优先于同 host 的泛域名块匹配。改完带上 service 环境变量 `caddy validate` → reload；首次握手会现场签发，耗时数秒到数十秒，别把验证用的 curl 超时设太短。Caddy 后台对 LE 的重试仍会按 `retry after` 继续，但该 host 已不依赖它。
+
 ### 可复用的错误页 snippet
 
 如果你有一个单独的 `error-pages` 服务跑在 `localhost:4040`，可以用 snippet 集中定义，再按站点 `import`：
@@ -1569,6 +1591,43 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 - **不要让 `:9001`（RustFS console）暴露到公网**——Caddy 反代只对 `:9000`（S3 API）做。
 - **不要绕过 forgejo / rclone sync 直接 mc cp 写桶**——下次 sync `--remove` 会把它抹掉，除非你**确实**在做“对齐桶到 main HEAD” 这种 hot-fix（见 `~/TiMidlY-projects/docs-share/.github/copilot-instructions.md` 的 rerun 覆盖事故说明）。
 - **不要对早 sha 的 forgejo Actions run 做 rerun**——`rclone sync --remove` 会按那个 sha 的 tree mirror，覆盖更新 commit 的产物。要重新对齐桶用：rerun **当前 HEAD 对应那条 run**，或 push 一个空 commit。
+
+## <a id="session-holding"></a>会话代持：反代自带一次性 token 会话的本地应用
+
+适用场景：上游是本地单用户应用，自己带一层"一次性 token 兑换 cookie"的会话认证，且 token 只存进程内存、重启即清零（tavotto、DSH 的浏览器会话都属于这一类）；它的公网入口已经在 caddy-security 后面。做法：Caddy 过完自己的认证后，代替浏览器携带一枚已兑换的上游会话 cookie——公网用户只见 Caddy 的 OAuth，从不接触上游的启动 token。需要三样东西，文件名里的 `<app>` 按应用替换：
+
+凭据文件 `/etc/caddy/<app>.env`（0600 root，一行）：
+
+```dotenv
+<APP>_SESSION=<兑换得到的会话 cookie 值>
+```
+
+systemd drop-in `/etc/systemd/system/caddy.service.d/<app>-env.conf`，把凭据放进 Caddy 进程环境：
+
+```ini
+[Service]
+EnvironmentFile=/etc/caddy/<app>.env
+```
+
+站点分片里的注入与剥离：
+
+```caddyfile
+<app.example.com> {
+	authorize with <policy>
+	reverse_proxy 127.0.0.1:<port> {
+		header_up Host 127.0.0.1:<port>
+		header_up -Origin
+		header_up Cookie "<session_cookie>={$<APP>_SESSION}"
+		header_down -Set-Cookie
+	}
+}
+```
+
+- `header_up Host` 改写与 `header_up -Origin` 剥离按上游的守卫取舍：tavotto 的会话守卫对 Host 做严格等值校验（只认 `127.0.0.1:<port>` 这一种写法）、带 Origin 的请求要求严格同源，代理域名不改写会被 403（[security.py](https://github.com/Tavotto/Tavotto/blob/62eb7f7a8746e99ce6ed59e1086ce79cb7509508/src/tavotto/security.py)）。
+- `header_up Cookie` 整段覆盖浏览器的 Cookie 头：上游只见到这一枚会话，Caddy 层的认证 cookie 不会发给上游。
+- `header_down -Set-Cookie` 剥离上游全部 Set-Cookie，会话 cookie 不落进公网域名；上游将来若新增依赖 Set-Cookie 的功能要复核这条。
+- `{$VAR}` 在 Caddyfile 解析期展开、值来自 Caddy 进程环境：**改 env 文件后必须 `systemctl restart caddy`，`reload` 不重读**；误写成 `{env.VAR}` 会把占位符原样发给上游。改 drop-in 还要先 `systemctl daemon-reload`。
+- 上游重启后内存会话清零、代持 cookie 随之失效：页面表现为上游自己的"会话未建立"提示，Caddy 的 OAuth 与磁盘数据不受影响。恢复 = 重跑一次兑换、写回 env、restart Caddy；兑换走各应用自己的 token API（tavotto 的实例命令在 software skill 的 Tavotto 文档）。DSH 的同款代持实例（含 nginx 对应写法）见 harness skill 的 dsh 运行时参考。
 
 ## 排障与诊断
 
