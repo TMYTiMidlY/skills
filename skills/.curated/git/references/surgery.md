@@ -127,7 +127,9 @@ git commit -m "add new.txt" -- new.txt
 
 #### hook 拦截的危险 Git 命令（实测）
 
-agent 环境的命令拦截 hook（如 `preToolUse`）按命令名拦截危险的 Git 命令，实测：`git restore`（含只 unstage 的 `--staged`，属误拦）与 `git stash drop` 被拦，`git stash push` / `pop`、`git reset -- <path>` 放行。所以此类环境里**丢弃走 stash、撤出用 `git reset -- <path>`**，最后 drop 交人做。
+agent 环境可能配置在工具调用前拦截危险命令的 **hook**，按命令名拦的是挂在 `PreToolUse` 事件上的 hook 脚本。实测：`git restore`（含只 unstage 的 `--staged`，属误拦）与 `git stash drop` 被拦，`git stash push` / `pop`、`git reset -- <path>` 放行。所以此类环境里**丢弃走 stash、撤出用 `git reset -- <path>`**，最后 drop 交人做。
+
+> 术语：hooks 是机制名，`PreToolUse` 是其中“工具执行前”的事件——Claude Code 官方写 PascalCase `PreToolUse`，Copilot CLI 官方配置示例写 camelCase `preToolUse`（PascalCase 也被容忍），真正拦命令的是挂在该事件上的脚本。出处：[Claude Code hooks 文档](https://code.claude.com/docs/en/hooks)、[Claude Code 官方事件表](https://claude.com/blog/how-to-configure-hooks)（对 `PreToolUse` 的定位即 "Block dangerous commands"）、[GitHub Copilot hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference)（2026-09-22 核）；Copilot 拼写与 hook schema 差异的源码级实测见 `harness` skill（Copilot CLI 配置发现）。
 
 ### `--` 分隔符：加不加提交结果相同，但推荐带上
 
