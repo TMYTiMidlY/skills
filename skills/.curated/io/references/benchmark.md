@@ -33,24 +33,40 @@ fsync 延迟排第一，是因为**每提交一次事务都要等一次 fsync**�
 
 ## <a id="fio-baseline"></a>fio 基准命令与参数语义
 
-`fio` 是唯一能把上面三个数分开量的常用工具。三条命令覆盖全部：
+`fio` 是唯一能把上面三个数分开量的常用工具。三条命令覆盖全部。
+
+这些测试会创建或覆盖测试文件，持续占用目标盘的 I/O，可能拖慢同盘业务，不能当成只读诊断。执行前确认用户已授权在该文件系统上做写入测试，并核对可用空间：按下面的规模至少要容纳一个 4 GiB 测试文件，另留业务所需余量；增大测试规模前重新确认影响。
+
+在已授权目标范围内选择一个现有父目录，用 `mktemp` 为本次测试新建唯一目录，不复用已有测试目录，更不能把 `--filename` 指向用户文件或块设备：
 
 ```bash
+base="<已授权目标目录的绝对路径>"
+test_dir=$(mktemp -d -- "$base/.fio-bench.XXXXXX") || exit 1
+printf 'test_dir=%s\n' "$test_dir"
+```
+
+记录输出的目录。后续命令只读写该目录内的 `testfile`；若分次调用工具或换了 shell，变量可能不会保留，必须把下面的 `test_dir` 显式重设为刚创建并已核对的那次测试目录，不能另选现有目录。
+
+```bash
+set -e  # 任一步失败即停止，保留目录供检查
+test_dir="<本次 mktemp 输出并已核对的绝对目录>"
+[ -d "$test_dir" ] && [ ! -L "$test_dir" ] || exit 1
+
 # ① fsync 延迟（最重要）：单线程 8K 随机写，每写一笔就 fsync
 #    模拟的就是数据库提交事务
-fio --name=commit --filename=/path/testfile --size=2G \
+fio --name=commit --filename="$test_dir/testfile" --size=2G \
     --bs=8k --rw=randwrite --ioengine=libaio \
     --iodepth=1 --fsync=1 --direct=1 \
     --runtime=25 --time_based
 
 # ② 随机写 IOPS：深队列并发
-fio --name=wiops --filename=/path/testfile --size=4G \
+fio --name=wiops --filename="$test_dir/testfile" --size=4G \
     --bs=8k --rw=randwrite --ioengine=libaio \
     --iodepth=32 --numjobs=4 --direct=1 \
     --runtime=25 --time_based --group_reporting
 
 # ③ 随机读 IOPS
-fio --name=riops --filename=/path/testfile --size=4G \
+fio --name=riops --filename="$test_dir/testfile" --size=4G \
     --bs=8k --rw=randread --ioengine=libaio \
     --iodepth=32 --numjobs=4 --direct=1 \
     --runtime=25 --time_based --group_reporting
@@ -62,7 +78,7 @@ fio --name=riops --filename=/path/testfile --size=4G \
 - `--iodepth`：同时压多少个请求，见[队列深度的语义与瓶颈判读](#queue-depth)。
 - `--fsync=1`：每写一笔就强制落盘，这才是数据库提交的真实行为。
 - `--bs=8k`：对齐 PostgreSQL 的默认页大小，量出来的数才和数据库行为对得上。
-- 测试文件写在要评估的那个文件系统上，测完记得删。
+- 测试文件只放在要评估的文件系统内、本次新建的独立目录中。测试结束默认保留目录和文件，报告路径与占用；清理由用户另行决定，测试授权不等于删除授权。
 
 ## <a id="queue-depth"></a>队列深度的语义与瓶颈判读
 
@@ -86,18 +102,34 @@ fio --name=riops --filename=/path/testfile --size=4G \
 
 fio 量的是数据面。**远端接入层真正的瓶颈通常在元数据面**——创建、`stat`、遍历、删除，每个操作一次网络往返，fio 一个字都不告诉你。用固定数量的空文件做相对比较即可：
 
-小文件基准可以用固定数量文件做相对比较：
+先确认用户已授权在目标范围创建测试文件，并核对可用空间和文件数量额度；空文件也会占用文件系统元数据。创建计时与删除计时分开执行，默认只创建、观测并保留，不自动清理。
+
+创建步骤在已授权父目录下用 `mktemp` 新建唯一目录，不能复用用户目录或此前的测试目录。记录输出的路径，后续只操作这一次的测试文件：
 
 ```bash
-base=<mount-point>/<sub-path>
-d="$base/.mount-bench-$$"
-mkdir -p "$d"
+base="<已授权目标目录的绝对路径>"
+d=$(mktemp -d -- "$base/.mount-bench.XXXXXX") || exit 1
+printf 'test_dir=%s\n' "$d"
 start=$(date +%s%N)
-i=1; while [ $i -le 200 ]; do touch "$d/f$i"; i=$((i+1)); done
-mid=$(date +%s%N)
-rm -rf "$d"
+i=1; while [ "$i" -le 200 ]; do touch "$d/f$i" || exit 1; i=$((i+1)); done
 end=$(date +%s%N)
-echo "create_ms=$(( (mid-start)/1000000 )) delete_ms=$(( (end-mid)/1000000 ))"
+printf 'create_ms=%s\n' "$(( (end-start)/1000000 ))"
 ```
 
+**删除计时是可选步骤，不属于默认测试。** 它会永久删除测试文件和目录；只有用户在本轮对话中明确批准“用 `rm`”后才可执行，普通的测试或清理授权不包含这一许可。执行前再次核对目录只含本次创建的 `f1` 到 `f200`，未被其他任务复用或写入。分次调用工具或换 shell 时变量不会可靠保留，必须把 `d` 显式重设为刚才记录并已确认的绝对目录。
+
+```bash
+# 仅在本轮已获得用户明确使用 rm 的批准，并核对目标后执行
+d="<本次创建步骤输出并已确认的绝对目录>"
+[ -d "$d" ] && [ ! -L "$d" ] || exit 1
+start=$(date +%s%N)
+rm -- "$d"/f{1..200} && rm -d -- "$d" || exit 1
+end=$(date +%s%N)
+printf 'delete_ms=%s\n' "$(( (end-start)/1000000 ))"
+```
+
+这里仅删除已核对的 200 个测试文件及空目录，不递归清除其他内容。没有上述授权就跳过删除计时，保留并报告目录。`trash-put` 测的是移入回收站的过程，不能替换 `rm` 后仍称为同一项删除性能；普通清理另按用户指示及删除规则处理。
+
 一次实际案例：同一 SMB share 在 WSL `drvfs/9p` 下创建 200 个空文件约 1912ms、删除约 624ms；改成 CIFS 后创建约 613ms、删除约 364ms。
+
+> 这是历史测量记录，未用上述分步样例重新测量；复测比较时应保持创建与删除的命令、计时边界和目标环境一致。

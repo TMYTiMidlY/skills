@@ -125,9 +125,11 @@ git commit -m "add new.txt" -- new.txt
 2. **要删别用裸 `stash@{0}`**：先 `-m` 打唯一标记 → `git stash list` 认准那条**当前**的 `stash@{n}` → 立刻删（更稳可先 `git rev-parse` 记 SHA、删前比对没变再删）。
 3. **多人共享 worktree 别碰共享栈**：改临时 commit（独立 SHA），或 `git stash create`——只生成快照 commit、**不入栈、不动 `stash@{0}`、也不回滚工作区**，自己记返回的 SHA（`git stash apply <sha>` 取用）；它是**游离对象、不再需要时由 gc 自动回收、压根没有 drop 这一步**，天然免疫上面的误删。
 
-#### 旁注：带 safety-net 的 agent 环境（实测）
+#### 权限拦截与命令替代
 
-`preToolUse` 按命令名拦截的 agent 环境实测：`git restore`（含只 unstage 的 `--staged`，属误拦）与 `git stash drop` 被拦，`git stash push` / `pop`、`git reset -- <path>` 放行。所以此类环境里**丢弃走 stash、撤出用 `git reset -- <path>`**，最后 drop 交人做。
+先区分命令不受支持与操作被权限策略拒绝。前者可在已授权范围内选择合适的替代命令；后者必须按当前环境的授权流程处理，授权被拒绝或不允许升级时停止该操作。即使怀疑误拦，也不能自行用另一命令、工具或重定向实现被拒绝的同一效果。
+
+> 历史环境曾观察到命令名过滤对 `git restore`、`git stash drop` 与其他命令给出不同结果。这只说明该环境的拦截表现，不是通用的授权判断；某条等效命令可以运行，不代表允许用它规避拒绝。本篇的暂存区隔离方法用于保护并发改动，不用于绕过权限。
 
 ### `--` 分隔符：加不加提交结果相同，但推荐带上
 
