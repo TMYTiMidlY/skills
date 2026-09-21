@@ -1,6 +1,6 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的配置和排障知识库。用于 SSH/systemd、终端与包管理工具、语言工具链、PostgreSQL、S3 对象存储、Docker/PaaS、Overleaf/OpenList、文档处理与发布，以及 Windows/WSL/macOS/HarmonyOS 日常软件问题。
+description: 本地软件、CLI 工具与自托管服务的配置和排障知识库。用于 SSH/systemd、终端与包管理工具、语言工具链、PostgreSQL、S3 对象存储、Docker/PaaS、Overleaf/OpenList、科大云盘（Seafile WebDAV/分享链接）、文档处理与发布、论文图编辑器 Tavotto，以及 Windows/WSL/macOS/HarmonyOS 日常软件问题。
 ---
 
 # Software
@@ -107,6 +107,10 @@ OpenList（AList 的活跃 fork）的 **REST API 编程接入**（两种 token�
 
 把 **iCloud Drive 接入 OpenList**（rclone 直连 vs 借道常开 Mac 用 SMB 中转的选型对比、R 系列 rclone 直连专属坑、M 系列 Mac SMB 中转专属坑、macOS SMB 部署步骤含 GUI 路径、嵌套挂载还原完整 iCloud 视图、`dd over ssh` 远程链路测速 + 体验对照、EasyTier 双向不对称排查）见 [references/openlist-icloud.md](references/openlist-icloud.md)——这篇大量是 macOS GUI / 桌面操作，给人照做的部署说明。
 
+## 科大云盘（USTC pan，Seafile）
+
+科大云盘（`pan.ustc.edu.cn`，服务端为 Seafile）的 headless / CLI 接入：几条访问通道的认证模型与可用性（网页 SSO、同步客户端、WebDAV、匿名分享链接）、**seaf-cli 同步客户端为何在该部署上走不通**（`/api2/auth-token/` 被 SSO 301 改道成 405 的解包证据链、GUI 走 Shibboleth 浏览器 SSO 而 Python CLI 未实现）、WebDAV 配 rclone（`vendor=other`、多账号多 remote、obscure 的可逆混淆语义、跨账号 copy 流经本机 vs 同账号服务端 COPY、大批量传输参数）、匿名分享 API（`/api/v1/share/get_share_detail` 直取 seafhttp 一次性直链与刷新策略）、经 Mihomo fake-ip 代理时 HTML GET 间歇超时而下载稳定的差异、以及 macOS 无 UTF-8 标志位 zip 的 cp437→UTF-8 还原解压，见 [references/ustc-pan.md](references/ustc-pan.md)。
+
 ## MinerU PDF→Markdown 转换
 
 MinerU（mineru.net）提供 VLM/pipeline 云端模型将 PDF、Office、图片和网页转为 Markdown/JSON，支持公式和表格识别。普通自动化默认用官方 Python SDK，需要 callback/`no_cache`/完整 HTTP 控制时用 REST API；官方 MCP 是 SDK 上的 Markdown 导向适配层，适合 MCP 客户端但不是全功能替代。当前精准解析按 200MB/200 页设计，旧的 URL 600 页规则只保留为历史说明。未经用户明确允许，不要在本机安装或部署 MinerU 模型；SDK/MCP 轻量云客户端不属于本地模型部署。安装、能力对比、分卷与结果合并见 [references/mineru.md](references/mineru.md)。
@@ -122,3 +126,7 @@ Ubuntu 上装 Docker Engine 的**官方推荐方式**（apt 仓库法，非 `get
 ## Coolify 与 Dokploy（自托管 PaaS）
 
 [Coolify](https://coolify.io) 与 [Dokploy](https://dokploy.com) 的宿主约束、端口所有权、上游反代、控制面/工作负载边界、分层清理及产品专有架构统一见 [references/coolify-dokploy.md](references/coolify-dokploy.md)。其中 Coolify 部分按 v4.1.2 源码覆盖运行架构、实时路由、配置持久性和对外应用发布；Dokploy 部分区分 v0.29.8 锁定源码、滚动安装脚本、官方默认入口与非官方 socat workaround。WSL/mesh 入站 portproxy 相关见 `network` skill 的 WSL 章节；边缘 Caddy 服务端配置由 `network` skill 覆盖。
+
+## Tavotto（论文图可视化编辑器：部署与公网访问）
+
+matplotlib 论文图的可视化编辑器（改动存 override、源脚本不动、出版规范预检、矢量导出）在本机的部署与恢复：`uv tool install "tavotto[worker]"` + systemd 系统服务（普通用户跑、崩溃 5 秒自愈、绝不用 root——它的渲染 worker 会执行图库里的 Python）；公网走双层 Caddy（边缘 VPS 用 ZeroSSL EAB 签发绕开 Let's Encrypt 注册域 50 张 / 7 天限额，内网 `admin_access` GitHub OAuth 门），反代必须改写 Host 为 `127.0.0.1:5089` 并剥 Origin 才能过它的会话守卫；公网免 dnonce 靠 Caddy 代持会话 cookie（`header_up Cookie` 注入 + `header_down -Set-Cookie` 剥离，值在 `/etc/caddy/tavotto.env`，`{$VAR}` 解析期展开故改值要 restart 而非 reload）。会话 token 只存进程内存，tavotto 重启后代持即失效——恢复命令（读凭据文件 → relaunch 换 nonce → bootstrap 换 cookie → 写 env → restart caddy）整段写在文内，见 [references/tavotto.md](references/tavotto.md)。
