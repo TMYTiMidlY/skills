@@ -1,6 +1,6 @@
 # Codex 运行时笔记
 
-本篇介绍 Codex app-server 的运行形态、CLI 启动行为、进程管理、用量与额度统计、上下文配置、协作模式、内置生图工具和订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
+本篇介绍 Codex app-server 的运行形态、CLI 启动行为、进程管理、桌面端 projectless 会话的目录与提示词、用量与额度统计、上下文配置、协作模式、内置生图工具和订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
 
 ## <a id="app-server-lifecycle"></a>Codex app-server
 
@@ -104,6 +104,85 @@ codex app-server daemon version
 使用 systemd 通过 `bash -c` 执行 app-server 管理脚本时，脚本文本会先经过 systemd 的参数处理，再交给 Bash。启用环境替换时，`${…}` 可能被提前展开；调用方加单引号不能阻止这一层处理。把复杂脚本放进独立文件、只向服务管理器传递文件路径，可以减少多层展开的干扰。
 
 > 来源：[systemd 命令参数的环境替换](https://github.com/systemd/systemd/blob/v239/man/systemd.service.xml#L1008-L1067)。内联脚本需要核对每层转义，关闭展开的选项也应先确认可用性。通用服务管理知识归 `software` skill。
+
+## <a id="desktop-projectless"></a>桌面端 projectless 会话的目录与提示词
+
+ChatGPT 桌面端的 Codex projectless 会话（不依附已有项目的聊天）有一套生成工作目录、指定交付目录并注入提示词的机制。下面记录的是 **2026-09-07 桌面端提取样本**：提示词把会话目录描述为用户 `Documents/Codex` 下的生成目录；配置了独立交付目录时，要求把中间文件放在 `work/`，把交付物放在指定路径，并只链接该路径下的交付文件。
+
+这套目录约定属于闭源桌面客户端的行为，不能当成开源 Codex CLI 在任意工作目录中都会注入的默认提示词。提示词表达文件组织要求，本身不等于文件系统沙箱或写权限强制限制。
+
+> 来源：历史会话记录将下列函数定位到桌面应用的 `resources/app.asar`。留存提取文件的 SHA-256 为 `90a7ba29257f8c3253b0977fa2efe40cf5742dc2c8896ed8d94c07df96dbe55b`，本次读回校验一致。这里保存的是历史提取证据，没有据此确认所有桌面端版本均使用同一函数；开源侧的相关概念另见[开源 Codex 中的 projectless](#projectless-open-source)。
+
+### <a id="desktop-projectless-source"></a>模板函数原文
+
+下面保留提取文件中的原样函数，包括压缩后的变量名和 `.join()` 中的实际换行；函数返回一段按行拼接的提示词。
+
+```js
+function et({cwd:e,projectlessOutputDirectory:t,projectlessWorkspaceBrowserRoot:n}){let r=t??n??e;return[`### Projectless Chat`,`This projectless thread starts in a generated directory under the user's Documents/Codex folder.`,`The generated directory name is only a filesystem identifier. Do not infer the user's language, locale, or preferences from its name or path, even if it resembles a language code such as 'ru'.`,`Prefer answering inline in chat unless using local files would make the result more useful.`,...t!=null&&t!==e?[`Use work/ for intermediate files, scratch analysis, scripts, drafts, and temporary assets. Use ${r} only for user-facing deliverables that should appear as outputs.`,`When referring to saved deliverables in the final response, link only files from ${r}.`]:[`When using local files for this projectless thread, write scratch files, drafts, generated assets, and other outputs under ${r}.`],`Do not write directly in the home directory unless the user explicitly asks.`].join(`
+`)}
+```
+
+`r` 是最终插入提示词的路径，取值逻辑用完整参数名表示为：
+
+```js
+r = projectlessOutputDirectory ?? projectlessWorkspaceBrowserRoot ?? cwd
+```
+
+`??` 只在左侧为 `null` 或 `undefined` 时回退，不会跳过空字符串：先用独立交付目录，再用 projectless 工作区的文件浏览根目录，最后用当前工作目录 `cwd`。原函数的 `t`、`n`、`e` 分别对应这三个参数；它不检查路径是否存在，也不自行拼接 `outputs`。
+
+函数还按 `t != null && t !== e` 选择目录提示。这里比较的是传入值，不是解析后的文件系统路径是否指向同一位置。
+
+| 参数条件 | 返回的目录约定 |
+|---|---|
+| `projectlessOutputDirectory` 既非 `null` 也非 `undefined`，且不等于 `cwd` | 中间文件用 `work/`；交付物和最终回复的交付链接只用 `${r}` |
+| `projectlessOutputDirectory` 为 `null` / `undefined`，或等于 `cwd` | 中间文件、草稿、生成资产及其他输出统一写入 `${r}`；不注入 `work/` 与交付目录分离的那两句 |
+
+> 历史桌面端取证还记录了由应用固定创建 `outputs` 目录，当时 `r` 指向生成会话目录下的 `outputs`。这一创建行为的依据是桌面端检查记录，**不是该模板函数，也不是开源仓库未匹配到 `outputs` 的搜索结果**；留存函数本身没有创建目录的调用。复核具体建目录实现需另查相应桌面端构建。
+
+### <a id="desktop-projectless-prompt"></a>独立交付目录分支的提示词原文
+
+满足 `t != null && t !== e` 时，函数返回以下完整文本。这里按模板保留 `${r}`，实际注入时替换成上面选出的路径。
+
+```text
+### Projectless Chat
+This projectless thread starts in a generated directory under the user's Documents/Codex folder.
+The generated directory name is only a filesystem identifier. Do not infer the user's language, locale, or preferences from its name or path, even if it resembles a language code such as 'ru'.
+Prefer answering inline in chat unless using local files would make the result more useful.
+Use work/ for intermediate files, scratch analysis, scripts, drafts, and temporary assets. Use ${r} only for user-facing deliverables that should appear as outputs.
+When referring to saved deliverables in the final response, link only files from ${r}.
+Do not write directly in the home directory unless the user explicitly asks.
+```
+
+### <a id="desktop-projectless-fallback"></a>统一写入目录分支的提示词原文
+
+不满足上述条件时，函数用一条统一写入要求替换中间的两条目录约定，完整文本如下：
+
+```text
+### Projectless Chat
+This projectless thread starts in a generated directory under the user's Documents/Codex folder.
+The generated directory name is only a filesystem identifier. Do not infer the user's language, locale, or preferences from its name or path, even if it resembles a language code such as 'ru'.
+Prefer answering inline in chat unless using local files would make the result more useful.
+When using local files for this projectless thread, write scratch files, drafts, generated assets, and other outputs under ${r}.
+Do not write directly in the home directory unless the user explicitly asks.
+```
+
+### <a id="projectless-open-source"></a>开源 Codex 中的 projectless
+
+开源 Codex 也使用 `projectless` 一词，但项目识别、信任处理和遥测元数据与桌面端模板是不同机制。以下源码核对锁定到 2026-09-21 的提交 `f747d23d4bc8a167207fb1c411e221022391fdbb`，不把它称为持续有效的“最新 HEAD”。
+
+**项目识别与信任**：配置加载器在未忽略项目配置且存在 `cwd` 时，检查其发现范围内没有项目根标记、没有 Git checkout 根、没有项目级 `.codex` 配置层，三者同时满足才标为 `is_projectless`。跳过这一发现过程时，标志仍为初始的 `false`。app-server 在 `thread/start` 中据此排除隐式项目信任的持久化；这不负责选择 `work/` 或 `outputs/`，也不表示撤销显式信任或绕过权限检查。
+
+> 源码：[发现条件与初值](https://github.com/openai/codex/blob/f747d23d4bc8a167207fb1c411e221022391fdbb/codex-rs/config/src/loader/mod.rs#L332-L333)、[projectless 判定](https://github.com/openai/codex/blob/f747d23d4bc8a167207fb1c411e221022391fdbb/codex-rs/config/src/loader/mod.rs#L404-L406)、[隐式授信分支](https://github.com/openai/codex/blob/f747d23d4bc8a167207fb1c411e221022391fdbb/codex-rs/app-server/src/request_processors/thread_processor.rs#L1361-L1376)。没有项目配置层与缺少 `config.toml` 不等价：发现项目级 `.codex` 目录但没有配置文件时，也会[加入空配置层](https://github.com/openai/codex/blob/f747d23d4bc8a167207fb1c411e221022391fdbb/codex-rs/config/src/loader/mod.rs#L1740-L1750)。
+
+> 引入这组改动的提交为 [Avoid persisting project trust for projectless directories (#46328)](https://github.com/openai/codex/commit/608e4cc9a132c2aa7754b10585d88ca34182d741)，提交日期为 2026-09-18。目的在于避免先在无项目目录启动任务、保存信任后，自动预先批准以后新加入的项目配置。它晚于 9 月 7 日的桌面端样本，只能作为后续开源旁证，不能倒推为当时桌面端的实现。
+
+**客户端遥测标签**：`workspace_kind()` 从 `responsesapi_client_metadata` 读取 `workspace_kind`；这里消费客户端传入的值，不根据 `cwd` 自行判定是否为 projectless。**不要把它写成从 `responses_api_metadata` 读取**，后者在该实现中是另一路透传配置。
+
+> 源码：[客户端元数据、另一组透传元数据及标签读取器](https://github.com/openai/codex/blob/f747d23d4bc8a167207fb1c411e221022391fdbb/codex-rs/core/src/turn_metadata.rs#L363-L391)、[`workspace_kind` 键常量](https://github.com/openai/codex/blob/f747d23d4bc8a167207fb1c411e221022391fdbb/codex-rs/core/src/turn_metadata.rs#L51)。读取通道的存在不能单独证明 9 月 7 日桌面端确实发送了该标签或经过该通道。
+
+> 此前的全仓及历史检索记录以 `f747d23d4b` 为快照，报告未匹配到 `### Projectless Chat`、`projectlessOutputDirectory`、`projectlessWorkspaceBrowserRoot` 及模板特征句；本轮未重跑这项全历史搜索。该记录说明未找到这段桌面端模板的开源出处，不意味着开源 Codex 完全没有 projectless 概念，也不能仅由搜索未命中推断目录由谁创建。
+
+因此，目录约定与提示词的直接依据是留存的桌面端提取样本；开源侧的信任判定和客户端标签应独立引用，不能代替模板与建目录代码的出处。
 
 ## <a id="usage-accounting"></a>用量与额度
 
