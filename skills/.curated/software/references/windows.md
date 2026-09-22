@@ -224,19 +224,48 @@ Get-Process wsl,wslhost,wslrelay -IncludeUserName |
   Where-Object { $_.UserName -match '<user>' }
 ```
 
-以 SSH 登录的管理员身份 `wsl -d <distro>` 拉不起别人的发行版——它按当前用户查注册表，报 `WSL_E_DISTRO_NOT_FOUND`。要启动必须在 `<user>` 的登录上下文里起进程，计划任务是指定 Principal 的通道，LogonType 决定可行性（在 SSH 网络登录、Administrators 成员且令牌已提权的环境实测）：
+`wsl -d <distro>` 按当前用户查注册表，跨用户执行报 `WSL_E_DISTRO_NOT_FOUND`。启动 `<user>` 的发行版要在该用户的登录上下文里起进程，计划任务通过 Principal 指定身份，LogonType 决定注册与运行条件（在 SSH 网络登录、Administrators 成员且令牌已提权的环境实测）：
 
 | LogonType | 从 SSH 注册 | 运行条件 | 适用 |
 |---|---|---|---|
 | Interactive | 成功 | 该用户已登录（断开的 RDP 会话也算） | 有遗留断开会话时首选 |
-| S4U | 拒绝访问（0x80070005） | 无需登录 | 需在交互式管理员会话（控制台 / RDP）里注册 |
+| S4U | 拒绝访问（0x80070005） | 无需登录 | 在交互式管理员会话（控制台 / RDP）里注册 |
 | Password | 需该用户密码 | 无需登录，重启后也能自启 | 拿得到共享账号密码时最稳 |
 
-> SSH 拿到的是网络登录令牌：`whoami /groups` 显示 High Mandatory Level、`net session` 也通过，但注册「以其他用户 S4U 运行」的任务仍被 Task Scheduler 拒绝；Interactive 型注册时不需要验证对方身份（直接复用现存会话的令牌注入进程），所以放行。「网络令牌缺本机特权导致 S4U 被拒」是按现象反推的机制解释，未在官方文档核实；同一台机器交互式会话里注册成功的既有 S4U 任务是旁证。
+> SSH 拿到的是网络登录令牌：`whoami /groups` 显示 High Mandatory Level、`net session` 也通过，注册「以其他用户 S4U 运行」的任务仍被 Task Scheduler 拒绝；Interactive 型直接复用该用户现存会话的令牌注入进程，免去验证对方身份，所以放行。「网络令牌缺本机特权导致 S4U 被拒」是按现象反推的机制解释，未在官方文档核实；同一台机器交互式会话里注册成功的既有 S4U 任务是旁证。
 
-保活动作用 `wsl.exe -d <distro> -- sleep infinity`：`ExecutionTimeLimit` 必须显式设为零（`New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero)`，默认 72 小时会掐死长驻实例），`-MultipleInstances IgnoreNew` 防重复实例堆叠。触发器用「该用户登录时」+ 固定间隔重复（如 15 分钟）：发行版被 `wsl --shutdown` 杀掉后任务实例结束，下个重复点自动拉回；实例存活期间 `IgnoreNew` 让重复触发空转。
+保活动作统一用 `wsl.exe -d <distro> -- sleep infinity`，公共设置把 `ExecutionTimeLimit` 设为零（默认 72 小时会终止长驻实例）、`-MultipleInstances IgnoreNew` 让实例存活期间的重复触发空转：
 
-> Interactive 型的边界：会话注销即停；整机重启后该用户未登录，任务停在登录触发器上，用户一登录即自动拉起。要重启免登录常驻，换 Password 型，或在本机交互式管理员会话里注册 S4U 型 + BootTrigger。
+```powershell
+$action   = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\wsl.exe" -Argument '-d <distro> -- sleep infinity'
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+  -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew `
+  -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+```
+
+S4U 型常驻 + 开机自启（在本机交互式管理员会话注册，BootTrigger 让重启后免登录自动拉起）：
+
+```powershell
+$principal = New-ScheduledTaskPrincipal -UserId '<SID>' -LogonType S4U
+Register-ScheduledTask -TaskName 'WSL-Autostart-<user>' -Action $action -Settings $settings `
+  -Principal $principal -Trigger (New-ScheduledTaskTrigger -AtStartup)
+```
+
+Interactive 型借现存会话（SSH 即可注册；登录触发 + 15 分钟重复触发自愈，发行版被 `wsl --shutdown` 杀掉后下个重复点自动拉回，注册完 `Start-ScheduledTask` 立即拉起）：
+
+```powershell
+$principal = New-ScheduledTaskPrincipal -UserId '<SID>' -LogonType Interactive
+$triggers  = @(
+  (New-ScheduledTaskTrigger -AtLogOn -User "$env:COMPUTERNAME\<user>")
+  (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+    -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 3650))
+)
+Register-ScheduledTask -TaskName 'WSL-Autostart-<user>' -Action $action -Settings $settings `
+  -Principal $principal -Trigger $triggers
+Start-ScheduledTask -TaskName 'WSL-Autostart-<user>'
+```
+
+> S4U 型同样可以叠加固定间隔重复触发做自愈；单靠 BootTrigger 时，发行版被 `wsl --shutdown` 杀掉后要等下次开机才回来。Interactive 型在会话注销后停止，整机重启后停在登录触发器上，该用户一登录即自动拉起——重启免登录常驻用 S4U 型或 Password 型。
 
 ## <a id="misc-diff"></a>5.1 与 7 的其余差异
 
