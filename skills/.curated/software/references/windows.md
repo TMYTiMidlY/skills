@@ -213,6 +213,31 @@ WSL 里的 systemd 服务不能阻止空闲停机——[微软文档](https://le
 
 验收口径（实测）：开机任务退出、无任何 wsl 客户端空置约 2 分钟后 `wsl -l -v` 仍 Running，SSH / Caddy / Zellij / code-serve-web 正常；默认 `wsl` 进入后 `exit` 再空置约 2 分钟，同样 Running、服务无重启。
 
+## <a id="cross-user-wsl"></a>跨用户启动并常驻其他 Windows 用户的 WSL
+
+多用户 Windows 机上，WSL 发行版按用户注册在 `HKU\<SID>\Software\Microsoft\Windows\CurrentVersion\Lxss`（已加载的 hive 可直接枚举各 GUID 子键的 `DistributionName`，未加载的需管理员 `reg load`），`wsl -l -v` 只列当前用户自己的。判断 `<user>` 的发行版是否在跑，看该用户名下的 WSL 进程：
+
+```powershell
+# 需管理员；出现 wslhost.exe 即其发行版在跑，
+# wslrelay.exe 还说明发行版内有端口被转发到宿主
+Get-Process wsl,wslhost,wslrelay -IncludeUserName |
+  Where-Object { $_.UserName -match '<user>' }
+```
+
+以 SSH 登录的管理员身份 `wsl -d <distro>` 拉不起别人的发行版——它按当前用户查注册表，报 `WSL_E_DISTRO_NOT_FOUND`。要启动必须在 `<user>` 的登录上下文里起进程，计划任务是指定 Principal 的通道，LogonType 决定可行性（在 SSH 网络登录、Administrators 成员且令牌已提权的环境实测）：
+
+| LogonType | 从 SSH 注册 | 运行条件 | 适用 |
+|---|---|---|---|
+| Interactive | 成功 | 该用户已登录（断开的 RDP 会话也算） | 有遗留断开会话时首选 |
+| S4U | 拒绝访问（0x80070005） | 无需登录 | 需在交互式管理员会话（控制台 / RDP）里注册 |
+| Password | 需该用户密码 | 无需登录，重启后也能自启 | 拿得到共享账号密码时最稳 |
+
+> SSH 拿到的是网络登录令牌：`whoami /groups` 显示 High Mandatory Level、`net session` 也通过，但注册「以其他用户 S4U 运行」的任务仍被 Task Scheduler 拒绝；Interactive 型注册时不需要验证对方身份（直接复用现存会话的令牌注入进程），所以放行。「网络令牌缺本机特权导致 S4U 被拒」是按现象反推的机制解释，未在官方文档核实；同一台机器交互式会话里注册成功的既有 S4U 任务是旁证。
+
+保活动作用 `wsl.exe -d <distro> -- sleep infinity`：`ExecutionTimeLimit` 必须显式设为零（`New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero)`，默认 72 小时会掐死长驻实例），`-MultipleInstances IgnoreNew` 防重复实例堆叠。触发器用「该用户登录时」+ 固定间隔重复（如 15 分钟）：发行版被 `wsl --shutdown` 杀掉后任务实例结束，下个重复点自动拉回；实例存活期间 `IgnoreNew` 让重复触发空转。
+
+> Interactive 型的边界：会话注销即停；整机重启后该用户未登录，任务停在登录触发器上，用户一登录即自动拉起。要重启免登录常驻，换 Password 型，或在本机交互式管理员会话里注册 S4U 型 + BootTrigger。
+
 ## <a id="misc-diff"></a>5.1 与 7 的其余差异
 
 除了 [文本编码](#encoding) 那三个开关，剩下这些差异影响面小，记一笔备查：
