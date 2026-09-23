@@ -66,7 +66,24 @@ codex app-server daemon version
 
 > 来源：[独立服务的更新机制](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/app-server-daemon/README.md#L113-L144)。
 
-确认目标受管、且允许中断其活动任务后，可以重启服务，再查询实际状态：
+`0.155.0` 起 daemon 管理器提供 `update` 子命令，把选取最新稳定版、替换受管安装和重启运行中的服务合成一步。CLI 在会话启动时对比后台服务与自身版本，落后时提示执行该命令：
+
+```bash
+codex app-server daemon update
+```
+
+> 🔬 2026-09-23 实测（standalone 安装、daemon 受管的 Linux 宿主）：CLI 0.155.1 启动时提示后台服务 0.153.4 落后，按提示执行上述命令一次成功，提示消失；随后 `codex app-server daemon version` 显示 `cliVersion`、`managedCodexVersion`、`appServerVersion` 对齐且 `backend: "pid"`。提示原文：
+>
+> ```text
+> ⚠ A background Codex service is running v0.153.4, older than your Codex CLI v0.155.1.
+>   To update the service, run:
+>     codex app-server daemon update
+>   Updating may interrupt active or queued work.
+> ```
+>
+> 来源：[update 子命令定义](https://github.com/openai/codex/blob/rust-v0.155.1/codex-rs/cli/src/main.rs#L794)（`rust-v0.154.0` 同文件无此子命令）、[update 的选取规则与重启行为](https://github.com/openai/codex/blob/rust-v0.155.1/codex-rs/app-server-daemon/README.md#L61-L68)、同款提示在其他安装渠道的独立报告 [issue #46468](https://github.com/openai/codex/issues/46468)。
+
+`update` 要求 Codex 安装器管理的 latest 渠道 standalone 安装：npm 等其他渠道安装返回 `unsupported`，且 `restart` 会拒绝接管非受管进程（对应下方排查实例中无 `backend` 的情形）。`restart` 不拉取新版本，只把运行进程刷新到受管安装的当前版本；确认目标受管、且允许中断其活动任务后执行，再查询实际状态：
 
 ```bash
 codex app-server daemon restart
