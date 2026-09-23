@@ -120,6 +120,62 @@ for (const s of sockets) if (s.readyState === WebSocket.OPEN) s.close()
 - **[#3854](https://github.com/deepseek-ai/deepseek-harness/discussions/3854)（0.1.1-rc.1）**：ask_user_question 工具把轮次 AbortController 的 `signal: exec.signal` 转发进问题，等待期间用户在输入框发任何消息都会取消运行中的轮次，连带把 pending 问题以 `ASK_ABORTED` 静默杀掉——UI 从未渲染，工具结果直接报错。与重连竞争的区别：日志里能看到 `turn/end {kind:"aborted", reason:{kind:"user"}}` 且紧跟 ASK_ABORTED。
 - **[#1471](https://github.com/deepseek-ai/deepseek-harness/discussions/1471)**：approval 应答者没有超时，弹窗丢失时工具调用无限挂起；报告者附了 fail-closed 超时的修复分支（未读正文，细节以讨论原文为准）。
 
+## <a id="subagent-burst-429"></a>大批量并发 subagent 的部分失败与伪失败信号
+
+> 2026-09-23 | `@deepseek-ai/dsh` 0.1.5-rc.3（Linux，spawn in-process 子代理，模型经 MiniMax Token Plan 订阅 key）| 批次落盘对账、zstdcat 子会话日志尸检、官方文档对照
+
+### 症状
+
+- 单条消息并发派发 N 个后台 subagent：N≤20 时全部正常返回、产物齐全；N=25 与 N=31 各有约三成子代理报 `Background subagent ... failed before it finished`。
+- 被报失败的子代理分两类：**真失败**（产物文件缺失）与**伪失败**（产物已完整落盘、结果消息也已发给父会话，终态仍是 failed）。
+- 失败率在 N=25 和 N=31 持平（约 30%），随并发数增加进入平台期。
+- 父会话全程存活。
+
+### 探测手段
+
+先按批次做落盘对账（派发清单 vs 产物文件），把"报了 failed"和"真没产物"分成两个集合——两者只部分重叠，这一步直接暴露伪失败的存在。再对子会话日志做尸检：
+
+```sh
+# 每个子代理一个目录，日志是 zstd 压缩的 JSONL
+zstdcat ~/.dsh/sessions/<workspace>--/<child-id>/session.v3.jsonl.zstd \
+  | jq -c 'select(.type=="llm/retry" or .type=="turn/end")
+    | {seq, type, code: .data.failure.code, kind: .data.reason.kind}'
+```
+
+- **真失败者**：`llm/retry` 连续 5 次 `RATE_LIMIT`（429 原文："已达到 Token Plan 速率限制：请升级 Token Plan 套餐或切换为按量付费 API 使用。(2062)"）→ `turn/end {kind:"error"}`。16 个真失败样本全部同一形态。
+- **伪失败者**：时间线是 `write`（产物落盘）→ `send_message`（结果已发父会话）→ `RATE_LIMIT ×5` → `turn/end error`——工作已完成，终止在收尾生成最终回复的那一步。
+- **对照组**（正常完成者）：`retries=0`、`turn/end completed`，一次瞬时 429 都没有。
+
+> 落盘对账阶段曾把根因暂记为"harness 队列稳定性"；子会话日志尸检给出上游 429 后随即翻案。两步都做才闭环：对账发现"信号与产物解耦"，尸检回答"死因是什么"。
+
+### 根因
+
+**上游 provider 的账户级速率限制（吞吐墙），harness 调度本身工作正常。**
+
+- dsh 的 agent-loop 按滚动池调度并行调用（同时 in-flight 默认至多 10 条，超出排队），N=31 时排队机制依然把每个子代理都送到了执行。
+- 一次 burst 的全部子代理共享同一个上游账户的速率预算；每个子代理每步重发完整上下文（系统提示 + 各自读入的文件），峰值 token 吞吐在 N≈20 附近顶到订阅限额，恰在峰值窗口调 LLM 的子代理收到 429。
+- 失败率平台期正是吞吐墙的指纹：限额约束的是每分钟 token 总量，超额瞬间谁在调用谁失败，加更多并发只会把撞墙比例抬高到一个稳定分数；并发槽位墙则会随 N 陡增。
+- 官方口径对照（[MiniMax Token Plan 页](https://platform.minimax.io/subscribe/token-plan)）：并发指引 Plus 3–4 / Max 4–5 / Ultra 6–7 个 agent，工作日 15:00–17:30 高峰动态收紧，并明示对"超高并发自动化批量任务"做账户级速率调控；限流"通常约 1 分钟恢复"。实测 ~20 能全过靠三重缓冲：池宽 10 削峰、短命 burst 任务（每个只发几次请求）、深夜错峰。
+- 重试链长度是第二重因素：`dsh-llm-retry` 整条退避链约 15 秒（5 次、逐次翻倍、单次上限 10s），上游限流窗口约 1 分钟——重试在恢复窗口到期前就耗尽。
+
+### 修复与缓解
+
+按性价比排序：
+
+1. 把重试退避上限调到 60s+，让重试链覆盖限流恢复窗口——瞬时 429 大概率大部分自愈。
+2. burst 规模控制在实测安全线内（本案环境 ≤20），高峰时段再收紧。
+3. 给子代理任务做 prompt 瘦身：契约内联进任务描述，替代每个子代理各自读入同一份大文件（N 路 burst 下是 N 倍重复 token）。
+4. 稳定的大规模并发换按量付费 key（429 报错原文即此建议）。
+
+### 教训
+
+- **落盘产物是 ground truth**：子代理终止在收尾步时，产物和结果消息都已送达，failed 信号与实际工作完成度解耦。评估批量 subagent 结果以对账产物为准。
+- **失败率平台期 = 吞吐墙指纹**，槽位墙随 N 线性恶化——失败曲线的形态先于归因。
+- subagent 大批量失败时，先查上游 provider 限流再看 harness 自身；子会话日志（zstdcat + 事件直方图）是最快的尸检通道。
+- 官方并发数字要读口径：3–7 指持续运行的交互式 agent，短命 burst + 队列削峰 + 错峰能撑到更高，代价是贴着限流边缘运行。
+- DSH 侧的机制事实（滚动池常量、重试策略形状、子会话日志通道）沉淀在 harness skill 的 dsh reference，与本案例按"机制 / 案例"分工。
+- 给并发 burst 配 watchdog 时，由父会话主动刷新的心跳会把"忙"误报成"死"（本案 31 路时父会话忙于处理通知，心跳 121s 未刷新触发一次误报）；改盯会话日志文件的 mtime 这类非自愿信号——忙时它更新得更频繁。
+
 ## <a id="diagnostics-env-pitfalls"></a>诊断工具链的坑
 
 排查这台机器时顺带撞上的环境故障，与 dsh 本身无关但会挡住验证路径：

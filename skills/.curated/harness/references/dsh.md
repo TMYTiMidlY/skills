@@ -1004,6 +1004,18 @@ Codex 与 Claude Code provider 作为彼此独立的可选 Profile 组合包分�
 
 > 来源：[Subagent provider 家族与可选组合包](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/subagent/README.zh.md#L5-L21)；[in-process spawn 与 fork 的上下文差异](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/subagent/subagent-in-process-driver/README.zh.md#L5-L63)。
 
+#### <a id="subagent-concurrency"></a>并发派发与上游速率预算
+
+单条消息里的多条 subagent 调用按 agent-loop 的滚动池调度：同时 in-flight 的并行安全调用至多 `maxParallelToolCalls` 条（默认 10），其余排队等空位依次执行。排队属于调度行为，调用条数超出池宽时依然全部获得执行机会。
+
+每个子代理是独立的 LLM 消费者：一次 N 路 burst 的峰值 token 吞吐约等于"池宽 × 单路上下文体积"，全部计入同一个上游账户的速率预算。走订阅类 key（Token Plan 一类）时账户按 RPM/TPM 维度限流，超额请求返回 429，官方并发指引按套餐分级（数个持续运行的 agent 量级）并在高峰时段动态收紧。提高并行路数的两条正路：把 burst 规模控制在账户吞吐内，或给子代理任务做 prompt 瘦身——契约内联进任务描述，替代每个子代理各自读入同一份大文件。
+
+子代理运行以 stopReason `completed` 收尾；`aborted` / `error` / `max-tokens` / `refusal` 等其他停止原因都会以 failed 信号上报父会话。`dsh-llm-retry` 对 `RATE_LIMIT` / `SERVER` / `TIMEOUT` / `EMPTY_RESPONSE` / `TRANSPORT` 类失败按指数退避重试（默认 5 次、约 500ms 起逐次翻倍、单次上限 10s，整链约 15s）；上游限流窗口以分钟计时，把退避上限调到与之间量级（60s+）即可让 burst 场景下的瞬时 429 自愈。
+
+每个子代理有独立会话日志（`~/.dsh/sessions/<workspace>--/<child-id>/session.v3.jsonl.zstd`，zstd JSONL）；`llm/retry`、`turn/end`、`tool/call` 事件给出终态与最后动作，是诊断批量结果的第一通道。评估批量结果时以子代理实际产物为准，终态信号与产物落地时刻各自独立。用量按尝试去重的口径见[子代理、重试与历史范围](#session-statistics-scope)。
+
+> 来源：`@deepseek-ai/dsh-agent-loop` 的 `DEFAULT_MAX_PARALLEL_TOOL_CALLS` 常量与 `dsh-tool-subagent` 的 stopReason 映射（本地安装 0.1.5-rc.3 源码读取）；重试策略形状取自会话日志 `policyKey`（`["normal",5,["EMPTY_RESPONSE","RATE_LIMIT","SERVER","TIMEOUT","TRANSPORT"],500,10000,0.1]`）实测记录。
+
 ## <a id="programmatic-access"></a>程序化接入
 
 这些入口驱动的是完整 Harness，而不是直接调用模型 API。外部程序创建或连接 Agent、发送输入、观察 Session event，并负责 runtime subprocess 的配置和生命周期。

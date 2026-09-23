@@ -98,4 +98,6 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
   - 关键词：`approval 不弹出`、`ask_user_question 卡住`、`刷新后才出现`、`resync pending.clear`、`onConnected`、`mux 重放`、`PendingWait`、`WebSocket 无心跳`、`0.1.1-rc.2`
 - **ask_user_question 等待期间一有用户输入就静默死亡（ASK_ABORTED），弹窗从未出现** → 工具把轮次 AbortController 的 signal 转发进问题，用户输入取消运行中轮次连带杀掉 pending 问题；相邻还有 approval 应答者无超时挂起 → [直达](references/dsh.md#related-failure-family)
   - 关键词：`ASK_ABORTED`、`aborted before the user answered`、`输入即中止`、`时灵时不灵`
+- **单条消息并发派发大批量 subagent 后约三成报 failed，其中部分产物已完整落盘（伪失败）** → 上游订阅 key 的账户级 429 吞吐墙（"已达到 Token Plan 速率限制 (2062)"）：失败率随并发数进平台期；重试链 ~15s 短于限流 ~1 分钟恢复窗口，子代理终止在收尾步时产物已送达 → [直达](references/dsh.md#subagent-burst-429)
+  - 关键词：`failed before it finished`、`伪失败`、`rate_limit_error`、`已达到 Token Plan 速率限制`、`2062`、`zstdcat 子会话日志`、`失败率平台期`、`落盘对账`
 
