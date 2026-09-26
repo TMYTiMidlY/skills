@@ -25,6 +25,8 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
   - 关键词：`Time limit reached`、`The workbench failed to connect to the server`、`upgrade expected but low level API in use`、`serve_connection_with_upgrades`、`reconnectionToken 死循环`、`1.119 vs 1.115`
 - **页面永远卡在 "The latest version of the VS Code Server is downloading"** → serve-web 跟踪 latest，CLI 无续传；2026-09-03 的 CDN 坏对象经播种缓存恢复，9 月 9 日旧缓存仍在却因追新版再现 202（本次未证实坏对象）。可[固定下次启动 commit](references/code-serve-web.md#web-pin-launch)，或[固定旧缓存入口](references/code-serve-web.md#web-pin-entry)避开等待，生效时机与任务风险不同 → [案例](references/code-serve-web.md#web-tarball-cdn-stall)
   - 关键词：`Downloading server`、`HTTP 202 占位页`、`server-linux-x64-web`、`curl -C -`、`--commit-id`、`stable-<commit>`、`KillMode=control-group`、`Caddy 首页 rewrite`、`保留 folder`
+- **Codex 扩展报 `command 'chatgpt.openSidebar' not found`，重装无效** → openai.chatgpt 26.917 起硬依赖 `openai.codex-audio`（`extensionKind: ["ui"]`、无 browser 入口），纯 Web 窗口没有 UI 扩展宿主，依赖边连成的整组被静默排除出扩展列表；删掉已装扩展 package.json 里的 `extensionDependencies` 即恢复 → [直达](references/code-serve-web.md#chatgpt-opensidebar-dep)
+  - 关键词：`chatgpt.openSidebar`、`command not found`、`openai.codex-audio`、`extensionDependencies`、`extensionKind ui`、`serve-web 扩展不激活`、`无 _doActivateExtension`、`全新浏览器无图标`
 
 ### Windows 宿主机
 

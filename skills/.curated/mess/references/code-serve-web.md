@@ -232,3 +232,37 @@ example.com {
 - 本故障的日志指纹：service `running` + journal 只有反复的 `Downloading server <commit>`、无任何 error + 页面 202。见到先核对目标 commit、exact web 构件与旧缓存，再按本案区分下载故障和入口选择；仅凭指纹不能认定 CDN 坏对象。
 - 顺带小坑：`pkill -f` 的模式若出现在自己命令行里会**把自己杀掉**；杀特定端口进程先 `ss -tlnp` 拿 PID 或运行时拼 pattern。
 
+## <a id="chatgpt-opensidebar-dep"></a>Codex 扩展报 `command 'chatgpt.openSidebar' not found`
+
+> 2026-09-27 | serve-web 1.136.1 (pinned `a44adf7f`) | openai.chatgpt 26.917.62051（26.917.61114 起引入问题）| 多用户实例中 timidly 一例
+
+### 症状
+
+- serve-web 里点活动栏 Codex 图标弹 `command 'chatgpt.openSidebar' not found`；Codex 全部命令（newChat / newCodexPanel 等）不存在。
+- 卸载重装扩展无效；扩展目录、`extensions.json` 注册、签名验证（Success）、engines（`^1.96.2`）、product.json proposed-API 白名单全部正常。
+
+### 根因
+
+OpenAI 在 26.917 系列给 `openai.chatgpt` 加了硬依赖 `extensionDependencies: ["openai.codex-audio"]`（语音辅助扩展），而 codex-audio 声明 `extensionKind: ["ui"]` 且只有 Node `main`、无 `browser` 入口。VS Code 会把依赖边连成的扩展并成同一运行组（`extensionRunningLocationTracker.ts`）；纯 Web 窗口（serve-web / vscode.dev）没有本地 Node UI 扩展宿主，web worker 又跑不了无 `browser` 入口的扩展 → 整组被静默排除，chatgpt 连 `_doActivateExtension` 都不出现。旧版 26.908.40401 是显式 `extensionKind: ["workspace"]` 且无依赖，所以此前正常；26.917.61114 于 09-23 10:48 自动更新装入后所有会话再未激活。桌面端（Remote-SSH 等）因有本地 UI 宿主不受影响。
+
+用户浏览器仍显示 Codex 图标是因为 workbench 布局缓存在浏览器 IndexedDB 里残留旧视图，点击触发的 reveal 落到已不存在的命令上；**全新浏览器 profile 里图标根本不出现**——这是区分"浏览器状态问题"与"结构性排除"的关键对照。
+
+### 排查与验证
+
+1. 扫全部会话 exthost 日志定位分水岭：09-23 10:46（旧版激活）之前有 `_doActivateExtension openai.chatgpt`，此后零记录；`remoteagent.log` 显示 09-23 10:48 自动更新 26.908→26.917.61114、09-24 00:06 批量更新到 26.917.62051。
+2. serve-web 的窗口级状态（settings/keybindings/enablement 的 state.vscdb）在浏览器侧，服务器端没有——别在 server-data-dir 里找禁用标记。
+3. 对比新旧版 manifest（旧版可从 open-vsx API 拿到）：新版多了对 ui-kind 扩展的硬依赖。
+4. **隔离 A/B 复现**（决定性）：workspace 里起独立 `code serve-web --server-data-dir <测试目录>`，把两个扩展目录复制进去并手写 `extensions/extensions.json` 注册表——原样时无 Codex 图标、exthost 无激活；仅删掉 package.json 的 `extensionDependencies` 后重启，立即出现 `_doActivateExtension openai.chatgpt, activationEvent: 'onChatSession:openai-codex'`。全程不动真实数据。
+
+### 解决
+
+- **补丁（已验证）**：编辑已安装扩展的 `extensions/openai.chatgpt-<ver>-linux-x64/package.json` 删除 `extensionDependencies` 字段，Reload Window 即恢复；语音功能本就不可用，无实际损失。扩展下次更新会覆盖补丁，可对该扩展关闭自动更新或更新后重打。
+- **改 manifest 不会热生效**：运行中的 server-main.js 把扩展扫描结果缓存在内存里，改 package.json、重写 extensions.json、bump 注册表时间戳都触发不了重扫（"added from another source" 事件只对真实增删触发）。必须让旧 server 进程退场；serve-web 每用户会积累几十个按版本常驻的 server-main.js（全部 PPID=1），要按 `用户 + commit + 启动时间早于补丁时间` 过滤后 TERM。动手前：① 沿 `$PPID` 链确认自己的 agent/终端不在击杀清单里（本机 DSH 的 `dsh web` 进程极易误判进清单）；② 绝不能碰 systemd 主单元——`KillMode=control-group` 下主进程退出即清空整个 cgroup（含全部终端与 agent）。杀 server-main.js 的代价是其下窗口的终端会话终止，需用户知情同意；TERM 即可全部优雅退出。
+- 备选：降级到 26.908.40401（open-vsx 有；serve-web 装 VSIX 的绕法见 [pdfjs-tohex.md#vsix-bypass](pdfjs-tohex.md#vsix-bypass)）；或改用桌面端 VS Code + Remote。上游修复（codex-audio 提供 browser 入口或解除硬依赖）前，重装/更新 Marketplace 版本无用。
+
+### 教训
+
+- serve-web 里"扩展装了却不激活"，先看 exthost 日志有没有 `_doActivateExtension`：连尝试都没有 = 被排除出扩展列表，与激活失败是两类问题。
+- `extensionDependencies` 指向 `extensionKind: ["ui"]` 的扩展，在纯 Web 窗口会连坐整组静默消失——排查跨扩展依赖时要同时核对依赖项的 kind 与 browser 入口。
+- 隔离实例 + 手写 extensions.json 注册表是在不动用户数据的前提下复现扩展加载问题的低成本手段；202 入口坑用 `stable-<commit>/` 固定路径绕开。
+
