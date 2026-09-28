@@ -100,6 +100,26 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
   - 关键词：`approval 不弹出`、`ask_user_question 卡住`、`刷新后才出现`、`resync pending.clear`、`onConnected`、`mux 重放`、`PendingWait`、`WebSocket 无心跳`、`0.1.1-rc.2`
 - **ask_user_question 等待期间一有用户输入就静默死亡（ASK_ABORTED），弹窗从未出现** → 工具把轮次 AbortController 的 signal 转发进问题，用户输入取消运行中轮次连带杀掉 pending 问题；相邻还有 approval 应答者无超时挂起 → [直达](references/dsh.md#related-failure-family)
   - 关键词：`ASK_ABORTED`、`aborted before the user answered`、`输入即中止`、`时灵时不灵`
+- **模型报"密钥无效"，换 key 无效，直接 curl 厂商端点却正常** → Kimi 用 HTTP 403 报配额耗尽，dsh 的 401/403→AUTH 分类把配额错误翻译成认证失败，且其 *"reached your … usage limit"* 语序躲开了通用配额识别器；修复在 403 分支前加配额文案识别 → [直达](references/dsh.md#kimi-403-quota-auth)
 - **单条消息并发派发大批量 subagent 后约三成报 failed，其中部分产物已完整落盘（伪失败）** → 上游订阅 key 的账户级 429 吞吐墙（"已达到 Token Plan 速率限制 (2062)"）：失败率随并发数进平台期；重试链 ~15s 短于限流 ~1 分钟恢复窗口，子代理终止在收尾步时产物已送达 → [直达](references/dsh.md#subagent-burst-429)
   - 关键词：`failed before it finished`、`伪失败`、`rate_limit_error`、`已达到 Token Plan 速率限制`、`2062`、`zstdcat 子会话日志`、`失败率平台期`、`落盘对账`
+
+### Lean 4 / Lake 工具链与 CI
+
+见 [lean.md](references/lean.md)。
+
+- **全库公理扫描要 6～13 分钟、`collectAxioms` 却只占 0.1 秒** → Lean 4.30 的 `header.moduleNames` 不是缓存字段，逐常量调用即 O(声明×模块) 重建数组；同索引直接取 `header.modules[idx].module`、模块 membership 改 `Std.HashSet` 后筛选 392+83s → 7+3s → [直达](references/lean.md#lean-module-names-perf)
+  - 关键词：`moduleNames`、`modules.map`、`env.getModuleIdxFor?`、环境筛选 392s、审计慢但 collectAxioms≈0、Std.HashSet Name
+- **删了"重复 elaborate"后 `example : False := by sorry` 静默漏检** → 匿名 example 在 withoutModifyingEnv 求值、不留 .olean，sorry 只存在于构建诊断流；一次 Lake 图的 stdout+stderr（含 Replayed 缓存重播）必须在 audit 前扫描 → [直达](references/lean.md#lean-example-sorry-diagnostics)
+  - 关键词：`example sorry 通过`、`withoutModifyingEnv`、`example 不进 olean`、`Replayed sorry`、`先打印再 check_returncode`、合并 stdout/stderr
+- **CI 临时 fixture 报 `base revision ... is not available`，本地复现不了** → job 级 `env:` 的 `QATLAS_CLAIM_BASE=<主仓库 PR base>` 逐层继承进独立小仓库；fixture 显式传自身 HEAD 并故意保留外来变量做回归，本地复现先注入 job env → [直达](references/lean.md#lean-claim-base-env-leak)
+  - 关键词：`QATLAS_CLAIM_BASE`、`fetch full history`、环境变量穿透 fixture、CI 绿本地红
+- **观测 wrapper 加日志后官方 bootstrap 失败** → Mathlib `Cache/IO.lean` 按首词解析 `curl --version`，wrapper 往 stdout 打 JSON 即污染；观测只写独立 events 文件，长任务前先字节级预检 stdout/stderr/exit code → [直达](references/lean.md#observer-stdout-pollution)
+  - 关键词：`curl --version 首词`、MEASURE JSON、wrapper 污染 stdout、第三方解析命令输出文本
+- **`--no-build` 报 out-of-date，误以为项目缓存失效** → 缺失 target 是 `QuantumInfo.*` 等上游 Physlib 模块（本机固定依赖缓存不完整），与项目 `.lake/build` 无关；只读依赖下补模块要用私有可写副本；审计 13 分钟单核 100% 是慢不是挂 → [直达](references/lean.md#lake-no-build-upstream-stale)
+  - 关键词：`target is out-of-date and needs to be rebuilt`、`QuantumInfo.Channels.Dual`、`--no-cache 不禁增量`、jobs 数是图规模、`docker top 分辨慢/挂`、Replayed 存量 warning 不失败
+- **`gh run view --log` 报 read-only file system** → gh 写本地 run-log 缓存被拒；改 `gh api --allow-escape-sequences repos/<owner>/<repo>/actions/jobs/<id>/logs` → [直达](references/lean.md#gh-log-readonly-cache)
+  - 关键词：`failed to get run log`、`creating cache entry`、`~/.cache/gh`、actions/jobs logs
+- **多 agent 共享工作区，自己的改动"回到未暂存区"** → 交接方提交误卷暂存改动后 reset 重做，改动以未暂存形态回归；提交边界只看 `git diff --cached`，禁全树 add，`A` 是已暂存不是已提交 → [直达](references/lean.md#shared-worktree-stage-mixup)
+  - 关键词：`误卷提交 reset`、改动回到 unstaged、`git diff --cached`、共享 gitdir、A 不等于 committed
 
