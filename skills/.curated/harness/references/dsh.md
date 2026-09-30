@@ -763,7 +763,32 @@ llm-pi-ai:
           contextWindow: 872000
 ```
 
-这里的 872,000 是部署选择的预算，不是 DSH 强制要求或服务端能力声明。`modelOverrides` 按模型 ID 合并字段；片段只设置 `contextWindow`，保留其余模型元数据，以及文件中的其他 provider、凭据引用、默认模型和选择器设置。已配置 `models` 列表的路由应在该列表的对应条目中改容量，不能同时添加 `modelOverrides`；覆盖的 ID 也必须存在于已安装目录。使用 Model Hub 时，确认目标为官方 `openai-codex`，而不是插件内建 `codex`，两者的适配器与凭据归属见 [Model Hub 的 Codex 路由](dsh-research.md#model-hub-codex-routes)。
+这里的 872,000 是部署选择的预算，不是 DSH 强制要求或服务端能力声明。`modelOverrides` 按模型 ID 合并字段；片段只设置 `contextWindow`，保留其余模型元数据，以及文件中的其他 provider、凭据引用、默认模型和选择器设置。已配置 `models` 列表的路由应在该列表的对应条目中改容量，不能同时添加 `modelOverrides`；覆盖的 ID 也必须存在于已安装目录。这里使用 DSH 官方 `openai-codex` provider，目录与请求协议均由官方 `dsh-llm-pi-ai` 适配器提供。
+
+已使用 `models` 列表的部署，在 `llm-pi-ai` 插件的 `config.providers` 下直接配置如下；例如放在 `$DSH_HOME/cordis.patch.yml` 中现有插件条目的对应位置。模型 ID 与窗口数值是公开配置，无需脱敏：
+
+```yaml
+openai-codex:
+  models:
+    - id: gpt-5.3-codex-spark
+    - id: gpt-5.5
+    - id: gpt-5.6-luna
+      contextWindow: 872000
+    - id: gpt-5.6-sol
+      contextWindow: 872000
+    - id: gpt-5.6-terra
+      contextWindow: 872000
+    - id: gpt-6-astra
+      contextWindow: 872000
+    - id: gpt-6-luna
+      contextWindow: 872000
+    - id: gpt-6-sol
+      contextWindow: 872000
+    - id: gpt-6.1-sol
+      contextWindow: 872000
+```
+
+`models` 替换该 provider 的可选模型列表，但每个已收录 ID 的未指定字段仍继承 pi-ai 目录，包括正式展示名、`maxTokens`、输入模态和 reasoning/effort 映射。只写 ID 的 Spark 和 GPT-5.5 保留目录默认窗口；不需要使用时可从列表移除。其余条目仅覆盖上下文预算为 872000，不必重抄能力字段。执行前确认安装的 pi-ai 已收录所有列出的 ID；新模型沿用 872000 是部署选择，不是对该模型服务端上限的实测证明。
 
 > 来源：[`contextWindow` 与 `modelOverrides` 配置字段](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/config.ts#L283-L335)、[模型覆盖的约束与解析优先级](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/catalog.ts#L790-L880)。
 
@@ -771,46 +796,53 @@ DSH 的 `compaction-basic` 按解析后的 `contextWindow` 计算压力预算，
 
 > 来源：[compaction 默认比例与按模型策略](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/compaction/compaction-basic/src/types.ts#L9-L43)；这里给的是默认策略的预算计算，不能代替对部署实际 preset 的检查。
 
-**热加载与验收。** 修改前备份目标文件并保留所有者及私有权限，只合并目标字段。文件监听开启时，settings provider 会重读配置，适配器在后续操作读取更新后的 profile；修改上下文预算不需要重启服务或新建 Session。修改后刷新现有 Models 页面，或通过已认证的 Model Hub `catalog.list` 查询 `provider: openai-codex`，检查四款模型的原始 `contextWindow` 为 872000，并确认未修改的字段与模型保持原值。页面格式化后的 K/M 标签可能按 1024 换算，精确验收看原始数值。若仍是旧值，检查 settings 的加载错误和目录刷新状态，不以重启代替诊断。
-
-> 🔬 2026-09-08 本机实测：DSH `0.1.2-rc.1`、Model Hub `0.2.4-rc.1` 的两个独立用户实例，分别原子合并上述覆盖后，现有进程的目录接口均返回四款模型 `contextWindow: 872000`；服务 PID 不变、HTTP 返回 200，其他模型窗口、输入模态和思考档位保持不变。该次验收没有发起模型推理请求，只证明配置热加载与目录更新，不证明服务端长输入容量。
+**热加载与验收。** 修改前备份目标文件并保留所有者及私有权限，只合并目标字段。文件监听开启时，settings provider 会重读配置，适配器在后续操作读取更新后的 profile；修改上下文预算不需要重启服务或新建 Session。修改后刷新 DSH 官方 Models 页面，检查目标模型的原始 `contextWindow` 为 872000，并确认未修改的字段与模型保持原值。页面格式化后的 K/M 标签可能按 1024 换算，精确验收看原始数值。若仍是旧值，检查 settings 的加载错误和目录刷新状态，不以重启代替诊断。
 
 > 来源：[settings 动态配置的生效时机](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/README.zh.md#L115-L119)。下述 pi-ai 依赖升级涉及进程加载的代码，须按升级流程重新启动；不要与只改 settings 的热加载混为一项操作。
 
-> 🔬 2026-08-27 本机实测：Z.AI 和 xAI 的真实 `/models` 请求都返回 200，并分别列出 `glm-5.3` 和 `grok-4.6`；同机 DSH 实际解析的 pi-ai `0.82.1` 却只列到 `glm-5.2` 和 `grok-4.5`。pi-ai `0.84.3` 同时补齐两项：xAI 内置模型改走 Responses API，并把 Grok 4.6 设为默认；Z.AI Coding Plan 的 GLM-5.3 推理档位补全为 low、high 和 max。
+### <a id="pi-ai-dependency-override"></a>pi-ai 依赖覆盖
 
-> 来源：[pi-ai 0.84.3 的 xAI 协议与 GLM-5.3 元数据变更](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/CHANGELOG.md#L3-L28)。
+pi-ai 的模型目录和协议适配通常比 DSH 的依赖范围更新得更快。厂商已经开放新模型，而 DSH 仍显示原始模型 ID、缺少 reasoning/effort 控件，或目录中没有该模型时，核对 DSH 依赖树中的 pi-ai 版本与目标发布包的 provider 数据。模型进入目录只表示客户端认识该 ID，不代表当前账号已有服务端调用权限。
 
-仅在 DSH 安装根执行 `npm install --no-save @earendil-works/pi-ai@0.84.3` 不足以完成升级。同一安装树的 npm dry-run 显示，npm 可以把 0.84.3 放在上层，同时在 `dsh-llm-pi-ai/node_modules` 下重新安装满足 `^0.82.1` 的 0.82.1；Node 按最近依赖优先解析，适配器仍会使用旧目录。正确路径是在 DSH 安装根设置 `overrides`，统一 Host 进程实际解析的整棵依赖树。先按前文对应的 systemd manager 停止 dsh，再执行：
+DSH 使用自身依赖树中的 pi-ai；更新另一份全局安装不会改变 Host 的解析结果。直接添加一个 `--no-save` 依赖也可能留下更近的旧副本。应在动态发现的 DSH 安装根设置 npm `overrides`，把依赖树统一到一个经过核对的明确版本。
 
-```sh
-DSH_PACKAGE_ROOT="$(dirname "$(dirname "$(readlink -f "$(command -v dsh)")")")"
-test -f "$DSH_PACKAGE_ROOT/package.json"
-
-npm pkg set 'overrides.@earendil-works/pi-ai=0.84.3' \
-  --prefix "$DSH_PACKAGE_ROOT"
-npm install --prefix "$DSH_PACKAGE_ROOT" \
-  --package-lock=false --ignore-scripts --omit=dev \
-  --no-audit --no-fund --dry-run
-npm install --prefix "$DSH_PACKAGE_ROOT" \
-  --package-lock=false --ignore-scripts --omit=dev \
-  --no-audit --no-fund
-npm ls --prefix "$DSH_PACKAGE_ROOT" @earendil-works/pi-ai --all
-```
-
-最后一条命令应只看到 `@earendil-works/pi-ai@0.84.3 overridden`，不能在适配器下面残留 0.82.1。随后启动 dsh，依次验收 service 为 `active/running`、Web 返回 HTTP 200、两个模型出现在目录，并各建一个新 Session 完成真实模型请求。该次实测中，包含 `dsh-model-hub` 的 Web Profile 正常加载并展示两项模型，GLM-5.3 与 Grok 4.6 的最小端到端请求也都成功；这只证明该 DSH、Plugin 与 pi-ai 版本组合，不代替其余 provider、工具调用、reasoning replay 和 OAuth 刷新的回归测试。
-
-这项 override 修改的是全局安装产物，不是 DSH 源码；重新全局安装或升级 DSH 会覆盖它。回滚时删除 override、让 npm 按 DSH 自己的依赖范围恢复，再重启并重复 service 与 HTTP 验收：
+先查询目标版本、Node 要求和 changelog，确认所需模型的协议、`reasoning` 与 `thinkingLevelMap`：
 
 ```sh
-npm pkg delete 'overrides.@earendil-works/pi-ai' \
-  --prefix "$DSH_PACKAGE_ROOT"
-npm install --prefix "$DSH_PACKAGE_ROOT" \
-  --package-lock=false --ignore-scripts --omit=dev \
-  --no-audit --no-fund
+npm view @earendil-works/pi-ai version engines --json
+node --version
 ```
 
-override 会影响 Host 中所有共享 pi-ai 的适配器和 Plugin。正式升级仍应由 DSH 发布新的依赖范围，并对 catalog、事件流、工具调用、reasoning 和 replay 做完整回归；本地 override 是一条可明确撤销的过渡路径。
+停止 DSH 后，把 `<version>` 换成目标版本执行；系统级安装需要 `sudo`，用户自有安装去掉 `sudo`：
+
+```sh
+DSH_ROOT="$(dirname "$(dirname "$(readlink -f "$(command -v dsh)")")")"
+sudo npm pkg set 'overrides.@earendil-works/pi-ai=<version>' --prefix "$DSH_ROOT"
+sudo npm install --prefix "$DSH_ROOT" --package-lock=false --ignore-scripts --omit=dev --no-audit --no-fund --dry-run
+sudo npm install --prefix "$DSH_ROOT" --package-lock=false --ignore-scripts --omit=dev --no-audit --no-fund
+```
+
+用独立命令检查整棵依赖树；结果应只包含目标版本并标记 `overridden`，不能残留更近的旧副本：
+
+```sh
+npm ls --prefix "$(dirname "$(dirname "$(readlink -f "$(command -v dsh)")")")" @earendil-works/pi-ai --all
+```
+
+依赖代码只在进程启动时装载，因此升级后必须重启 DSH，不能用 settings/Profile HMR 代替。刷新 Models 页面后，目标模型应使用目录中的正式名称，reasoning/effort 档位应与发布包一致；再用新 Session 验证文本请求、工具调用和 reasoning replay。
+
+已有 `modelOverrides` 会按模型 ID 合并在新版目录元数据之上；只覆盖 `contextWindow` 会保留展示名和 reasoning 映射，但 ID 必须存在于新版目录。仅添加 picker 条目不会为目录未知的模型补出 reasoning 元数据。
+
+回滚时停止 DSH，删除 override 并按原依赖范围重装；系统级安装需要 `sudo`：
+
+```sh
+DSH_ROOT="$(dirname "$(dirname "$(readlink -f "$(command -v dsh)")")")"
+sudo npm pkg delete 'overrides.@earendil-works/pi-ai' --prefix "$DSH_ROOT"
+sudo npm install --prefix "$DSH_ROOT" --package-lock=false --ignore-scripts --omit=dev --no-audit --no-fund
+```
+
+这项 override 修改安装产物，不是 DSH 源码；重新安装或升级 DSH 会覆盖它，也会影响同一 Host 中共享 pi-ai 的适配器和 Plugin。目标版本超出适配器声明范围时，本地 override 只是可撤销的过渡方案，正式升级仍应由 DSH 更新依赖并完成回归。
+
+> 来源：[pi-ai 0.84.3 changelog](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/CHANGELOG.md#L3-L28)记录了新模型目录与推理档位的更新；依赖覆盖后的兼容性仍需针对实际 DSH 与 pi-ai 版本组合验证。
 
 ### Skills
 
