@@ -746,26 +746,9 @@ Codex CLI 的顶层 `model_context_window` 和 `model_auto_compact_token_limit` 
 >
 > [Codex 官方模型文档](https://learn.chatgpt.com/docs/models.md)的 2026-09-08 原文摘录：“GPT-5.4 and GPT-5.4 mini retire from Codex on August 31, 2026.” 同段明确 “If you sign in with ChatGPT” 的用户需要更换模型，并说明 “The OpenAI API and Codex authenticated with your own API key aren't affected.” 因此该次退役针对 ChatGPT 登录的 Codex；本地目录残留条目不能证明账号仍可调用。
 
-**DSH 上下文覆盖。** DSH 的 `openai-codex` provider 由 `dsh-llm-pi-ai` 直接驱动，不读取 Codex CLI 的 `config.toml` 或模型缓存，也不执行上述截断规则。若部署选择参考 Codex 当前目录，给这四款模型设置 872,000 的客户端预算，在 `$DSH_HOME/settings.yaml` 合并以下片段：
+**DSH 上下文覆盖。** DSH 官方 `openai-codex` provider 由 `dsh-llm-pi-ai` 驱动，不读取 Codex CLI 的 `config.toml` 或模型缓存，也不执行上述截断规则。上下文容量在官方插件的 `config.providers` 中配置；当前入口是 Cordis patch，而不是旧版 `$DSH_HOME/settings.yaml` 的命名空间片段。
 
-```yaml
-llm-pi-ai:
-  providers:
-    openai-codex:
-      modelOverrides:
-        gpt-6-astra:
-          contextWindow: 872000
-        gpt-5.6-luna:
-          contextWindow: 872000
-        gpt-5.6-terra:
-          contextWindow: 872000
-        gpt-5.6-sol:
-          contextWindow: 872000
-```
-
-这里的 872,000 是部署选择的预算，不是 DSH 强制要求或服务端能力声明。`modelOverrides` 按模型 ID 合并字段；片段只设置 `contextWindow`，保留其余模型元数据，以及文件中的其他 provider、凭据引用、默认模型和选择器设置。已配置 `models` 列表的路由应在该列表的对应条目中改容量，不能同时添加 `modelOverrides`；覆盖的 ID 也必须存在于已安装目录。这里使用 DSH 官方 `openai-codex` provider，目录与请求协议均由官方 `dsh-llm-pi-ai` 适配器提供。
-
-已使用 `models` 列表的部署，在 `llm-pi-ai` 插件的 `config.providers` 下直接配置如下；例如放在 `$DSH_HOME/cordis.patch.yml` 中现有插件条目的对应位置。模型 ID 与窗口数值是公开配置，无需脱敏：
+在 `$DSH_HOME/cordis.patch.yml` 的既有 `llm-pi-ai` 条目中，合并下面的 `openai-codex` 配置。该位置的结构为 `- id: llm-pi-ai` → `config` → `providers` → `openai-codex`；只调整对应 provider，保留同一 config 中其他 provider 和凭据引用。此例使用 `models` 明确选择可用模型，并对目标条目覆盖上下文预算：
 
 ```yaml
 openai-codex:
@@ -788,7 +771,9 @@ openai-codex:
       contextWindow: 872000
 ```
 
-`models` 替换该 provider 的可选模型列表，但每个已收录 ID 的未指定字段仍继承 pi-ai 目录，包括正式展示名、`maxTokens`、输入模态和 reasoning/effort 映射。只写 ID 的 Spark 和 GPT-5.5 保留目录默认窗口；不需要使用时可从列表移除。其余条目仅覆盖上下文预算为 872000，不必重抄能力字段。执行前确认安装的 pi-ai 已收录所有列出的 ID；新模型沿用 872000 是部署选择，不是对该模型服务端上限的实测证明。
+`models` 替换该 provider 的可选模型列表，但每个已收录 ID 的未指定字段仍继承 pi-ai 目录，包括正式展示名、`maxTokens`、输入模态和 reasoning/effort 映射。只写 ID 的 Spark 和 GPT-5.5 保留目录默认窗口；不需要使用时可从列表移除。其余条目仅覆盖上下文预算为 872000，不必重抄能力字段。执行前确认安装的 pi-ai 已收录所有列出的 ID；872000 是部署选择，不是 DSH 强制要求或对所有列出模型的服务端上限证明。
+
+若希望保留 provider 的整个已安装目录、仅调整个别模型，则在同一个 `config.providers.openai-codex` 位置使用 `modelOverrides` 字典：键为模型 ID，值为包含 `contextWindow` 等覆盖字段的对象。它也是官方配置能力，与使用何种界面无关；同一 provider 的 `models` 与 `modelOverrides` 互斥。已有 `models` 列表时直接修改对应条目，无需再建立第二份窗口配置。
 
 > 来源：[`contextWindow` 与 `modelOverrides` 配置字段](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/config.ts#L283-L335)、[模型覆盖的约束与解析优先级](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/src/catalog.ts#L790-L880)。
 
@@ -796,9 +781,9 @@ DSH 的 `compaction-basic` 按解析后的 `contextWindow` 计算压力预算，
 
 > 来源：[compaction 默认比例与按模型策略](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/compaction/compaction-basic/src/types.ts#L9-L43)；这里给的是默认策略的预算计算，不能代替对部署实际 preset 的检查。
 
-**热加载与验收。** 修改前备份目标文件并保留所有者及私有权限，只合并目标字段。文件监听开启时，settings provider 会重读配置，适配器在后续操作读取更新后的 profile；修改上下文预算不需要重启服务或新建 Session。修改后刷新 DSH 官方 Models 页面，检查目标模型的原始 `contextWindow` 为 872000，并确认未修改的字段与模型保持原值。页面格式化后的 K/M 标签可能按 1024 换算，精确验收看原始数值。若仍是旧值，检查 settings 的加载错误和目录刷新状态，不以重启代替诊断。
+**热加载与验收。** 修改前备份目标 patch 并保留所有者及私有权限，只合并目标字段。`live` 型 Profile 会重读 patch，后续请求使用更新后的插件配置；`startup` 型 Profile 在下次启动生效，具体机制见 [Patch 热更新的生效机制](#mcp-patch-hot-reload)。刷新官方 Models 页面，核对目标模型的 `contextWindow` 与未修改的名称、输出上限和 effort 元数据。若仍是旧值，检查最终合成配置、加载错误和页面刷新状态。
 
-> 来源：[settings 动态配置的生效时机](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/llm/llm-pi-ai/README.zh.md#L115-L119)。下述 pi-ai 依赖升级涉及进程加载的代码，须按升级流程重新启动；不要与只改 settings 的热加载混为一项操作。
+上下文配置覆盖与 pi-ai 依赖升级是两项操作：前者按 Profile 的配置重载规则生效，后者替换进程加载的代码，必须重启 DSH。
 
 ### <a id="pi-ai-dependency-override"></a>pi-ai 依赖覆盖
 
@@ -829,8 +814,6 @@ npm ls --prefix "$(dirname "$(dirname "$(readlink -f "$(command -v dsh)")")")" @
 ```
 
 依赖代码只在进程启动时装载，因此升级后必须重启 DSH，不能用 settings/Profile HMR 代替。刷新 Models 页面后，目标模型应使用目录中的正式名称，reasoning/effort 档位应与发布包一致；再用新 Session 验证文本请求、工具调用和 reasoning replay。
-
-已有 `modelOverrides` 会按模型 ID 合并在新版目录元数据之上；只覆盖 `contextWindow` 会保留展示名和 reasoning 映射，但 ID 必须存在于新版目录。仅添加 picker 条目不会为目录未知的模型补出 reasoning 元数据。
 
 回滚时停止 DSH，删除 override 并按原依赖范围重装；系统级安装需要 `sudo`：
 
