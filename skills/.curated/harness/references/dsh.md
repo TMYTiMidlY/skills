@@ -1,6 +1,6 @@
 # DeepSeek Harness（dsh）运行时
 
-本文从使用者和集成者视角说明 DeepSeek Harness 的产品定位、安装与运行、Cordis 插件框架、Agent 执行、内置扩展、程序化入口和权限边界。本文只给出安装、卸载和选择工作模式所需的插件概念；插件怎样组成运行环境、叠加配置、协作和清理，以及怎样开发和分发，见 [DeepSeek Harness Plugin 开发](dsh-dev.md)。现成扩展与社区项目见 [DeepSeek Harness Plugin 调研记录](dsh-research.md)。
+本文从使用者和集成者视角说明 DeepSeek Harness 的产品定位、运行模式、Cordis 插件框架、Agent 执行、内置扩展、程序化入口和权限边界。安装 DSH runtime、配置服务、维护共享实例、升级与回滚统一见 [安装、服务部署与维护](dsh-deploy.md)。本文保留 Profile 内现成 Plugin 的安装／卸载、配置发现和生效机制；插件怎样组成运行环境、叠加配置、协作和清理，以及怎样开发和分发，见 [Plugin 开发](dsh-dev.md)。现成扩展与社区项目见 [Plugin 调研记录](dsh-research.md)。
 
 ## <a id="product-position"></a>产品定位
 
@@ -10,57 +10,13 @@ DeepSeek Harness（`dsh`）是 DeepSeek 开源的 agent harness（把模型、�
 
 > 来源：[DeepSeek Harness 的产品定位、预览状态、运行入口与许可](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/README.md#L5-L57)；[Cordis 插件框架的核心概念](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/docs/cordis-primer.zh.md#L1-L13)。
 
-## <a id="install-and-run"></a>安装与运行
+## <a id="install-and-run"></a>运行模式
 
-运行要求是 Node.js `^22.19.0 || >=24.0.0`。npm 包提供已经构建的 CLI；源码 checkout 需要先生成 Host、Client 和前端产物。没有版本号的包规格会跟随 registry 的 dist-tag，显式的 `<version>` 则固定这次安装或运行所用的发布版本。
+取得运行时、选择 npm／pnpm／源码／打包产物、固定版本与依赖覆盖，见[首次安装](dsh-deploy.md#first-install)。安装期脚本策略见[安装脚本授权](dsh-deploy.md#install-script-authorization)。
 
-### 安装方式
+<a id="install-script-authorization"></a>
 
-| 安装方式 | 命令 | 依赖解析时机 | 使用场景 |
-|---|---|---|---|
-| npm 临时运行 | `npx @deepseek-ai/dsh@<version> web` | 尚无可复用的 `_npx` 安装树时 | 官方快速启动入口 |
-| pnpm 临时运行 | `pnpm dlx @deepseek-ai/dsh@<version> web` | 尚无对应的 dlx 临时项目时 | 临时验证；当前发布版已通过 Linux Web 与 PTY smoke test |
-| npm 全局安装 | `npm install --global @deepseek-ai/dsh@<version>`，随后运行 `dsh web` | 安装或升级阶段 | 需要固定可执行路径的服务 |
-| 源码构建 | `pnpm install && pnpm run build`，随后运行 `pnpm dsh web` | checkout 的安装与构建阶段 | 源码开发、锁文件复现或源码审计 |
-
-源码模式以仓库根 `package.json` 的 `packageManager` 字段确定 pnpm 版本。`pnpm run build` 生成 CLI 所需的 Host、Client 和前端产物；`pnpm dsh web` 使用已有产物。
-
-已有部署统一按[升级与回滚](dsh-update.md)操作；每次升级后重新覆盖 pi-ai，避免新安装树退回适配器自带的模型目录。
-
-> 来源：[官方 npm 与源码运行方式](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/README.md#L13-L37)；[Node 与 pnpm 版本约束](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/package.json#L1-L10)；[CLI 的可执行入口](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/package.json#L11-L18)。
-
-#### npm 首次安装异常
-
-本节记录 dsh 预发布版本曾出现的一类 npm 首次安装异常：`npx` 在建立 `_npx` 安装树时长时间没有进度。它是一段历史取证，用于保留当时的症状、定位过程、证据边界和失败 workaround；当前环境是否复现需要另行验证。正常完成安装后，同一 cache 与 package spec 下的后续 `npx` 调用可以复用安装树，`npm install -g` 也只在安装或升级时解析依赖。
-
-| 实测 | 条件 | 结果 |
-|---|---|---|
-| 隔离 `npx --yes @deepseek-ai/dsh@0.1.1-rc.2 --version` | Node 24、npm 11.17.0、Arborist 9.8.0、独立 HOME 与空 cache | 150 秒观察窗内未完成，停在 `idealTree`，`_npx` 安装树仍为空 |
-| 更换 Node 后重复 | Node 26；npm、npx、Arborist 版本及相关文件哈希与上一轮相同 | 155 秒内仍未完成，安装树仍为空 |
-| 复用上一轮下载 cache | 128 个 cache hit、0 个 miss | 95 秒内仍停在相同阶段；下载命中没有跳过依赖树构造 |
-| 真实用户环境首次运行 | Node 22.23.1、npm 11.18.0、已有混合 cache | 最终成功；npm 父进程启动约 14 分 50 秒后才出现 dsh 子进程，dsh 自身启动只占最后几秒 |
-
-同一套隔离测试还覆盖了从 `0.0.1-rc.1` 到 `0.1.1-rc.2` 的多个版本；除早期版本另有未发布 package 的 404 外，其余版本都在 150 秒观察窗内停留于 `idealTree`。当时记录到的慢解析跨越多个预发布版本，最后一次核对落在 `dsh-v0.1.1-rc.2`。
-
-当时的运行状态把耗时进一步定位到 npm：进程持续占用约一个逻辑核，磁盘计数停止增长，npm timing 最后停在 `idealTree:buildDeps` 与 `placeDep ROOT @deepseek-ai/dsh-base`。一段 Node Inspector CPU profile 中，`URL`、Arborist 的 `getBundler` 和 `SemVer` 占主要 self samples；调用链集中在 `CanPlaceDep → satisfiedBy → depValid` 与 `canPlacePeers → inBundle → getBundler`。
-
-当时核对的 `0.1.1-rc.2` 内部依赖闭包包含 199 个 package、1472 条内部边，其中 1138 条是 peer dependency；`@deepseek-ai/cordis` 被 192 个内部包引用，图中还存在强连通环。这些观测把瓶颈定位为 Arborist 在 CPU 上反复进行 peer placement、bundle 归属与 package spec/semver 判断；具体哪一条 peer 环或哪一次 fixed point 决定总耗时，当时没有锁定。
-
-几组对照进一步限定了当时的结论：Node 24 与 26 的相同 npm/Arborist 实现都出现慢解析，单独更换 Node 没有消除现象；只有下载 cache、尚无完整 `_npx` 安装树时，npm 仍会重建 `idealTree`；真实环境最终成功则说明求解可以收敛。当时能确认的是“首次依赖树构造曾出现极慢且缺少进度反馈的异常”，具体触发条件没有归因到单一变量。
-
-当时用 `legacy-peer-deps` 绕过 peer placement，可以在约 67 秒内完成安装，却在启动时缺少 `@deepseek-ai/cordis-plugin-group`：`dsh-app-boot` 会静态 import 该包，而 manifest 只把它声明为 peer，跳过 peer 安装便没有补齐运行时依赖。`install-strategy=nested`、`shallow` 与隔离 npm 12 也没有在各自观察窗内完成。作为另一条包管理器路径，`pnpm dlx` 的冷 store 用时约 47 秒、热 store 约 1 秒，并通过 Web 与 PTY smoke test；这项对照只验证了当时的 pnpm 路径可用。
-
-当时的官方 packed-install gate 把所有 workspace tarball 同时列为顶层依赖，预先满足了许多 peer，也补齐了按包名动态加载的 package；普通用户只安装 `@deepseek-ai/dsh` 时解析的是另一张依赖图。因此这份历史记录把 packed-install CI 与单包 consumer 视为两个独立的验证边界。
-
-> 来源：[官方安装入口](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/README.md#L13-L37)；[`dsh` 聚合包依赖](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/package.json#L20-L103)；[`dsh-app-boot` 的 peer 声明](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/boot/app-boot/package.json#L31-L61)；[packed-install consumer 的构造](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/scripts/release/verify-packed-install.ts#L88-L109)；相关用户报告见 [Discussion #176](https://github.com/deepseek-ai/deepseek-harness/discussions/176)、[#223](https://github.com/deepseek-ai/deepseek-harness/discussions/223) 和 [#1032](https://github.com/deepseek-ai/deepseek-harness/discussions/1032)。
-
-### <a id="install-script-authorization"></a>安装脚本授权
-
-普通 npm 安装使用官方命令即可；`@deepseek-ai/dsh` 本身不要求用户把一批依赖手工加入 `--allow-scripts`。npm 的该选项是 lifecycle script（安装期脚本）白名单，授权对象应是实际拥有脚本、且部署确实需要执行脚本的依赖。
-
-源码构建使用仓库自己的 pnpm 策略。固定 tag 中的 `pnpm-workspace.yaml` 记录已经审核的 `allowBuilds` 条目，也显式拒绝随依赖带入但不需要执行的脚本；部署直接沿用该文件，避免把 npm warning 翻译成另一套全量授权。
-
-> 来源：[官方源码的 `allowBuilds`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/pnpm-workspace.yaml#L35-L55)。
+该锚点保留用于已有引用；安装期脚本的具体授权在部署篇维护。
 
 ### Web 与 headless
 
@@ -84,152 +40,11 @@ Web 与 headless 是两个 Profile（启动时选用的具名运行配置）。W
 
 ### <a id="systemd-user-service"></a>systemd 用户服务
 
-dsh 的配置、凭据和 Session 都归启动它的普通用户。systemd user service（用户级服务）以同一身份托管 Web 进程；linger 让该用户的 manager 在无人登录时继续运行并参与开机启动。
-
-服务入口可以指向 npm 全局安装的 `dsh`，也可以指向固定源码 checkout 构建出的 `apps/cli/lib/bin.js`。两条路径都在部署阶段完成依赖解析，并把 `WorkingDirectory` 留给 Agent 的项目 workspace。
-
-#### 运行入口与工作目录
-
-NVM 可以同时保存多个 Node 版本。部署时先解析实际使用的 Node 与 dsh 路径，再把绝对路径写入 unit：
-
-```sh
-nvm version default
-command -v node
-command -v dsh
-readlink -f "$(command -v dsh)"
-```
-
-systemd user manager 直接执行 `ExecStart`，不会加载交互 shell 的 NVM 初始化。npm 全局安装的 `dsh` 使用 `#!/usr/bin/env node`，所以 unit 同时需要固定 `dsh` 的绝对路径，并在 `PATH` 中包含相应 Node 的 `bin` 目录。
-
-源码入口由绝对 Node 路径执行 `<source-checkout>/apps/cli/lib/bin.js`。源码 checkout 按其 `packageManager` 字段选择 pnpm，并在每次切换 tag 后重新安装与构建。Agent 的默认 workspace 来自启动 cwd，因此 `WorkingDirectory` 应指向实际项目目录，与 dsh 的安装或源码目录分开。
-
-> 来源：[Node 与 pnpm 版本约束](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/package.json#L1-L10)；[CLI 的 `bin` 入口](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/package.json#L11-L18)；[所有运行模式的默认 workspace](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.zh.md#L81-L85)。
-
-#### 用户管理器与 linger
-
-```sh
-loginctl show-user "$USER" -p Linger
-sudo loginctl enable-linger "$USER"
-loginctl show-user "$USER" -p Linger    # 应为 Linger=yes
-```
-
-开启 linger 需要管理员权限。`Linger=yes` 时，user manager 可以在没有登录会话时运行；`Linger=no` 时，其生命周期跟随用户登录。systemd 用户服务的一般生命周期、网络顺序和凭据边界归 `software` skill 维护。
-
-#### 服务配置
-
-先创建 Agent workspace，再把 `<node-bin-dir>` 和 `<dsh-executable>` 换成前面解析出的绝对路径：
-
-```sh
-install -d -m 0755 "$HOME/dsh-workspace"
-```
-
-```ini
-[Unit]
-Description=DeepSeek Harness Web
-
-[Service]
-WorkingDirectory=%h/dsh-workspace
-Environment=PATH=<node-bin-dir>:/usr/local/bin:/usr/bin:/bin
-ExecStart=<dsh-executable> web --no-open --host 127.0.0.1 --port 3080
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-```
-
-保存为：
-
-```text
-~/.config/systemd/user/dsh.service
-```
-
-这几项各有独立用途：
-
-| 配置 | 作用 |
-|---|---|
-| `PATH` 与绝对 `ExecStart` | 固定 Node 和 dsh 入口，并提供 Plugin、MCP 与子进程继承的命令路径 |
-| `WorkingDirectory` | 设置 Agent 默认 workspace |
-| `--no-open --host 127.0.0.1` | 以无浏览器、仅回环地址的方式启动 Web |
-| `Restart=always` | clean exit 或失败后重新启动；显式 stop 仍会停止服务 |
-| `default.target` | 把 unit 挂到 user manager 的启用目标 |
-
-若选用固定源码 tag，只替换 `ExecStart`，其余 service 语义不变：
-
-```ini
-ExecStart=<node-executable> <source-checkout>/apps/cli/lib/bin.js web --no-open --host 127.0.0.1 --port 3080
-```
-
-`pnpm dlx` 在 service 启动时仍可能下载和解析 package；固定入口把这些工作留在部署阶段。遥测模式及 `DSH_TELEMETRY_DISABLED` 的作用见[遥测数据](#telemetry-data)。
-
-#### 启用与验收
-
-先停止占用同一地址和端口的手工 dsh 进程，再加载并启动 unit：
-
-```sh
-install -d -m 0755 "$HOME/.config/systemd/user"
-systemd-analyze --user verify "$HOME/.config/systemd/user/dsh.service"
-systemctl --user daemon-reload
-systemctl --user enable --now dsh.service
-```
-
-验收同时覆盖 unit 状态和 Web 响应：
-
-```sh
-systemctl --user show dsh.service \
-  -p LoadState -p UnitFileState -p ActiveState -p SubState \
-  -p MainPID -p ExecMainStatus -p NRestarts -p FragmentPath
-curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:3080/
-```
-
-预期是 `enabled`、`active/running`、`NRestarts=0` 和 HTTP 200。失败时用 `systemctl --user status dsh.service` 与 `journalctl --user -u dsh.service` 查看 `EADDRINUSE`、入口路径或依赖加载错误。再执行一次 `systemctl --user restart dsh.service`，确认服务独立于当前交互 shell。
-
-#### 运行数据
-
-升级、pi-ai 覆盖与回滚统一见[升级与回滚](dsh-update.md)。备份对象是 unit 实际使用的 DSH home（默认 `~/.dsh`），包括 Session、配置、凭据和 Profile；多个实例分别核对 `DSH_HOME`。
-
-卸载 executable 或 unit 会保留 `~/.dsh` 中的 Session、配置和凭据。运行时卸载与数据删除是两个独立操作；回滚同样安装明确的旧版本或切回旧 tag。
+固定入口、Node PATH、workspace、linger、unit 与启用验收，统一见[部署篇的用户服务](dsh-deploy.md#systemd-user-service)。
 
 ### <a id="systemd-system-service"></a>systemd 系统服务
 
-与前文的用户服务相比，system service（系统级服务）由 PID 1 的 system manager 托管，不依赖用户 manager 或 linger，适合由主机管理员统一维护。这个托管层级的变化不应改变 DSH 的运行身份：系统 unit 必须用 `User=`、`Group=` 降权到普通用户，并显式提供该用户的 Home、DSH home、PATH 和 workspace。
-
-| 维度 | 用户服务 | 系统服务 |
-|---|---|---|
-| unit 路径 | `~/.config/systemd/user/dsh.service` | `/etc/systemd/system/dsh.service` |
-| manager / enable target | user manager / `default.target` | system manager（PID 1）/ `multi-user.target` |
-| DSH 进程身份 | 隐式为当前用户 | 显式 `User=<user>`、`Group=<group>`；不要省略为 root |
-| Home 与运行数据 | 通常自动继承用户环境 | 显式 `HOME=<home>`、`DSH_HOME=<dsh-home>` |
-| 无人登录时启动 | 依赖 `Linger=yes` | 不依赖 linger |
-| 管理与日志 | `systemctl --user …`、`journalctl --user -u …` | `sudo systemctl …`、`sudo journalctl -u …` |
-| 适用场景 | 单用户自行维护 | 主机管理员统一托管、按系统启动顺序管理 |
-
-下面是 `/etc/systemd/system/dsh.service` 的完整模板。把所有尖括号占位符换成绝对值；`<workspace>` 与 `<dsh-home>` 必须归 `<user>` 可读写。模板沿用前文解析出的 npm 全局入口；使用源码 checkout 时，把 `ExecStart` 换成绝对 Node 路径加 `<source-checkout>/apps/cli/lib/bin.js`。
-
-```ini
-[Unit]
-Description=DeepSeek Harness Web
-Wants=network-online.target
-After=network-online.target
-RequiresMountsFor=<workspace> <dsh-home>
-
-[Service]
-Type=simple
-User=<user>
-Group=<group>
-WorkingDirectory=<workspace>
-Environment=HOME=<home>
-Environment=DSH_HOME=<dsh-home>
-Environment=PATH=<node-bin-dir>:/usr/local/bin:/usr/bin:/bin
-ExecStart=<dsh-executable> web --no-open --host 127.0.0.1 --port 3080
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-> 来源：[systemd 系统与用户 unit 的加载路径](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html#Unit%20File%20Load%20Path)、[`User=`、`Group=` 与执行环境](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#User=)、[`WantedBy=` 的 enable 语义](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html#%5BInstall%5D%20Section%20Options)、[linger 的生命周期语义](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html#enable-linger%20USER%E2%80%A6)。
+系统 manager、普通用户运行身份、Home 与 DSH home、模板及多实例，统一见[部署篇的系统服务](dsh-deploy.md#systemd-system-service)和[多实例维护](dsh-deploy.md#multiple-instances)。安装权限与服务运行身份分别判断。
 
 ### <a id="web-trusted-host"></a>直接远程访问 Web
 
@@ -501,11 +316,11 @@ DSH 的 `compaction-basic` 按解析后的 `contextWindow` 计算压力预算，
 
 pi-ai 的模型目录和协议适配通常比 DSH 的依赖范围更新得更快。厂商已经开放新模型，而 DSH 仍显示原始模型 ID、缺少 reasoning/effort 控件，或目录中没有该模型时，核对 DSH 依赖树中的 pi-ai 版本与目标发布包的 provider 数据。模型进入目录只表示客户端认识该 ID，不代表当前账号已有服务端调用权限。
 
-DSH 使用自身依赖树中的 pi-ai；更新另一份全局安装不会改变 Host 的解析结果。直接添加一个 `--no-save` 依赖也可能留下更近的旧副本。依赖覆盖应写在执行安装的项目根，把该安装树统一到明确版本；不同安装方式的根目录见[安装位置](dsh-update.md#installation-scope)。
+DSH 使用自身依赖树中的 pi-ai；更新另一份全局安装不会改变 Host 的解析结果。直接添加一个 `--no-save` 依赖也可能留下更近的旧副本。依赖覆盖应写在执行安装的项目根，把该安装树统一到明确版本；不同安装方式的根目录见[安装位置](dsh-deploy.md#installation-scope)。
 
-每次升级时的最新版本覆盖、固定 PATH / npm / prefix、共享实例停启、依赖验收和回滚统一见[升级与回滚](dsh-update.md)。只修复 pi-ai 时跳过 DSH 本体升级，保留本体版本。
+每次升级时的最新版本覆盖、固定 PATH / npm / prefix、共享实例停启、依赖验收和回滚统一见[升级与回滚](dsh-deploy.md)。只修复 pi-ai 时跳过 DSH 本体升级，保留本体版本。
 
-DSH `0.2.1-alpha.1` 的适配器仍声明 `^0.87.1`，该范围无法解析到 `0.99.1`；后者增加了 `gpt-6.1-sol` 的 OpenAI Codex 目录条目。覆盖影响同一安装树中共享 pi-ai 的适配器和 Plugin，按[依赖验收](dsh-update.md#verification)核对实际组合。
+DSH `0.2.1-alpha.1` 的适配器仍声明 `^0.87.1`，该范围无法解析到 `0.99.1`；后者增加了 `gpt-6.1-sol` 的 OpenAI Codex 目录条目。覆盖影响同一安装树中共享 pi-ai 的适配器和 Plugin，按[依赖验收](dsh-deploy.md#verification)核对实际组合。
 
 > 来源：[DSH 0.2.1-alpha.1 的依赖范围](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/llm/llm-pi-ai/package.json#L44)、[pi-ai 0.99.1 的目录更新](https://github.com/earendil-works/pi/blob/v0.99.1/packages/ai/CHANGELOG.md#L3-L7)。
 
@@ -630,31 +445,7 @@ REMOTE_MCP_TOKEN=<token>
 chmod 600 "$DSH_HOME/profiles/web/<env-file>"
 ```
 
-`<env-file>` 表示部署自行选定的环境文件名；下文的 shell 命令与 systemd `EnvironmentFile=` 都应替换成实际路径。这个文件由启动方式加载，DSH 不会因为它与 patch 相邻便自动读取；上例的 MCP 表达式引用的是 Host 中已经存在的变量。直接从 shell 启动 dsh 时，先把变量导入当前 shell，再启动目标 Profile：
-
-```sh
-set -a
-. "$DSH_HOME/profiles/web/<env-file>"
-set +a
-dsh --profile web
-```
-
-**systemd service 托管。** 下面的内容适用于由 systemd 启动 dsh 的部署。system service 的 drop-in 记录环境文件路径：
-
-```ini
-[Service]
-EnvironmentFile=<absolute-dsh-home>/profiles/web/<env-file>
-```
-
-system service 把 drop-in 保存到 `/etc/systemd/system/dsh.service.d/20-mcp-environment.conf`；user service 把它保存到 `~/.config/systemd/user/dsh.service.d/20-mcp-environment.conf`，并使用对应的 `systemctl --user` 命令。drop-in 变更通过 `daemon-reload` 和 restart 生效；环境文件中的值变更通过 restart 进入新进程：
-
-```sh
-sudo systemctl daemon-reload
-sudo systemctl restart dsh.service
-systemctl show dsh.service -p EnvironmentFiles -p ActiveState -p SubState
-```
-
-systemd 的 PATH 通常比交互 shell 短，systemd 部署中的 stdio `command` 使用绝对路径可获得一致的命令解析结果。
+`<env-file>` 是部署自行选定的环境文件名。由 shell 或服务启动器把它加载到 DSH Host，再由上例的 MCP 表达式引用；导入方式、systemd `EnvironmentFile=`、drop-in 路径和重启时机统一见[启动环境与凭据](dsh-deploy.md#startup-environment)。stdio MCP 的 `command` 使用与服务 PATH 一致的绝对路径。
 
 config 的 schema 校验发生在插件 apply 之前；`failOnStartupError` 只覆盖初始连接与工具同步这类运行期失败，管不到校验层。校验失败的表现按进程状态分两种：冷启动 `dsh --profile web` 时一行配置校验抛错，整棵 plugin tree 加载失败、进程非零退出，错误从 `failed to apply loader entry <id>` 汇总为 `plugin tree failed to load`，不是只跳过这一行；已在运行的进程改 patch 触发 HMR（机制见 [Patch 热更新的生效机制](#mcp-patch-hot-reload)）时，校验失败的候选被整体丢弃，上一棵可用树继续服务，进程不退出。
 
