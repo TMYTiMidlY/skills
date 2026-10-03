@@ -25,6 +25,8 @@ DeepSeek Harness（`dsh`）是 DeepSeek 开源的 agent harness（把模型、�
 
 源码模式以仓库根 `package.json` 的 `packageManager` 字段确定 pnpm 版本。`pnpm run build` 生成 CLI 所需的 Host、Client 和前端产物；`pnpm dsh web` 使用已有产物。
 
+已有部署统一按[升级与回滚](dsh-update.md)操作；每次升级后重新覆盖 pi-ai，避免新安装树退回适配器自带的模型目录。
+
 > 来源：[官方 npm 与源码运行方式](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/README.md#L13-L37)；[Node 与 pnpm 版本约束](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/package.json#L1-L10)；[CLI 的可执行入口](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/package.json#L11-L18)。
 
 #### npm 首次安装异常
@@ -52,7 +54,7 @@ DeepSeek Harness（`dsh`）是 DeepSeek 开源的 agent harness（把模型、�
 
 > 来源：[官方安装入口](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/README.md#L13-L37)；[`dsh` 聚合包依赖](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/package.json#L20-L103)；[`dsh-app-boot` 的 peer 声明](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/packages/boot/app-boot/package.json#L31-L61)；[packed-install consumer 的构造](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/scripts/release/verify-packed-install.ts#L88-L109)；相关用户报告见 [Discussion #176](https://github.com/deepseek-ai/deepseek-harness/discussions/176)、[#223](https://github.com/deepseek-ai/deepseek-harness/discussions/223) 和 [#1032](https://github.com/deepseek-ai/deepseek-harness/discussions/1032)。
 
-### 安装脚本授权
+### <a id="install-script-authorization"></a>安装脚本授权
 
 普通 npm 安装使用官方命令即可；`@deepseek-ai/dsh` 本身不要求用户把一批依赖手工加入 `--allow-scripts`。npm 的该选项是 lifecycle script（安装期脚本）白名单，授权对象应是实际拥有脚本、且部署确实需要执行脚本的依赖。
 
@@ -182,18 +184,9 @@ curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:3080/
 
 预期是 `enabled`、`active/running`、`NRestarts=0` 和 HTTP 200。失败时用 `systemctl --user status dsh.service` 与 `journalctl --user -u dsh.service` 查看 `EADDRINUSE`、入口路径或依赖加载错误。再执行一次 `systemctl --user restart dsh.service`，确认服务独立于当前交互 shell。
 
-#### 升级、回滚与数据
+#### 运行数据
 
-升级前先停 unit并备份实际的 DSH home（默认 `~/.dsh`）。npm 全局路径显式安装目标版本：
-
-```sh
-systemctl --user stop dsh.service
-npm install --global @deepseek-ai/dsh@<new-verified-version>
-dsh --version
-systemctl --user start dsh.service
-```
-
-源码路径切到明确 tag，重新执行 `pnpm install --frozen-lockfile && pnpm run build`，再启动并重复验收。显式版本让升级发生在部署操作中；developer preview 的 Session 数据在跨版本恢复前仍需核对兼容性。
+升级、pi-ai 覆盖与回滚统一见[升级与回滚](dsh-update.md)。备份对象是 unit 实际使用的 DSH home（默认 `~/.dsh`），包括 Session、配置、凭据和 Profile；多个实例分别核对 `DSH_HOME`。
 
 卸载 executable 或 unit 会保留 `~/.dsh` 中的 Session、配置和凭据。运行时卸载与数据删除是两个独立操作；回滚同样安装明确的旧版本或切回旧 tag。
 
@@ -508,43 +501,13 @@ DSH 的 `compaction-basic` 按解析后的 `contextWindow` 计算压力预算，
 
 pi-ai 的模型目录和协议适配通常比 DSH 的依赖范围更新得更快。厂商已经开放新模型，而 DSH 仍显示原始模型 ID、缺少 reasoning/effort 控件，或目录中没有该模型时，核对 DSH 依赖树中的 pi-ai 版本与目标发布包的 provider 数据。模型进入目录只表示客户端认识该 ID，不代表当前账号已有服务端调用权限。
 
-DSH 使用自身依赖树中的 pi-ai；更新另一份全局安装不会改变 Host 的解析结果。直接添加一个 `--no-save` 依赖也可能留下更近的旧副本。应在动态发现的 DSH 安装根设置 npm `overrides`，把依赖树统一到一个经过核对的明确版本。
+DSH 使用自身依赖树中的 pi-ai；更新另一份全局安装不会改变 Host 的解析结果。直接添加一个 `--no-save` 依赖也可能留下更近的旧副本。依赖覆盖应写在执行安装的项目根，把该安装树统一到明确版本；不同安装方式的根目录见[安装位置](dsh-update.md#installation-scope)。
 
-先查询目标版本、Node 要求和 changelog，确认所需模型的协议、`reasoning` 与 `thinkingLevelMap`：
+每次升级时的最新版本覆盖、固定 PATH / npm / prefix、共享实例停启、依赖验收和回滚统一见[升级与回滚](dsh-update.md)。只修复 pi-ai 时跳过 DSH 本体升级，保留本体版本。
 
-```sh
-npm view @earendil-works/pi-ai version engines --json
-node --version
-```
+DSH `0.2.1-alpha.1` 的适配器仍声明 `^0.87.1`，该范围无法解析到 `0.99.1`；后者增加了 `gpt-6.1-sol` 的 OpenAI Codex 目录条目。覆盖影响同一安装树中共享 pi-ai 的适配器和 Plugin，按[依赖验收](dsh-update.md#verification)核对实际组合。
 
-停止 DSH 后，把 `<version>` 换成目标版本执行；系统级安装需要 `sudo`，用户自有安装去掉 `sudo`：
-
-```sh
-DSH_ROOT="$(dirname "$(dirname "$(readlink -f "$(command -v dsh)")")")"
-sudo npm pkg set 'overrides.@earendil-works/pi-ai=<version>' --prefix "$DSH_ROOT"
-sudo npm install --prefix "$DSH_ROOT" --package-lock=false --ignore-scripts --omit=dev --no-audit --no-fund --dry-run
-sudo npm install --prefix "$DSH_ROOT" --package-lock=false --ignore-scripts --omit=dev --no-audit --no-fund
-```
-
-用独立命令检查整棵依赖树；结果应只包含目标版本并标记 `overridden`，不能残留更近的旧副本：
-
-```sh
-npm ls --prefix "$(dirname "$(dirname "$(readlink -f "$(command -v dsh)")")")" @earendil-works/pi-ai --all
-```
-
-依赖代码只在进程启动时装载，因此升级后必须重启 DSH，不能用 settings/Profile HMR 代替。刷新 Models 页面后，目标模型应使用目录中的正式名称，reasoning/effort 档位应与发布包一致；再用新 Session 验证文本请求、工具调用和 reasoning replay。
-
-回滚时停止 DSH，删除 override 并按原依赖范围重装；系统级安装需要 `sudo`：
-
-```sh
-DSH_ROOT="$(dirname "$(dirname "$(readlink -f "$(command -v dsh)")")")"
-sudo npm pkg delete 'overrides.@earendil-works/pi-ai' --prefix "$DSH_ROOT"
-sudo npm install --prefix "$DSH_ROOT" --package-lock=false --ignore-scripts --omit=dev --no-audit --no-fund
-```
-
-这项 override 修改安装产物，不是 DSH 源码；重新安装或升级 DSH 会覆盖它，也会影响同一 Host 中共享 pi-ai 的适配器和 Plugin。目标版本超出适配器声明范围时，本地 override 只是可撤销的过渡方案，正式升级仍应由 DSH 更新依赖并完成回归。
-
-> 来源：[pi-ai 0.84.3 changelog](https://github.com/earendil-works/pi/blob/v0.84.3/packages/ai/CHANGELOG.md#L3-L28)记录了新模型目录与推理档位的更新；依赖覆盖后的兼容性仍需针对实际 DSH 与 pi-ai 版本组合验证。
+> 来源：[DSH 0.2.1-alpha.1 的依赖范围](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/llm/llm-pi-ai/package.json#L44)、[pi-ai 0.99.1 的目录更新](https://github.com/earendil-works/pi/blob/v0.99.1/packages/ai/CHANGELOG.md#L3-L7)。
 
 ### Skills
 
