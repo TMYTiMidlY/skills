@@ -240,7 +240,7 @@ WantedBy=multi-user.target
 
 ### <a id="web-trusted-host"></a>直接远程访问 Web
 
-DSH Web 的公网访问、`--trusted-host`、`--public-url`、启动 token 与 cookie、SSH 隧道、受控 relay、Caddy 接入、远程设置限制和文件兼容维护，统一见 [dsh-public-web README](https://github.com/TMYTiMidlY/dsh-public-web#web-trusted-host)。该仓库记录官方版本历史、补丁用途与安全边界；dsh-mobile 等附加客户端方案仍在社区调研篇。
+DSH Web 的直接远程访问、`--trusted-host`、`--public-url`、浏览器认证、Caddy 门禁接入，以及远程设置与文件兼容处理，统一见 [dsh-public-web README](https://github.com/TMYTiMidlY/dsh-public-web#web-trusted-host)。该仓库记录相关官方版本历史、插件用途与安全边界。
 
 <a id="browser-session-auth"></a><a id="browser-session-lifecycle"></a><a id="cookie-max-age-patch"></a><a id="launch-token-journal"></a><a id="remote-access-methods"></a><a id="ssh-tunnel"></a><a id="tcp-relay"></a><a id="caddy-public-entry"></a><a id="client-isloopback"></a><a id="loopback-privilege-history"></a>
 
