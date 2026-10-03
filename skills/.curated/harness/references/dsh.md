@@ -844,9 +844,13 @@ for (const [name, value] of Object.entries(process.env)) {
 
 - **bwrap**：`--ro-bind / /` 提供只读宿主根，`--unshare-pid --proc /proc` 提供私有进程视图，`workspace-write` 额外加 `--tmpfs /tmp` 和可写工作区 bind。这个 `/tmp` 是该执行器新建的挂载，不是宿主目录的可写映射。
 - **Landlock**：授权列表给宿主 `/tmp` 和工作区读写权限，没有把 `/tmp` 换成新挂载。目录及仍存活的 SSH master 可以被下一次、同样有访问权限的客户端使用。
+- **Seatbelt（macOS）**：把真实 `/tmp` 和 `os.tmpdir()` 列入可写根，内容跨命令持久。
+- **Windows ACL**：为每个 session 分配随机私有临时目录，会话结束回收。
 - **danger-full-access**：Bash executor 直接交给本地执行器，不调用 confinement；它看到的是宿主 `/tmp`。这是文件策略，不是 sudo 或 root 提权，也与审批是否需要用户回答分属不同机制。
 
-> 来源：[bwrap 与 Landlock 的 profile 构造](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/sandbox/sandbox-local/src/profiles.ts#L16-L35)、[Linux runner 优先链](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/sandbox/sandbox-local/src/index.ts#L151-L166)、[Bash 按模式选择直接执行或 confinement](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/shell/bash-sandbox/src/index.ts#L89-L103)。以上与该版本安装产物核对。
+进程内文件工具（read/edit/write）按 fs fence 的同一套可写根判定，落的是宿主机真实 `/tmp`，与 Bash 沙箱内那份相互独立。经 `/tmp` 中转文件前先确认所在 backend；需要跨命令或交给用户的产物写入 workspace。
+
+> 来源：[bwrap 与 Landlock 的 profile 构造](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/sandbox/sandbox-local/src/profiles.ts#L16-L35)、[Linux runner 优先链](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/sandbox/sandbox-local/src/index.ts#L151-L166)、[Bash 按模式选择直接执行或 confinement](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/shell/bash-sandbox/src/index.ts#L89-L103)、[Seatbelt 与进程内 fs fence 共享的可写根含 `/tmp` 与 `os.tmpdir()`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/sandbox/sandbox/src/roots.ts#L43-L55)、[Windows ACL 为每个 session 分配随机私有临时目录](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/sandbox/sandbox-local/src/index.ts#L8-L13)。以上与该版本安装产物核对。
 
 执行器生命周期进一步决定能复用多久。普通 Bash 调用每次走 `confine(['bash', '-c', command], …)`：若选 bwrap，每条命令便有独立 `/tmp`。持久终端则在 `spawn()` 时 confinement 一次，后续输入送进同一 PTY；在这个 PTY 内创建 `/tmp/ssh-cm-<uid>/` 后，可以在终端存活期间复用。另一个 PTY 或普通 Bash 工具调用不会自动共享它。
 
