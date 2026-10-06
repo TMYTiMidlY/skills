@@ -1,6 +1,6 @@
 ---
 name: dredge-up
-description: 用于 Copilot CLI、Claude Code、Codex、DeepSeek Harness 等工具的会话收尾、关停或交接盘点。通过回读原始对话并核对实际状态，区分已完成事项，找出被后续任务遗漏的承诺和未尽工作。
+description: 用于 Copilot CLI、Claude Code、Codex、DeepSeek Harness、Cursor Agent 等工具的会话收尾、关停或交接盘点。通过回读原始对话并核对实际状态，区分已完成事项，找出被后续任务遗漏的承诺和未尽工作。
 ---
 
 # dredge-up — 会话收尾盘点
@@ -13,9 +13,9 @@ description: 用于 Copilot CLI、Claude Code、Codex、DeepSeek Harness 等工�
 
 开始读取前，先确定目标会话来自哪个工具，以及它的会话 ID。
 
-- **用户只给出会话 ID、没有明确说明来源工具时，必须先向用户询问并等待回答，再读取或检索。** 例如：“这个会话 ID 来自哪个工具：Copilot CLI、Claude Code、Codex、DSH，还是其他工具？”不要根据 ID 形状、当前运行环境或默认搜索结果猜测，也不要先跨工具搜索来代替询问。
+- **用户只给出会话 ID、没有明确说明来源工具时，必须先向用户询问并等待回答，再读取或检索。** 例如：“这个会话 ID 来自哪个工具：Copilot CLI、Claude Code、Codex、DSH、Cursor Agent，还是其他工具？”不要根据 ID 形状、当前运行环境或默认搜索结果猜测，也不要先跨工具搜索来代替询问。
 - 用户明确指定的目标会话优先。只有用户要求盘点“当前会话”时，才使用运行时明确提供的来源和 ID；任一信息不明确就询问。正文中提及的历史会话 ID、文件名或子代理 ID，不自动成为盘点目标。
-- 确认来源后，所有按 ID 读取或搜索的命令都加 `--agent <agent>`。`asmgr` 的来源标识包括 `copilot`、`claude`、`codex`、`dsh` 和 `chatgpt`；ChatGPT 仅使用已经导入本机的快照。ID 为前缀时，在该来源内核对唯一匹配，不直接采用第一条结果。
+- 确认来源后，所有按 ID 读取或搜索的命令都加 `--agent <agent>`。`asmgr` 的来源标识包括 `copilot`、`claude`、`codex`、`dsh`、`cursor`（Cursor Agent，别名 `cursor-agent`）和 `chatgpt`；ChatGPT 仅使用已经导入本机的快照。ID 为前缀时，在该来源内核对唯一匹配，不直接采用第一条结果。
 
 ## 盘点依据
 
@@ -76,16 +76,17 @@ description: 用于 Copilot CLI、Claude Code、Codex、DeepSeek Harness 等工�
   - **单文件 HTML**：`asmgr html <id> --agent <agent> -o out.html`。报告支持离线搜索、类型筛选、折叠、目录、代码高亮和数学公式。用户提供明确的本地会话文件时，可用 `asmgr html --file <路径> -o out.html`，由工具检测格式。
   - **Markdown**：`asmgr md <id> --agent <agent> -o out.md`。
   - **对话主干通读**：`asmgr show <id> --agent <agent> --format dialogue`，用于回读用户消息、可恢复的交互式问答、压缩摘要和助手正文；普通工具调用及结果不展示。
-  - **完整文本 / 结构化 JSON**：`asmgr show <id> --agent <agent> --format text`；需要结构化数据时改为 `--format json`。工具、子代理、计划等细节以该来源实际保留的内容为准。
+  - **完整文本 / 结构化 JSON**：`asmgr show <id> --agent <agent> --format text`；需要结构化数据时改为 `--format json`（含统一会话文档 `document`，逐条消息带原始来源与用量台账）。工具、子代理、计划等细节以该来源实际保留的内容为准。
+  - **统计与关系速览**：`asmgr list --agent <agent> --stats`（上下文峰值、token/缓存、压缩次数）、`asmgr tree <id> --agent <agent>`（父子、fork 与 guardian 关系）；Codex 另有 `asmgr quota <id> --agent codex` 账号额度轨迹。缺值显示为空白（未知），不当作 0。
   - **附加总结**：`asmgr html <id> --agent <agent> -s 总结.html` 使用 HTML 片段；`asmgr md <id> --agent <agent> -s 总结.md` 使用 Markdown。两种格式不能混用同一片段，需要时查看 `--summary-format`。
   - **来源与保真度**：各工具的持久化格式和可恢复条目不同，不能把某一工具的字段规则套到其他来源。缺失内容和有损回退须在报告中注明；离线归档不等于可继续运行的原生会话。
 
-  > Copilot 的 `events.jsonl` 缺失时，`--copilot-db <session-store.db>` 可从 `turns` 表回退，但只有用户和助手文本，无法恢复交互式决策与工具条目。Bun 原生二进制缺少该 SQLite 回退能力；DSH 压缩日志也需要运行时支持 Zstandard。具体限制见 [asmgr 使用说明](https://github.com/TMYTiMidlY/agent-session-manager/blob/v0.3.0/README.md#L35-L99)与[归档保真度说明](https://github.com/TMYTiMidlY/agent-session-manager/blob/v0.3.0/docs/adr/0003-archive-reconstruction-fidelity.md#L7-L25)。
+  > Copilot 的 `events.jsonl` 缺失时，`--copilot-db <session-store.db>` 可从 `turns` 表回退，但只有用户和助手文本，无法恢复交互式决策与工具条目。Bun 原生二进制缺少该 SQLite 回退能力；DSH 压缩日志也需要运行时支持 Zstandard。Codex 的 guardian 子线程默认并入 `show` 输出并标注来源（`--no-guardian` 只看主会话），`search` 默认排除 guardian 噪音（`--include-guardian` 保留）；Cursor Agent 只读 `~/.cursor/chats` 的 SQLite 存档，来源中没有逐消息时间戳与 token 用量，保持未知而非补 0。具体限制见 [asmgr 来源与读取说明](https://github.com/TMYTiMidlY/agent-session-manager/blob/v0.6.0/README.md#L37-L79)、[Cursor 格式说明](https://github.com/TMYTiMidlY/agent-session-manager/blob/v0.6.0/docs/cursor-format.md)与[归档保真度说明](https://github.com/TMYTiMidlY/agent-session-manager/blob/v0.6.0/docs/adr/0003-archive-reconstruction-fidelity.md#L7-L25)。
 - **正式交接文档**：若用户明确要"交接给下一个 agent / 写 handoff"，结合 `plan` skill（写给实施者的自包含正式文档）或仓库自带的 handoff 流程，不要在本 skill 里重造。
 
 ## 关于导出工具
 
-导出与会话解析由 `asmgr` 维护，本 skill 负责确认会话来源、回读记录和核对事项。Copilot CLI、Claude Code、Codex、DSH 及本地导入快照的具体支持范围，以已安装版本的说明为准；读取失败时报告原因，不自行补造记录。
+导出与会话解析由 `asmgr` 维护，本 skill 负责确认会话来源、回读记录和核对事项。Copilot CLI、Claude Code、Codex、DSH、Cursor Agent 及本地导入快照的具体支持范围，以已安装版本的说明为准；读取失败时报告原因，不自行补造记录。
 
 ## 边界
 
