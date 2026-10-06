@@ -98,6 +98,7 @@ Tool contract 同时说明 timeout、取消传播、进度、资源清理和并�
 ## References
 
 - [Lark / Feishu CLI 作为 Agent Tool](references/lark.md)：用 Lark CLI 说明 executable、tool adapter、AI Skill 与 OAuth 权限的分层；包含一键安装、Skills 目录布局、Agent 探测和可靠调用契约。
+- [Z.ai MCP](references/zai-mcp.md)：接入或排查 Vision、Web Search、Web Reader、Zread 时读取；覆盖本地与远端执行、媒体上传、仓库权限、套餐额度，以及 Reader 读取 Google 搜索页的实测边界。
 
 ## 边界
 
