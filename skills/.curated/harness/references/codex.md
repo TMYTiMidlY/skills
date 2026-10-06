@@ -340,6 +340,25 @@ compact_prompt = "保留当前目标、关键决策、失败尝试、约束和�
 
 对证明和审阅任务，建议把目标合同、实际受测版本、已验证结果、失败路线和下一步放在可重新读取的任务材料中。压缩后重新读取这些材料：solver 可恢复具体证明路线，reviewer 可继续依据实际代码和验证证据审查。调大窗口主要改变压缩间隔；对信息恢复质量的判断，需要真实任务的对照测试。
 
+## <a id="config-layering"></a>配置层栈与项目级 `.codex` 发现
+
+`~/.codex/config.toml` 只是层栈中的一层。生效配置由多层**深合并**而成：表递归合并、逐键覆盖，上层未写的键保留低层的值。优先级从低到高为：包默认值 → 管理偏好（仅 macOS MDM）→ 系统 `/etc/codex/config.toml` → 企业托管云端片段 → 用户 `${CODEX_HOME}/config.toml`（选定 profile 再叠一层）→ **项目层**（见下）→ 会话标志（`-c` / `--config`、UI 选择器）。组织 `requirements.toml` 以约束形式压在整个层栈之上；legacy `managed_config.toml` 仍以最高配置层兼容加载。
+
+**项目层发现规则**（回答“这份 `.codex/config.toml` 到底管不管这个会话”）：
+
+1. `project_root` = 离 `cwd` 最近的、带项目根标记的祖先目录。默认标记只有 `.git`，且必须是含 `HEAD` 的合法 git 目录（普通同名目录不命中）；向上找不到标记时回落为 `cwd` 本身。标记列表可由配置键 `project_root_markers` 改写，空数组表示禁用根检测。
+2. 从 `cwd` 沿祖先向上**到 `project_root`（含）为止**，每级目录若有 `.codex/` 就收集一层（`config.toml` 缺失也记空层）；**离 `cwd` 越近优先级越高**。
+3. 目录未受信任时该层“加载但禁用”（`disabled_reason`），只在 UI 展示、不参与生效配置。
+4. 项目层有一份 denylist——仓库内容不能决定凭据去向或执行哪些本地命令：`openai_base_url`、`chatgpt_base_url`、`apps_mcp_product_sku`、`responses_api_metadata`、`model_provider`、`model_providers`、`notify`、`profile`、`profiles`、`experimental_realtime_webrtc_call_base_url`、`experimental_realtime_ws_base_url`、`otel` 只能来自用户／系统／托管／运行时层。
+
+**git 根截断推论**：祖先遍历止于最近的 `.git`，所以子目录一旦是独立 git 仓库，仓库外层父目录的 `.codex/config.toml` 对它**不生效**。想给一组平行的 agent 工作克隆共享项目配置，提升到公共父目录做不到，必须每个 git 仓库各放一份；改 `project_root_markers` 也绕不过——命中的永远是最内层标记祖先。反向用法：`sandbox_mode`、`approval_policy` 不在 denylist 里，项目层可写，给单个仓库放宽／收紧沙箱比改用户全局影响面小。
+
+**守护进程的读取时机**：app-server 的 `ConfigManager` 不长期缓存层栈——每个新 thread 启动都现读磁盘；已在运行的 thread 保留其启动时配置（"Existing threads retain their session route"），只有托管 requirements 变化能作废它。显式重载入口 `reload_user_config` / `reload_mcp_config` 由客户端在写完配置后调用，外部工具改文件不会自动触发。因此**外部编辑 `config.toml` 对新会话即刻生效，无需重启 daemon**；旧会话只能 `/permissions` 临时切换或开新对话。
+
+> 源码（锁定 2026-10-06 master `80e0b51c9e44853471fae105032fa000c77d3e4a`，不视为持续有效的最新 HEAD）：[层栈顺序文档注释](https://github.com/openai/codex/blob/80e0b51c9e44853471fae105032fa000c77d3e4a/codex-rs/config/src/loader/mod.rs#L120-L144)、[项目层 denylist](https://github.com/openai/codex/blob/80e0b51c9e44853471fae105032fa000c77d3e4a/codex-rs/config/src/loader/mod.rs#L89-L102)、[根标记向上查找与 `.git`/HEAD 校验](https://github.com/openai/codex/blob/80e0b51c9e44853471fae105032fa000c77d3e4a/codex-rs/config/src/loader/mod.rs#L1514-L1529)、[遍历范围与优先级注释](https://github.com/openai/codex/blob/80e0b51c9e44853471fae105032fa000c77d3e4a/codex-rs/config/src/loader/mod.rs#L1601-L1611)、[discover_project_layers 实现](https://github.com/openai/codex/blob/80e0b51c9e44853471fae105032fa000c77d3e4a/codex-rs/config/src/loader/mod.rs#L1653)、[默认标记列表](https://github.com/openai/codex/blob/80e0b51c9e44853471fae105032fa000c77d3e4a/codex-rs/config/src/project_root_markers.rs#L5)、[每次现读的 load_latest_config](https://github.com/openai/codex/blob/80e0b51c9e44853471fae105032fa000c77d3e4a/codex-rs/app-server/src/config_manager.rs#L191)、[旧会话保留注释](https://github.com/openai/codex/blob/80e0b51c9e44853471fae105032fa000c77d3e4a/codex-rs/app-server/src/config_manager.rs#L267)、[重载入口 reload_user_config](https://github.com/openai/codex/blob/80e0b51c9e44853471fae105032fa000c77d3e4a/codex-rs/app-server/src/request_processors/config_processor.rs#L356)。
+
+> 🔬 2026-10-06 宿主实测（daemon 0.160.1、CLI 0.160.x）：`workers/` 下四个各自带 `.git` 的平行工作克隆，父级 `workers/.codex/config.toml` 对克隆内会话无效（源码推演 + 目录标记核对）；逐克隆放置 `.codex/config.toml`（512K/440K 上下文、禁两个本地 MCP、`sandbox_mode = "danger-full-access"`）后，新开对话按新层栈生效，TOML 经 `tomllib` 校验。未逐会话抓取生效快照，生效结论以新会话行为为准。
+
 ## 协作模式与结构化提问
 
 Codex 会话可使用不同的协作预设，也提供面向长期任务的 Goal 工作流。这里把 Goal 一并列出是为了消歧：Default 与 Plan 是当前 harness 的协作模式，Goal 则是可暂停、恢复和调整的长期任务状态，并非与前两者同层的模式枚举。
