@@ -889,6 +889,6 @@ TUI 时间轴等界面有从 grok-pager 借来的交互，那是 UI，不是 Gro
 
 - 未把任何社区搜索插件装进 Profile 做端到端；免费引擎 keyless 额度、回退链行为与 MCP 点数消耗（zai README 自述智谱测试"一次搜索消耗一点"）均为项目自述。
 - 🔬 覆盖范围仅为：本机 0.1.2-rc.1 安装树的包清单、provider 常量与 README 行号核对，以及 08-28 的两段归档会话观察；未发真实搜索请求。
-- 两份社区 README 对 profile patch 热重载的描述互相矛盾（brave 称"保存即生效"、searxng 称"Web profiles 按设计禁用 HMR、需重启"），与官方 CLI reference 的"运行进程监视 Profile patch"表述也不一致；未实测裁决，列为待验证。
+- 两份社区 README 对 profile patch 热重载的描述互相矛盾（brave 称"保存即生效"、searxng 称"Web profiles 按设计禁用 HMR、需重启"），与官方 CLI reference 的"运行进程监视 Profile patch"表述也不一致。🔬 2026-10-08 已实测裁决：**无需重启，保存即生效**——web Profile（DSH `0.2.0-rc.2`，Profile 未声明 `patchReload`、走默认 `live`）的 `profiles/web/cordis.patch.yml` 写入 `llm-pi-ai` → `openai-codex` → `modelOverrides` 的 `contextWindow` 后，不重启的运行实例直接按新预算工作，运行中的会话也无需重开。brave 与官方 CLI reference 的口径成立，searxng 的"Web profiles 按设计禁用 HMR、需重启"不成立；机制见运行时篇 [Patch 热更新的生效机制](dsh.md#mcp-patch-hot-reload)。
 - free-search 的 v0.4.x 迭代很快（README 内嵌的版本截图文字与 HEAD 提交版本号已不同步），引用其细节时以仓库 HEAD 为准。
 - 官方包家族与 provider 行为以 0.1.2-rc.1 为快照；DSH 处于 developer preview，settings 注册面等接口在 0.1.2 系列内已经变动（free-search 为此做双兼容），引用本节细节时先确认当前版本。
