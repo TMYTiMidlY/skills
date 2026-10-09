@@ -25,7 +25,7 @@ Mihomo 产品与配置发现、GUI 配置链、流量选择、协议性能、RES
 
 ## 共享 Linux 节点
 
-Mihomo TUN、systemd-resolved、EasyTier、双层 Caddy / OAuth 和多用户 Zellij Web / VS Code Serve Web 的组合部署见 [references/setup.md](references/setup.md)。该文描述整套共享节点；Mihomo 本身的配置、运行态和泄漏理论仍以 [mihomo.md](references/mihomo.md) 为准。
+Mihomo TUN、systemd-resolved、EasyTier、双层 Caddy / OAuth 和多用户 Web 服务的组合部署见 [references/setup.md](references/setup.md)。新增用户时读 [按用户组织配置](references/setup.md#routes)和 [接入流程](references/setup.md#user-provisioning)；UID 端口分配由 `software` skill 的 Service / systemd 主题说明。Mihomo 本身的配置与泄漏机制见 [references/mihomo.md](references/mihomo.md)。
 
 ## 远程接入
 

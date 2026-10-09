@@ -21,23 +21,27 @@ ExecStart=/usr/bin/myservice
 systemctl enable --now myservice@<user>
 ```
 
-### 按 UID 分配端口
+### <a id="uid-ports"></a>按 UID 分配端口
 
-多用户实例可以在 `ExecStart` 中按 UID 动态计算端口，避免冲突：
+UID 是 Linux 用户的数字标识，可用 `id -u <user>` 查询。为同一服务的多个用户实例分配端口时，先选定一个起点：`base_uid`（基准 UID）对应 `base_port`（基础端口），UID 每增加 1，端口也增加 1：
 
 ```text
 port = base_port + user_uid - base_uid
 ```
 
-**先用 `id -u <主用户>` 查询 `base_uid`，不要想当然填 `1000`**；部分发行版或镜像的首个普通用户 UID 是 `1001` 或其他值。把查询结果填入偏移项：
+已有部署直接读取现有模板中的基础端口和基准 UID；新部署在模板中确定这两个值，之后保持不变。UID 在实际运行服务的 Linux / WSL 中查询。Zellij、Code 等不同服务各自使用独立的端口范围。
 
 ```ini
 [Service]
 User=%i
-ExecStart=/bin/sh -c 'exec /usr/bin/myservice --port $((BASE_PORT + $(id -u %i) - <主用户 UID>))'
+ExecStart=/bin/sh -c 'exec /usr/bin/myservice --port $$((<base-port> + $$(id -u %i) - <base-uid>))'
 ```
 
-其中 `BASE_PORT` 替换为实际基准端口，`%i` 仍是实例用户名。
+将 `<base-port>`、`<base-uid>` 替换为已记录的整数，`%i` 仍是实例用户名。这里的 `$$` 是 unit 文件中的写法：systemd 将它传成字面量 `$`，再由 shell 执行计算。直接在 shell 中运行时使用单个 `$`。
+
+> systemd 的命令行展开与字面量美元符号规则见 [systemd v255 命令行语义](https://github.com/systemd/systemd/blob/v255/man/systemd.service.xml#L1431-L1481)。
+
+新增用户前，检查计算出的端口在预留范围及 `1..65535` 内，并核对其他实例和当前监听，避免不同服务的端口范围重叠。UID 分布不适合连续分配时，使用显式端口表；启动命令与代理路由采用同一份分配结果。
 
 ### Specifier 的解析上下文
 
@@ -58,7 +62,7 @@ Environment=RUNTIME_DIR=/tmp/myservice-%U
 ```ini
 [Service]
 User=%i
-ExecStart=/bin/sh -c 'uid=$(id -u %i); exec /usr/bin/myservice --runtime-dir "/tmp/myservice-$uid"'
+ExecStart=/bin/sh -c 'uid=$$(id -u %i); exec /usr/bin/myservice --runtime-dir "/tmp/myservice-$$uid"'
 ```
 
 如果程序本身会根据当前进程 UID、HOME 或 XDG runtime 选择安全目录，通常无需覆盖该目录。
@@ -72,6 +76,8 @@ ExecStart=/bin/sh -c 'uid=$(id -u %i); exec /usr/bin/myservice --runtime-dir "/t
 LoadCredential=secrets.toml:/etc/myservice/secrets.toml
 ExecStart=/usr/local/bin/myservice -secrets ${CREDENTIALS_DIRECTORY}/secrets.toml
 ```
+
+`LoadCredential=` 交付的是文件，应用需读取该文件。应用若要求环境变量，则使用 `EnvironmentFile=`；凭据文件中的内容不会自动成为环境变量。
 
 `LoadCredential=` 需要 **systemd ≥ 247**，`$CREDENTIALS_DIRECTORY` 也由该版本开始注入。老发行版（如 systemd 239 的 RHEL8、Anolis 或 Alibaba Cloud Linux 3 系）会**静默忽略**这行：变量为空，程序按默认路径找不到密钥，可能表现为“配置看似正确却读不到密钥”，例如 S3 后端启动时报 `Access Denied`。
 
@@ -145,4 +151,4 @@ Environment=PYTHONUNBUFFERED=1
 - **Python 的 stderr 不受影响**：3.9 起 stderr 始终行缓冲（`sys.stderr.line_buffering` 为 `True`），未捕获异常的 traceback 照常实时进 journal。丢的是走 stdout 的那部分——恰恰是构建日志、进度输出这类"卡在哪一步"的线索。
 - 无缓冲会让每次 `print` 都触发一次 write 系统调用。对日志量极大的服务是真实开销，此时改用行缓冲（`python -X ...` 无对应开关，可在代码里 `sys.stdout.reconfigure(line_buffering=True)`）比全无缓冲更合适。
 
-真实案例：`mkdocs serve` 的 user 服务卡死时 `journalctl --user -u qsu2-docs` 始终看不到最后的 build 报错，加 `Environment=PYTHONUNBUFFERED=1` 后恢复实时。
+真实案例：`mkdocs serve` 的 user 服务卡死时 `journalctl --user -u <docs-unit>` 始终看不到最后的 build 报错，加 `Environment=PYTHONUNBUFFERED=1` 后恢复实时。

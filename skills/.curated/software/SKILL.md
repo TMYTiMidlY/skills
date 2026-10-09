@@ -37,7 +37,7 @@ Zellij Web client、HTTPS 证书要求、login token/session token、应用侧�
 
 ## Service / systemd
 
-多用户共享服务、systemd 模板单元与按 UID 分配端口、systemd `LoadCredential` 注入密钥，**user 级服务（`systemctl --user`）与 `loginctl enable-linger` 常驻**（user manager 生命周期默认绑 login session、登出即被杀、开机不自启的坑），以及 **stdout 块缓冲导致 journal 看不到服务卡死前最后输出**（`StandardOutput=journal` 接的是管道不是 TTY；Python 要 `PYTHONUNBUFFERED=1`，`stdbuf` 对它无效）见 [references/service.md](references/service.md)。
+systemd 模板、多用户实例、凭据注入、用户级服务常驻与日志缓冲见 [references/service.md](references/service.md)。配置多用户服务时先读 [按 UID 分配端口](references/service.md#uid-ports)；Caddy 路由、用户授权与代理凭据由 `network` skill 覆盖。
 
 ## MkDocs
 

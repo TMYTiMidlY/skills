@@ -36,6 +36,16 @@
 
 多层反代必须保留公网的 `X-Forwarded-Proto: https`。缺失时，OAuth 回跳可能被生成成 HTTP；依赖 forwarded scheme 生成绝对 URL 的上游也会得到错误地址。
 
+内网节点若运行在 WSL 中，把宿主入口与应用监听分开记录：
+
+```text
+入口 Caddy → Windows <mesh-node-ip>:<gateway-port>
+           → WSL Caddy <wsl-gateway-port>
+           → WSL 内 127.0.0.1:<user-service-port>
+```
+
+宿主转发到 WSL 网关，各用户的应用端口留在 WSL 内；网关端口与应用端口分别记录。转发方式和目标发行版的核对见 [WSL 网络管道](wsl.md)。
+
 ### <a id="sni-passthrough"></a>TCP/SNI 透传的替代架构
 
 如果入口机不应看到请求正文或 Cookie，应让内网 Caddy 终止 TLS。普通 DNAT 或 TCP 转发无法按域名分流，因为 TCP 层只有目标 IP 和端口；按域名透传 TLS 需要 `caddy-l4`、HAProxy `ssl_preread` 一类能读取 ClientHello SNI 的四层代理。
@@ -251,15 +261,19 @@ Domains=~.
 :<internal-caddy-port> {
 	bind <mesh-node-ip>
 
-	@blocked {
-		not remote_ip <ingress-mesh-ip> <mesh-node-ip> 127.0.0.1 ::1
-	}
-	respond @blocked 403
+	route {
+		@blocked {
+			not remote_ip <ingress-mesh-ip> <mesh-node-ip> 127.0.0.1 ::1
+		}
+		respond @blocked 403
 
-	import /etc/caddy/routes.d/*.caddy
-	respond 404
+		import /etc/caddy/routes.d/*.caddy
+		respond 404
+	}
 }
 ```
+
+`route` 保证先检查来源，再进入用户路由，最后返回 404；顺序说明见 [共享 listener 的 Host 分流](caddy.md#shared-listener-routing)。
 
 ### <a id="domain-matching"></a>多层域名匹配
 
@@ -310,19 +324,44 @@ regex match sub "(?i)^github\.com/<account>$"
 
 写成 `github\\.com` 会匹配失败，用户能登录却拿不到目标角色。
 
-### <a id="authorization"></a>显式授权策略
+### <a id="authorization"></a>角色与授权策略
 
-共享入口与个人入口使用显式 policy，不依赖模板推导：
+共享入口与个人入口沿用已有的 `authp/...` 角色命名，例如：
 
 ```text
-network_admin  → 两位指定管理员
-user_a_access  → 只允许用户 A
-user_b_access  → 只允许用户 B
+authp/admin     → 指定管理员
+authp/<user-a>  → 用户 A 的独立角色
+authp/<user-b>  → 用户 B 的独立角色
 ```
 
-角色规则变更后，旧 JWT 不会自动刷新。轮换内网 JWT key，或让用户清理独立 Cookie 并重新登录，才能获得新角色。
+登录门户用 `transform user` 分配角色，授权策略用 `allow roles` 匹配角色，路由用 `authorize with <policy>` 引用策略名。角色名与策略名分别沿用现有配置；个人入口使用独立角色，避免共用普通用户角色后互相访问。
 
-### <a id="routes"></a>路由片段与 secret
+权限修改后的登录态处理见 [权限变更与 JWT](caddy.md#security-token-claims)。
+
+### <a id="routes"></a>按用户组织路由、策略与凭据
+
+每个用户的终端、编辑器路由放在同一文件，公共登录入口单独维护。先通读现有 Caddyfile、导入片段和 systemd 模板，沿用已有组织方式。
+
+一种目录约定是：
+
+```text
+/etc/caddy/
+├── Caddyfile                 # 网关监听、导入与默认响应
+├── routes.d/
+│   ├── 10-auth.caddy         # 公共登录入口
+│   ├── 20-<user-a>.caddy     # 用户 A 的终端、编辑器路由与策略引用
+│   └── 20-<user-b>.caddy     # 用户 B 的终端、编辑器路由与策略引用
+└── env.d/
+    ├── 00-auth.env           # 公共 OAuth / JWT 凭据
+    ├── 20-<user-a>.env       # 用户 A 的独立上游会话
+    └── 20-<user-b>.env       # 用户 B 的独立上游会话
+```
+
+文件名可沿用已有用户简称；记录它与 Linux 用户、域名、上游端口及授权策略的对应关系。
+
+[网关示例](#internal-caddy)在 HTTP 站点内导入路由，授权策略定义在全局 `security` 块中，路由用 `authorize with` 引用。若同一用户文件包含两者，先在顶层加载命名 snippet，再分别导入这两个位置。
+
+> Caddy `import` 会把文件或 snippet 的内容插入调用位置；解析与 snippet 处理见 [Caddy v2.11.2 import 实现](https://github.com/caddyserver/caddy/blob/v2.11.2/caddyconfig/caddyfile/parse.go#L350-L416)。
 
 推荐域名：
 
@@ -331,25 +370,21 @@ zellij.<user>.<zone>
 code.<user>.<zone>
 ```
 
-路由片段由内网 Caddy 显式导入，并通过 `{env.*}` 引用 secret，不把 token 或 JWT key 写进 route。环境文件权限、变量展开和更新方式统一见 [服务凭据与环境变量](caddy.md#service-environment)；systemd credential 是另一种文件交付机制，不会自动变成 `{env.*}`。
+路由通过环境变量引用凭据，真实 token 和 JWT key 放在环境文件中。文件加载、变量命名和更新方式统一见 [多用户凭据文件](caddy.md#per-user-environment)，变量写法与权限见 [服务凭据与环境变量](caddy.md#service-environment)。
 
 ### <a id="zellij-token"></a>Zellij token 迁移
 
 从旧路由中迁出明文凭据时，按每个用户、每个实例分别兑换新的 session token。兑换、续期和撤销方式见 `software` skill 的 Zellij 主题；不要把多个用户改成共用一枚 token。
 
-将新值放入受保护的环境文件，route 使用 `{env.ZELLIJ_USER_SESSION_TOKEN}` 一类独立变量，按 [服务凭据与环境变量](caddy.md#service-environment)使其生效。验证新凭据与用户策略后再撤销旧凭据。旧 Caddyfile 的历史备份仍可能含有效明文，所以只删除当前文件中的值不等于完成撤销；其他仍依赖旧凭据的客户端也应纳入轮换。
+按 [多用户凭据文件](caddy.md#per-user-environment)保存并应用新值，验证访问后再撤销旧凭据。旧配置备份和其他客户端也可能保留旧值，应一并核对。
 
 ## <a id="multi-user"></a>多用户 Web 服务
 
 ### <a id="uid-ports"></a>UID 端口映射
 
-多用户服务按 UID 推导端口：
+端口由 systemd 模板按用户 UID 分配。基准 UID、基础端口的含义、计算公式和冲突检查统一见 `software` skill 的 Service / systemd「按 UID 分配端口」。先按该流程确定各实例端口，再填入下面路由的 `<zellij-port>`、`<code-port>`。
 
-```text
-port = base_port + user_uid - base_uid
-```
-
-UID 公式和 system manager specifier 的完整语义见 `software` skill 的 Service / systemd 主题。这里保留这套网络栈中的实例形态。
+两项服务都监听应用所在 Linux / WSL 内的 `127.0.0.1`。记录每个 Linux 用户、模板实例、实际监听和路由文件的对应关系；Caddy 的上游地址须与模板计算结果一致。
 
 ### <a id="zellij-web"></a>Zellij Web
 
@@ -396,7 +431,7 @@ WorkingDirectory=/home/%i
 Environment=HOME=/home/%i
 Environment=TERM=xterm-256color
 Environment=COLORTERM=truecolor
-ExecStart=/bin/sh -c 'uid=$(id -u %i); port=$((<zellij-base-port> + uid - <base-uid>)); exec /usr/bin/zellij -c /home/%i/.config/zellij/web.kdl web --ip 127.0.0.1 --port "$port"'
+ExecStart=/bin/sh -c 'uid=$$(id -u %i); port=$$((<zellij-base-port> + uid - <base-uid>)); exec /usr/bin/zellij -c /home/%i/.config/zellij/web.kdl web --ip 127.0.0.1 --port "$$port"'
 ExecStop=/usr/bin/zellij web --stop
 Restart=on-failure
 ```
@@ -412,11 +447,22 @@ Group=%i
 WorkingDirectory=/home/%i
 Environment=HOME=/home/%i
 Environment=VSCODE_CLI_DATA_DIR=/home/%i/.vscode/cli
-ExecStart=/bin/sh -c 'uid=$(id -u %i); port=$((<code-base-port> + uid - <base-uid>)); exec /usr/bin/code serve-web --host 127.0.0.1 --port "$port" --without-connection-token --accept-server-license-terms --disable-telemetry --server-data-dir /home/%i/.vscode-server/serve-web'
+ExecStart=/bin/sh -c 'uid=$$(id -u %i); port=$$((<code-base-port> + uid - <base-uid>)); exec /usr/bin/code serve-web --host 127.0.0.1 --port "$$port" --without-connection-token --accept-server-license-terms --disable-telemetry --server-data-dir /home/%i/.vscode-server/serve-web'
 Restart=on-failure
 ```
 
 每个实例使用自己的 HOME、扩展目录、用户数据和进程权限。
+
+模板通过命令行指定监听地址和端口；`web.kdl` 保存用户设置，重复的监听参数须与模板一致。配置优先级见 `software` skill 的 Zellij「模板服务与监听参数」；`$$` 写法见其 Service / systemd 主题。
+
+### <a id="user-provisioning"></a>新增用户与服务实例
+
+新增用户时，按顺序完成：
+
+1. 按 `software` skill 的 Service / systemd 流程查询 UID、确定端口，准备应用配置并启用该用户的模板实例；重启已有实例前检查活动任务。
+2. 补齐该用户的域名路由、授权策略和独立凭据，核对公共登录入口能赋予正确角色，并检查[入口域名匹配](#domain-matching)。
+3. 用完整 Caddy 配置和服务所需环境验证，成功后按 [服务凭据与环境变量](caddy.md#service-environment)选择 reload 或 restart。
+4. 核对实例用户、实际监听和路由端口，验证未登录被拦截、本人可访问、其他未获授权用户被拒，以及终端和编辑器的 WebSocket。
 
 ## <a id="verification"></a>验证矩阵
 
@@ -425,14 +471,15 @@ Restart=on-failure
 | 层 | 检查 |
 |---|---|
 | systemd | unit 为 `enabled` + `active`，`User=` 与实例名一致 |
-| 端口 | localhost 端口与 UID 公式一致 |
+| 端口 | 实际监听为 `127.0.0.1`，端口与 UID 公式及路由一致；各服务范围无冲突 |
 | Mihomo | 显式 HTTP/SOCKS 代理能访问目标站点 |
 | TUN | 清除代理环境变量后，普通请求仍能访问目标站点 |
 | 组网 | 运维地址仍走 EasyTier 接口，没有进入 Mihomo TUN |
 | DNS | systemd-resolved 全局上游指向 Mihomo DNS listener |
 | 内网 Caddy | 入口机带 Host + `X-Forwarded-Proto: https` 时得到正确 OAuth 跳转 |
 | 公网 Caddy | 首次 TLS 握手能申请证书，未登录请求跳独立 portal |
-| OAuth | callback、realm、角色和独立 Cookie 名一致 |
+| OAuth | callback、realm、角色和独立 Cookie 名一致；本人可访问，其他未获授权的用户被拒 |
+| 用户配置 | 域名、policy、上游地址、独立凭据变量和实例用户逐项对应，未知域名落到默认拒绝 / 404 |
 | Zellij | 真 session token 的 `/ws/control` 返回 `101`，伪 token 返回 `401` |
 | VS Code | 根页面返回 HTML，WebSocket 经过外层 Caddy 可建立 |
 
@@ -484,8 +531,6 @@ curl -x <proxy> --noproxy '*' ...
 
 ### <a id="caddy-reload"></a>Caddy reload 与长连接
 
-- Caddyfile 驱动的 `caddy.service` 与 Admin API 动态配置不能同时作为真源；下一次 Caddyfile reload 会覆盖只存在于 API 的改动。
-- `caddy validate` 不继承 systemd 注入的环境变量。校验含 `{env.*}` 的配置时，在校验进程中提供占位值或安全加载环境文件。
-- reload 可能已成功加载新配置，却因关闭旧 Admin API 或等待长连接超时，让 systemd 长时间停在 `reloading`。确认新配置已经生效后，可用 restart 解卡。
-- `servers { grace_period ... }` 在实测 Caddy 2.11.2 的 Caddyfile adapter 中不被接受，不应只凭文档片段加入。
-- `stream_timeout` 用于限制半死 WebSocket 的寿命；未设置时，静默断网的连接可能长期占用 copier，并阻碍旧 server drain。
+- Caddyfile reload 会覆盖只存在于 API 的改动；配置来源的选择见 [Admin API 运行态配置](caddy.md#admin-config-source)。
+- `caddy validate` 的验证进程需取得服务所需环境，方法见 [service 环境变量下的配置验证](caddy.md#validate-service-environment)。
+- reload 卡住与 WebSocket 不释放分别按 [reload 配置锁阻塞](caddy.md#reload-lock)和 [长连接超时](caddy.md#reverse-proxy-stream-timeout)诊断。
