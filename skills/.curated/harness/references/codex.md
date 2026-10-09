@@ -212,7 +212,7 @@ Codex 的账号 token 活动图、剩余额度窗口和各客户端的本地会�
 
 > 源码：[Codex 读取云端 profile](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/backend-client/src/client.rs#L351-L363)。客户端只取得聚合结果，未给出服务端的入账、去重和第三方覆盖规则，因此不能将 `/usage` 概括为“只统计官方客户端”，也不能保证它完整覆盖所有第三方调用。
 
-## 上下文窗口与自动压缩
+## <a id="context-compaction"></a>上下文窗口与自动压缩
 
 Codex 需要分别知道模型可用的上下文窗口，以及历史增长到多少 tokens 时开始自动压缩。前者是客户端的预算上限，后者是提前收缩历史的触发线；只改其中一个，不能完整表达长上下文策略。
 
@@ -247,6 +247,56 @@ codex features list
 该检查只能证明配置文件成功加载，不能证明账户已经获得模型权限，也不能证明一次端到端请求实际占用了 1M tokens。模型可用性仍由当前账户和服务端决定。
 
 > 🔬 2026-08-20 在 `codex-cli 0.148.0` 上实测：上述三项写入用户级配置后，`codex features list` 返回成功；这是配置解析检查，不是 1M 请求压力测试。
+
+### <a id="compaction-runtime"></a>压缩触发与运行路径
+
+自动压缩由 Codex harness 管理活动历史、判断阈值并发起；压缩状态可以由 OpenAI 后端生成，随后由 harness 安装为下一轮上下文。判断某次压缩使用什么机制，要同时核对客户端版本、provider、请求内容和会话存档。
+
+在下述 `0.162.0` 实测路径中，harness 把当前模型指令和历史消息送到 OpenAI，在输入末尾加入 `compaction_trigger`。后端返回保留的消息和带 `encrypted_content` 的 `compaction` item；存档中的 `compacted.message` 为空，`replacement_history` 保存新的活动历史。后续推理携带这份压缩状态继续执行，具体保留内容通过后续回忆测试核验。
+
+> 🔬 2026-10-09，Codex app-server `0.162.0`、ChatGPT 订阅登录、OpenAI provider、`gpt-6.1-sol` / `xhigh`：独立进程的请求 trace 与 rollout 对照确认上述结构。加密 item 是不透明状态，JSONL 中的空 `message` 应结合 `replacement_history` 解读。
+
+Codex 当前远端路径可通过 Responses 流执行压缩；定位 HTTP 接口时应检查实际传输日志。公开 API 另提供独立的 `/responses/compact`，以及在普通 `/responses` 中用 `context_management.compact_threshold` 启用的服务端自动压缩。后者由服务端判断阈值，和 Codex 本地阈值触发请求属于不同的控制方式。
+
+> 本节所述 Codex 路径以实测为准。公开 API 的用法阅读入口为 [Compaction](https://developers.openai.com/api/docs/guides/compaction)，2026-10-09 查阅；API 文档只说明接口能力，Codex 是否采用某个接口仍需运行时证据。
+
+压缩频率取决于活动上下文增长和阈值计数范围。文件读取、工具输出、模型输出和新增指令都会影响增长；统计频率时应按同一版本、同一角色、实际工作时段记录压缩事件，空闲时间单列。增大上下文预算并提高压缩线，可以延后达到阈值的时刻；一次求解能否在两次压缩之间完成，仍取决于任务规模和历史增长速度。
+
+### <a id="compact-prompt"></a>自定义压缩提示词
+
+`compact_prompt` 是用户级 `config.toml` 的顶层字符串配置，例如：
+
+```toml
+compact_prompt = "保留当前目标、关键决策、失败尝试、约束和下一步。"
+```
+
+配置文档还提供 `experimental_compact_prompt_file`，用于从文件读取覆盖提示词。核验时分别确认配置被解析、当前会话采用该配置、提示词进入压缩请求，以及压缩后的实际行为。
+
+> 配置项阅读入口：[Configuration Reference](https://learn.chatgpt.com/docs/config-file/config-reference)，2026-10-09 查阅。文档将这些键描述为压缩提示词覆盖入口；具体运行路径是否使用覆盖值，按下述实测条件判断。文件覆盖入口未在本次实验中测试。
+
+**在本次 `0.162.0` 的 OpenAI 远端压缩路径上，`compact_prompt` 成功读取，但未进入记录的压缩请求，修改它未显示出对压缩行为的影响。** 这个结论同时覆盖会话配置覆盖和隔离的用户级配置。其他版本、provider 或文字交接摘要路径需要另测；二进制包含默认摘要提示词，只能说明存在该文本，实际采用哪条路径仍看运行证据。
+
+### <a id="compaction-experiment"></a>压缩提示词对照实测
+
+2026-10-09，用独立 `CODEX_HOME` 和 stdio app-server `0.162.0`，以 `gpt-6.1-sol` / `xhigh`、OpenAI provider、ChatGPT 订阅登录执行实验。固定合成会话包含 12 个任务事实、一个已废弃的旧值、下一步和约束，并混入无关观察；事实放在 assistant 历史中，压缩后保留的明文消息不含这些事实。各组从同一份完成的历史 fork，使用同一回忆问题。实验提示词要求 JSON 摘要、保留任务事实，并加入一个仅存在于配置中的识别标记。
+
+| 配置组 | 触发方式与次数 | 请求中出现自定义提示词标记 | 压缩后事实回忆 |
+|---|---|---|---|
+| 默认配置，未覆盖提示词 | 手动 2 次、自动 1 次 | 无 | 均为 12/12；旧值、下一步与约束也正确 |
+| 会话覆盖 `compact_prompt` | 手动 2 次、自动 1 次 | 无 | 均为 12/12；旧值、下一步与约束也正确 |
+| 用户级 `compact_prompt` | 新进程手动 1 次 | 无 | 12/12；旧值、下一步与约束也正确 |
+
+用户级实验先通过 `config/read` 确认解析出的字符串与实验提示词完全一致。7 次压缩的 trace 中，`compaction_request` payload 逐字段相同；各组压缩后的回忆均未报告配置专用标记。默认组自身也出现输出排版和数值类型差异，因此输出文本、密文或 token 数不同，应与重复对照一起判断。
+
+自动组仅在测试配置中把触发线降到 16,000 tokens；每组都在下一次推理前完成一次压缩，采用与手动组相同的请求结构。实验的 `model_context_window` 为 272,000，推理事件报告的有效窗口始终为 258,400。压缩后自动组的客户端计数约 7.9–8.0k，所有组随后完整推理请求的输入约 16.3–18.3k；这两个计数应分别记录。压缩缩减的是已占用历史，窗口容量保持不变，压缩后的占用也随输入内容与保留项变化。
+
+> 🔬 本实验结论来自配置读取结果、请求 trace、压缩安装事件、rollout 和后续回忆答案。合成事实在历史中重复出现；这是配置是否进入当前压缩路径的对照，覆盖有限的事实回忆，尚未测量真实 solver / reviewer 的完成率、长程证明推理或 512k 满窗口表现。原始测试材料不收录于本 skill。
+
+复测时在隔离进程中固定模型、effort、指令和源历史，先重复默认组，再只修改压缩提示词。手动调用 `thread/compact/start` 后等待 `contextCompaction` 完成及对应 `turn/completed`，再执行共同回忆问题；自动组降低测试阈值，并从事件确认实际发生压缩。使用 `CODEX_ROLLOUT_TRACE_ROOT` 可记录本版本的请求和安装过程，核对提示词标记是否进入请求、两组源历史是否一致。验证该环境变量与 trace 格式时仍以被测版本为准。
+
+> `thread/fork`、`thread/inject_items` 和 `thread/compact/start` 的协议阅读入口：[Codex App Server](https://learn.chatgpt.com/docs/app-server)，2026-10-09 查阅。压缩 RPC 即时返回 `{}`，后续事件才表明压缩完成。使用 `thread/inject_items` 等实验接口需启用 `experimentalApi`。
+
+对证明和审阅任务，建议把目标合同、实际受测版本、已验证结果、失败路线和下一步放在可重新读取的任务材料中。压缩后重新读取这些材料：solver 可恢复具体证明路线，reviewer 可继续依据实际代码和验证证据审查。调大窗口主要改变压缩间隔；对信息恢复质量的判断，需要真实任务的对照测试。
 
 ## 协作模式与结构化提问
 
