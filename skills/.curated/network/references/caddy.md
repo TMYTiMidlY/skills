@@ -47,7 +47,9 @@ sudo systemctl reload caddy
 
 ### <a id="service-environment"></a>服务凭据与环境变量
 
-OAuth 密钥和上游会话都可以经 systemd 的 `EnvironmentFile=` 提供。这里统一说明文件权限、变量展开和更新方式；各应用负责生成自己的凭据。下面的 `<app>` 与 `APP_SESSION` 是示例名称，多应用、多用户部署应分别命名，避免互相覆盖。
+环境文件保存 OAuth 密钥或上游会话值，systemd 通过 `EnvironmentFile=` 把它们加载到服务进程的环境中，Caddy 再按变量名取值。下面用 `APP_SESSION` 演示；`.env` 是这类文件常用的后缀。
+
+以下路径和变量名仅作示例；已有部署先核对实际 unit / drop-in 的环境来源及 Caddyfile 中的变量引用。
 
 先在受保护目录创建 `/etc/caddy/<app>.env`，设为 `0600 root:root` 后再写入真实值，不把凭据放进命令行、聊天或版本库：
 
@@ -62,14 +64,22 @@ systemd drop-in `/etc/systemd/system/caddy.service.d/<app>-env.conf` 只记录�
 EnvironmentFile=/etc/caddy/<app>.env
 ```
 
+Caddyfile 的反代请求头可以这样引用：
+
+```caddyfile
+header_up Cookie "session_token={env.APP_SESSION}"
+```
+
+`{env.APP_SESSION}` 表示读取 Caddy 进程中的 `APP_SESSION` 变量：`env.` 是 Caddy 的占位符前缀，后面是完整变量名。文件、变量和引用按这条链路对应起来。
+
 > drop-in 通常是 `0644`，能通过 `systemctl cat` 读取；把值直接写进 `Environment=` 会暴露给能读 unit 的本地用户。系统级 systemd 负责读取 `0600` 文件，Caddy 服务用户不必有文件读取权。环境文件不是加密存储，凭据仍会进入进程；解析期展开的值还会进入适配后的 JSON、Admin API 配置和配置快照，这些也按凭据保护。
 
 `header_up` 支持下面两种语法，但读取环境的进程不同：
 
 | 写法 | 展开时机与取值位置 | 只修改已有 EnvironmentFile 内容后的生效方式 |
 |---|---|---|
-| `{$APP_SESSION}` | Caddyfile 解析前，由执行适配的进程读取环境，替换结果写入 JSON | 若 `ExecReload` 启动继承该 EnvironmentFile 的 `caddy reload --config <Caddyfile>`，新进程可读到新值并通过 reload 提交；其他启动方式另查 |
-| `{env.APP_SESSION}` | 在支持 placeholder 的字段中运行期展开；`header_up` 每次请求读取常驻 Caddy 进程环境 | 普通配置 reload 不刷新常驻进程环境，更新此环境通常须 restart |
+| `{$APP_SESSION}` | 解析前由适配配置的进程读取，值写入 JSON | 确认 `ExecReload` 继承环境并重新适配 Caddyfile 时，可通过 reload 更新 |
+| `{env.APP_SESSION}` | 支持占位符的字段在运行时读取；`header_up` 在每次请求时读取 Caddy 主进程环境 | 需 restart，让主进程取得新环境 |
 
 > Caddy v2.11.2 的 `reverse_proxy` 请求头处理调用 `HeaderOps.ApplyToRequest`，其 Set 值经 `ReplaceKnown` 展开；全局 replacer 将 `env.*` 映射到 `os.Getenv`，未定义的环境变量得到空值，不是原样透传。见 [请求头处理](https://github.com/caddyserver/caddy/blob/v2.11.2/modules/caddyhttp/reverseproxy/reverseproxy.go#L628-L652)、[header 替换](https://github.com/caddyserver/caddy/blob/v2.11.2/modules/caddyhttp/headers/headers.go#L220-L256)、[环境变量 provider](https://github.com/caddyserver/caddy/blob/v2.11.2/replacer.go#L368-L373)。其他模块是否支持运行期 placeholder，要按字段核实。
 >
@@ -82,6 +92,23 @@ systemctl show caddy --property=ExecStart --property=ExecReload --property=Envir
 ```
 
 首次增加或修改 drop-in 定义后先 `systemctl daemon-reload`；只改已有 env 文件内容无需这一步。`daemon-reload` 本身不更新已经运行的 Caddy 进程环境。根据上表选择 reload 或 restart，正式应用前按 [service 环境变量下的配置验证](#validate-service-environment)验证，再检查实际业务；不要只凭配置能解析就认定凭据有效。
+
+### <a id="per-user-environment"></a>多用户凭据文件
+
+公共 OAuth / JWT 凭据与每用户上游会话可分文件维护；已有文件也可沿用。Caddy 的 drop-in 显式加载每份文件：
+
+```ini
+[Service]
+EnvironmentFile=/etc/caddy/env.d/00-auth.env
+EnvironmentFile=/etc/caddy/env.d/20-<user-a>.env
+EnvironmentFile=/etc/caddy/env.d/20-<user-b>.env
+```
+
+各用户使用不同变量名，例如 `ZELLIJ_USER_A_SESSION_TOKEN`、`ZELLIJ_USER_B_SESSION_TOKEN`，路由引用对应名称。所有文件都进入同一个 Caddy 进程，同名变量会被后加载的值覆盖；分文件不会隔离变量。
+
+> 多个 `EnvironmentFile` 的读取与覆盖顺序见 [systemd v255 环境文件](https://github.com/systemd/systemd/blob/v255/man/systemd.exec.xml#L2793-L2800)。
+
+`import` 只导入 Caddy 配置，不加载 `.env`。新增用户时同时补齐 `EnvironmentFile=`、变量名和路由引用；权限、验证与更新方式见 [服务凭据与环境变量](#service-environment)，完整接入流程见 [共享节点配置](setup.md#user-provisioning)。
 
 ## <a id="admin-runtime-config"></a>Admin API 运行态配置
 
@@ -825,13 +852,12 @@ sudo systemctl restart caddy
 
 **坑：不能直接 `cp` 覆盖正在运行的二进制**——会报 `Text file busy`；从 `/tmp` 跨文件系统 `mv` 也会退化成 copy 同样失败。正解是**拷到目标同目录再用 `mv` 原子 rename**（rename 只换目录项，运行中的旧 inode 不受影响，重启才加载新的）：
 
+先从实际 unit / drop-in 核对环境来源，为新二进制提供当前配置所需的变量，再执行下面的验证与替换；方法与 dummy 值的适用范围见 [service 环境变量下的配置验证](#validate-service-environment)。
+
 ```bash
 B=/usr/bin/caddy.custom
-# 1) 先用新二进制验证当前配置兼容（大版本升级可能改 Caddyfile 语法 / 默认值）。
-#    {env.*} 占位符给 dummy 值（validate 只查能否解析，不查值是否合法）。
-GITHUB_CLIENT_ID=x GITHUB_CLIENT_SECRET=x \
-JWT_SHARED_KEY=0000000000000000000000000000000000000000000000000000000000000000 \
-  ./caddy.new validate --config /etc/caddy/Caddyfile --adapter caddyfile   # 出 "Valid configuration" 才继续
+# 1) 已按实际配置注入所需环境变量，再用新二进制验证兼容性。
+./caddy.new validate --config /etc/caddy/Caddyfile --adapter caddyfile   # 出 "Valid configuration" 才继续
 # 2) 备份 → 同目录暂存 → 原子 rename 覆盖忙文件 → 重启
 sudo cp -a "$B" "$B.bak-$(date +%Y%m%d-%H%M%S)"
 sudo cp caddy.new "$B.new" && sudo chmod +x "$B.new"
@@ -1089,7 +1115,7 @@ portal（`authenticate with <portal>` 那个站点）按 path 分发（`go-authc
 
 ### 配置 OAuth 环境变量
 
-按 [服务凭据与环境变量](#service-environment)配置环境文件、权限和 drop-in。OAuth 的 `/etc/caddy/caddy.env` 包含：
+OAuth 环境来源按实际 unit / drop-in 确定，权限和更新方式见 [服务凭据与环境变量](#service-environment)。下列变量名对应本文的 GitHub OAuth 示例，使用时与 Caddyfile 引用保持一致：
 
 ```dotenv
 GITHUB_CLIENT_ID=<你的ID>
@@ -1097,7 +1123,7 @@ GITHUB_CLIENT_SECRET=<你的密钥>
 JWT_SHARED_KEY=<你的JWT密钥>
 ```
 
-`JWT_SHARED_KEY` 使用足够长的随机值；显式固定签名密钥的作用见上文 `crypto key sign-verify` 说明。这里的 caddy-security 示例使用 `{env.*}`，轮换后须让新值进入 Caddy 主进程环境，再验证 OAuth 登录与授权。
+`JWT_SHARED_KEY` 使用足够长的随机值；显式固定签名密钥的作用见上文 `crypto key sign-verify` 说明。轮换方式见 [服务凭据与环境变量](#service-environment)，更新后验证 OAuth 登录与授权。
 
 ### GitHub OAuth 与 callback 踩坑经验
 
@@ -1487,7 +1513,7 @@ viewer 壳子是**外置文件**（Caddy 本地 file_server 直接 serve），�
 下面模板假设：
 
 - 边缘域名：`<S3_HOST>`（如 `s3.example.com`）
-- 后端 RustFS：`<RUSTFS_S3_API>`（如 mesh 内 `10.144.18.10:9000`）
+- 后端 RustFS：`<RUSTFS_S3_API>`（实际组网地址与 S3 API 端口）
 - 外置 viewer：`/srv/viewer/_viewer.html`
 
 ```caddyfile
@@ -1590,7 +1616,7 @@ S3 presigned URL **自带过期**（`X-Amz-Expires`，最长 7 天）。比 capa
 ### 不要做的事
 
 - **不要让 `:9001`（RustFS console）暴露到公网**——Caddy 反代只对 `:9000`（S3 API）做。
-- **不要绕过 forgejo / rclone sync 直接 mc cp 写桶**——下次 sync `--remove` 会把它抹掉，除非你**确实**在做“对齐桶到 main HEAD” 这种 hot-fix（见 `~/TiMidlY-projects/docs-share/.github/copilot-instructions.md` 的 rerun 覆盖事故说明）。
+- **不要绕过 forgejo / rclone sync 直接 mc cp 写桶**——下次 sync `--remove` 会把它抹掉，除非你**确实**在做“对齐桶到 main HEAD” 这种 hot-fix（项目约束见 `<docs-repo>/.github/copilot-instructions.md`）。
 - **不要对早 sha 的 forgejo Actions run 做 rerun**——`rclone sync --remove` 会按那个 sha 的 tree mirror，覆盖更新 commit 的产物。要重新对齐桶用：rerun **当前 HEAD 对应那条 run**，或 push 一个空 commit。
 
 ## <a id="session-holding"></a>上游会话代持
@@ -1710,17 +1736,9 @@ grep -nE 'changeConfig|rawCfgMu|ManageSync|tls.obtain|Shutdown|io\.Copy|streamin
 
 ### <a id="validate-service-environment"></a>service 环境变量下的配置验证
 
-**从独立 shell 启动的 `caddy validate` 不会自动继承 systemd 的服务环境**。先为验证进程提供所需变量；解析期变量与运行期变量的区别见 [服务凭据与环境变量](#service-environment)。`header_up` 的 `{env.*}` 在请求时才展开，validate 通过不代表它已取得有效凭据。
+**从独立 shell 启动的 `caddy validate` 不会自动继承 systemd 的服务环境**。先核对实际 unit / drop-in 的环境来源与 Caddyfile 引用，为验证进程提供所需变量；写法见 [服务凭据与环境变量](#service-environment)。正式应用前使用与服务一致的真实环境，要求 `validate` 退出 0，再测试实际业务。
 
-dummy 值仅用于隔离配置语法或模块加载问题，不能验证真实 OAuth 密钥、上游会话或运行期变量。下面是 caddy-security 的隔离示例；实际配置使用了其他变量时也须逐项核对：
-
-```bash
-GITHUB_CLIENT_ID=x GITHUB_CLIENT_SECRET=x \
-JWT_SHARED_KEY=0000000000000000000000000000000000000000000000000000000000000000 \
-  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-```
-
-> 输出出现 `adapted config to JSON` 只证明 Caddyfile 已完成语法适配；provision 阶段报错仍表示配置没有通过验证，不能据此执行 reload 或 restart。正式应用前应注入与 service 一致的环境并要求 `caddy validate` 退出 0；dummy 值只用于隔离语法问题。Caddy 官方也明确区分 adapt 与会加载、provision 所有模块的 validate，见 [validate 命令说明](https://github.com/caddyserver/website/blob/15ac087cfd9c21a53b2ddfa10359fdc63d5ec9b6/src/docs/markdown/command-line.md#L682-L693)。
+> 仅排查语法或模块加载时，可为实际配置中的变量提供符合模块格式要求的 dummy 值；它不验证真实登录或上游凭据。`adapted config to JSON` 只表示适配完成，仍须检查 validate 的退出码。validate 会加载并 provision 模块，见 [validate 命令说明](https://github.com/caddyserver/website/blob/15ac087cfd9c21a53b2ddfa10359fdc63d5ec9b6/src/docs/markdown/command-line.md#L682-L693)。
 
 ### 共享端口 `bind` 劫持白屏
 
@@ -1815,15 +1833,13 @@ reverse_proxy http://127.0.0.1:8082 {
 **取舍**：
 
 - `stream_timeout` **按龄一刀切**，到点连**活着的**长连接也砍——但 zellij / code-server 客户端会自动重连、服务端会话还在，代价可接受。文档类（livereload）给 `3h` 都够；终端类给 `24h` 更友好；图省事全 `24h`。
-- **全局 `grace_period` 给「旧 server 后台排空」设硬上界**（reload / 退出时旧 server 等活跃连接关闭的最长时长）。不设时默认 `0` = **永久等**（源码 `modules/caddyhttp/app.go` 就是这么写的，还专门警告「频繁 reload + 长 / 无限 grace period 会耗尽资源」）——于是每次 reload 都可能攒下一批永不退出的排空 goroutine。设个有界值即可：
+- **全局 `grace_period` 限制旧 HTTP server 等待请求结束的时间**，默认无限等待。它直接写在全局块中：
   ```caddyfile
   {
-      servers {
-          grace_period 10s
-      }
+      grace_period 10s
   }
   ```
-  它和 `stream_timeout` 层次不同、互补：`grace_period` 管「reload 时旧 server 整体排空的截止」，`stream_timeout` 管「单条流自身的最大存活」。平时靠 `stream_timeout` 防单条泄漏，reload 时靠 `grace_period` 兜底不让旧 server 赖着。**注意 `grace_period` 治泄漏累积，不等于让已卡死的 reload 立刻返回**（详见本节「`systemctl reload caddy` 卡住 / 永久挂起」）。
+  `grace_period` 控制 server 整体停止，`stream_timeout` 控制单条流的寿命；配置锁卡住仍按 [reload 配置锁阻塞](#reload-lock)处理。该写法已用 Caddy v2.11.2 adapter 验证，注册位置见 [全局选项源码](https://github.com/caddyserver/caddy/blob/v2.11.2/caddyconfig/httpcaddyfile/options.go)。
 - 更外科手术的补充（可选、**系统级**）：调小 `net.ipv4.tcp_retries2`（如 `8`，≈100s），让"对端不 ACK 的写"在内核层几分钟就失败——**只杀真死连接、不动活连接**，精准打 `waitWrite` 那种。代价：影响本机所有 TCP，非 Caddy 局部。
 - ~~`stream_close_delay`~~ 治的是 reload 时避免重连风暴（延迟关流），**方向相反、不治泄漏**，别混用。
 

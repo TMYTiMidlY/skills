@@ -21,7 +21,7 @@ OpenWrt 的设备支持、首次安装、镜像类型、升级恢复、BusyBox/p
 
 ## 共享 Linux 节点
 
-EasyTier、双层 Caddy / OAuth 和多用户 Zellij Web / VS Code Serve Web 的组合部署见 [references/setup.md](references/setup.md)。
+EasyTier、双层 Caddy / OAuth 和多用户 Web 服务的组合部署见 [references/setup.md](references/setup.md)。新增用户时读 [按用户组织配置](references/setup.md#routes)和 [接入流程](references/setup.md#user-provisioning)；UID 端口分配由 `software` skill 的 Service / systemd 主题说明。
 
 ## 远程接入
 

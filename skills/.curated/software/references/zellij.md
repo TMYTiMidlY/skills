@@ -65,6 +65,14 @@ default_shell "/bin/bash"
 
 `web_sharing "on"` 表示新建 session 默认通过 Web server 共享；只想在需要时显式共享可用 `"off"`，完全禁用共享可用 `"disabled"`。
 
+### <a id="web-service-listener"></a>模板服务与监听参数
+
+模板通过 `zellij -c <web.kdl> web --ip 127.0.0.1 --port <port>` 指定监听地址和端口时，命令行参数优先于配置文件；`web.kdl` 可省略重复的监听设置。端口的确定方式见 [按 UID 分配端口](service.md#uid-ports)。
+
+> Zellij v0.44.3 的参数选择见 [Web client 启动实现](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-client/src/web_client/mod.rs#L92-L100)。
+
+手动启动若省略 `--ip`、`--port`，则使用配置或默认值；同一 `web.kdl` 兼用于手动启动时，保留与模板一致的监听设置。每用户 Caddy 路由与代理凭据由 `network` skill 覆盖。
+
 ### 普通启动与 Web 共享前提
 
 输入 `zellij` 会启动普通 Zellij session；session 会持续存在，后续可用 `zellij attach` 恢复。这个命令本身不等同于打开 Web client。
