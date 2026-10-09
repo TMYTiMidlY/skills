@@ -47,6 +47,8 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
   - 关键词：`总是断网`、`ping 网关 100% 丢包但能上网`、`CoPP 控制平面限速`、`断窗时长恒定 ~5 分钟`、`分源 IP 绑定测试`、`WSL 内跑 EasyTier`
 - **user session bus 消失，`systemctl --user` 连不上** → `/run/user/1000/bus` 不见了而 manager 还活着；补 bus 无用，须对 manager 发 reexec 信号，代价是 running user services 可能中断 → [直达](references/wsl.md#user-bus-missing)
   - 关键词：`Failed to connect to bus`、`/run/user/1000/bus`、`DBUS_SESSION_BUS_ADDRESS`、`dbus-daemon --session`、`kill -RTMIN+25`、`running user services 断开`
+- **Git 引用和对象变成空文件，Zellij 配了 Caddy session token 仍登录失败** → 同次故障中 Windows 宿主 C 盘满，WSL 重启后需恢复 Git 文件并检查 Zellij token 数据库 → [案例](references/wsl-host-disk-full.md)
+  - 关键词：`C 盘满`、`WSL df 还有空间`、`Git 空对象`、`零字节引用`、`tokens.db`、`Caddy session_token`
 
 ### Linux（服务器 / 容器 / 工具链）
 
