@@ -11,17 +11,45 @@ AI 运行环境疑似在容器里、需要在容器内装工具 / 配置认证 /
 
 ## 容器感知
 
-先搞清楚自己在哪，错误地把容器当宿主会踩很多坑。
+先分别确认运行环境和目标路径的挂载属性。识别出容器，不等于已经知道它有哪些权限、哪些目录可写，或哪些文件会持久保存。
 
-- `uname -a` **不够用**：WSL2 也会显示 `microsoft-standard-WSL2`，不能据此判断是容器。
-- 判据看这两个：
-  - `/proc/1/cgroup` 在容器里通常是 `0::/` 或带 `docker/containerd` 字样。
-  - `mount | grep ' / '` 看到 `overlay` 就是容器。
-- Hermes Docker 后端的文件系统布局：`~/.hermes/` 在容器里是**只读 overlay 挂载**，直接写入会报 `Read-only file system`。可写路径优先选 `/workspace`（若启用了 cwd 挂载）或 `/root` 下的数据盘位置。**遇到写失败先问“我是不是在只读挂载下”，别盲目重试**。
+| 观察 | 能说明什么 | 不能据此断定什么 |
+|---|---|---|
+| `uname -a` 包含 `microsoft-standard-WSL2` | 当前使用 WSL2 内核 | 无法区分 WSL2 本身和运行在其中的容器 |
+| `/proc/1/cgroup` 为 `0::/` | 在当前 cgroup 视图中，PID 1 位于统一层级的根 | 宿主根 cgroup 和私有 cgroup namespace 都可能出现，不能单独证明是容器 |
+| cgroup 路径包含 `docker` / `containerd` | 有运行时命名线索 | namespace、运行时和配置变化可能隐藏这些名称；没有名称不等于不是容器 |
+| 根挂载使用 `overlay` | 根文件系统组合了上下层目录 | OverlayFS 是文件系统机制，不是容器身份证明；也不是所有容器都用它 |
+
+> cgroup namespace 会改变 `/proc/<pid>/cgroup` 中可见的路径，见 [Linux 6.12 · cgroup namespace](https://www.kernel.org/doc/html/v6.12/admin-guide/cgroup-v2.html#namespace)。OverlayFS 的上下层语义见 [Linux 6.12 · Overlay Filesystem](https://www.kernel.org/doc/html/v6.12/filesystems/overlayfs.html)。
+
+环境有 `systemd-detect-virt` 时，先用它收集容器线索，再结合当前平台提供的运行环境说明判断：
+
+```bash
+systemd-detect-virt --container
+cat /proc/1/cgroup
+findmnt --target / -o TARGET,FSTYPE,OPTIONS
+```
+
+`systemd-detect-virt` 未检出、命令不存在或执行失败时，保留“环境未确认”的结论，不直接当成宿主。嵌套环境中应区分容器和下层虚拟机，不根据内核名称跳过这一层。
+
+> 检测范围、嵌套环境与退出状态见 [systemd 257 · systemd-detect-virt](https://www.freedesktop.org/software/systemd/man/257/systemd-detect-virt.html)。
+
+写入失败时，检查**实际目标**所在的挂载，而不是只看根目录。以下命令中的目标应是已存在的目录；文件尚不存在时检查其父目录：
+
+```bash
+findmnt --target "$HOME" -o TARGET,SOURCE,FSTYPE,OPTIONS
+id
+```
+
+`Read-only file system` 和 `Permission denied` 是不同问题：前者查目标挂载的只读属性，后者还要查用户身份、目录权限及访问控制。不要通过换路径、提权或重挂载绕过既定权限边界；先确定允许写入的位置。
+
+在 Hermes Docker 后端曾遇到 `~/.hermes/` 只读的环境，但不能把它写成所有部署的固定布局。`/workspace`、`/root` 是否存在、可写、挂载到宿主或会随容器销毁，都以当前配置为准。容器内能写入某目录，并不证明该目录会持久化；持久化需要核对宿主侧的 volume / bind mount 或平台配置。
 
 ## 网络
 
-Hermes Docker 容器默认放通外网（可直连 `google.com`、GitHub 等）。若 curl 200 正常但 apt 一直失败，多半是镜像源对 apt 加了限制，别去怀疑基础网络。
+容器是否能访问外网由实际网络模式、代理、DNS 和平台策略决定，不预设 Hermes Docker 一定直连。
+
+某个 URL 返回 HTTP 200，只能证明当时那条请求成功，不能排除 apt 所用镜像域名、协议、代理或证书链的问题。按 apt 的实际错误继续分层：解析 / 连接 / TLS 错误查相应链路，HTTP 错误查对应源端点，签名错误查仓库密钥和发行版配置。没有对应证据时，不把故障归因于“镜像限制 apt”，也不通过关闭 TLS 或签名校验让安装勉强通过。
 
 ## 安装受限工具：以 gh CLI 为例
 
