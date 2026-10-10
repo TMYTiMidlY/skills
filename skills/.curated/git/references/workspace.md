@@ -1,4 +1,4 @@
-# 隔离工作区（worktree 与共享 clone）
+# 隔离工作区（worktree 与独立 clone）
 
 给「可能出错或需要并行的改动」开一个隔离工作区，避免 stash / reset 频繁切换。典型用途：
 尝试有失败风险的大改动、并行跑多个实验分支、用户明确说"在 worktree 里做"。
@@ -7,38 +7,44 @@
 
 ## 选型
 
-两个判据互相独立：**有没有 submodule** 决定用哪套机制，**要不要编译** 决定要不要把 submodule 拉下来。
+是否需要独立的仓库配置影响工作区机制，任务是否实际依赖子模块内容决定初始化范围；两者分别判断。
 
 ### <a id="mechanism-compare"></a>两套机制共享的层级不同
 
 它们不是「同一件事的两种写法」——省盘的效果相似，但共享的层级不一样：
 
-| | [`git worktree`](#git-worktree) | [共享 clone](#shared-clone) |
+| | [`git worktree`](#git-worktree) | [独立 clone](#shared-clone) |
 |---|---|---|
-| 本质 | **1 个仓库，N 个工作树** | **N 个独立仓库** |
-| objects | 共享（同一 gitdir） | 共享（alternates + 硬链接） |
+| 本质 | **1 个仓库，N 个工作树** | **各自维护 refs / config；对象是否独立另看借用方式** |
+| objects | 共享（同一对象库） | 可借用 alternates / 本地硬链接，也可用 `--dissociate` 结束借用 |
 | refs / 分支 | 共享 | [各自独立](#branch-flow) |
-| config | **共享** | 各自独立 |
+| config | 默认共享；另有 worktree-specific 配置扩展 | 各自独立 |
 | HEAD / index | 各自独立 | 各自独立 |
 | 同一分支两处 checkout | 拒绝（`already used by worktree at …`） | 可以 |
 | 适用 | 无 submodule 的仓库 | 有 submodule 的仓库 |
 
-worktree 共享**整个仓库**，clone 只共享**对象库**。`config` 那一行就是分水岭：submodule 的定位
-字段 `core.worktree` 正住在 config 里，是个**单值**字段，表达不了 N 个工作区——谁最后写谁赢。
-在 worktree 里跑一次 `git submodule update`，**主工作区**的 submodule 当场变成不可访问；
-共享 clone 里 `core.worktree` 是 per-clone 的，这场冲突在结构上不可能发生。
-所以不是「小心点就能绕过」的行为问题，选对机制才是解。
+worktree 默认共享仓库配置和对象库，clone 则有自己的 refs / config。独立 config 能避免
+下述共享 submodule gitdir 的 `core.worktree` 冲突，但**配置独立不等于对象独立**：
+`--reference` / `--shared` 会留下对源对象库的依赖。
 
-`refs / 分支` 那一行是共享 clone 的代价：分支不会自动同步，得手动搬一次（见[分支流转](#branch-flow)）；
+源仓库不会考虑借用方独有的 refs；源端删除分支、改写历史后，后续自动维护可能回收
+借用方仍需要的对象。因此默认用 `--reference ... --dissociate`：复制时利用参考仓库，
+完成后补齐所需对象、结束借用。只有明确管理源仓库生命周期和对象保留策略的短期工作区，
+才选择持续借用以省空间。
+
+> 依据：[Git 2.43 · clone 的 shared / reference / dissociate](https://git-scm.com/docs/git-clone/2.43.0)。
+> 本地 clone 还可能与源端并发修改发生竞争；`--dissociate` 不是并发备份或独立备份介质保证。
+
+`refs / 分支` 那一行是独立 clone 的代价：分支不会自动同步，得手动搬一次（见[分支流转](#branch-flow)）；
 换来的是两边能同时 checkout 同一分支。
 
 ### 仓库有没有 submodule
 
 ```bash
-[ -s .gitmodules ] && echo "有 submodule → 共享 clone" || echo "无 submodule → git worktree"
+[ -s .gitmodules ] && echo "有 submodule → 独立 clone" || echo "无 submodule → git worktree"
 ```
 
-有 submodule 默认走共享 clone——git 官方把这件事写进了 `git worktree` 文档的
+有 submodule 默认走独立 clone——git 官方把这件事写进了 `git worktree` 文档的
 [BUGS 一节](https://github.com/git/git/blob/v2.43.0/Documentation/git-worktree.txt#L513-L517)：
 
 > Multiple checkout in general is still experimental, and the support for submodules is
@@ -50,42 +56,44 @@ worktree 共享**整个仓库**，clone 只共享**对象库**。`config` 那一
 `git submodule update --init` 会走 worktree 私有的 submodule gitdir，主仓库不受影响；
 真正劫持主工作区的是"先给 submodule `git worktree add` 挂上共享 gitdir、再 `submodule update`"
 那条路。用 `worktrunk` 之类第三方 worktree CLI 建 worktree 不改变这个结论（底层就是
-`git worktree add`）。**默认仍选共享 clone**：私有 gitdir 让每个 worktree 各存一份 submodule 对象，
-且并发 session 里任何人走一次危险路径就波及全体工作区——共享 clone 是结构上出不了事，
-worktree 是"只要没人走错那条路"。实测矩阵见
+`git worktree add`）。**默认仍选独立 clone**：私有 gitdir 让每个 worktree 各存一份 submodule 对象，
+且并发 session 里有人走上述共享 gitdir 的路径，可能波及其他工作区。独立 clone 避开的是
+这类配置冲突；其对象借用风险仍需按[对象依赖](#object-lifetime)处理。实测矩阵见
 [worktree 私有的 submodule gitdir](submodule-hazards.md#private-gitdir)。
 
 > 机理、实测现场、五个坑、诊断与恢复流程见
 > [submodule 与 worktree 的冲突](submodule-hazards.md)。
 > 已有 worktree 必须就地修好时，那里也给了权宜之计。
 
-### 这次任务要不要 build
+### 任务依赖的 submodule 范围
 
-**判据只有一条：要不要编译。** 要就带上 submodule，不要就整个跳过。
+按任务实际会读取、测试或构建的内容决定初始化范围，而不是只看是否编译。文档主题、Python 测试数据和 CI 脚本也可能位于 submodule 中。
 
 | 任务类型 | 要 submodule 吗 |
 |---|---|
-| 改文档 / 配置 / 脚本 / CI / Markdown | **不要** |
-| 只跑 Python 测试、只读代码、只改注释 | **不要** |
-| 要 `make` / `ninja` / `cmake` / 链接依赖库 | 要 |
+| 改文档 / 配置 / 脚本 / CI / Markdown | 仅在依赖子模块内容时初始化相关路径 |
+| 只跑 Python 测试、只读代码、只改注释 | 检查导入、测试数据和所读代码的位置 |
+| 要 `make` / `ninja` / `cmake` / 链接依赖库 | 初始化构建实际依赖的路径 |
 
-SU2-Quantum 实测的成本差距：
+SU2-Quantum 原先采用持续借用对象的 clone 时，记录的成本差距：
 
 | | 耗时 | 真实增量占盘 |
 |---|---|---|
 | 带 `--recurse-submodules` | 1 分 37 秒 | +122 MB |
 | **不带**（docs 类任务） | **1.17 秒** | **+1 MB** |
 
-**83 倍时间、122 倍空间。** 而且不带 submodule 的 clone 完全够用——实测在其中
-`mkdocs build` 成功产出 62 个页面、git 操作正常。
+这次记录相差约 **83 倍时间、122 倍空间**；其中 `mkdocs build` 成功产出 62 个页面。
+这些是该项目和原先借用模式的结果，不能作为改用 `--dissociate` 后的耗时 / 占盘保证。
 
 > 真实教训：本文记录的那次事故，起因是为一次**纯 markdown 的 cherry-pick**
 > 无条件给 27 个 submodule 建了工作区并跑了 `git submodule update`，导致主工作区的
 > `externals/eigen` 被指向别的目录、`git submodule status` 报错。按需触发本可以完全避免。
 
-## <a id="shared-clone"></a>共享 clone（有 submodule 的仓库）
+## <a id="shared-clone"></a>独立 clone 与对象借用
 
 ### 建立
+
+以下示例假定主仓库当前位于一个已提交的分支；detached HEAD 或未出生分支需先明确基准提交，不把 `HEAD` 当作分支名。
 
 ```bash
 MAIN_REPO=$(git rev-parse --show-toplevel)          # 或见「动态推导主仓库路径」
@@ -95,18 +103,18 @@ NEW="$(dirname "$MAIN_REPO")/$(basename "$MAIN_REPO").clones/cli-clone-$TIMESTAM
 BRANCH_NAME="cli/clone-$TIMESTAMP"
 BASE=$(git -C "$MAIN_REPO" rev-parse --abbrev-ref HEAD)
 
-# 按需：要 build 才加 --recurse-submodules（见「这次任务要不要 build」）
-NEED_BUILD=0
-[ "$NEED_BUILD" = 1 ] && RECURSE=(--recurse-submodules) || RECURSE=()
+# 按需：任务依赖子模块内容时才递归初始化；也可之后按路径初始化
+NEED_SUBMODULES=0
+[ "$NEED_SUBMODULES" = 1 ] && RECURSE=(--recurse-submodules) || RECURSE=()
 
 mkdir -p "$(dirname "$NEW")"
 git -c submodule.alternateLocation=superproject \
     -c submodule.alternateErrorStrategy=info \
-    clone --reference "$MAIN_REPO" "${RECURSE[@]}" \
-          --branch "$BASE" "$MAIN_REPO" "$NEW"
+    clone --reference "$MAIN_REPO" --dissociate "${RECURSE[@]}" \
+          --branch "$BASE" "$MAIN_REPO" "$NEW" || exit 1
 
-cd "$NEW"
-git checkout -b "$BRANCH_NAME"
+cd "$NEW" || exit 1
+git checkout -b "$BRANCH_NAME" || exit 1
 # 别让 origin 指着本地仓库（主仓库没有 origin 时跳过）
 UP=$(git -C "$MAIN_REPO" remote get-url origin 2>/dev/null) && [ -n "$UP" ] && git remote set-url origin "$UP"
 # 再留一条指回主仓库的 remote——origin 改指上游后就够不着主仓库了（见「分支流转」）
@@ -115,14 +123,18 @@ git remote add local "$MAIN_REPO"
 
 要点：
 
-- `--reference "$MAIN_REPO"` 让超项目借用主仓库的 object store，几乎不复制
-- [`submodule.alternateLocation=superproject`](https://github.com/git/git/blob/v2.43.0/Documentation/config/submodule.txt#L96-L102)
-  让**每个 submodule**（含任意深度嵌套）自动把 alternates 指到
-  `$MAIN_REPO/.git/modules/<path>/objects`，省掉重新下载
-- [`alternateErrorStrategy=info`](https://github.com/git/git/blob/v2.43.0/Documentation/config/submodule.txt#L103-L110)
-  让个别 submodule 算不出 alternate 时退化成正常 clone 而不是整体失败
-- 之后**一切照常**：`git submodule update`、`git checkout`、`git pull` 想怎么用怎么用，
-  不需要任何特殊姿势，也不会影响主仓库
+- `--reference` 利用参考仓库减少获取成本，`--dissociate` 在 clone 完成时复制所需的借用对象。
+  代价是占用本地空间，不能继续承诺“几乎不复制”。
+- `submodule.alternateLocation=superproject` 允许 submodule 初始化时根据超项目的 alternates
+  推导参考位置；`alternateErrorStrategy=info` 允许推导失败时提示并退回正常 clone。
+  它们不负责保留源对象，也不是备份策略。
+- 每个 submodule 都是另一个仓库。完成递归初始化后，以及以后补初始化时，都应逐个检查
+  `git rev-parse --git-path objects/info/alternates` 指出的文件；仍有借用时按
+  [解除依赖](#detach-objects)处理，不凭超项目的一个 flag 推定所有子仓库都已独立。
+
+> submodule 参数见 [Git 2.43 · alternateLocation / alternateErrorStrategy](https://github.com/git/git/blob/v2.43.0/Documentation/config/submodule.txt#L96-L110)。
+> Git 2.47.3 的隔离样例中，上述递归 clone 完成后超项目与已初始化子仓库均没有活动 alternates，
+> 且 `git fsck --full` 通过；这是该版本样例，不替代其他版本和后续初始化的检查。
 
 命名约定（与 worktree 同构，只换容器目录名和前缀）：
 
@@ -138,15 +150,16 @@ git remote add local "$MAIN_REPO"
 一条命令就完成，而 `git clone` 只能 checkout 已有分支——所以先用 `--branch "$BASE"` 落在
 主仓库当前所在的分支上当起点，再 `git checkout -b "$BRANCH_NAME"` 开专属分支。
 
-clone 的 refs 独立，你**可以**直接在 `main` 上提交（worktree 会拒绝），但那样两边各有一条
-`main` 分头前进，[搬回主仓库](#branch-flow)时就撞车；开带时间戳的专属分支，`fetch` 回去
-永远是干净的 `[new branch]`。
+clone 的 refs 独立，在 clone 的 `main` 上提交会使两边同名分支分别前进。worktree 的默认限制
+是不能在两处同时 checkout 同一分支，并非禁止在 `main` 上提交。使用专属分支可减少命名冲突，
+但[搬回主仓库](#branch-flow)前仍应检查目标分支是否已经存在。
 
 ### <a id="branch-flow"></a>分支流转
 
-共享 clone 的 refs 独立，分支不会自动同步，成果得手动搬一次（为什么见
-[两套机制共享的层级不同](#mechanism-compare)）。因为对象早已共享，两个方向的 `fetch`
-都**不传输对象**，只更新 ref。
+独立 clone 的 refs 不会自动同步，成果需要显式传递（见[共享的层级](#mechanism-compare)）。
+alternates 是单向的对象查找依赖：借用方可能从源端读到已有对象，但借用方新建的对象不自动
+出现在源端。`fetch` 是否传对象取决于接收方缺什么，不能保证两个方向都只更新 ref。
+使用 `--dissociate` 后，同样按正常独立仓库的缺失对象进行传输。
 
 ```bash
 # 主仓库 → clone：clone 时只带到了当时的分支，之后主仓库新建的要靠 local 取
@@ -163,7 +176,7 @@ git -C "$MAIN_REPO" fetch "$NEW" "$BRANCH_NAME":"$BRANCH_NAME"
 
 ### 事后补 submodule
 
-事后才发现要 build？补一条即可，不用重来：
+任务后来需要 submodule 时可以补初始化；完成后同样检查新子仓库的对象依赖：
 
 ```bash
 cd "$NEW"
@@ -172,11 +185,12 @@ git -c submodule.alternateLocation=superproject \
     submodule update --init --recursive
 ```
 
-实测补做耗时 2 分 40 秒（比一开始就带 `--recurse-submodules` 的 1 分 37 秒略慢），
-终态完全一致：24 条 alternates、异常 0、增量 +122 MB、主仓库零污染。
-所以**默认不带是划算的**——大多数任务根本走不到补做这一步。
+原先持续借用模式下补做的记录为 2 分 40 秒（初始递归 clone 为 1 分 37 秒），
+24 条 alternates、异常 0、增量 +122 MB，未观察到主工作区配置变化。
+这并不证明借用方能承受源对象被回收；新初始化的子仓库有活动 alternates 时，继续执行
+[解除依赖](#detach-objects)。
 
-### 占盘与共享机制
+### <a id="object-lifetime"></a>占盘与对象依赖
 
 SU2-Quantum 实测（11 个顶层 + 16 个嵌套 submodule，主仓库 `.git` = 3.4G）：
 
@@ -189,31 +203,58 @@ SU2-Quantum 实测（11 个顶层 + 16 个嵌套 submodule，主仓库 `.git` = 
 > ⚠️ **别用 `du -sh <新clone>/.git` 量占盘**，它会把硬链接重复计数（这里报 2.9G，实际只多占
 > 122 MB）。正确的测量方式：`du -cs <主>/.git <新>/.git` 的合计减去 `du -s <主>/.git`。
 
-共享机制分两层，**保护级别不同**：
+原先实测的共享方式及其边界如下：
 
-| 层 | 机制 | 主仓库被删会怎样 |
+| 层 | 当时观察 | 能保留什么 |
 |---|---|---|
-| 超项目 | alternates **＋** pack 硬链接（8/8 个 pack `st_nlink=2`） | 硬链接保命，**不受影响** |
-| submodule | **仅** alternates（24 条，0 个硬链接） | **会坏** |
+| 超项目 | alternates ＋ pack 硬链接（8/8 个 pack `st_nlink=2`） | 已有硬链接对应的文件不会因源路径删除而消失；不保证后续借用的新对象也有本地副本 |
+| submodule | 仅 alternates（24 条，0 个硬链接） | 未复制的对象依赖源对象库持续可达且不被回收 |
 
-所以 submodule 的 objects 是纯借用，主仓库**不能删**、也不能 `git gc --prune` 掉被借用的对象；
-主仓库常规使用（commit / repack）没问题。要彻底断开这层依赖：
+“源仓库常规使用没问题”不是可靠保证：在源端变成不可达的对象，可能在后续正常命令触发的
+自动维护中被移除，源端不会检查其他 clone 的分支。源端已有 pack 的硬链接不能保护未来的
+所有对象；也不能把普通 clone 的配置隔离称为完整备份隔离。
+
+> Git 2.47.3 的隔离回归：按原 `clone --reference` 方式建副本，再从源端获取后续提交；
+> 源端移除该提交的引用、过期 reflog 并回收对象后，借用副本读取该提交失败。
+> 提前 `--dissociate` 的副本及先补齐对象再解除 alternates 的副本仍可读取。
+> 回收操作只用于一次性测试仓库，不应照搬到实际主仓库来“验证安全”。
+
+### <a id="detach-objects"></a>解除已有对象借用
+
+在源对象仍完整可读、没有并发回收且本地空间充足时，先复制当前仓库需要的对象，
+再移走 alternates，最后在没有该依赖的情况下检查完整性。不要先移走 alternates，也不要
+用 `repack --local` 代替这里的 `repack -a`。
 
 ```bash
-cd "$NEW"
-git repack -a -d && rm -f .git/objects/info/alternates
-git submodule foreach --recursive 'git repack -a -d && rm -f "$(git rev-parse --git-dir)/objects/info/alternates"'
+cd "$NEW" || exit 1
+git repack -a || exit 1
+alt=$(git rev-parse --git-path objects/info/alternates) || exit 1
+if [ -f "$alt" ]; then trash-put "$alt" || exit 1; fi
+git fsck --full || exit 1
+
+git submodule foreach --recursive '
+    git repack -a &&
+    alt=$(git rev-parse --git-path objects/info/alternates) &&
+    { [ ! -f "$alt" ] || trash-put "$alt"; } &&
+    git fsck --full
+' || exit 1
 ```
 
-代价是占回全量空间（本例约 3.4G）。
+`foreach` 只访问已 checkout 的子模块，不覆盖未初始化或失效注册的仓库；以后初始化仍需检查。
+这里也只解除 alternates 依赖，不承诺恢复已经丢失的对象、保存不可达历史，或取消 partial clone
+的 promisor 远端依赖。某一步失败就停止，不继续清理源端；保留日志以便从其他完整副本恢复。
+
+> `repack -a` 解除借用的依据见 [Git 2.43 · git-clone](https://git-scm.com/docs/git-clone/2.43.0)。
+> 空间会随实际复制的对象增加；历史案例的全量对象约 3.4G，仅作该环境的容量参考。
 
 ### 拆除
 
 ```bash
-rm -rf "$NEW"        # 独立 clone，直接删就行，没有注册残留要清
+trash-put "$NEW"     # 核对未提交内容和未传出的分支后，移至回收站
 ```
 
-分支活在这个 clone 自己的仓库里，删目录即一并消失——先按[分支流转](#branch-flow)把成果搬走或推上游。
+分支保存在这个 clone 自己的仓库里。移走目录前，检查未提交内容、未传出的分支，
+并按[分支流转](#branch-flow)转移成果；不要依赖别的仓库“已经共享对象”来保证这些成果存在。
 
 ## <a id="git-worktree"></a>git worktree（无 submodule 的仓库）
 
@@ -297,7 +338,7 @@ submodule 的 `.git/modules/**/worktrees/` 里都有一份），只能靠事后 
 
 它**不**改变的：
 
-- **选型不变**：有 submodule 仍默认[共享 clone](#shared-clone)。它的官方 reference 全文**零次**提到 submodule，
+- **选型不变**：有 submodule 仍默认[独立 clone](#shared-clone)。它的官方 reference 全文**零次**提到 submodule，
   实测也确认它对 submodule 不做任何处理，[劫持](submodule-hazards.md#core-worktree-hijack)照样发生。
 - **省下载靠的仍是 alternates**：worktree 那条路每个工作区各存一份 submodule 对象，与用不用 `wt` 无关。
 - **命名约定不同**：默认路径模板是兄弟目录 `<仓库名>.<分支名>`，与本文的
