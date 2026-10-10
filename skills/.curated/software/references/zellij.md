@@ -246,7 +246,7 @@ WantedBy=multi-user.target
 
 如需新增端口，可使用独立 config，或在配置中显式设置 `web_server_port <PORT>`。反代前应先按[令牌兑换流程](#web-session-tokens)对该端口重新生成并登录，再按[反向代理接入约束](#proxy-access)使用新的 `session_token`。
 
-重启这个 service 前先掂量代价：systemd 默认 `KillMode=control-group`，一重启会杀掉该 service cgroup 内的**所有**进程——不只是 web-server，还有它下面挂的每个会话/pane/agent。而且多数 `web.kdl` 改动其实不需要重启（新开会话即生效），详见 [web.kdl 改动的生效时机](#reload-timing)。
+重启这个 service 前先掂量代价：systemd 默认 `KillMode=control-group`，一重启会杀掉该 service cgroup 内的**所有**进程——不只是 web-server，还有它下面挂的每个会话/pane/agent。键位与主题等会话配置可自动重载，先按 [web.kdl 改动的生效时机](#reload-timing)核对修改项与活动配置路径，再决定是否需要重启。
 
 ### Windows：NSSM / 登录脚本 / --daemonize
 
@@ -285,29 +285,33 @@ keybinds {
 }
 ```
 
-### <a id="reload-timing"></a>web.kdl 改动的生效时机（新会话重读 vs 重启 web server）
+### <a id="reload-timing"></a>web.kdl 改动的生效时机
 
-判断某项 `web.kdl` 改动要不要重启 web-server service，取决于该配置是「web-server 进程启动时读一次并常驻内存」还是「每次新建会话时由 server 端从磁盘重读」。源码依据：zellij 源码 @ commit [`68362d4cf`](https://github.com/zellij-org/zellij/tree/68362d4cf)（main，略超前 0.44.1；web 配置装载架构与在跑的 0.44.3 一致）。
+Zellij 自 **0.41.0（2024-11-04）** 起支持配置文件自动重载，修改可影响正在运行的会话。判断 `web.kdl` 改动如何生效，先确认活动会话实际读取的文件，再区分会话可重配置字段与 Web server 启动参数。
 
-**前提：zellij 不监听（watch）配置文件。** 没有 inotify/文件监视，外部编辑器改 `web.kdl` 不会被自动发现——只在下面这些时机才被读到。（仓库里的 `watch` 代码是**插件**的文件系统监视，与主配置无关。）
+> [0.41.0 发布说明](https://github.com/zellij-org/zellij/releases/tag/v0.41.0)明确列出 Configuration live reloading。以下行为按 **0.44.3 源码**核对；浏览器不同连接场景尚未逐项实测，不将所有配置项概括为立即生效。
 
-**① 无需重启 service，新开一个 session 即生效**（改完 `web.kdl`，在 Web 里新建会话就带上新配置；已存在的会话不受影响、也不会变）：
+**① 活动会话的键位与主题：自动重载。**
 
-- `keybinds`、`themes` / `theme`、`plugins` / `load_plugins`、`env`、layout 等**会话侧**配置。
-- 机制：浏览器新建会话 → server 收到 `FirstClientConnected` → `CliAssets::load_config_and_layout()` → `Config::from_path(web.kdl)` **当场从磁盘重读**（[`cli_assets.rs` `load_config_and_layout`](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-utils/src/input/cli_assets.rs#L28)、[`lib.rs` `FirstClientConnected`](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-server/src/lib.rs#L934)）。
-- 附着到**已存在**会话（`AttachClient`）走的是 `session_configuration.saved_config`，只 merge 运行时 `options`，**不重读磁盘全量配置**（[`lib.rs` `AttachClient`](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-server/src/lib.rs#L1127)）。所以老会话/老 tab 不会长出新键位，必须新建会话。
+- 会话读取 `web.kdl` 且文件监视正常时，外部编辑器修改合法的 `keybinds`、`theme` / `themes` 配置，也会更新现有会话；无需专门新建 session 或重启 service。若该会话读取的是 `config.kdl` 或另一份 `-c` 文件，应修改对应文件。
+- 0.44.3 用 `PollWatcher` 每秒检查活动配置文件；重新解析成功后，经 `ConfigWrittenToDisk` 更新保存的会话配置，再把键位与主题变化传播到已连接客户端。
 
-**② 必须重启 `zellij … web`（这个 service）才生效：**
+> 源码：[配置文件监视与重新解析](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-utils/src/input/config.rs#L442-L514)、[会话启动文件监视](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-server/src/lib.rs#L2167-L2175)、[配置更新通知](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-server/src/lib.rs#L1710-L1734)、[键位与主题传播](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-server/src/lib.rs#L404-L445)。
 
-- **监听相关**：`web_server_ip`、`web_server_port`、`web_server_cert`、`web_server_key`、`enforce_https_for_localhost`——只在 web-server 启动时读一次，用来 bind TCP listener + 建 TLS（[`web_client/mod.rs` 启动路径](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-client/src/web_client/mod.rs#L95-L175)）。
-- **浏览器外观 `web_client { }`**（theme / font / cursor / base_url 等）：新浏览器连进来时下发的首个 `SetConfig` 取自 `state.config`（`SetConfigPayload::from(&*state.config.lock())`）——即 **web-server 启动时装载、常驻内存的那份**（[`websocket_handlers.rs`](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-client/src/web_client/websocket_handlers.rs#L54)；base_url 见 [`http_handlers.rs`](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-client/src/web_client/http_handlers.rs#L40)）。改 `web_client` 外观，即使新开会话也不变，必须重启 service。
+**② Web 浏览器外观：可通过会话通知更新，按连接场景核验。**
 
-**③ 应用内「重配置」会热更新，但外部编辑触发不了：**
+- 活动 Web 会话监视同一配置文件并触发 `ConfigFileUpdated` 后，Web client 会重读文件，把新的 `SetConfig` 推送给已连接浏览器。因此，`web_client` 外观也存在热更新路径。
+- 新浏览器连接的首个 `SetConfig` 仍取自 Web server 的 `state.config`。只有独立 Web server、没有监视该文件的活动会话时，以及新连接的初始外观是否一致，应分别核验；字体、光标、主题等外观字段与 `base_url` 等路由设置也应按具体字段判断作用范围。
 
-- 存在一条热重载链路：`ServerToClientMsg::ConfigFileUpdated` → web-server 重读磁盘（`Config::from_path`）并把新主题/外观实时推给所有浏览器（[`server_listener.rs`](https://github.com/zellij-org/zellij/blob/68362d4cf/zellij-client/src/web_client/server_listener.rs#L203)）。
-- 但它由 `ServerInstruction::ConfigWrittenToDisk` / `Reconfigure` 触发——即 **zellij 自己在应用内写配置 / 重配置**（如 Configuration 设置界面保存）时才发；**外部编辑器改 `web.kdl` 不会触发**（无文件监视）。
+> 源码：[收到会话通知后重读并推送浏览器配置](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-client/src/web_client/server_listener.rs#L198-L247)、[新连接首次下发配置](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-client/src/web_client/websocket_handlers.rs#L49-L59)。
 
-> 实务：给 Web 端加 `Alt u`/`Alt d` 这类 `keybinds` 改动属于 ①，**不用重启 service**——在跑着多个 agent 会话的机器上尤其重要（重启会连坐杀掉 cgroup 内所有会话和 agent，见上「作为后台服务运行」的 `KillMode` 说明）。直接在 Web 里新建一个 session 即可用上新键位，老会话保持不动。只有改「监听端口 / 证书 / IP」或「`web_client` 浏览器外观」才必须重启。
+**③ 监听地址、端口与 TLS：重启 Web server 才生效。**
+
+`web_server_ip`、`web_server_port`、`web_server_cert`、`web_server_key`、`enforce_https_for_localhost` 在 Web server 启动时用于绑定 TCP listener、读取证书和选择 HTTP / HTTPS。配置重载不会重新绑定监听器；命令行指定的地址与端口仍优先于配置文件。
+
+> 源码：[Web server 启动与监听器创建](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-client/src/web_client/mod.rs#L92-L175)。
+
+实务：只改键位或主题时，先用 `zellij -c <file> setup --check` 校验语法，确认活动会话读取该文件，再核对界面和按键效果。layout、插件启动项、`env` 等配置按各自加载时机判断，已有进程的状态需另行核对。需要重启 Web service 时，先检查 `KillMode` 与会话归属，评估会话和 pane 被连带终止的风险。
 
 ## pane 大小相关的操作（全屏 / resize / stacked_resize / 边框留白）
 

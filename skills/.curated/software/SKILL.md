@@ -29,7 +29,7 @@ pixi 自身的操作模型：`pixi global` 的真相源是清单 `~/.pixi/manife
 
 ## Zellij
 
-Zellij Web client、HTTPS 证书要求、login token/session token、应用侧会话与反代接入约束、`default_shell`、Web/xterm 主题分层、给特定软件写 OSC 10/11 颜色 wrapper、Codex 输入框颜色、鼠标选区颜色、pane 大小相关操作（全屏 `Ctrl p`→`f`、resize 模式 `Ctrl n`、`stacked_resize` 只由无方向的 `+`/`=` 与 `-` 触发、边框/留白开关 `Ctrl p`→`z`（`TogglePaneFrames`，误触致内容贴边无留白、再按一次恢复））、pane 布局排列（swap layout 切换 `Alt [`/`Alt ]` 及随 pane 数自动跳档、新建普通 pane vs stacked pane `Ctrl p`→`s`、焦点在 stack 内新建即并入、`MovePane` 只对调不增长 stack）、keybinds 合并块 vs `clear-defaults` 全量（合并块只写增量、`unbind` 撤默认键，避免给动作加新键后两键都触发）、改 `web.kdl` 后哪些要重启 web service 哪些新开会话即生效、与 WSL systemd service 写法见 [references/zellij.md](references/zellij.md)。公网统一认证、代理 Cookie 注入和凭据更新转用 `network` skill 的上游会话代持主题。
+Zellij Web client、HTTPS 证书要求、login token/session token、应用侧会话与反代接入约束、`default_shell`、Web/xterm 主题分层、给特定软件写 OSC 10/11 颜色 wrapper、Codex 输入框颜色、鼠标选区颜色、pane 大小相关操作（全屏 `Ctrl p`→`f`、resize 模式 `Ctrl n`、`stacked_resize` 只由无方向的 `+`/`=` 与 `-` 触发、边框/留白开关 `Ctrl p`→`z`（`TogglePaneFrames`，误触致内容贴边无留白、再按一次恢复））、pane 布局排列（swap layout 切换 `Alt [`/`Alt ]` 及随 pane 数自动跳档、新建普通 pane vs stacked pane `Ctrl p`→`s`、焦点在 stack 内新建即并入、`MovePane` 只对调不增长 stack）、keybinds 合并块 vs `clear-defaults` 全量（合并块只写增量、`unbind` 撤默认键，避免给动作加新键后两键都触发）、`web.kdl` 自动重载的版本、活动配置路径、浏览器更新与监听参数重启边界、与 WSL systemd service 写法见 [references/zellij.md](references/zellij.md)。公网统一认证、代理 Cookie 注入和凭据更新转用 `network` skill 的上游会话代持主题。
 
 ## uv（Python 包 / 环境管理器）
 
