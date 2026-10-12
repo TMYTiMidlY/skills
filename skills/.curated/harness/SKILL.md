@@ -93,6 +93,7 @@ MCP 2025-06-18 的 host/client/server 架构同样把 context aggregation、安�
 - [模型切换与上下文缓存](references/model-switch-caching.md)：对话中途换模型时 prompt caching 为何必然失效——缓存的是与模型架构强绑定的 KV Cache，`opusplan` 自动切换与手动 `/model` 切换代价相同；含 `opusplan` 下 Opus 被限为 200k 的推测、按 2026-04 定价快照推算的切换代价构成（切回旧模型最贵、输出差价补不回缓存惩罚），以及"质量分层而非省钱方案"的定位。
 - [Codex 运行时笔记](references/codex.md)：app-server 的进程内和独立运行形态、普通 CLI 在独立服务运行或未运行时的连接行为、服务启动、进程归属、程序升级和管理命令的执行环境；另含[桌面端 projectless 目录与提示词](references/codex.md#desktop-projectless)（原始函数、完整 prompt 和开源证据边界）、`/usage` 云端账号活动图、额度窗口及第三方客户端的统计边界，[上下文窗口、自动压缩与自定义压缩提示词对照实测](references/codex.md#context-compaction)，协作模式、内置生图工具和订阅登录凭据。
 - [Codex 订阅生图接入](references/image-gen.md)：先区分生成、编辑和请求提交方式，再说明遮罩制作、接口支持及模型参数，独立对照代表项目的接入方式和验证范围；重点说明脚本直接调用 CPA、DSH 通过生图插件或 MCP 工具连接 CPA，含生成、编辑及遮罩请求示例、独立实例／Home 模式的并发行为，以及精简的结果处理和验收说明。
+- [Codex 会话监控与远程推进](references/codex-monitoring.md)：无人值守 Codex 会话的观察与干预——rollout 存档判读（mtime + 尾部事件类型表、`task_complete`/`turn_aborted`/`token_count` 含 `rate_limits` 遥测、杀进程后的半截事件流、多代理 `agent_message` 密文与明文状态文件对策、grep 回执 ID 无效应 grep 消息文本）；`codex queue --thread` 三场景语义（空闲无客户端持久挂起、进行中排队不打断、回合结束自动投递；SQLite 持久化、上限 100、必须走共享 app-server）；`codex exec resume` 冲入挂起消息、`thread-store conflict` 写锁与进程死后接管、`--skip-git-repo-check` 与退出码语义（101=Rust panic）；限流退避与监控守则（现场阈值、长工具静默期、委派互等假待命、明确指令优于裸"继续"）。源码锁定 `rust-v0.162.1`，🔬 实测同版本。
 
 ## Claude Code / Codex 横向对照
 
