@@ -365,6 +365,25 @@ zellij 中几个改变 pane 大小 / 占比 / 边框显示的操作，均为 **�
 
 Zellij 0.44.3 实测：当前 Web client 已确认 `Ctrl+p`、`Ctrl+n`、`Alt+[` / `Alt+]`、`Alt+n` 以及 resize 模式的 `h/j/k/l`、`=`/`+` 都能正常进入 Zellij，未被浏览器截获；`h/j/k/l` 的实际方向是左/下/上/右，压到底不会自动 stack，而 `=`/`+` 会触发自动 stack。两者差异来自 Zellij 的动作分流规则，不是浏览器吃键。不同浏览器若某组合完全没反应，才考虑浏览器快捷键冲突。
 
+## <a id="codex-web-clipboard"></a>Codex 的选中复制
+
+WSL2、Codex 0.162.1、Zellij 0.44.3 Web client 的一次排查中，Codex 显示 `Copied`，实际文字却只进入 Windows 宿主剪贴板；Zellij 自己的拖选复制正常。可按界面需求选择：
+
+- **交给 Zellij 处理拖选**：在实际使用的 `$CODEX_HOME/config.toml` 的 `[tui]` 段设置 `alternate_screen = "never"`，重开 Codex。界面变为普通终端滚动输出，主界面拖选可复制到浏览器；`/copy` 仍走 Codex 后端。
+- **保留 Codex 全屏并转发复制**：在 Zellij 会话实际读取的 `config.kdl` / `web.kdl` 根级加入 `env` 块，与 `default_shell` 同级：
+
+```kdl
+env {
+    SSH_TTY "/dev/tty"
+}
+```
+
+新开读取该配置的会话 / pane，用 `echo "$SSH_TTY"` 确认值为 `/dev/tty`，再正常启动 Codex。原有 shell 的环境不会自动更新。`default_shell` 保持 shell 可执行文件路径，环境变量放在 `env` 块中；这会影响该配置启动的所有 pane，其他程序也可能据此识别为 SSH 环境。只给 Codex 设置变量可缩小作用范围。
+
+Codex 检测到变量存在后，会额外发送 OSC 52 复制指令，经 Zellij Web 到达浏览器剪贴板。上述版本的独立 Chromium 测试验证了该转发路径的拖选、中文与 `/copy` 菜单；Zellij `env` 写法通过 0.44.3 配置解析检查。复制后端的说明见 `harness` skill 的 Codex 运行时笔记。
+
+> 来源：[Zellij 根级环境变量解析](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-utils/src/kdl/mod.rs#L4884-L4887)、[环境变量键值](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-utils/src/kdl/mod.rs#L4470-L4489)、[默认 shell 路径](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-utils/assets/config/default.kdl#L269-L273)、[Codex 复制转发条件](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/tui/src/clipboard_copy.rs#L215-L234)。
+
 ## Zellij Web 浅色主题与终端颜色
 
 以下是 Zellij Web 浅色化中确认过的事实（最初在 `0.44.0` 排障，背景色那部分已在 `0.44.3` 由官方修复，见 [终端默认背景（OSC 11）](#osc11-background)）。遇到类似问题先按层级判断，不要直接改 `.bashrc`。

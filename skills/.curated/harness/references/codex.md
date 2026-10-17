@@ -1,6 +1,6 @@
 # Codex 运行时笔记
 
-本篇介绍 Codex app-server 的运行形态、CLI 启动行为、进程管理、桌面端 projectless 会话的目录与提示词、用量与额度统计、上下文配置、协作模式、内置生图工具和订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
+本篇介绍 Codex app-server 的运行形态、CLI 启动行为、进程管理、终端显示与复制、桌面端 projectless 会话的目录与提示词、用量与额度统计、上下文配置、协作模式、内置生图工具和订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
 
 ## <a id="app-server-lifecycle"></a>Codex app-server
 
@@ -104,6 +104,27 @@ codex app-server daemon version
 使用 systemd 通过 `bash -c` 执行 app-server 管理脚本时，脚本文本会先经过 systemd 的参数处理，再交给 Bash。启用环境替换时，`${…}` 可能被提前展开；调用方加单引号不能阻止这一层处理。把复杂脚本放进独立文件、只向服务管理器传递文件路径，可以减少多层展开的干扰。
 
 > 来源：[systemd 命令参数的环境替换](https://github.com/systemd/systemd/blob/v239/man/systemd.service.xml#L1008-L1067)。内联脚本需要核对每层转义，关闭展开的选项也应先确认可用性。通用服务管理知识归 `software` skill。
+
+## <a id="terminal-clipboard"></a>终端界面与 Zellij Web 复制
+
+WSL2 中使用 Codex 0.162.1、Zellij 0.44.3 Web client 时，曾出现 Codex 显示 `Copied`，浏览器剪贴板却没有更新：Codex 捕获拖选后，调用 PowerShell 复制到 Windows 宿主；宿主复制成功、且未检测到 SSH / tmux 环境时，就结束复制。Zellij 自己的拖选复制仍可用。
+
+> 源码：[复制路由与 SSH 检测](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/tui/src/clipboard_copy.rs#L167-L247)、[WSL PowerShell 复制](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/tui/src/clipboard_copy.rs#L277-L326)。以下方法在上述环境中以独立 Chromium 会话实测，含中文复制。
+
+**普通终端界面**：在实际使用的 `$CODEX_HOME/config.toml`（默认 `~/.codex/config.toml`）已有的 `[tui]` 段中设置，重开 Codex：
+
+```toml
+[tui]
+alternate_screen = "never"
+```
+
+备用屏幕用于全屏重绘、退出后恢复 shell 画面；该版本 Codex 将全屏界面与主界面鼠标捕获关联。设为 `never` 后，普通终端滚动输出的拖选交给 Zellij，浏览器复制恢复；`/copy` 仍使用 Codex 的复制后端。使用独立 `CODEX_HOME` 的启动入口需分别配置。
+
+> 来源：[备用屏幕配置](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/core/config.schema.json#L4547-L4554)、[全屏状态与鼠标捕获](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/tui/src/tui.rs#L761-L806)。
+
+**保留全屏界面**：让 Codex 启动时继承 `SSH_TTY=/dev/tty`。该版本只检查 `SSH_TTY` 是否存在，随后即使宿主复制成功，也会通过 OSC 52 向终端转发复制请求；Zellij Web 再写入浏览器所在设备的剪贴板。实测拖选与 `/copy` 菜单均可用。这里借用 SSH 环境检测，设置变量本身不会建立 SSH 连接；`/dev/tty` 是当前控制终端的设备路径。
+
+变量可仅在启动 Codex 时设置，也可通过 Zellij 的 `env` 块统一注入；配置位置及作用范围见 `software` skill 的 Zellij 章节。
 
 ## <a id="desktop-projectless"></a>桌面端 projectless 会话的目录与提示词
 
