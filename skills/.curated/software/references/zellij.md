@@ -369,8 +369,8 @@ Zellij 0.44.3 实测：当前 Web client 已确认 `Ctrl+p`、`Ctrl+n`、`Alt+[`
 
 WSL2、Codex 0.162.1、Zellij 0.44.3 Web client 的一次排查中，Codex 显示 `Copied`，实际文字却只进入 Windows 宿主剪贴板；Zellij 自己的拖选复制正常。可按界面需求选择：
 
-- **交给 Zellij 处理拖选**：在实际使用的 `$CODEX_HOME/config.toml` 的 `[tui]` 段设置 `alternate_screen = "never"`，重开 Codex。界面变为普通终端滚动输出，主界面拖选可复制到浏览器；`/copy` 仍走 Codex 后端。
-- **保留 Codex 全屏并转发复制**：在 Zellij 会话实际读取的 `config.kdl` / `web.kdl` 根级加入 `env` 块，与 `default_shell` 同级：
+- **交给 Zellij 处理拖选**：在实际使用的 `$CODEX_HOME/config.toml` 的 `[tui]` 段设置 `alternate_screen = "never"`，重开 Codex。界面变为普通终端滚动输出，主界面拖选可复制到浏览器；`/copy` 仍走 Codex 后端。代价是 Codex 主聊天的 PageUp/PageDown 历史滚动停用，透传这些按键的 `Alt u`/`Alt d` 也不再滚动主聊天；机制与源码见 `harness` skill 的 Codex 运行时笔记。
+- **保留 Codex 全屏并转发复制**：移除 Codex 的 `alternate_screen = "never"` 恢复默认，再在 Zellij 会话实际读取的 `config.kdl` / `web.kdl` 根级加入 `env` 块，与 `default_shell` 同级：
 
 ```kdl
 env {
@@ -378,7 +378,7 @@ env {
 }
 ```
 
-新开读取该配置的会话 / pane，用 `echo "$SSH_TTY"` 确认值为 `/dev/tty`，再正常启动 Codex。原有 shell 的环境不会自动更新。`default_shell` 保持 shell 可执行文件路径，环境变量放在 `env` 块中；这会影响该配置启动的所有 pane，其他程序也可能据此识别为 SSH 环境。只给 Codex 设置变量可缩小作用范围。
+新开读取该配置的会话 / pane，用 `echo "$SSH_TTY"` 确认值为 `/dev/tty`，再正常启动 Codex。原有 shell 的环境不会自动更新；需要时可在该 shell 执行 `export SSH_TTY=/dev/tty`，供之后启动的 Codex 继承，无须为此重启 Zellij 服务或关闭现有会话。已经运行的 Codex 不会追溯继承新环境。`default_shell` 保持 shell 可执行文件路径，环境变量放在 `env` 块中；这会影响该配置启动的所有 pane，其他程序也可能据此识别为 SSH 环境。只给 Codex 设置变量可缩小作用范围。
 
 Codex 检测到变量存在后，会额外发送 OSC 52 复制指令，经 Zellij Web 到达浏览器剪贴板。上述版本的独立 Chromium 测试验证了该转发路径的拖选、中文与 `/copy` 菜单；Zellij `env` 写法通过 0.44.3 配置解析检查。复制后端的说明见 `harness` skill 的 Codex 运行时笔记。
 

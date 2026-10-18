@@ -122,7 +122,11 @@ alternate_screen = "never"
 
 > 来源：[备用屏幕配置](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/core/config.schema.json#L4547-L4554)、[全屏状态与鼠标捕获](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/tui/src/tui.rs#L761-L806)。
 
-**保留全屏界面**：让 Codex 启动时继承 `SSH_TTY=/dev/tty`。该版本只检查 `SSH_TTY` 是否存在，随后即使宿主复制成功，也会通过 OSC 52 向终端转发复制请求；Zellij Web 再写入浏览器所在设备的剪贴板。实测拖选与 `/copy` 菜单均可用。这里借用 SSH 环境检测，设置变量本身不会建立 SSH 连接；`/dev/tty` 是当前控制终端的设备路径。
+**翻页取舍**：按 Codex 0.163.0 源码，`alternate_screen = "never"` 会关闭主界面由 Codex 管理的历史视图，即使 `fullscreen_transcript = true` 也一样；主聊天的 PageUp/PageDown 历史滚动处理随之停用。Zellij 用 `Write` 将 `Alt u`/`Alt d` 映射成 PageUp/PageDown 时，只是在向 Codex 发送按键，不会改为滚动 Zellij 的终端历史。保留 `never` 时，可用 Zellij 自身的滚动操作，或先按 `Ctrl+T` 打开独立的历史查看界面再翻页。
+
+> 来源：[备用屏幕策略](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/tui/src/lib.rs#L2172-L2193)、[启动时选择历史视图](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/tui/src/lib.rs#L1952-L1967)、[历史视图归属条件](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/tui/src/transcript_mode.rs#L12-L23)。这是源码核验；Ctrl+T 的查看界面与主聊天使用不同的输入路径，禁用备用屏幕不等于所有界面都不能翻页。
+
+**保留全屏界面**：若还要主聊天的 PageUp/PageDown 翻页，移除 `alternate_screen = "never"` 恢复默认，再让 Codex 启动时继承 `SSH_TTY=/dev/tty`。该版本只检查 `SSH_TTY` 是否存在，随后即使宿主复制成功，也会通过 OSC 52 向终端转发复制请求；Zellij Web 再写入浏览器所在设备的剪贴板。实测拖选与 `/copy` 菜单均可用。这里借用 SSH 环境检测，设置变量本身不会建立 SSH 连接；`/dev/tty` 是当前控制终端的设备路径。
 
 变量可仅在启动 Codex 时设置，也可通过 Zellij 的 `env` 块统一注入；配置位置及作用范围见 `software` skill 的 Zellij 章节。
 
