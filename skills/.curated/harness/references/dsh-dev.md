@@ -166,11 +166,11 @@ flowchart LR
 | 修改 Profile/Home `cordis.patch.yml` | package 源码不变 | patch 持久改变 | 有效修改通常热重载对应 entry | 回退 patch 即可；无需改 package |
 | `dsh --dump-config` | 不变 | 不变 | 不启动应用或 Plugin，也不通知已运行进程 | 只验证配置合成，不能替代实际启动 |
 | `pnpm pack` 或等价打包 | 新增可审查的安装产物 | 不变 | 不变 | 检查 tarball 后再装进干净 Profile |
-| `dsh plugin ... add` | 安装 npm、Git、目录或 tarball package | 写依赖、lockfile 和 Bundle 列表 | 已运行进程保持原 Bundle 集合 | 重启目标 Profile 后验证 |
-| `dsh plugin ... update/remove` | 更新或移除已安装 package | 重写依赖和 Bundle 列表 | 已运行进程保持原 Bundle 集合 | 重启后切换；回滚 package 版本需再次安装旧版本 |
+| `dsh plugin ... add` | 安装 npm、Git、目录或 tarball package | 写依赖、lockfile 和 Bundle 列表 | **按 DSH 版本分叉**：`<0.2.1-alpha.3` 已运行进程保持原 Bundle 集合（manifest 监视只对 bundle 列表增减反应，模块监视忽略 node_modules，同版本号更新不触发任何重载）；`≥0.2.1-alpha.3` 重装热生效——HMR 记录已加载模块的 `inode:size:mtime` 磁盘身份（含 node_modules，pnpm 换文件/硬链接重导即判陈旧）并热重载受影响 entry，无需重启 | 新版装完即热生效；旧版需重启目标 Profile 后验证 |
+| `dsh plugin ... update/remove` | 更新或移除已安装 package | 重写依赖和 Bundle 列表 | 同上按版本分叉：新版热生效，旧版保持原 Bundle 集合 | 旧版重启后切换；回滚 package 版本需再次安装旧版本 |
 | Git commit、tag 或 GitHub Release | 保存或标记仓库版本，可附发布产物 | 不变 | 不变 | 仍需单独安装；发布动作不会替用户更新 Profile |
 
-> 来源：[创造模式的版本、停用与删除语义](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L368-L420)；[配置 dump 的非启动语义](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/src/dump-config.ts#L1-L52)；[Profile 安装和重启边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L41-L64)。
+> 来源：[创造模式的版本、停用与删除语义](https://github.com/deepseek-ai/deepseek-harness/blob/47f943859bef60e4160492346772ded9b24f765a/apps/cli/config/agent-presets/cordis/skills/cordis-plugin-development/SKILL.md#L368-L420)；[配置 dump 的非启动语义](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/src/dump-config.ts#L1-L52)；[Profile 安装和重启边界](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/apps/cli/reference/README.md#L41-L64)。🔬 2026-10-18 实测：npm 拉 `@deepseek-ai/dsh-hmr` 的 0.2.1-alpha.1/alpha.2 与 0.2.1-alpha.3+ 的发布 tarball 逐行 diff——重装热检测（`ModuleFiles` 按 `inode:size:mtime` 记录已加载模块磁盘身份、`loadDependencies` 增加 `includeNodeModules`）自 **0.2.1-alpha.3** 引入；alpha.1/2 的 manifest 刷新在 bundle 列表不变时直接 early-return，同版本号重装不会触发热重载。
 
 ### <a id="creation-mode-plugin-development"></a>创造模式中的临时原型
 
