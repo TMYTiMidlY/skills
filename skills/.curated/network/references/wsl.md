@@ -1,6 +1,6 @@
 # WSL ↔ Windows 网络管道
 
-WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT 网络、WSL 出站怎么进宿主 Mihomo、WSL/Docker 服务入站（portproxy + wslrelay）。**分工**：本文只管「WSL 流量怎么进出宿主那个 Mihomo」这条管道；**Mihomo 内核自己怎么跑**（DNS 语义 / `fake-ip-range` 取值 / TUN 路由规则 / REST / 协议选型）都在 [mihomo.md](mihomo.md)，下文引用会指到具体小节。远程桌面 / VS Code serve-web 等远程接入见 [remote.md](remote.md)；独立 systemd 版 Hysteria2 服务端见 [hysteria2.md](hysteria2.md)。
+WSL2 与 Windows 宿主、远端之间的网络互通与排障：Mirror / NAT 网络、WSL 出站怎么进宿主 Mihomo、WSL/Docker 服务入站（portproxy + wslrelay）、对外服务 WSL 的常驻（`instanceIdleTimeout=-1`）。**分工**：本文只管「WSL 流量怎么进出宿主那个 Mihomo」这条管道；**Mihomo 内核自己怎么跑**（DNS 语义 / `fake-ip-range` 取值 / TUN 路由规则 / REST / 协议选型）都在 [mihomo.md](mihomo.md)，下文引用会指到具体小节。远程桌面 / VS Code serve-web 等远程接入见 [remote.md](remote.md)；独立 systemd 版 Hysteria2 服务端见 [hysteria2.md](hysteria2.md)。
 
 ## WSL Mirror 模式网络
 
@@ -66,6 +66,29 @@ wsl -d Ubuntu -- cat /proc/sys/kernel/random/boot_id
 - Microsoft WSL basic commands: `wsl --shutdown` terminates all running distributions and the WSL2 VM.
 - Docker Desktop WSL2 backend: Docker Desktop uses a `docker-desktop` WSL distribution for the Docker engine.
 - Docker Resource Saver on WSL: Resource Saver does not stop the whole WSL VM because it is shared by all WSL distributions.
+
+## 对外提供服务的 WSL 常驻（`instanceIdleTimeout=-1` + 一次性开机任务）
+
+WSL 里的 systemd 服务不能阻止空闲停机——[微软文档](https://learn.microsoft.com/en-us/windows/wsl/systemd)明说 "systemd services will NOT keep your WSL instance alive"。默认 `instanceIdleTimeout` 15 s、`vmIdleTimeout` 60 s：最后一个 wsl 客户端退出后发行版先停、VM 随后停，wslrelay 转发和所有入口一起消失。靠挂 `sleep infinity` / detached `sleep 86400` 当 keepalive 的旧方案废弃：保活随进程或任务退出而丢，还常驻占一个客户端。
+
+现行方案（2026-10-19 在 1810 / MY.Tan 的 Ubuntu 实测通过）：
+
+1. 属主 Windows 用户的 `%UserProfile%\.wslconfig` 加（[官方键说明](https://learn.microsoft.com/en-us/windows/wsl/wsl-config#general-wsl-settings)）：
+
+   ```ini
+   [general]
+   instanceIdleTimeout=-1
+   ```
+
+   发行版不再空闲自停；发行版活着 VM 就不会空闲，`vmIdleTimeout` 不用动（手动停掉全部发行版后，空 VM 仍按默认 60 s 回收）。
+
+2. 开机任务只做一次性启动：计划任务（BootTrigger、S4U、属主用户身份）执行 `wsl.exe -d Ubuntu --exec /bin/true`，跑完即退、退出码 0，没有常驻进程。
+
+3. 手动场景同样简单：终端输 `wsl` 进入，`exit` 或直接关窗口，发行版继续跑。
+
+生效时机：改 `.wslconfig` 后重启该用户的 WSL VM（属主用户上下文 `wsl --shutdown` 再启动）。`.wslconfig` 与 `wsl --shutdown` 都按 Windows 用户隔离（WSL 2.7.0 按 SID 分 session），各用户各自配、互不影响其他账户的 WSL。
+
+验收口径（实测）：开机任务退出、无任何 wsl 客户端空置约 2 分钟后 `wsl -l -v` 仍 Running，SSH / Caddy / Zellij / code-serve-web 正常；默认 `wsl` 进入后 `exit` 再空置约 2 分钟，同样 Running、服务无重启。
 
 ## WSL NAT 下出站走 Mihomo
 

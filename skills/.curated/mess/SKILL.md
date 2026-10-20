@@ -49,8 +49,8 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
   - 关键词：`Failed to connect to bus`、`/run/user/1000/bus`、`DBUS_SESSION_BUS_ADDRESS`、`dbus-daemon --session`、`kill -RTMIN+25`、`running user services 断开`
 - **Git 引用和对象变成空文件，Zellij 配了 Caddy session token 仍登录失败** → 同次故障中 Windows 宿主 C 盘满，WSL 重启后需恢复 Git 文件并检查 Zellij token 数据库 → [直达](references/wsl.md#host-disk-full-git-zellij)
   - 关键词：`C 盘满`、`WSL df 还有空间`、`Git 空对象`、`零字节引用`、`tokens.db`、`Caddy session_token`
-- **「组网正常却入口全断」：WSL 服务握手即断、502 与守护进程成批死亡** → 宿主卷余量饿死动态 VHDX，guest ext4 收 EIO 成批团灭守护进程；干净重启靠 journal 回放自愈。含无密码跨用户修复通道与 vmIdleTimeout 陷阱 → [直达](references/wsl.md#vhdx-host-starvation)
-  - 关键词：`kex_exchange_identification`、`Connection closed by remote host`、`portproxy 后端假活`、`wslrelay`、`getpwnam(root) failed 5`、`WSL_E_USER_NOT_FOUND`、`EIO 不是 ENOSPC`、`VHDX 断供`、`fstrim`、`vmIdleTimeout`、`跨用户 WSL CreateProcessAsUser`、`S4U Access denied`
+- **「组网正常却入口全断」：WSL 服务握手即断、502 与守护进程成批死亡** → 宿主卷余量饿死动态 VHDX，guest ext4 收 EIO 成批团灭守护进程；干净重启靠 journal 回放自愈。含无密码跨用户修复通道与 vmIdleTimeout 陷阱的 `instanceIdleTimeout=-1` 常驻修复 → [直达](references/wsl.md#vhdx-host-starvation)
+  - 关键词：`kex_exchange_identification`、`Connection closed by remote host`、`portproxy 后端假活`、`wslrelay`、`getpwnam(root) failed 5`、`WSL_E_USER_NOT_FOUND`、`EIO 不是 ENOSPC`、`VHDX 断供`、`fstrim`、`vmIdleTimeout`、`instanceIdleTimeout=-1`、`--exec /bin/true`、`跨用户 WSL CreateProcessAsUser`、`S4U Access denied`
 
 ### Linux（服务器 / 容器 / 工具链）
 
