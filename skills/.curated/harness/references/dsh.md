@@ -580,6 +580,63 @@ Session 创建时采用所选 preset。尚未产生内容的 Session 可以切�
 
 默认智能体循环（agent loop）推进这条流程，Plugin 则在 prompt 组装、模型请求、工具执行和轮次收尾等扩展点加入策略。审批、重试、超时、压缩和观测通过 service 或 event 与循环组合。
 
+### <a id="instruction-discovery"></a>AGENTS.md 指令发现与加载
+
+本节以 `dsh-v0.2.1-rc.2` 的默认 `dsh-base` 为准。`dsh-agent-instructions` 为第一次模型请求加载适用的全局与项目指令，profile 可以禁用或调整其预算。排查“模型默认读了什么”时，应分别核对部署的系统提示词、自动注入的指令文件和本轮手动读取的文件。
+
+系统提示词由部署与插件组装，包括 harness 身份、persona 和适用的工具指导；动态运行状态另以用户角色上下文提供。`AGENTS.md` 指令也以持久的用户角色消息进入会话，虽然外层写着 `<system-reminder>`，仍受 system、developer 和用户直接指令约束。Skills 的目录与按需加载正文属于另一条加载链。
+
+> 来源：[系统提示词、工具与动态上下文的组装](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/core/system-prompt/README.zh.md#L98-L110)、[模型实际收到的系统提示词](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/core/system-prompt/README.zh.md#L133-L146)；[指令文件的用户角色消息与持久化](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L86-L107)。
+
+#### <a id="instruction-baseline"></a>默认指令链
+
+第一次请求按下表顺序加载已存在且可读取的文件；项目链从宽泛目录走向当前会话目录。
+
+| 范围 | 默认入口 | 用途与加载顺序 |
+|---|---|---|
+| DSH 用户全局 | `$DSH_HOME/AGENTS.md`，默认 `~/.dsh/AGENTS.md` | DSH 专用的用户要求，先加载 |
+| 共享用户全局 | `$DSH_AGENTS_HOME/AGENTS.md`，默认 `~/.agents/AGENTS.md` | 供支持该约定的 Agent 工具共享的要求，随后加载 |
+| 项目与当前目录 | 项目根到 Session cwd 路径上各目录的候选文件 | 每个目录依次加载 `AGENTS.md`、`CLAUDE.md`、`AGENTS.local.md`、`CLAUDE.local.md` |
+
+> 来源：[默认指令链、根目录解析与候选名称](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L28-L68)。
+
+项目根默认是从 cwd 向上找到的最近一个含 `.git` 标记的目录；一路都没有标记时，以 cwd 自身为根。只收录根到 cwd 这条目录链，因此家目录的 `~/AGENTS.md` 只有恰好位于该项目链中时才会加载，并无独立的全局入口地位。探测项目根标记时遇到权限或 I/O 错误，会停止发现并返回原始错误，而不是跳到更上层项目。
+
+同目录中不同内容的候选会一起加载，更具体目录的指令优先约束该目录内的工作。去除首尾空白后内容完全相同的同组候选只保留最早一份：两个全局入口是一组，每个项目目录各自一组。指向普通文件的软链接会跟随到目标内容；全局与项目的作用范围仍按加载入口表达。
+
+> 来源：[项目根与目录链算法](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/src/files.ts#L223-L282)、[候选发现顺序](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/src/files.ts#L323-L366)、[去重与软链接边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L219-L226)。
+
+候选名称按配置精确匹配；默认识别大写复数的 `AGENTS.md`，自定义名称通过 `instructionFileCandidates` 与 `localInstructionFileCandidates` 设置。全局根固定只取 `AGENTS.md`，项目候选配置不会给全局增加 `CLAUDE.md` 或 `.local` overlay。若要拆分全局本机补充，可在主文件中明确要求 Agent 继续读取加载入口同目录的补充文件；这是主文件驱动的读取约定，DSH 自身不解析 `@path` import。
+
+> 来源：[配置字段](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L38-L68)、[全局候选与本地 overlay 的边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L219-L225)。
+
+#### <a id="instruction-nested-loading"></a>子目录发现与刷新
+
+首次加载只建立适用的基线。成功的第一方 `read`、`write`、`edit` 调用触及 cwd 下更深的文件时，插件沿 cwd 到目标文件父目录的路径发现新增指令，并在后续模型请求前注入；工具返回的文件正文与自动追加的指令消息是两件事。
+
+例如 cwd 是含 `.git` 的项目根，目录为：
+
+```text
+repo/
+├── .git/
+├── AGENTS.md
+└── packages/
+    ├── AGENTS.md
+    └── api/
+        ├── AGENTS.local.md
+        └── client.ts
+```
+
+首次请求加载全局指令和根目录的 `AGENTS.md`。成功读取 `packages/api/client.ts` 后，后续请求再收到 `packages/AGENTS.md` 与 `packages/api/AGENTS.local.md`；消息注明来源及适用子目录。兄弟目录在触及前保持未发现状态。仅运行 Shell 的 `cd` 或读取命令，以及 `glob`、`grep` 搜索，不属于这条文件触及钩子。修改 Session 工作目录则会在下一次请求前重新计算适用的项目链。
+
+> 来源：[嵌套目录路径计算](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/src/files.ts#L270-L282)、[参与发现的工具及路径参数](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/src/index.ts#L76-L84)、[请求前的加载与工作目录切换](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L28-L34)。
+
+指令文件没有持续 watcher。文件系统触及或恢复会话对账后，新来源以 `Additional instructions from:` 注入，已改变的来源以 `Updated instructions from:` 替换，已移除的来源以 `Instructions removed:` 声明失效；未变内容通过来源与内容比较抑制重复。自动注入会记录来源和作用范围，模型手动读过任意路径的文件则只说明该会话看到了文件内容，不能据此断言新会话也会自动加载。
+
+`dsh-base` 默认给整条渲染基线 65,536 字节，单个源文件读取上限默认为 1,048,576 字节。超预算时先省略较宽泛文件，再截断最具体文件，并给出预算通知；核对实际提示词时，应同时查看来源消息和省略／截断通知。
+
+> 来源：[字节预算与省略策略](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L30-L74)、[新增、更新与移除消息](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L163-L210)、[刷新触发条件与预算省略边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L219-L226)。
+
 ### Session 日志与持久化
 
 Session 是只追加的事件日志。模型历史、Trajectory、恢复、分叉、回放和遥测都从同一条记录推导；**model-visible means logged** 表示进入模型请求的信息必须能够从日志重建。
