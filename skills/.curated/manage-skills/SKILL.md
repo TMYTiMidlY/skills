@@ -60,13 +60,9 @@ ln -s ../../.agents/skills <target>/.config/agents/skills
 
 ### <a id="instruction-installation"></a>通用指令的安装入口
 
-全局安装或维护 skill 完成后，先核对实际使用的 harness 的用户级指令入口。skill 目录与通用指令分别发现；默认位置和来源见[仓库 README 的共享指令与发现入口](../../../README.md#agent-instructions)，按进程实际使用的配置根目录检查，而非固定检查 `~/AGENTS.md`／`~/CLAUDE.md`。
+全局安装或维护 skill 完成后，按[仓库 README 的共享指令与发现入口](../../../README.md#agent-instructions)核对目标 harness 的实际配置根、原有文件及 override。获准后，将原生主文件入口链接到 `<repo>/AGENTS.md`，可选的同目录补充入口链接到 `<repo>/AGENTS.local.md`；补充本体仅本地保留，经用户同意将忽略规则写入本仓 `.git/info/exclude`，已有内容不覆盖。
 
-本仓以 `<repo>/AGENTS.md` 为通用规则源，仓库内 `CLAUDE.md` 仅作为指向它的兼容软链接。入口缺失时，询问用户是否将其接到这份共享源；获准后只创建所需入口，已有文件与 override 先核对内容、按用户确认的方案处理，不覆盖。DSH 的共享规则放在默认 `~/.agents/AGENTS.md`（或 `DSH_AGENTS_HOME` 指定的根），DSH 专用要求可保留在其独立的 `DSH_HOME` 中。其他 harness 各用自己的原生发现位置，不照搬 DSH 的路径。
-
-本机补充放在加载入口同目录的 `AGENTS.local.md`，由共享主文件要求继续读取；同目录以软链接入口为准。这是本仓约定，各 harness 的原生 `.local` 支持另行核对。项目级“基础＋本地补充”和子目录加载的机制见 `harness` skill 的 DSH 指令发现说明；安装说明中的链接已指向对应文档。
-
-软链接完成后，核对入口可读、目标正确，并查看目标工具的实际加载来源。Windows 下创建文件 symlink 需要权限时，按当前环境处理；`.lnk` 快捷方式不作为替代，Claude Code 的 `@` 导入等方案也应按其原生规则选择。
+安装后核对链接目标、可读性和实际加载来源。补充文件由共享主文件要求继续读取，不视作所有 harness 的原生全局能力；平台限制和具体路径统一见 README，DSH 的发现机制见 `harness` skill。
 
 ### 安装前先扫环境、冲突就问不自动改
 
