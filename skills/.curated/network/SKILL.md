@@ -1,6 +1,6 @@
 ---
 name: network
-description: 配置或排查 Caddy 反向代理与 caddy-security、OpenWrt、外部 Wi-Fi、远程接入及 WSL/远端网络管道时使用。核心是还原 TLS、认证、DNS、路由和隧道的实际数据路径，再分层处理。
+description: 配置或排查 Caddy 反向代理与 caddy-security、OpenWrt、外部 Wi-Fi、WireGuard / EasyTier 组网、远程接入及 WSL/远端网络管道时使用。核心是还原 TLS、认证、DNS、路由和隧道的实际数据路径，再分层处理。
 ---
 
 # Network
@@ -30,6 +30,10 @@ RDP、向日葵、会话管理、缩放修复和 VS Code Serve Web 远程访问�
 ## WSL ↔ Windows 网络管道
 
 WSL Mirror / NAT、portproxy / wslrelay 入站服务暴露见 [references/wsl.md](references/wsl.md)。
+
+## WireGuard 组网
+
+Ubuntu 公网中心节点、内核 relay 转发、客户端配置与后续加设备见 [references/wireguard.md](references/wireguard.md)；作为 EasyTier 替代方案时，先读[方案比较](references/wireguard.md#comparison)。网段与地址先由用户选定；沿用官方 wg-quick 服务，用简短命令分步安装、写配置和启动。已连通设备不重新部署。
 
 ## EasyTier 客户端
 

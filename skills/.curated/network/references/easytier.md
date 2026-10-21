@@ -1,6 +1,6 @@
 # EasyTier 客户端（Windows）
 
-本文档只覆盖 Windows 上的 EasyTier 客户端配置。VPS 服务端配置见 `vps-maintenance` skill。
+本文档只覆盖 Windows 上的 EasyTier 客户端配置。VPS 服务端配置见 `vps-maintenance` skill。使用公网中心节点和手工 Peer 配置替代 EasyTier 时，见 [WireGuard 组网](wireguard.md)及[方案比较](wireguard.md#comparison)。
 
 ## 安装
 
