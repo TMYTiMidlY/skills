@@ -132,7 +132,7 @@ ln -s <repo>/skills/<skill-name> .agents/skills/
 ln -s <repo>/skills/.experimental/<skill-name> .agents/skills/
 ```
 
-GitHub Copilot、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等工具原生读取 `.agents/skills/`，无需额外配置。其他工具需要将各自的 skills 目录链接到 `.agents/skills/`：
+DeepSeek Harness、GitHub Copilot、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等工具原生读取约定范围内的 `.agents/skills/`，无需再建工具专属的目录链接。其他工具需要将各自的 skills 目录链接到 `.agents/skills/`：
 
 | 工具 | 自有 skills 目录 | 链接命令 |
 | --- | --- | --- |
@@ -148,7 +148,7 @@ GitHub Copilot、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等工�
 **软链接注意事项：**
 
 - 链接到 skill **目录本身**而非内部单个文件，否则相对引用会断裂。
-- 同名目录已存在时先删除再建链接，否则 `ln -s` 会建到子目录里。
+- 同名文件或目录已存在时，先核对内容并确认合并或替换方案；获准替换后按删除规则移入回收站，再建链接。直接对现有目录运行 `ln -s` 可能把链接建到它的子目录中。
 - symlink 的目标相对路径按**链接所在目录**解析；不确定层级时可改用绝对路径。
 
 由于软链接直接指向仓库中的文件，对仓库的任何修改都会即时反映到所有链接位置，无需重新安装或手动同步。日常维护只需在仓库目录中编辑、用 `git pull` 拉取更新即可。
@@ -199,15 +199,39 @@ pre-commit run lychee --all-files
 - 文档里 github.com 链接多时，`export GITHUB_TOKEN=<无权限 PAT>` 可抬高限额、避免限流。
 - 升级 hook 版本用 `pre-commit autoupdate`（会改写 `.pre-commit-config.yaml` 里的 `rev`）。
 
-## AGENTS.md
+## <a id="agent-instructions"></a>共享指令与发现入口
 
-[AGENTS.md](AGENTS.md) 是一份通用的 AI agent 行为规则，涵盖 Python 环境选择、Git 操作约束、工具使用习惯等偏好设置。适用于 Claude Code、GitHub Copilot 等支持 `AGENTS.md` / `CLAUDE.md` 的工具。
+[AGENTS.md](AGENTS.md) 是本仓统一维护的通用行为规则，涵盖 Python 环境选择、Git 操作约束和工具使用习惯。[CLAUDE.md](CLAUDE.md) 是指向它的软链接，用不同文件名复用同一份内容；规则正文只维护一份。
 
-如需让 Claude Code 也读取同一份规则：
+要让规则跨项目生效，应把共享源文件接到实际使用的 harness 的用户级发现入口。指令文件与 skill 目录各自发现：安装了 `~/.agents/skills/` 中的技能，还需核对通用指令是否接入。默认入口举例如下：
+
+| Harness | 默认用户级入口 | 根目录与加载说明 | 依据 |
+|---|---|---|---|
+| DeepSeek Harness | `~/.agents/AGENTS.md` | 共享根可用 `DSH_AGENTS_HOME` 改位置；另有 `$DSH_HOME/AGENTS.md`（默认 `~/.dsh/AGENTS.md`）承载 DSH 专用要求，两处按顺序叠加 | [DSH 指令发现与加载](skills/.curated/harness/references/dsh.md#instruction-discovery) |
+| Claude Code 本地 CLI | `~/.claude/CLAUDE.md` | 设置 `CLAUDE_CONFIG_DIR` 后，入口位于该目录 | [用户级入口文档节选](skills/.curated/harness/references/claude-instructions-2026-10-22.md#user-instructions) |
+| Codex | `~/.codex/AGENTS.md` | 根目录由 `CODEX_HOME` 控制；同目录优先采用非空的 `AGENTS.override.md`，而非与基础文件叠加 | [用户级指令读取](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/codex-home/src/instructions/mod.rs#L40-L83) |
+| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md` | 根目录可用 `COPILOT_HOME` 改位置；额外目录通过 `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` 显式指定 | [个人与项目指令位置](https://github.com/github/docs/blob/b4ab111fb699bb543084d010b56a8aa01e840edb/content/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions.md#L22-L43) |
+
+> 入口于 2026-10-22 核对；Claude Code 的未版本化在线说明保留了采集日的必要节选，原始阅读入口见节选中的来源。各工具还会发现项目级指令，范围各异；`~/AGENTS.md` 是否处在项目父目录链中，与原生用户级入口是两件事。
+
+全局安装前先检查实际入口、已有文件与 Codex override；由用户确认需要接入哪些工具，保留已有内容。入口不存在且获准创建时，可将其软链接到本仓 `AGENTS.md`。例如，为 DSH 接入共享指令，把 `<repo>` 换成仓库绝对路径：
 
 ```bash
-ln -s AGENTS.md CLAUDE.md
+mkdir -p "$HOME/.agents"
+ln -s "<repo>/AGENTS.md" "$HOME/.agents/AGENTS.md"
 ```
+
+其他 harness 按表选择自己的入口，再验证实际加载结果。Claude Code 可用 `/context` 核对，Copilot CLI 可用 `/instructions` 核对；项目内的 `CLAUDE.md → AGENTS.md` 兼容链接与全局安装分开处理。
+
+> Claude 官方也给出 [CLAUDE.md 软链接到 AGENTS.md 的方案](skills/.curated/harness/references/claude-instructions-2026-10-22.md#shared-file)。本例面向本地可读路径；Windows 的文件 symlink 权限／Git 检出方式，以及 Claude Cowork 对工作目录外链接的限制，需要按实际环境处理。
+
+### <a id="local-instructions"></a>本机补充
+
+共享规则随仓库提交，个人或机器专属补充放在加载入口同目录的 `AGENTS.local.md`，保持在仓库外或配置 Git 忽略。本仓主文件明确要求继续读取这份补充；“同目录”按入口或软链接的位置判断，而非仓库源文件的位置。这是本仓的读取约定，并非每个 harness 都原生发现用户级 `.local` 文件。
+
+DSH 在项目级也采用“基础指令＋本地补充”的设计：依次检查 `AGENTS.md`、`CLAUDE.md`、`AGENTS.local.md`、`CLAUDE.local.md`，同组内容相同会去重。全局入口只自动取 `AGENTS.md`；`~/.agents/AGENTS.local.md` 依靠本仓主文件的补读要求进入上下文。文件是否被 Git 忽略，与 DSH 是否加载相互独立。
+
+> 来源：[DSH 默认候选与全局入口](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L28-L68)、[全局 overlay 与软链接边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L219-L225)。首次加载、子目录按需发现和更新／移除的完整机制见 [DSH 指令发现与加载](skills/.curated/harness/references/dsh.md#instruction-discovery)。
 
 ## 许可
 

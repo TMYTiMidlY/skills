@@ -47,7 +47,7 @@ ln -s ../../.agents/skills <target>/.config/agents/skills
 # 其他工具按目标目录层级调整相对路径，完整表见仓库 README
 ```
 
-**原生扫 `.agents/skills/` 的 CLI 不需要第 2 层**：GitHub Copilot CLI、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等直接读 `.agents/skills/`（项目级，沿 cwd→git root 收录）和 `~/.agents/skills/`（个人级），软链 hub 即被发现，无需再建工具专属目录。
+**原生扫 `.agents/skills/` 的 CLI 不需要第 2 层**：DeepSeek Harness、GitHub Copilot CLI、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等可从各自约定的项目级 `.agents/skills/` 和个人级 `~/.agents/skills/` 发现 skill。将 skill 链入共享目录后，按目标工具的项目根与扫描范围验证发现结果，无需再建工具专属目录。
 
 ⚠️ 易踩坑：**项目级**的 skill 约定目录只有 `.github/skills`、`.agents/skills`、`.claude/skills` 三种，**没有** `.copilot/skills`。`~/.copilot/skills` 只在 home（个人级）下有效；别照着"个人级 `~/.copilot/skills`"在项目里建 `<project>/.copilot/skills` 软链——没有 CLI 会把它当项目级 skill 读。
 
@@ -58,11 +58,15 @@ ln -s ../../.agents/skills <target>/.config/agents/skills
 - **统一修改**：任一处编辑都落到仓库实体，所有工具同步可见
 - **git 追踪**：改动走仓库 git，有历史、可回滚、便于协作
 
-### AGENTS.md / CLAUDE.md
+### <a id="instruction-installation"></a>通用指令的安装入口
 
-全局安装或维护 skill 完成后，顺便检查 `~/AGENTS.md` 和 `~/CLAUDE.md`。只有当其中任一文件不存在时，才询问用户是否要补装仓库根目录的 `AGENTS.md` / `CLAUDE.md`。
+全局安装或维护 skill 完成后，先核对实际使用的 harness 的用户级指令入口。skill 目录与通用指令分别发现；默认位置和来源见[仓库 README 的共享指令与发现入口](../../../README.md#agent-instructions)，按进程实际使用的配置根目录检查，而非固定检查 `~/AGENTS.md`／`~/CLAUDE.md`。
 
-用户同意后，把 `~/AGENTS.md` 做成指向 `<repo>/AGENTS.md` 的软链接，再把 `~/CLAUDE.md` 做成指向 `~/AGENTS.md` 的软链接；`CLAUDE.md` 不单独维护内容。已有的文件不替换、不覆盖。Windows 下创建文件 symlink 需要权限时，按当前环境请求授权；不要用 `.lnk` 快捷方式代替。
+本仓以 `<repo>/AGENTS.md` 为通用规则源，仓库内 `CLAUDE.md` 仅作为指向它的兼容软链接。入口缺失时，询问用户是否将其接到这份共享源；获准后只创建所需入口，已有文件与 override 先核对内容、按用户确认的方案处理，不覆盖。DSH 的共享规则放在默认 `~/.agents/AGENTS.md`（或 `DSH_AGENTS_HOME` 指定的根），DSH 专用要求可保留在其独立的 `DSH_HOME` 中。其他 harness 各用自己的原生发现位置，不照搬 DSH 的路径。
+
+本机补充放在加载入口同目录的 `AGENTS.local.md`，由共享主文件要求继续读取；同目录以软链接入口为准。这是本仓约定，各 harness 的原生 `.local` 支持另行核对。项目级“基础＋本地补充”和子目录加载的机制见 `harness` skill 的 DSH 指令发现说明；安装说明中的链接已指向对应文档。
+
+软链接完成后，核对入口可读、目标正确，并查看目标工具的实际加载来源。Windows 下创建文件 symlink 需要权限时，按当前环境处理；`.lnk` 快捷方式不作为替代，Claude Code 的 `@` 导入等方案也应按其原生规则选择。
 
 ### 安装前先扫环境、冲突就问不自动改
 
