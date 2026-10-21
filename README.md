@@ -201,7 +201,7 @@ pre-commit run lychee --all-files
 
 ## <a id="agent-instructions"></a>共享指令与发现入口
 
-[AGENTS.md](AGENTS.md) 是统一维护的通用规则，[CLAUDE.md](CLAUDE.md) 是它的兼容软链接。主文件与可选的本机补充 `AGENTS.local.md` 均以仓库根目录为本体，各 harness 的用户级入口只建软链接：
+[AGENTS.md](AGENTS.md) 是统一维护的通用规则，[CLAUDE.md](CLAUDE.md) 是它的兼容软链接。主文件与可选的本地规则 `AGENTS.local.md` 均以仓库根目录为本体，各 harness 的用户级入口只建软链接：
 
 | Harness | 主文件入口 → `<repo>/AGENTS.md` | 补充入口 → `<repo>/AGENTS.local.md` | 依据 |
 |---|---|---|---|
@@ -212,9 +212,9 @@ pre-commit run lychee --all-files
 
 若设置了 `DSH_AGENTS_HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME` 或 `COPILOT_HOME`，相应入口改用实际配置根。DSH 专用要求仍可放在 `$DSH_HOME/AGENTS.md`；Codex 已有非空 `AGENTS.override.md` 时优先读取它，安装前须先核对。
 
-### <a id="local-instructions"></a>本机补充
+### <a id="local-instructions"></a>本地规则
 
-需要本机补充时，在仓库根创建 `AGENTS.local.md`，并在本仓 `.git/info/exclude` 添加 `/AGENTS.local.md`，使它只留在本地。共享主文件要求继续读取入口同目录的这份补充；这是本仓约定，不是各 harness 都原生发现全局 `.local` 文件。
+需要本地规则时，在仓库根创建 `AGENTS.local.md`，并在本仓 `.git/info/exclude` 添加 `/AGENTS.local.md`，使它只留在本地。共享主文件要求继续读取入口同目录的这份补充；这是本仓约定，不是各 harness 都原生发现全局 `.local` 文件。
 
 确认入口不存在或已获准处理原有内容后，按表建立两条链接。例如 DSH（将 `<repo>` 换成仓库绝对路径）：
 
@@ -224,7 +224,7 @@ ln -s "<repo>/AGENTS.md" "$HOME/.agents/AGENTS.md"
 ln -s "<repo>/AGENTS.local.md" "$HOME/.agents/AGENTS.local.md"
 ```
 
-其他工具替换目标入口即可；没有本机补充时省略第二条。建好后核对链接目标和实际加载来源，Claude Code 可用 `/context`，Copilot CLI 可用 `/instructions`。Windows 文件软链接权限及 Claude Cowork 的工作目录外链接限制见[官方共享文件说明](https://code.claude.com/docs/en/memory#share-one-file-with-other-coding-tools)。
+其他工具替换目标入口即可；没有本地规则时省略第二条。建好后核对链接目标和实际加载来源，Claude Code 可用 `/context`，Copilot CLI 可用 `/instructions`。Windows 文件软链接权限及 Claude Cowork 的工作目录外链接限制见[官方共享文件说明](https://code.claude.com/docs/en/memory#share-one-file-with-other-coding-tools)。
 
 > DSH 项目级也采用“基础指令＋本地补充”设计，全局则只自动取 `AGENTS.md`；候选名称、去重与子目录按需加载统一见 [DSH 指令发现与加载](skills/.curated/harness/references/dsh.md#instruction-discovery)。
 
