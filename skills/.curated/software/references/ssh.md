@@ -464,7 +464,43 @@ Host host.example
     ControlPersist 10m
 ```
 
-[`ControlMaster`、`ControlPath` 和 `ControlPersist`](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5)的完整语义由 OpenSSH 定义。查看或关闭现有 master：
+OpenSSH 默认 `ControlMaster no`、`ControlPersist no`；`ControlPath` 本身没有预设的复用 socket 路径。若看到客户端自动在某目录创建 socket，应先查实际生效配置：
+
+```bash
+ssh -G host.example | awk '$1 ~ /^(controlmaster|controlpath|controlpersist)$/ {print}'
+```
+
+#### <a id="controlpath-sandbox"></a>沙箱中的临时控制目录
+
+当 SSH 已完成认证，却报 `unix_listener: cannot bind to path ... Permission denied`，先检查错误中的**本地 socket 路径**。沙箱可能允许读取 SSH 配置、使用 agent 和联网，却不允许在家目录创建控制 socket；这种错误不等于远端仓库权限或密钥失效。经授权可将 `ControlPath` 改到沙箱允许写入的临时目录，并保留用户隔离。
+
+`/tmp` 通常为 `1777`：sticky bit 限制其他普通用户删除、重命名你的目录项，访问仍由文件和目录各自的权限控制。将 socket 放进当前用户拥有的 `700` 子目录，不依赖 `/tmp` 自动隔离或某个平台对 socket mode 的实现。下面的准备步骤遇到预先存在的软链接、非目录或其他属主时停止，避免直接 `chmod` 一个被抢先创建的路径：
+
+```bash
+socket_dir="/tmp/ssh-cm-$(id -u)"
+if [ -e "$socket_dir" ] || [ -L "$socket_dir" ]; then
+    [ ! -L "$socket_dir" ] && [ -d "$socket_dir" ] && [ -O "$socket_dir" ] || exit 1
+else
+    mkdir -m 700 -- "$socket_dir" || exit 1
+fi
+chmod 700 -- "$socket_dir" || exit 1
+```
+
+将下面一行用于实际匹配的 SSH 配置块，其余认证和连接复用设置保持原样；`%i` 为本地 UID，`%C` 为连接标识哈希：
+
+```sshconfig
+ControlPath /tmp/ssh-cm-%i/%C
+```
+
+`/tmp` 被启动或周期清理后，需要先重建私有目录；SSH 不替用户创建父目录。临时 socket 丢失不影响密钥，但原 master 仍可能存活，新连接也不会自动找到旧路径的 master。需要自动化时，让调用程序或已授权的启动流程执行上述准备步骤，不把固定随机目录当长期配置。
+
+验证分两层：`ssh -G` 确认路径展开，再在目标沙箱内执行原本失败的已授权操作，随后 `ssh -O check host.example` 核对复用连接。临时目录能否写入依然由沙箱策略决定；被拒绝时按权限流程处理，不默认 `/tmp` 是通用绕过入口。
+
+> 一次 Linux/OpenSSH 9.6p1、Landlock workspace-write 环境中，原家目录控制路径的创建被拒绝。授权迁移到当前用户拥有的 `/tmp/ssh-cm-<uid>/` 后，实际 `git fetch origin main` 无需扩大该 fetch 的文件权限即可完成。此结果只证明该环境下的路径修复，不保证其他沙箱允许相同目录。
+>
+> 权限和 token 语义见 [OpenSSH 的 ControlPath 建议](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5#ControlPath)、[ControlMaster 默认值](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5#ControlMaster)与 [TOKENS](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5#TOKENS)；`/tmp` 的 sticky bit 见 [GNU Coreutils 的受限删除标志](https://www.gnu.org/software/coreutils/manual/html_node/Mode-Structure.html)。
+
+查看或关闭现有 master：
 
 ```bash
 ssh -O check host.example
