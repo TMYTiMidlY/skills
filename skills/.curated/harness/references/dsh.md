@@ -1086,6 +1086,34 @@ for (const [name, value] of Object.entries(process.env)) {
 
 部分平台只能提供有限隔离。没有可用 backend 时，负责强制隔离的执行器应显式失败，而不是悄悄退回无约束执行。
 
+##### <a id="sandbox-tmp-ssh"></a>临时目录、持久终端与 SSH 控制连接
+
+同为 `workspace-write`，`/tmp` 的含义仍取决于 runner。按 `0.2.1-alpha.1` 源码，Linux 默认优先探测 bwrap，再尝试 Landlock：
+
+- **bwrap**：`--ro-bind / /` 提供只读宿主根，`--unshare-pid --proc /proc` 提供私有进程视图，`workspace-write` 额外加 `--tmpfs /tmp` 和可写工作区 bind。这个 `/tmp` 是该执行器新建的挂载，不是宿主目录的可写映射；工具中看不到某个宿主进程，也不能据此认定该服务已经停止。
+- **Landlock**：授权列表给宿主 `/tmp` 和工作区读写权限，没有把 `/tmp` 换成新挂载。目录及仍存活的 SSH master 可以被下一次、同样有访问权限的客户端使用。
+- **danger-full-access**：Bash executor 直接交给本地执行器，不调用 confinement；它看到的是宿主 `/tmp`。这是文件策略，不是 sudo 或 root 提权，也与审批是否需要用户回答分属不同机制。
+
+> 来源：[bwrap 与 Landlock 的 profile 构造](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/sandbox/sandbox-local/src/profiles.ts#L16-L35)、[Linux runner 优先链](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/sandbox/sandbox-local/src/index.ts#L151-L166)、[Bash 按模式选择直接执行或 confinement](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/shell/bash-sandbox/src/index.ts#L89-L103)。以上与该版本安装产物核对。
+
+执行器生命周期进一步决定能复用多久。普通 Bash 调用每次走 `confine(['bash', '-c', command], …)`：若选 bwrap，每条命令便有独立 `/tmp`。持久终端则在 `spawn()` 时 confinement 一次，后续输入送进同一 PTY；在这个 PTY 内创建 `/tmp/ssh-cm-<uid>/` 后，可以在终端存活期间复用。另一个 PTY 或普通 Bash 工具调用不会自动共享它。
+
+> 来源：[普通命令的 confinement 入口](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/shell/bash-sandbox/src/index.ts#L183-L190)、[终端按策略包装 shell argv](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/terminal/terminal-bash/src/index.ts#L100-L109)、[每个持久终端仅在创建时 spawn shell](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/terminal/terminal-bash/src/index.ts#L201-L226)。
+
+`ControlPath /tmp/ssh-cm-%i/%C` 可以解决宿主或合适 runner 中家目录不可写的问题，但**目录准备必须在实际运行 SSH 的挂载视图里执行**。在一次 bwrap 工具调用里建好目录，不会替宿主终端或下一次 bwrap 调用建目录；因此把目录创建成功直接报告成“用户现在可以连接”是不完整的验收。DSH `terminal-bash` 默认启动参数是 `--noprofile --norc -i`，只给 `.bashrc` 添加初始化也不能覆盖这个默认 PTY，需要在该终端内显式准备，或配置经授权的启动初始化。通用 SSH 配置、目录安全检查与认证后 mux 失败的恢复步骤见 `software` skill。
+
+> 来源：[终端的默认 shell 参数及覆盖规则](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/terminal/terminal-bash/src/config.ts#L62-L88)。2026-10-22，Linux/OpenSSH 8.0p1 对照实测：宿主私有 `/tmp` 下建立的 master 可被第二次独立命令复用，第二客户端禁用认证方法仍成功执行只读命令，并返回同一 master PID；分别按上述 profile 启动的两个 bwrap 执行器则不共享第一份目录。不能把后一个结果扩大为“SSH 无法靠 `/tmp` 复用”。
+
+##### <a id="sandbox-uid-ssh"></a>用户命名空间中的文件属主检查
+
+沙箱内的数字 UID 是当前用户命名空间的视图。遇到 SSH 的 `Bad owner or permissions`，应先在获准的宿主视图与执行器内分别核对 `id`、`/proc/self/uid_map`、文件数字属主和 mode；不能只看到 `nobody:nobody` 就建议在宿主执行 `chown`。
+
+OpenSSH 8.0p1 在读取带权限检查标记的配置时，要求文件属主是 `0` 或 `getuid()`，并且不允许 group/other 写入；每个递归 `Include` 都会加这个检查。在一次 bwrap 环境中，宿主本来为 `0:0 0644` 的系统 Include 文件，在沙箱内显示为未映射 UID `65534`，且不等于进程 UID，于是被拒绝；宿主相同配置正常。这是用户命名空间与应用安全检查的交互，不是宿主配置真的被改了属主，`chmod` 也不能修正 UID 视图。临时文件目录不存在导致的 `unix_listener ... ENOENT` 是另一条路径，应分别诊断。
+
+> 来源：[OpenSSH 配置的数字 UID/mode 检查](https://github.com/openssh/openssh-portable/blob/V_8_0_P1/readconf.c#L1788-L1799)、[Include 递归强制权限检查](https://github.com/openssh/openssh-portable/blob/V_8_0_P1/readconf.c#L1551-L1565)；2026-10-22 现场配对观察到宿主 UID `0`、bwrap 内 UID `65534`，并用相同 bwrap profile 复现该报错。UID 是否映射取决于实际 user namespace，不能概括成所有 bwrap 环境都显示相同属主。
+
+需要隔离诊断时，可在权限允许且配置已审核的条件下显式 `-F <用户配置>`，区分用户配置与系统 Include 的影响；它会跳过默认系统配置，不是通用修复，若该文件又 Include 了同样的系统文件，仍会触发递归权限检查。准备控制目录、检查主机密钥与修复 SSH 配置权限是不同操作，不能为了通过沙箱内的一次检查降低宿主的权限或主机密钥校验。
+
 #### MCP 进程权限
 
 `stdio` MCP server 是 Host 启动的独立可执行程序。Agent 看到的是它桥接出的 tool，但 server 本身不在 Agent 工具沙箱里；HTTP MCP server 则把同等信任转移到远端服务和认证 header。默认 Profile 因此不启用任何 MCP server。
