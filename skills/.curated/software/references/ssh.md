@@ -472,7 +472,11 @@ ssh -G host.example | awk '$1 ~ /^(controlmaster|controlpath|controlpersist)$/ {
 
 #### <a id="controlpath-sandbox"></a>沙箱中的临时控制目录
 
-当 SSH 已完成认证，却报 `unix_listener: cannot bind to path ... Permission denied`，先检查错误中的**本地 socket 路径**。沙箱可能允许读取 SSH 配置、使用 agent 和联网，却不允许在家目录创建控制 socket；这种错误不等于远端仓库权限或密钥失效。经授权可将 `ControlPath` 改到沙箱允许写入的临时目录，并保留用户隔离。
+`unix_listener: cannot bind to path ...` 报的是客户端创建**本地控制 socket**失败。`Permission denied` 指向本地权限限制；`No such file or directory` 则先检查父目录或路径中的断链。最终 socket 文件原本不存在是正常的，OpenSSH 会创建它，但不会创建任意 `ControlPath` 的父目录。沙箱允许认证、使用 agent 和联网，与是否允许创建这个 socket 是两件事。经授权可将 `ControlPath` 改到沙箱允许写入的临时目录，并保留用户隔离。
+
+认证成功后仍可能在这一步退出。上游 OpenSSH 8.0p1 先完成 `ssh_login()`，再进入 `ssh_session2()` 调用 `muxserver_listen()`；因此同一次调用中，密码提示之后出现这个 bind 错误，说明客户端已经越过 SSH 用户认证阶段，应先处理本地控制路径，不应据此改用户名或反复试密码。该版本为避免竞争先绑定 `<ControlPath>.<随机后缀>`，监听就绪后才发布最终名称；bind 的 `ENOENT` 分支直接退出 255，并不会因为 `ControlMaster auto` 自动退化为不复用。
+
+> 来源：[认证先于 session 初始化](https://github.com/openssh/openssh-portable/blob/V_8_0_P1/ssh.c#L1489-L1526)、[session 中建立 mux 监听](https://github.com/openssh/openssh-portable/blob/V_8_0_P1/ssh.c#L1907-L1909)、[随机临时路径及 bind 错误处理](https://github.com/openssh/openssh-portable/blob/V_8_0_P1/mux.c#L1301-L1356)。这能定位已通过的认证阶段，单凭该行日志仍不能识别成功的认证方法或验证某串密码。其他客户端版本应按其源码与日志核对。
 
 `/tmp` 通常为 `1777`：sticky bit 限制其他普通用户删除、重命名你的目录项，访问仍由文件和目录各自的权限控制。将 socket 放进当前用户拥有的 `700` 子目录，不依赖 `/tmp` 自动隔离或某个平台对 socket mode 的实现。下面的准备步骤遇到预先存在的软链接、非目录或其他属主时停止，避免直接 `chmod` 一个被抢先创建的路径：
 
@@ -492,11 +496,23 @@ chmod 700 -- "$socket_dir" || exit 1
 ControlPath /tmp/ssh-cm-%i/%C
 ```
 
-`/tmp` 被启动或周期清理后，需要先重建私有目录；SSH 不替用户创建父目录。临时 socket 丢失不影响密钥，但原 master 仍可能存活，新连接也不会自动找到旧路径的 master。需要自动化时，让调用程序或已授权的启动流程执行上述准备步骤，不把固定随机目录当长期配置。
+`/tmp` 被启动或周期清理后，需要先重建私有目录；SSH 不替用户创建父目录。临时 socket 丢失不影响密钥，但原 master 仍可能存活，新连接也不会自动找到旧路径的 master。需要自动化时，让调用程序或已授权的启动流程执行上述准备步骤，不把固定随机目录当长期配置。初始化遇到不安全路径应报告并停止本次准备，不能用 `|| true` 隐藏错误；已有安全目录仍要核对并收紧到 `700`。上面的 `exit` 写法用于独立准备脚本；放进 shell rc 时改用函数返回错误，避免直接退出用户的交互 shell。
 
-验证分两层：`ssh -G` 确认路径展开，再在目标沙箱内执行原本失败的已授权操作，随后 `ssh -O check host.example` 核对复用连接。临时目录能否写入依然由沙箱策略决定；被拒绝时按权限流程处理，不默认 `/tmp` 是通用绕过入口。
+**准备目录和运行 SSH 必须处于同一文件系统视图**。宿主 `/tmp` 可以复用，但换到私有挂载命名空间后，同名路径可能是另一份目录：
 
-> 一次 Linux/OpenSSH 9.6p1、Landlock workspace-write 环境中，原家目录控制路径的创建被拒绝。授权迁移到当前用户拥有的 `/tmp/ssh-cm-<uid>/` 后，实际 `git fetch origin main` 无需扩大该 fetch 的文件权限即可完成。此结果只证明该环境下的路径修复，不保证其他沙箱允许相同目录。
+| 执行环境 | `/tmp` 与复用范围 |
+|---|---|
+| 宿主 shell，或放行宿主 `/tmp` 的 Landlock 执行器 | 只要 master 仍存活、目录未被清理，不同 SSH 客户端可以跨调用复用 |
+| 每条命令新建的 bwrap 执行器，profile 含 `--tmpfs /tmp` | 每次都有新的 `/tmp`；上一次命令或宿主里建的目录不会出现在下一次执行器中 |
+| 同一个持久 PTY 内的 bwrap shell | shell 存活期间共享这一份 `/tmp`，在该 PTY 内准备目录后可复用；另一个 PTY 仍是独立视图 |
+
+DSH 的 backend 与执行器生命周期决定属于哪种情况，细节见 `harness` skill。DSH `terminal-bash` 在所核查版本中默认以 `--noprofile --norc -i` 启动；仅改 `.bashrc` 不会自动覆盖这种 PTY，需要在目标 PTY 内执行准备步骤，或配置已授权的启动初始化。不要仅因某次工具调用看不到目录，就推断宿主终端也无法通过 `/tmp` 复用；也不要只改成工作区路径就假定短命沙箱里的 master 一定能跨调用存活。
+
+验证应覆盖实际调用边界：先 `ssh -G` 确认展开路径，在**真正运行 SSH 的宿主、执行器或 PTY 内**准备目录，再建立一个 master。随后用第二个客户端执行原本需要的只读操作，并核对 `ssh -O check host.example` 返回同一 master PID，以及调试日志中的 mux 握手；不能只以目录存在或一次连接成功作为复用证据。脚本应保留 SSH 的真实退出码，避免 `ssh ... | head` 把错误显示成成功。沙箱拒绝时按权限流程处理，不默认 `/tmp` 是通用绕过入口。
+
+> 2026-10-22，Linux/OpenSSH 8.0p1 实测：在宿主私有 `/tmp/ssh-cm-<uid>/` 下建立 master 后，第二次独立命令禁用客户端认证方法，仍通过同一 master 执行远端只读命令，日志包含 `mux_client_hello_exchange` 和 master 的退出状态 0。对照按 DSH `0.2.1-alpha.1` profile 分别启动的 bwrap 命令，第二次看不到第一次创建的目录；两者都成立，区别在挂载视图而非 SSH 是否支持临时目录。
+>
+> 另一次 Linux/OpenSSH 9.6p1、Landlock workspace-write 环境中，原家目录控制路径的创建被拒绝。授权迁移到当前用户拥有的 `/tmp/ssh-cm-<uid>/` 后，实际 `git fetch origin main` 无需扩大该 fetch 的文件权限即可完成。此结果只证明该环境下的路径修复，不保证其他沙箱允许相同目录。
 >
 > 权限和 token 语义见 [OpenSSH 的 ControlPath 建议](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5#ControlPath)、[ControlMaster 默认值](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5#ControlMaster)与 [TOKENS](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5#TOKENS)；`/tmp` 的 sticky bit 见 [GNU Coreutils 的受限删除标志](https://www.gnu.org/software/coreutils/manual/html_node/Mode-Structure.html)。
 
