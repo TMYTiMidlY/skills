@@ -190,6 +190,29 @@ journalctl --list-boots        # 排查重启时间点一律以它为准
 
 > 三个来源的分歧与 `journalctl --list-boots` 的可靠性为实测。"虚拟 RTC 以上次关机时刻做种子"是由 `btime` 恰好落在上次关机时刻这一现象反推的机制解释，未在官方文档中核实。
 
+## <a id="wsl-persistence"></a>对外提供服务的 WSL 常驻（`instanceIdleTimeout=-1` + 一次性开机任务）
+
+WSL 里的 systemd 服务不能阻止空闲停机——[微软文档](https://learn.microsoft.com/en-us/windows/wsl/systemd)明说 "systemd services will NOT keep your WSL instance alive"。默认 `instanceIdleTimeout` 15 s、`vmIdleTimeout` 60 s：最后一个 wsl 客户端退出后发行版先停、VM 随后停，wslrelay 转发和所有入口一起消失。靠挂 `sleep infinity` / detached `sleep 86400` 当 keepalive 的旧方案废弃：保活随进程或任务退出而丢，还常驻占一个客户端。
+
+现行方案（2026-10-19 在 1810 / MY.Tan 的 Ubuntu 实测通过）：
+
+1. 属主 Windows 用户的 `%UserProfile%\.wslconfig` 加（[官方键说明](https://learn.microsoft.com/en-us/windows/wsl/wsl-config#general-wsl-settings)）：
+
+   ```ini
+   [general]
+   instanceIdleTimeout=-1
+   ```
+
+   发行版不再空闲自停；发行版活着 VM 就不会空闲，`vmIdleTimeout` 不用动（手动停掉全部发行版后，空 VM 仍按默认 60 s 回收）。
+
+2. 开机任务只做一次性启动：计划任务（BootTrigger、S4U、属主用户身份）执行 `wsl.exe -d Ubuntu --exec /bin/true`，跑完即退、退出码 0，没有常驻进程。
+
+3. 手动场景同样简单：终端输 `wsl` 进入，`exit` 或直接关窗口，发行版继续跑。
+
+生效时机：改 `.wslconfig` 后重启该用户的 WSL VM（属主用户上下文 `wsl --shutdown` 再启动）。`.wslconfig` 与 `wsl --shutdown` 都按 Windows 用户隔离（WSL 2.7.0 按 SID 分 session），各用户各自配、互不影响其他账户的 WSL。
+
+验收口径（实测）：开机任务退出、无任何 wsl 客户端空置约 2 分钟后 `wsl -l -v` 仍 Running，SSH / Caddy / Zellij / code-serve-web 正常；默认 `wsl` 进入后 `exit` 再空置约 2 分钟，同样 Running、服务无重启。
+
 ## <a id="misc-diff"></a>5.1 与 7 的其余差异
 
 除了 [文本编码](#encoding) 那三个开关，剩下这些差异影响面小，记一笔备查：
