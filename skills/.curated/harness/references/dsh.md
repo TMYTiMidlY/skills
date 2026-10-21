@@ -606,11 +606,11 @@ Session 创建时采用所选 preset。尚未产生内容的 Session 可以切�
 
 > 来源：[项目根与目录链算法](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/src/files.ts#L223-L282)、[候选发现顺序](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/src/files.ts#L323-L366)、[去重与软链接边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L219-L226)。
 
-维护项目指令时，通常把团队共享约定放进受 Git 跟踪的基础文件，把个人或本机补充放进已配置忽略的 `.local` 文件。DSH 也采用“基础文件＋本地补充”的叠加设计：Git 是否追踪与指令是否加载彼此独立，`.local` 命名本身不替用户配置 Git 忽略。
+维护项目指令时，通常把团队共享约定放进受 Git 跟踪的基础文件，把本地规则放进已配置忽略的 `.local` 文件。DSH 也采用“基础文件＋本地补充”的叠加设计：Git 是否追踪与指令是否加载彼此独立，`.local` 命名本身不替用户配置 Git 忽略。
 
 > 来源：[本地补充的设计与默认候选](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/.agents/notes/archived/feature/2026-07-21-local-instruction-overlay.md#L8-L18)。
 
-候选名称按配置精确匹配；默认识别大写复数的 `AGENTS.md`，自定义名称通过 `instructionFileCandidates` 与 `localInstructionFileCandidates` 设置。全局根固定只取 `AGENTS.md`，项目候选配置不会给全局增加 `CLAUDE.md` 或 `.local` overlay。若要拆分全局本机补充，可在主文件中明确要求 Agent 继续读取加载入口同目录的补充文件；这是主文件驱动的读取约定，DSH 自身不解析 `@path` import。
+候选名称按配置精确匹配；默认识别大写复数的 `AGENTS.md`，自定义名称通过 `instructionFileCandidates` 与 `localInstructionFileCandidates` 设置。全局根固定只取 `AGENTS.md`，项目候选配置不会给全局增加 `CLAUDE.md` 或 `.local` overlay。若要单独保存全局本地规则，可在主文件中明确要求 Agent 继续读取加载入口同目录的补充文件；这是主文件驱动的读取约定，DSH 自身不解析 `@path` import。
 
 > 来源：[配置字段](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L38-L68)、[全局候选与本地 overlay 的边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L219-L225)。
 
