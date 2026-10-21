@@ -42,17 +42,17 @@ Google Antigravity 的终端 CLI（`agy`）与桌面版（Antigravity App / IDE�
 
 ### 双账号隔离（已验证方案）
 
-agy 没有 `CODEX_HOME` 等价物。**唯一已验证的隔离方式是不同的 `HOME`**。二进制中的 `ANTIGRAVITY_APP_DATA_DIR`、`ANTIGRAVITY_GEMINI_DIR`、`JETSKI_APP_DATA_DIR` 属于插件子命令入口，不改变主 CLI 数据目录。
+agy 不提供只重定向自身数据目录的环境变量（不像 Codex 有 `CODEX_HOME` 只改工具数据路径、不影响 git/SSH 等其他 `$HOME` 引用）。**唯一已验证的隔离方式是整个替换 `HOME`**——这意味着 git、SSH、工具配置也跟着换，需要额外软链回来。二进制中的 `ANTIGRAVITY_APP_DATA_DIR`、`ANTIGRAVITY_GEMINI_DIR`、`JETSKI_APP_DATA_DIR` 属于插件子命令入口，不改变主 CLI 数据目录。
 
 在 `.bashrc` 中定义包装函数（类似 `codex-gth`）：
 
 ```bash
-agy-lxy() {
-    HOME="$HOME/.agy-homes/lxy" command agy "$@"
+agy-alt() {
+    HOME="$HOME/.agy-homes/<account>" command agy "$@"
 }
 ```
 
-隔离 HOME 内部结构（`~/.agy-homes/lxy/`）：
+隔离 HOME 内部结构（`~/.agy-homes/<account>/`）：
 
 | 路径 | 类型 | 说明 |
 |---|---|---|
