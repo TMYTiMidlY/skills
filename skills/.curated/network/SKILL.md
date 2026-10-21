@@ -1,6 +1,6 @@
 ---
 name: network
-description: 配置或排查 Caddy 反向代理与 caddy-security、OpenWrt、外部 Wi-Fi、客户端代理、远程接入及 WSL/远端网络管道时使用。核心是还原 TLS、认证、DNS、路由和隧道的实际数据路径，再分层处理。
+description: 配置或排查 Caddy 反向代理与 caddy-security、OpenWrt、外部 Wi-Fi、客户端代理、WireGuard / EasyTier 组网、远程接入及 WSL/远端网络管道时使用。核心是还原 TLS、认证、DNS、路由和隧道的实际数据路径，再分层处理。
 ---
 
 # Network
@@ -42,6 +42,10 @@ WSL Mirror / NAT、宿主 Mihomo 出站、portproxy / wslrelay 入站和 tun2soc
 ## Hysteria2 服务端
 
 独立 systemd 服务、证书复用和 UDP 放行见 [references/hysteria2.md](references/hysteria2.md)；面板内 Hysteria2 inbound 见 [3x-ui.md](references/3x-ui.md)，客户端参数与 Brutal 验证见 [mihomo.md](references/mihomo.md)。
+
+## WireGuard 组网
+
+Ubuntu 公网中心节点、内核 relay 转发、客户端配置与后续加设备见 [references/wireguard.md](references/wireguard.md)；作为 EasyTier 替代方案时，先读[方案比较](references/wireguard.md#comparison)。网段与地址先由用户选定；沿用官方 wg-quick 服务，用简短命令分步安装、写配置和启动。已连通设备不重新部署。
 
 ## EasyTier 客户端
 
