@@ -209,6 +209,8 @@ Zellij 按同样的顺序恢复：先检查和备份 `tokens.db`，让数据库�
 > 记录原则：机制链有两处（宿主盘是否瞬时见底、进程段错误与内存峰值的关系）没拿到直接证据，按事实 / 研判分开写。
 >
 > 同环境更早的一次同病发作（2026-10-09，症状为 Git 空对象与 Zellij token 库损坏）见 [宿主机 C 盘满：WSL Git 空文件与 Zellij 登录异常](#host-disk-full-git-zellij)。
+>
+> 2026-10-19 后续：常驻做法已改为属主用户 `.wslconfig` 写 `[general]` `instanceIdleTimeout=-1` + 一次性开机任务，不再挂 keepalive；做法与实测见 `software` skill 的 windows.md「对外提供服务的 WSL 常驻」。下文恢复动作第 3 条保留当时的处置原貌。
 
 ### 症状
 
@@ -249,7 +251,7 @@ ext4 进入错误态 → 正在写盘的守护进程接连死亡；纯内存服�
    - 走不通：给别的用户注册 S4U 计划任务——管理员直接注册、SYSTEM 代注册、XML 导入三条路全部 Access denied；`runas /savecred` 无缓存凭据。
    - 走得通：`schtasks /RU SYSTEM` 计划任务（管理员可建）→ SYSTEM 持 SeDebugPrivilege / SeAssignPrimaryTokenPrivilege，取属主用户任一常驻进程（断开会话里总有 sihost / ApplicationFrameHost 之类）的令牌，DuplicateTokenEx 后 CreateProcessAsUser 执行 `wsl -d <distro> -u root -- …`。
    - 细节：lpDesktop 不指 `winsta0\default` 时 CreateProcessAsUser 报 err=3；远端输出要么在 bash 内重定向到 `/mnt/c/...`、要么用 cmd 包一层统一落盘，否则 wsl.exe 自身的报错看不见。
-3. VM 空闲自停陷阱：最后一个 wsl 客户端退出约 60 s（vmIdleTimeout 默认）后整个 VM 停机，wslrelay 转发随之消失、所有入口断——此前靠属主用户断开会话里的常驻 shell 撑着 VM，被 `--terminate` 波及。修复：属主用户 `.wslconfig` 写 `[general]` `instanceIdleTimeout=-1` 禁止发行版空闲自停，开机用一次性任务 `wsl.exe -d <distro> --exec /bin/true` 拉起，不再挂 keepalive（2026-10-19 在 1810 / MY.Tan 实测；做法见 `network` skill 的 wsl.md「对外提供服务的 WSL 常驻」）。
+3. VM 空闲自停陷阱：最后一个 wsl 客户端退出约 60 s（vmIdleTimeout 默认）后整个 VM 停机，wslrelay 转发随之消失、所有入口断——此前靠属主用户断开会话里的常驻 shell 撑着 VM，被 `--terminate` 波及。修复：以属主身份挂 detached `wsl -d <distro> -- bash -c "sleep 86400"` 当 keepalive；治本要属主用户真实登录一次。
 4. 空间回收链：guest 内删冷文件（本次 30 GB）→ 属主身份 root 执行 `fstrim -v /`（trim 68 GiB）→ 宿主 C: 22 GB→54.6 GB；VHDX 文件逻辑大小不变，缩小的是 NTFS 实际占用。fstrim 只还空闲块，先删后 trim 顺序才有意义。
 
 ### 教训
@@ -258,5 +260,5 @@ ext4 进入错误态 → 正在写盘的守护进程接连死亡；纯内存服�
 - WSL 发行版按 Windows 用户隔离：`wsl --list` 看不到别人的，`HKU\<SID>\…\Lxss` 注册表能枚举全部。
 - guest 报 EIO（errno 5）而非 ENOSPC 时，优先怀疑虚拟盘后端（宿主卷余量 / 存储栈）而不是 guest 满；`getpwnam(root) failed 5` 是文件系统层坏的信号，别去折腾用户与权限。
 - 动态 VHDX 只涨不缩：删文件只改 guest 的 df；要还宿主空间必须 `fstrim`（改文件逻辑大小还需 sparse VHD 或 compact）。宿主卷余量是持续消耗品，fstrim 还回去的空间会被后续写入再吃掉。
-- 对外提供服务的 WSL 发行版默认受 vmIdleTimeout 支配：没有 wsl 客户端会话就会整体停机；属主用户 `.wslconfig` 配 `instanceIdleTimeout=-1` 即可常驻，不用 keepalive 会话（做法见 `network` skill 的 wsl.md「对外提供服务的 WSL 常驻」）。
+- 对外提供服务的 WSL 发行版受 vmIdleTimeout 支配：没有常驻 wsl 客户端会话就会整体停机，需要 keepalive 会话或属主常驻登录。
 
