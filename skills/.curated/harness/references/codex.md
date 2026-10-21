@@ -1,6 +1,6 @@
 # Codex 运行时笔记
 
-本篇介绍 Codex app-server 的运行形态、CLI 启动行为、进程管理、终端显示与复制、桌面端 projectless 会话的目录与提示词、用量与额度统计、上下文配置、协作模式、内置生图工具和订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
+本篇介绍 Codex app-server 的运行形态、CLI 启动行为、进程管理、终端显示与复制、桌面端 projectless 会话的目录与提示词、用量与额度统计、上下文配置、协作模式、内置生图工具、cc-switch 多账号与共享会话，以及订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
 
 ## <a id="app-server-lifecycle"></a>Codex app-server
 
@@ -500,6 +500,89 @@ Codex 随附的 `imagegen` skill 还包含公共 API 调用脚本。这个 fallb
 脚本的校验也可能落后于公共 API。所核版本对 `model == "gpt-image-2"` 且 `background == "transparent"` 的组合直接报错，并建议另选 `gpt-image-1.5`；它不会自动替换模型。这是这一脚本版本的本地限制，不是所有内置工具、公共 API 或底层图片模型的统一限制。
 
 > [模型特定校验](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/skills/src/assets/samples/imagegen/scripts/image_gen.py#L181-L202)与 [显式切换要求](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/skills/src/assets/samples/imagegen/SKILL.md#L23-L30)需同时阅读。公共 Image 2／2.5 参数及其版本范围另见 [公共 API 对照](image-gen.md#model-parameters)，不能用旧脚本的拒绝信息代替当前接口规范。
+
+## <a id="cc-switch-multi-account"></a>cc-switch 多账号与共享会话
+
+需要给不同 ChatGPT 账号建立长期启动入口时，用独立 `CODEX_HOME` 保存各自配置和登录状态；是否共享历史另行决定。这里使用的是 [SaladDay/cc-switch-cli](https://github.com/SaladDay/cc-switch-cli/tree/v5.11.1)，不是同名桌面客户端。以下初始化流程于 2026-10-22 在 Linux / WSL、cc-switch `5.11.1`、Codex `0.163.0` 下实测；其他版本先核对 `--help`。
+
+### <a id="cc-switch-storage"></a>账号与存储边界
+
+`CODEX_HOME` 只重定向 Codex 自身的数据，不替换整个 `HOME`。这里隔离的是文件式认证；环境变量或外部宿主另行注入的身份仍须核对，不能仅凭目录不同判定账号不同，见 [凭据的存储形式](#auth-storage)。cc-switch 的 `start codex … --shared-sessions` 为每个 provider 建立持久目录，默认形态为 `<source-home>/.cc-switch-launches/<SHA256(provider-id)>`；实际位置以 `--dry-run` 返回值为准。
+
+| 对象 | `--shared-sessions` 的处理 |
+|---|---|
+| `config.toml`、`auth.json`、`.auth-source` | 留在各 provider 的独立目录；生成配置指定 `cli_auth_credentials_store = "file"` |
+| 会话、归档、线程写锁、rollout 迁移目录 | 分别软链接到源目录的 `sessions`、`archived_sessions`、`thread-writer-locks`、`rollout-migrations` |
+| `.tmp/rollout-maintenance.lock` | 链接到源目录的维护锁 |
+| SQLite 会话索引 | 用 `sqlite_home` 指向按源配置解析出的共享目录，不必等于源 `CODEX_HOME` |
+| `session_index.jsonl` | 各目录保留本地缓存，不做软链接；Codex 会原子替换它 |
+
+共享历史意味着不同账号入口可访问同一批本地会话内容，归档、删除等操作也会影响这批共享数据。它适用于已获准共享历史的账号，不是用户间的数据隔离。创建新账号入口时保持凭据为空，由用户在新入口独立登录；不要复制或链接已有账号的认证文件，也不要把整个源目录复制一遍。
+
+> 源码：[目录命名与共享配置](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L98-L165)、[共享目录、索引与维护锁](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L217-L253)。同一授权被复制到不同目录仍可能竞争刷新，见 [访问令牌的刷新](#auth-refresh)。
+
+### <a id="cc-switch-initialize"></a>创建与初始化
+
+先确认当前 shell 的 `CODEX_HOME`、已有启动函数及 cc-switch 的默认 provider，记录现有配置状态；确认账号隔离和历史共享范围后，再执行创建。下面的 `<provider-id>`、`<account-label>` 都需替换，ID 应选尚不存在的值：
+
+```bash
+cc-switch -a codex provider list
+cc-switch -a codex provider current
+cc-switch -a codex provider add --template openai-official \
+  --id '<provider-id>' --name '<account-label>'
+cc-switch start codex '<provider-id>' --shared-sessions --dry-run
+cc-switch start codex '<provider-id>' --shared-sessions -- --help
+```
+
+`--dry-run` 只预览，不生成启动目录；最后一条才初始化持久目录、共享链接和空凭据来源标记，并运行原生 Codex 帮助后退出，不执行登录或模型任务。这两条启动命令不切换全局当前 provider。若只需要完全独立的历史，可以直接使用专用 `CODEX_HOME`，无需引入共享目录结构。
+
+官方订阅入口使用 `openai-official` 模板，它以空 `auth` 和配置创建 provider；这里不需要填写 API key 或 Base URL。`5.11.1` 的官方模板不接受 `--config` / `--config-file` 或模型、API 字段覆盖，模型等本地设置在初始化后单独配置。默认的 `custom` 创建路径按第三方端点校验，把只含原生官方设置的 `{"auth": {}, "config": "…"}` 直接传给它会因缺少有效 Base URL 被拒绝；应改选官方模板，而不是给订阅入口编造端点。
+
+> 源码：[官方模板的空初始配置](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/commands/provider_input.rs#L519-L529)、[凭据与配置的构造](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/commands/provider_input.rs#L2744-L2759)、[官方模板的字段限制](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/commands/provider.rs#L1620-L1650)。上述 `custom` 校验错误也在本次初始化中实测。
+
+### <a id="cc-switch-launch"></a>启动入口与多开
+
+两种入口的管理职责不同：
+
+| 入口 | 启动与退出时的处理 | 同 provider 多开 |
+|---|---|---|
+| `cc-switch start codex '<provider-id>' --shared-sessions` | 从 provider 重新生成配置，持有目录级 `.lock`；原生进程退出时将登录状态回写到该 provider | `5.11.1` 对同目录第二个此类启动直接报已有活动实例 |
+| 包装函数指定已初始化的 `CODEX_HOME`，直接运行 `codex` | 使用目录现有配置与凭据；不经过 cc-switch 的配置生成、目录级启动锁和退出回写 | 可沿用原生 Codex 的多实例机制，但同一线程仍受共享写锁约束 |
+
+如果需要原生多开，可以在实际使用的 shell 配置中建立函数。下面例子仅用于官方订阅，且共享历史按原生 `openai` provider 使用；目录替换为预览得到的绝对路径：
+
+```bash
+codex-account() {
+    CODEX_HOME='<isolated-codex-home>' command codex \
+        -c 'model_provider="openai"' \
+        -c 'cli_auth_credentials_store="file"' "$@"
+}
+```
+
+cc-switch 生成的配置和受管启动会显式选 `custom` route。改为直接启动时，显式的 `openai` 覆盖用于保持官方入口，并覆盖 resume 从旧线程恢复的 provider；它不是跨任意 provider 合并历史的开关。第三方端点应保留自己的路由，不能照抄该覆盖。共享目录和索引后，仍要核对历史使用的 provider 及 resume 的实际结果。
+
+> 源码：[目录级启动锁](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L186-L215)、[受管启动的退出回写、provider 与存储覆盖](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L283-L309)。共享模式还拒绝透传 `-c` / `--config`、`--profile` 和 `--oss`，见 [参数门禁](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L25-L40)；需要这些覆盖时先选择并理解直接启动方式。
+
+模型、思考强度和 `[tui]` 等非凭据设置可以按需单独配置；终端显示见 [终端界面与 Zellij Web 复制](#terminal-clipboard)。权限策略也应单独确认：`--sandbox danger-full-access --ask-for-approval never` 会授予全权限并关闭确认，不是多账号隔离的前提，不能从旧账号默认照搬。不同入口使用同一账号时，不要同时让 cc-switch 重新生成目录配置；同一共享线程也只允许一个活动写者。
+
+### <a id="cc-switch-sync"></a>配置与凭据同步
+
+cc-switch 的 provider 数据和持久目录是两个维护位置。直接启动后，Codex 的登录与刷新留在该目录，**不会自动执行 cc-switch 的退出回写，也不等于进入了 `cc-switch auth` 管理的账号库**。判断此入口是否登录，应执行同一包装函数的 `login status`。
+
+再次经过 cc-switch 启动时，`config.toml` 会按 provider 配置重新生成，仅保存在持久目录的模型或界面修改可能被覆盖。认证另用 `.auth-source` 记录 provider 凭据的摘要：摘要未变时保留目录内的刷新 / 退出登录结果；provider 侧凭据显式变化时重新同步，变为空时会移除原认证文件。因此维护时应先确认实际入口、配置来源和活动进程，保留非凭据配置差异，再决定同步方向；不要用“重新启动”代替这一步判断。
+
+> 源码：[配置重建与凭据来源检测](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L253-L279)、[退出时仅回写认证](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L283-L309)。本节不提供直接改写 cc-switch 数据库的流程。
+
+### <a id="cc-switch-verification"></a>验收
+
+把配置完成、用户登录和真实模型请求分开验收：
+
+- **配置完成**：shell 语法检查通过，实际终端能解析包装函数，`--version` / `login --help` 正常；独立目录和认证路径不是指向其他账号的软链接，共享链接与 `sqlite_home` 均指向预期位置；原启动函数、配置及全局当前 provider 不变。
+- **登录前**：在空凭据、文件存储且无其他认证注入的方案下，初始化后没有认证文件，`codex-account login status` 返回 `Not logged in` 和退出码 1。此时还没有验证账号或模型可用性。
+- **用户登录后**：用户通过 `codex-account` 内的登录入口或 `codex-account login --device-auth` 独立授权，再检查同入口的登录状态和账号；不让用户把 token 粘贴进对话。
+- **实际使用**：在获准后做最小模型请求，并分别核对所需历史可见性、resume 和不同线程并行使用；初始化、帮助命令及配置文件存在都不能替代这些测试。
+
+> 2026-10-22 的实测范围包括空凭据初始化、共享链接 / 配置检查、shell 入口和原生帮助、未登录状态，以及既有配置和默认 provider 未变化的核验；未代用户登录，也未验证登录后的模型请求或所有 resume / 并行场景。
 
 ## <a id="subscription-auth"></a>订阅登录凭据
 
