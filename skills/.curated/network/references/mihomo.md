@@ -282,6 +282,22 @@ secret: ''                            # 非空 = 所有 REST 调用都要带 tok
 
 > **`secret` 非空 = 所有 REST 调用要带 `Authorization: Bearer <secret>`**（websocket 方式访问的流式端点如 `/logs`、`/traffic` 改用 URL 参数 `?token=<secret>`）。缺失或不匹配一律 HTTP 401 `{"message":"Unauthorized"}`——见 [`authentication` 中间件源码](https://github.com/MetaCubeX/mihomo/blob/24b6de71fc1c4ea282dcbc7b65a8bcbcc0c75e6c/hub/route/server.go#L336)（`safeEqual` 常数时间比较 token）。所以裸 `curl http://127.0.0.1:9090/` 回 `{"message":"Unauthorized"}` 只说明**这个实例设了 secret**、不代表 mihomo 挂了——加 `-H "Authorization: Bearer <secret>"` 即通。绑回环自用可留 `secret: ''` 免认证。**真实 secret 不入库，占位即可。**
 
+**运行时不回显提取 `secret`**：自动化或远程调用受保护的控制端时，从 `config.yaml` 当场提取 `secret` 组装请求头，不在标准输出、日志或文档中打印真实密钥：
+
+```powershell
+# PowerShell：从主配置提取 secret 并构造认证头
+$line = Select-String -Path "$env:USERPROFILE\.config\mihomo\config.yaml" -Pattern '^secret:' | Select-Object -First 1
+$sec = ($line.Line -replace '^secret:\s*', '').Trim('''" ')
+$h = @{ Authorization = "Bearer $sec" }
+Invoke-RestMethod -Uri 'http://127.0.0.1:9090/configs' -Headers $h
+```
+
+```bash
+# Bash：从主配置提取 secret 并构造认证头
+sec=$(sed -n "s/^secret:[[:space:]]*['\"]*\([^'\"]*\)['\"]*/\1/p" ~/.config/mihomo/config.yaml | head -n1)
+curl -s -H "Authorization: Bearer $sec" http://127.0.0.1:9090/configs
+```
+
 **读运行态**——常用端点（适合脚本/AI 监控，CLI 默认不写日志文件，靠这些 API 看运行态）：
 
 ```bash
@@ -369,12 +385,13 @@ curl -H "Authorization: Bearer <secret>" -X PATCH http://127.0.0.1:9090/configs 
   -d '{"tun":{"enable":true,"strict-route":false}}'
 ```
 
-**改 `tun` 段的四个额外坑**（改 `mode`/端口那些一般没这些）：
+**改 `tun` 段的注意事项**（改 `mode`/端口那些一般没这些）：
 
 1. `tun.enable` 是**非指针 bool**——一旦发 `tun` 对象就**必须带 `"enable":true`**，漏了会被当 `false`、直接把 TUN 关掉。
-2. **`enable` OFF→ON = 新建 TUN/Wintun 设备，要 mihomo 进程本身有管理员 / root 权限**。注意提权的是**核心进程**、**不是**调 9090 的 curl（调用方只要 `secret`、不要 admin）。所以：**只要那个带 TUN 的 mihomo 本来是提权跑的（正常都是），就能用 9090 把 TUN 关了再开**；若核心没提权，`enable:true` 会**静默失败**、`GET /configs` 读回 `enable=false`。这也是"驱动已提权的核心原地重建 TUN"能行、而"kill 核心再从普通上下文裸起"不行（新进程拿不到 TUN 提权、还撞下面的竞态，本机实测 4/4 次 TUN 起不来）的根因。
+2. **`enable` OFF→ON = 新建 TUN/Wintun 设备，要 mihomo 进程本身有管理员 / root 权限**。注意提权的是**核心进程**、**不是**调 9090 的 curl（调用方只要 `secret`、不要 admin）。所以：**只要那个带 TUN 的 mihomo 本来是提权跑的（正常都是），就能用 9090 把 TUN 关了再开**；若核心没提权，`enable:true` 会**静默失败**、`GET /configs` 读回 `enable=false`。这也是"驱动已提权的核心原地重建 TUN"能行、而"kill 核心再从普通上下文裸起"不行（新进程拿不到 TUN 提权、还撞下面的竞态，本机实测 4/4 次 TUN 起不来）的根因。Windows 上经 OpenSSH Server 登录管理员账户时，SSH 会话默认已持有 `BUILTIN\Administrators` 与 `High Mandatory Level` 令牌（可用 `whoami /groups` 或 `([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)` 核实），无需再弹 UAC；只有从非提权上下文首次拉起核心时，才需要走 `software` skill 的 `Start-Process -Verb RunAs` 提权。
 3. **（Windows）改任何 `tun` 参数都触发 `ReCreateTun` = close + 立刻重建 → 撞 Wintun 竞态 → TUN 静默掉**（机制见 [进程重启](#process-restart)）。所以切 tun 参数要**两段式**：先 `{"tun":{"enable":false}}` 关掉 → 等 ~12s 让 Meta 适配器 PnP 删净 → 再 `{"tun":{"enable":true, ...目标...}}` 建新的（此时不再撞）。
 4. **读回坑**：`strict-route:false`（及其它零值 bool）因 `json:",omitempty"`，`GET /configs` 会**省略该字段**——读到 `None`/缺失 ≠ 没生效。
+5. **运行态 `PATCH` 与持久配置同步**：`PATCH /configs` 只改内存运行态、不写回 `config.yaml`，而 `PUT /configs?force=true` 全量重载会重新初始化订阅与规则、打断现有连接。零中断开关 TUN 并保持磁盘配置一致时，分三步执行：① 向 `:9090/configs` 发 `PATCH` 提交 `{"tun":{"enable":true}}`（或 `false`），查 `GET /configs` 的 `.tun.enable` 与 `Get-NetAdapter -Name '*Meta*'` 确认虚拟网卡状态；② 同步更新 `config.yaml` 中的 `tun.enable`；③ 执行 `mihomo -t -d <config-dir>` 仅做离线语法校验，不额外触发全量重载或 `POST /restart`。
 
 <a id="62-tun-模式下别用-post-restartwindows-会静默丢-tun"></a>
 ### <a id="process-restart"></a>进程重启
