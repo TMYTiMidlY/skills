@@ -513,7 +513,7 @@ ControlPath /tmp/ssh-cm-%i/%C
 
 验证应覆盖实际调用边界：先 `ssh -G` 确认路径，在**真正运行 SSH 的环境中**准备目录并建立 master，再用第二个客户端执行只读操作，核对 `ssh -O check host.example` 返回同一 master PID，以及调试日志中的 mux 握手。脚本应保留 SSH 的真实退出码，避免 `ssh ... | head` 把错误显示成成功。临时目录能否写入仍受沙箱策略约束，被拒绝时按权限流程处理。
 
-如果问题发生在 **DSH 工具或内置终端**，而宿主终端的 SSH 正常，继续看 [DSH 的临时目录与执行器生命周期](../../harness/references/dsh.md#sandbox-tmp-ssh)：该处解释为何一次工具调用建好的目录，可能在下一次调用或另一个终端里不存在。若报的是配置文件 `Bad owner or permissions`，且宿主与工具内看到的属主不同，则看 [DSH 的用户命名空间与属主检查](../../harness/references/dsh.md#sandbox-uid-ssh)。这些 DSH 特有差异集中在对应章节说明。
+如果问题发生在 **DSH 工具或内置终端**，而宿主终端的 SSH 正常，则属于 DSH 沙箱的执行环境差异：一次工具调用建好的目录可能在下一次调用或另一个终端里不存在，配置文件也可能因用户命名空间属主视图不同而报 `Bad owner or permissions`。这两类差异与对应的源码证据在 `harness` skill（DSH 运行时、工具沙箱与持久终端）中说明。
 
 > Linux/OpenSSH 9.6p1、Landlock workspace-write 环境中的一次实测：原家目录控制路径的创建被拒绝。授权迁移到当前用户拥有的 `/tmp/ssh-cm-<uid>/` 后，实际 `git fetch origin main` 无需扩大该 fetch 的文件权限即可完成。此结果只证明该环境下的路径修复，不保证其他沙箱允许相同目录。
 >
