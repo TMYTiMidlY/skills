@@ -470,7 +470,20 @@ OpenSSH 默认 `ControlMaster no`、`ControlPersist no`；`ControlPath` 本身�
 ssh -G host.example | awk '$1 ~ /^(controlmaster|controlpath|controlpersist)$/ {print}'
 ```
 
-#### <a id="controlpath-sandbox"></a>沙箱中的临时控制目录
+查看或关闭现有 master：
+
+```bash
+ssh -O check host.example
+ssh -O exit host.example
+```
+
+master 建立时已经固化了认证、转发和 agent forwarding 等连接级配置。修改 `RemoteForward` 或其他连接级选项后，应关闭旧 master 再重新连接。
+
+Windows OpenSSH 当前没有实现 ControlMaster；相关功能请求仍在 [Win32-OpenSSH #1328](https://github.com/PowerShell/Win32-OpenSSH/issues/1328)。在 Windows 上不应照搬依赖 Unix control socket 的配置。
+
+#### <a id="controlpath-sandbox"></a>临时控制目录与监听错误
+
+本节用于两类场景：默认家目录控制路径在受限环境中不可写，需要迁到临时目录；或迁移后目录被清理，SSH 因无法创建控制 socket 而中断。
 
 `unix_listener: cannot bind to path ...` 报的是客户端创建**本地控制 socket**失败。`Permission denied` 指向本地权限限制；`No such file or directory` 则先检查父目录或路径中的断链。最终 socket 文件原本不存在是正常的，OpenSSH 会创建它，但不会创建任意 `ControlPath` 的父目录。沙箱允许认证、使用 agent 和联网，与是否允许创建这个 socket 是两件事。经授权可将 `ControlPath` 改到沙箱允许写入的临时目录，并保留用户隔离。
 
@@ -496,36 +509,15 @@ chmod 700 -- "$socket_dir" || exit 1
 ControlPath /tmp/ssh-cm-%i/%C
 ```
 
-`/tmp` 被启动或周期清理后，需要先重建私有目录；SSH 不替用户创建父目录。临时 socket 丢失不影响密钥，但原 master 仍可能存活，新连接也不会自动找到旧路径的 master。需要自动化时，让调用程序或已授权的启动流程执行上述准备步骤，不把固定随机目录当长期配置。初始化遇到不安全路径应报告并停止本次准备，不能用 `|| true` 隐藏错误；已有安全目录仍要核对并收紧到 `700`。上面的 `exit` 写法用于独立准备脚本；放进 shell rc 时改用函数返回错误，避免直接退出用户的交互 shell。
+`/tmp` 被启动或周期清理后，需要先重建私有目录；原 master 即使仍存活，新客户端也无法通过已经丢失的 socket 路径找到它。需要自动化时，让调用程序或已授权的启动流程执行上述准备步骤。初始化遇到不安全路径应报告并停止本次准备，已有安全目录仍要收紧到 `700`。上面的 `exit` 写法用于独立准备脚本；放进 shell rc 时改用函数返回错误，避免退出用户的交互 shell。
 
-**准备目录和运行 SSH 必须处于同一文件系统视图**。宿主 `/tmp` 可以复用，但换到私有挂载命名空间后，同名路径可能是另一份目录：
+验证应覆盖实际调用边界：先 `ssh -G` 确认路径，在**真正运行 SSH 的环境中**准备目录并建立 master，再用第二个客户端执行只读操作，核对 `ssh -O check host.example` 返回同一 master PID，以及调试日志中的 mux 握手。脚本应保留 SSH 的真实退出码，避免 `ssh ... | head` 把错误显示成成功。临时目录能否写入仍受沙箱策略约束，被拒绝时按权限流程处理。
 
-| 执行环境 | `/tmp` 与复用范围 |
-|---|---|
-| 宿主 shell，或放行宿主 `/tmp` 的 Landlock 执行器 | 只要 master 仍存活、目录未被清理，不同 SSH 客户端可以跨调用复用 |
-| 每条命令新建的 bwrap 执行器，profile 含 `--tmpfs /tmp` | 每次都有新的 `/tmp`；上一次命令或宿主里建的目录不会出现在下一次执行器中 |
-| 同一个持久 PTY 内的 bwrap shell | shell 存活期间共享这一份 `/tmp`，在该 PTY 内准备目录后可复用；另一个 PTY 仍是独立视图 |
+如果问题发生在 **DSH 工具或内置终端**，而宿主终端的 SSH 正常，继续看 [DSH 的临时目录与执行器生命周期](../../harness/references/dsh.md#sandbox-tmp-ssh)：该处解释为何一次工具调用建好的目录，可能在下一次调用或另一个终端里不存在。若报的是配置文件 `Bad owner or permissions`，且宿主与工具内看到的属主不同，则看 [DSH 的用户命名空间与属主检查](../../harness/references/dsh.md#sandbox-uid-ssh)。这些 DSH 特有差异集中在对应章节说明。
 
-DSH 的 backend 与执行器生命周期决定属于哪种情况，细节见 `harness` skill。DSH `terminal-bash` 在所核查版本中默认以 `--noprofile --norc -i` 启动；仅改 `.bashrc` 不会自动覆盖这种 PTY，需要在目标 PTY 内执行准备步骤，或配置已授权的启动初始化。不要仅因某次工具调用看不到目录，就推断宿主终端也无法通过 `/tmp` 复用；也不要只改成工作区路径就假定短命沙箱里的 master 一定能跨调用存活。
-
-验证应覆盖实际调用边界：先 `ssh -G` 确认展开路径，在**真正运行 SSH 的宿主、执行器或 PTY 内**准备目录，再建立一个 master。随后用第二个客户端执行原本需要的只读操作，并核对 `ssh -O check host.example` 返回同一 master PID，以及调试日志中的 mux 握手；不能只以目录存在或一次连接成功作为复用证据。脚本应保留 SSH 的真实退出码，避免 `ssh ... | head` 把错误显示成成功。沙箱拒绝时按权限流程处理，不默认 `/tmp` 是通用绕过入口。
-
-> 2026-10-22，Linux/OpenSSH 8.0p1 实测：在宿主私有 `/tmp/ssh-cm-<uid>/` 下建立 master 后，第二次独立命令禁用客户端认证方法，仍通过同一 master 执行远端只读命令，日志包含 `mux_client_hello_exchange` 和 master 的退出状态 0。对照按 DSH `0.2.1-alpha.1` profile 分别启动的 bwrap 命令，第二次看不到第一次创建的目录；两者都成立，区别在挂载视图而非 SSH 是否支持临时目录。
->
-> 另一次 Linux/OpenSSH 9.6p1、Landlock workspace-write 环境中，原家目录控制路径的创建被拒绝。授权迁移到当前用户拥有的 `/tmp/ssh-cm-<uid>/` 后，实际 `git fetch origin main` 无需扩大该 fetch 的文件权限即可完成。此结果只证明该环境下的路径修复，不保证其他沙箱允许相同目录。
+> Linux/OpenSSH 9.6p1、Landlock workspace-write 环境中的一次实测：原家目录控制路径的创建被拒绝。授权迁移到当前用户拥有的 `/tmp/ssh-cm-<uid>/` 后，实际 `git fetch origin main` 无需扩大该 fetch 的文件权限即可完成。此结果只证明该环境下的路径修复，不保证其他沙箱允许相同目录。
 >
 > 权限和 token 语义见 [OpenSSH 的 ControlPath 建议](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5#ControlPath)、[ControlMaster 默认值](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5#ControlMaster)与 [TOKENS](https://man.openbsd.org/OpenBSD-7.5/ssh_config.5#TOKENS)；`/tmp` 的 sticky bit 见 [GNU Coreutils 的受限删除标志](https://www.gnu.org/software/coreutils/manual/html_node/Mode-Structure.html)。
-
-查看或关闭现有 master：
-
-```bash
-ssh -O check host.example
-ssh -O exit host.example
-```
-
-master 建立时已经固化了认证、转发和 agent forwarding 等连接级配置。修改 `RemoteForward` 或其他连接级选项后，应关闭旧 master 再重新连接。
-
-Windows OpenSSH 当前没有实现 ControlMaster；相关功能请求仍在 [Win32-OpenSSH #1328](https://github.com/PowerShell/Win32-OpenSSH/issues/1328)。在 Windows 上不应照搬依赖 Unix control socket 的配置。
 
 ### RemoteForward 反向转发
 
