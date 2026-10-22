@@ -256,13 +256,13 @@ Remove-Item "$env:TEMP\symlink-test.txt","$env:TEMP\target-test.txt"
 
 ### 症状与对照
 
-同一客户端中，普通页可显示和截图，受保护业务页在原生 RDP 里全白，在截图与另一种远控里却全黑或捕获失败。进入远程桌面时曾短暂看到内容。
+同一 Chromium 客户端中，普通页可显示和截图，受保护业务页在 Windows RDP 里全白，在 ToDesk 中黑屏，KimiCU 截图失败。KimiCU 的 WGC 路径创建 `GraphicsCaptureItem` 失败，PrintWindow＋DwmFrame 回退得到黑帧；进入 RDP 时曾短暂看到内容。
 
 先对照代理隧道、资源加载和业务认证。定点绕行后现象保持一致，结合故障早于透明代理开启的时间线，排查转向客户端显示层。开发者面板空白另由面板禁用设置控制，测试路由用后撤回。
 
 ### 原生保护路径
 
-离线分析把具名接口依次关联到注册、工厂、虚表处理函数和系统调用，发现两条独立路径：
+用 REA 检查 PE 头、节和资源，再用 GNU objdump 从 `windows.setContentProtection`、`windows.setContentProtectionForRdp` 追到注册、工厂、虚表处理函数和系统调用，找到两条独立路径：
 
 - **捕获保护**：调用 `SetWindowDisplayAffinity`，当前窗口查询到 `WDA_EXCLUDEFROMCAPTURE`。它与截图拒绝或黑帧相符。
 - **远程显示保护**：根据保护状态和远程会话检测，调用内容视图的 `SetVisible(false)`，留下主题背景。它解释本案的 RDP 白色区域。
@@ -283,5 +283,5 @@ Capture 接口对应基础、Trace 和网络诊断。企业报告按配置和允
 
 ### 技术方法归属
 
-静态地址换算、注册链、有界运行字段、授权写入事务、恢复验收和采集／报告分析，使用 `reversing` skill；本条保留症状、根因和排查转折，便于检索。
+REA／objdump 命令、Win32 查询代码、窗口与网页视图状态读取、内存修改与回滚、Crashpad 设置解析，使用 `reversing` skill；本条保留症状、根因和排查转折，便于检索。
 

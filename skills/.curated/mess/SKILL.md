@@ -36,8 +36,8 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
   - 关键词：`WSAEACCES`、`os error 10013`、`excludedportrange 里有`、`49694-49793`、`Hyper-V 端口保留`、`保留段每次开机漂移`、`mixed-port 起不来`
 - **普通 PowerShell 创建文件 symlink 失败** → 文件 symlink 需要 `SeCreateSymbolicLinkPrivilege`；目录能装只是因为走了 junction，文件没有 junction 可用 → [直达](references/windows.md#symlink-privilege)
   - 关键词：`Administrator privilege required`、`You do not have sufficient privilege`、`SeCreateSymbolicLinkPrivilege`、`secedit 扩展错误`、`*SID`、`Developer Mode`
-- **受管客户端在 RDP 中白屏，截图或另一远控却黑屏** → 客户端分别通过原生视图隐藏和窗口捕获亲和性实施保护；网络响应正常与画面可见是不同证据层 → [案例](references/windows.md#managed-client-display)
-  - 关键词：`RDP 白屏`、`截图黑帧`、`WDA_EXCLUDEFROMCAPTURE`、`SetVisible`、`状态字段被回写`、`代码恢复但窗口状态未重新应用`
+- **受管客户端在 RDP 中白屏，ToDesk 黑屏且 KimiCU 截图失败** → 客户端分别通过 `SetVisible(false)` 隐藏网页视图、通过 `SetWindowDisplayAffinity` 排除捕获 → [案例](references/windows.md#managed-client-display)
+  - 关键词：`RDP 白屏`、`ToDesk 黑屏`、`KimiCU`、`WGC`、`PrintWindow`、`WDA_EXCLUDEFROMCAPTURE`、`SetVisible`
 
 ### WSL2
 

@@ -22,7 +22,7 @@ description: 逆向分析已发布的移动端应用、游戏或桌面客户端�
 - [APK 与 native 库的静态逆向](references/apk.md)：跨应用通用方法，包括解包与应用分层、资产加解密、native 反汇编与地址解析、界面文案反查、数值规则表语义、失效在线服务的本地替代、改包构建与验证、存档实现定位。
 - [设备侧取数通道](references/adb.md)：设备私有数据的导出与恢复，包括 adb / Shizuku / 鸿蒙 HDC 的权限边界、ANCO 容器隔离、厂商备份覆盖范围、HMOSBackup 6.1 `encryptionType=2` 解密链，以及跨隔离边界的迁移机制。
 - [爱养成系列](references/aiyangcheng.md)：单个应用族的完整还原实例，并规定结局达成条件的汇报格式。用户问"某结局怎么达成"时，按[结局达成条件的汇报格式](references/aiyangcheng.md#report-format)回答。
-- [桌面客户端显示与捕获防护](references/desktop-protection.md#display-paths)：远程白屏、截图黑帧及诊断上报的脱敏案例；按需读取[静态证据与运行对象](references/desktop-protection.md#native-evidence)、[授权下的运行时验证](references/desktop-protection.md#runtime-adjustments)、[录屏与报告行为](references/desktop-protection.md#recording-reporting)及[案例结果与覆盖](references/desktop-protection.md#case-results)。
+- [桌面客户端显示与捕获防护](references/desktop-protection.md#display-paths)：Windows RDP 白屏、ToDesk 黑屏和 KimiCU 截图失败的排查案例。包含 [REA／objdump 定位保护函数](references/desktop-protection.md#native-evidence)、[读取窗口的防截屏和显示状态](references/desktop-protection.md#bounded-runtime)、[修正远程显示和截图行为](references/desktop-protection.md#runtime-adjustments)、[检查录屏与数据上报](references/desktop-protection.md#recording-reporting)的命令和代码。
 
 ## <a id="working-rules"></a>工作原则
 
@@ -30,7 +30,7 @@ description: 逆向分析已发布的移动端应用、游戏或桌面客户端�
 - **界面缺失以渲染函数为准。** 数据表只能说明字段存在，不能证明界面是否会显示；已知成因与排查链见[从界面文案反查数据与代码](references/apk.md#ui-to-data)。
 - **结论必须可复核。** 每条判断落到函数、地址或数据表行，实测与推断分开标；能重建输出时，用还原器与应用实际显示逐条对照，闭合证据链。构建身份和原始证据保存在任务私有目录，知识库只保留脱敏后的机制与流程。
 - **桌面行为分层验收。** 从注册、工厂、虚表和处理函数追到系统 API，分别核对资源加载、视图可见性、窗口捕获、远程显示及连接认证。能力存在、配置启用、当前执行和实际外传分开记录。
-- **授权验证采用最小事务。** 先只读匹配当前进程和对象，确需写入并获授权后，保存原值与页权限；写后回读、刷新指令缓存、恢复并核验页权限，最后检查系统状态和真实画面。保留覆盖缺口，不把字段变化或参数写入当成行为验证。
+- **修改代码时保留回滚。** 先匹配当前进程和对象，获得写入授权后保存原值与页权限；写后回读、刷新指令缓存、恢复并核验页权限，最后对照窗口设置和实际画面。
 
 ## <a id="related"></a>相邻能力
 
