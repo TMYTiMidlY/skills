@@ -1092,7 +1092,7 @@ for (const [name, value] of Object.entries(process.env)) {
 
 ##### <a id="sandbox-tmp-ssh"></a>DSH 内 SSH 控制目录的可见性
 
-本节处理 **SSH 在宿主终端正常，在 DSH 工具或内置终端中行为却不同**的情况，例如：一个工具调用刚创建控制目录，下一次调用又找不到；或者宿主已创建目录，DSH 终端仍报 `unix_listener ... No such file or directory`。SSH 的临时目录配置、安全初始化、认证后监听失败的源码解释与复用验收统一见 [SSH：临时控制目录与监听错误](../../software/references/ssh.md#controlpath-sandbox)；这里只说明 DSH 带来的执行环境差异。
+本节处理 **SSH 在宿主终端正常，在 DSH 工具或内置终端中行为却不同**的情况，例如：一个工具调用刚创建控制目录，下一次调用又找不到；或者宿主已创建目录，DSH 终端仍报 `unix_listener ... No such file or directory`。SSH 的临时目录配置、安全初始化、认证后监听失败的源码解释与复用验收统一在 `software` skill（SSH 客户端与服务端）中维护；这里只说明 DSH 带来的执行环境差异。
 
 按 `0.2.1-alpha.1` 源码，Linux 默认优先探测 bwrap，再尝试 Landlock。同为 `workspace-write`，`/tmp` 的含义仍取决于 runner：
 
