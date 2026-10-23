@@ -536,6 +536,14 @@ cc-switch start codex '<provider-id>' --shared-sessions -- --help
 
 `--dry-run` 只预览，不生成启动目录；最后一条才初始化持久目录、共享链接和空凭据来源标记，并运行原生 Codex 帮助后退出，不执行登录或模型任务。这两条启动命令不切换全局当前 provider。若只需要完全独立的历史，可以直接使用专用 `CODEX_HOME`，无需引入共享目录结构。
 
+通常各账号共用同一套设置时，可以在初始化后，把各自的 `$CODEX_HOME/config.toml` 软链接到默认配置。先核对配置差异，确认共用的权限策略，备份并移走已有配置，再建立链接；下面两个目录都替换为实际绝对路径，源目录通常是 `~/.codex`：
+
+```bash
+ln -s '<source-codex-home>/config.toml' '<isolated-codex-home>/config.toml'
+```
+
+以后统一维护源配置，修改会影响所有使用它的入口；`auth.json` 继续各自独立。历史共享另行核对：替换配置会移除原文件独有的 `sqlite_home` 等设置，需要时在源配置或启动参数中保留共享数据库路径，仅有 `sessions` 软链接不足以保证历史数据库共享。
+
 官方订阅入口使用 `openai-official` 模板，它以空 `auth` 和配置创建 provider；这里不需要填写 API key 或 Base URL。`5.11.1` 的官方模板不接受 `--config` / `--config-file` 或模型、API 字段覆盖，模型等本地设置在初始化后单独配置。默认的 `custom` 创建路径按第三方端点校验，把只含原生官方设置的 `{"auth": {}, "config": "…"}` 直接传给它会因缺少有效 Base URL 被拒绝；应改选官方模板，而不是给订阅入口编造端点。
 
 > 源码：[官方模板的空初始配置](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/commands/provider_input.rs#L519-L529)、[凭据与配置的构造](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/commands/provider_input.rs#L2744-L2759)、[官方模板的字段限制](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/commands/provider.rs#L1620-L1650)。上述 `custom` 校验错误也在本次初始化中实测。
@@ -570,6 +578,8 @@ cc-switch 生成的配置和受管启动会显式选 `custom` route。改为直�
 cc-switch 的 provider 数据和持久目录是两个维护位置。直接启动后，Codex 的登录与刷新留在该目录，**不会自动执行 cc-switch 的退出回写，也不等于进入了 `cc-switch auth` 管理的账号库**。判断此入口是否登录，应执行同一包装函数的 `login status`。
 
 再次经过 cc-switch 启动时，`config.toml` 会按 provider 配置重新生成，仅保存在持久目录的模型或界面修改可能被覆盖。认证另用 `.auth-source` 记录 provider 凭据的摘要：摘要未变时保留目录内的刷新 / 退出登录结果；provider 侧凭据显式变化时重新同步，变为空时会移除原认证文件。因此维护时应先确认实际入口、配置来源和活动进程，保留非凭据配置差异，再决定同步方向；不要用“重新启动”代替这一步判断。
+
+若 `config.toml` 已软链接到共享配置，重新生成前还应核对链接及其目标，防止覆盖共享源文件；重建后复核链接是否保留。
 
 > 源码：[配置重建与凭据来源检测](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L253-L279)、[退出时仅回写认证](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L283-L309)。本节不提供直接改写 cc-switch 数据库的流程。
 
