@@ -542,7 +542,13 @@ cc-switch start codex '<provider-id>' --shared-sessions -- --help
 ln -s '<source-codex-home>/config.toml' '<isolated-codex-home>/config.toml'
 ```
 
-以后统一维护源配置，修改会影响所有使用它的入口；`auth.json` 继续各自独立。历史共享另行核对：替换配置会移除原文件独有的 `sqlite_home` 等设置，需要时在源配置或启动参数中保留共享数据库路径，仅有 `sessions` 软链接不足以保证历史数据库共享。
+以后统一维护源配置，修改会影响所有使用它的入口；`auth.json` 继续各自独立。沿用本节的共享历史方案时，建立配置软链接前，须在源配置的顶层显式保留同一个数据库目录，或由各入口通过启动参数指定；下面替换为已有共享数据库的实际绝对路径，通常为源 `CODEX_HOME`，以原配置为准：
+
+```toml
+sqlite_home = "<shared-sqlite-home>"
+```
+
+仅有 `sessions` 软链接不足以共享历史数据库。丢失 `sqlite_home` 后，新进程会改用各自 `CODEX_HOME` 下的数据库并补建会话索引，可能在启动时提示 `state db backfill is running`、等待或超时。恢复时先核对新库是否有原共享库没有的会话，再把配置指回已有共享数据库；切换路径本身不迁移或合并数据，保留新库供核对。完成后验证新进程实际解析出的数据库路径和交互式启动，不能只检查配置语法或已有进程。
 
 官方订阅入口使用 `openai-official` 模板，它以空 `auth` 和配置创建 provider；这里不需要填写 API key 或 Base URL。`5.11.1` 的官方模板不接受 `--config` / `--config-file` 或模型、API 字段覆盖，模型等本地设置在初始化后单独配置。默认的 `custom` 创建路径按第三方端点校验，把只含原生官方设置的 `{"auth": {}, "config": "…"}` 直接传给它会因缺少有效 Base URL 被拒绝；应改选官方模板，而不是给订阅入口编造端点。
 
