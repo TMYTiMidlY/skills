@@ -364,6 +364,18 @@ Codex 把 MCP 放在普通 TOML 配置层的 `[mcp_servers.<key>]` 下。日常�
 
 `codex mcp add` / `remove` 当前只改用户级 `${CODEX_HOME}/config.toml`；项目级 server 要直接编辑项目 `.codex/config.toml`。插件 manifest 决定 transport，用户 TOML 只在 `[plugins."<plugin-id>".mcp_servers.<server>]` 下覆盖 enabled 和工具策略。桌面端或 IDE 从设置页保存后要按界面提示 Restart。
 
+**通过 uv 安装的本地 STDIO server（以 Portal 为例）**：先安装到 uv 的隔离工具环境，再登记可执行文件的绝对路径：
+
+```bash
+uv tool install portal-mcp-server
+codex mcp add portal -- "$(uv tool dir --bin)/portal-mcp-server"
+codex mcp list
+```
+
+`$(uv tool dir --bin)` 在登记时由 shell 展开，Codex 保存的是当前 uv 工具目录下的绝对路径，无需写死 `~/.local/bin`；也避免桌面端或 IDE 未继承 shell PATH 时找不到 server。`list` 只核验配置，重启 Codex 后再用 `/mcp` 确认连接和工具加载。
+
+> 依据：[uv 的工具目录命令](https://docs.astral.sh/uv/reference/cli/#uv-tool-dir)、[Portal 安装与接入说明](https://github.com/TMYTiMidlY/portal-mcp-server#readme)。
+
 **`github-mcp-server` 官方例子**：上游给出的 Codex shell 命令连接 GitHub 托管的 HTTP server；启动 Codex 前须让 `GITHUB_PAT_TOKEN` 在其环境中可见：
 
 ```bash
