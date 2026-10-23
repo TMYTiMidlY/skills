@@ -83,6 +83,8 @@ Plugin 卸载、热替换和失败状态的语义见开发篇的[实现 Plugin �
 
 ## <a id="2026-08-26-subscription-auth-surfaces"></a>2026-08-26 · 订阅登录与交互界面
 
+> **后续复核：** 本章保留 2026-08-26 的历史快照。当前默认登录、Models 插槽、第三方登录前端与额度插件见 [2026-09-27 专题](#2026-09-27-auth-quota-plugins)；旧版本的服务挂载、界面缺口和候选版本不作为当前状态。
+
 本次从 DSH 官方的模型与凭据实现出发，检索社区中提供订阅登录、模型路由以及 Web / TUI 交互界面的 Plugin。本文记录截至本次源码快照已经核实的信息，并给出贴合当前目标的初步路线；最终采用方案仍需真实账号端到端验证后决定。
 
 **调研时间：** 2026-08-26（Asia/Shanghai）
@@ -287,6 +289,125 @@ dsh-model-hub 的凭据记录 key 绑定与无 API Key 配置激活
 | 使用成熟终端产品与自有生态 | `dsh-TUI` |
 
 这仍是阶段性路线，实现前还需要完成：官方六类登录流程的枚举测试、每种交互输入的无凭据单元测试、少量非主账号的真实登录与刷新基本测试、登录后的模型请求验证，以及供应商条款风险确认。
+
+## <a id="2026-09-27-auth-quota-plugins"></a>2026-09-27 · 第三方登录前端与额度检测插件
+
+本轮复核官方默认登录的完成范围，并检索两类现成 Plugin：给官方第三方模型路径增加登录交互的前端，以及读取供应商账号余额或订阅额度的面板。另对照自带额度功能的订阅插件，区分登录流程、凭据存储与刷新、推理适配器和额度读取各自由谁维护。
+
+**调研时间：** 2026-09-27（Asia/Tokyo）。官方基线为 2026-09-24 发布的 `dsh-v0.1.7-rc.2`，对应 commit `477b4f420553e8a52c2fbccc464d7561b239c443`。本次查询 GitHub 发布列表时它是最新发布条目，仍为预发布版本；下文的“默认”指该版本随附的组合，不指用户自行安装插件后的界面。
+
+> **证据边界：** 候选从 GitHub 仓库检索、社区目录及原专题中的项目发现，重点回读当前默认分支的 manifest、登录桥、凭据读取和额度请求源码，再锁定到下列提交。版本表记录源码包声明；本轮未核实各包的 npm dist-tag 与发布 tarball，未安装插件、升级 DSH、登录账号或查询真实额度，也未执行插件构建和端到端测试。来源：[官方发布条目](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.1.7-rc.2)。
+
+### <a id="auth-quota-official-default"></a>官方默认登录与界面
+
+当前默认基础组合已经挂载 `dsh-authorization`、`dsh-deepseek-account-platform`、`dsh-credentials-local` 和 `dsh-llm-pi-ai`。Pi 适配器以无活动路由的状态加载，模型服务配置写入后才注册相应推理路由。因此，8 月专题中“默认组合尚未完整挂载登录服务”的限制需要按新版本更新。
+
+> 来源：[默认组合中的登录、账号、凭据与 Pi 适配器](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.7-rc.2/packages/bundle/base/cordis.patch.yml#L105-L128)。
+
+| 登录对象与入口 | 已完成的部分 | 当前界面边界 |
+|---|---|---|
+| 普通 `dsh web` 的模型 API Key | Models 页面编辑提供方、保存密钥引用、配置模型目录；已知第三方和自定义兼容 API 可通过配置启用 | 默认仍采用 API Key 引导；普通 Web 不显示 DeepSeek 账号登录和账号设置 |
+| 具有 preload 桥接的 Desktop 的 DeepSeek 账号 | 系统浏览器授权、回调与 PKCE 校验、授权码兑换、凭据落盘、账号状态、资料和余额、退出登录；账号 token 可用于独立账号推理路径 | 已有完整账号交互，但对象是 DeepSeek Platform 账号，不能据此推导 Codex、Claude、Copilot 等已有默认登录按钮 |
+| 官方 `llm-pi-ai` 的第三方登录 | 按实际安装的 Pi 目录注册登录流程；调用 `Models.login()`；保存官方 `llm-pi-ai/<provider>` 记录；通过同一凭据存储执行刷新，再由官方适配器推理 | 本轮检查的默认 Web Models 界面仍未提供通用的第三方 OAuth 提示、输入和取消交互；前端桥接插件仍有用途 |
+| 官方账号的额度显示 | Desktop 可读取 DeepSeek 账号普通钱包与赠送钱包，展示余额、用量和充值入口，并处理账号欠费提示 | 这套账号余额界面不等于各第三方订阅的剩余窗口；本轮未发现默认 Models 页面具有通用第三方额度查询面板 |
+
+> 来源：[普通 Web 与 Desktop 的界面分工](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.7-rc.2/packages/client/ui-settings-account/README.zh.md#L24-L39)、[账号资料、余额与授权码兑换](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.7-rc.2/packages/credentials/deepseek-account-platform/README.zh.md#L29-L41)、[Pi 登录流程与 `Models.login()`](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.7-rc.2/packages/llm/llm-pi-ai/src/login.ts#L120-L190)、[官方凭据映射与互斥修改](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.7-rc.2/packages/llm/llm-pi-ai/src/auth.ts#L117-L195)、[Models 的现有配置入口](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.7-rc.2/packages/client/ui-settings-models/README.md#L27-L69)。
+
+DeepSeek 账号被资料或余额服务以 HTTP 401、业务码 `40003` 拒绝时，Host 会使对应代次的凭据失效，界面提示重新登录；其他错误保留凭据，余额请求失败也不会被制造成零余额。这与 Pi OAuth 在官方凭据存储内刷新的生命周期分别实现，评估插件时应按实际账号路径判断。
+
+> 来源：[账号凭据被拒绝后的处理](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.7-rc.2/packages/credentials/deepseek-account-platform/README.zh.md#L15-L16)、[余额失败的语义](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.7-rc.2/packages/credentials/deepseek-account-platform/README.zh.md#L35-L39)。
+
+当前 Models 页面还声明了 `settings.models.provider-card`、`settings.models.footer` 和账号引导用的 `settings.models.sign-in` 插槽。社区可以保留官方页面增加交互；“只有替换整页才能添加按钮”已不是当前限制。插槽本身只是扩展位置，具体第三方登录流程仍需组件桥接。Model Hub 会停用官方 Models 页面，因此依附官方页面的组件不会自动出现在 Model Hub 自建页面中。
+
+> 来源：[官方 Models 插槽契约](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.7-rc.2/packages/client/ui-settings-models/src/client/slot-contract.ts#L24-L41)、[Model Hub 的安装 patch 与界面替换](https://github.com/yhyfhgs/dsh-model-hub/blob/2bb54c6543c8faac05d2b54162b33f1c80915e1a/README.md#L52-L69)。
+
+### <a id="auth-quota-plugin-snapshot"></a>候选版本与适配声明
+
+版本号相近、npm 能完成安装或 peer 被标为 optional，都不足以证明新版运行兼容。下表分别记录包版本和源码中的 DSH 适配声明；本轮没有把任一行标为已通过 `0.1.7-rc.2` 真实组合验收。
+
+| 项目 | 源码包版本 | 功能范围 | DSH 适配证据 |
+|---|---|---|---|
+| [`edge-sky/dsh-oauth-adapter`](https://github.com/edge-sky/dsh-oauth-adapter/blob/f21c9745b1aead93cc85d589d146605c59e04557/package.json#L1-L110) | `@edge-sky/dsh-oauth-adapter@0.1.3-rc.2` | 官方第三方登录的 Web 前端 | peers 为 `>=0.1.5-rc.1 <0.1.6-0`，未覆盖本次官方基线 |
+| [`yhyfhgs/dsh-model-hub`](https://github.com/yhyfhgs/dsh-model-hub/blob/2bb54c6543c8faac05d2b54162b33f1c80915e1a/package.json#L1-L125) | `@fhxgs/dsh-model-hub@0.2.4` | 模型管理、官方登录桥与 native 路由 | DSH 基线仍为 `0.1.1-rc.2`，Pi peer 为 `~0.82.1` |
+| [`XMoon/dsh-pi-tui`](https://github.com/XMoon/dsh-pi-tui/blob/0d307050eb59955ae4e53694f4d5d3a3301509ac/package.json#L1-L105) | `@xmoon76/dsh-pi-tui@0.4.9` | 官方登录的 TUI 入口 | 已声明 DSH `>=0.1.7-rc.2` |
+| [`loneyclown/dsh-plan-quota`](https://github.com/loneyclown/dsh-plan-quota/blob/b8f0784f665289253caaec3526cfca0e81dbf87d/package.json#L1-L56) | `@loneyclown/dsh-plan-quota@0.1.1` | 可读取官方凭据记录的独立额度浮层 | manifest 未给出当前 DSH 的明确兼容范围 |
+| [`wenzetan/dsh-quota-panel`](https://github.com/wenzetan/dsh-quota-panel/blob/63e01f61735b7a6b5be6488745ebd33730c2515d/package.json#L1-L100) | `dsh-quota-panel@0.1.7-rc.1-v0.1` | 多平台余额、Coding Plan 与 ChatGPT 额度 | DSH peers 精确指向 `0.1.7-rc.1`，仍需复核 rc.2 |
+| [`Minokun/dsh-quota`](https://github.com/Minokun/dsh-quota/blob/3dff5d395d708614d508ca2faa60161f4870a46a/package.json#L1-L80) | `dsh-quota@0.14.3` | 多平台额度、余额与花费监控 | manifest 未提供当前 DSH 的明确 peer 范围 |
+| [`Yan-Zero/dsh-codex`](https://github.com/Yan-Zero/dsh-codex/blob/307e731779b812e54d5a47ba5174c778fe9c101b/package.json#L1-L135) | `dsh-codex@0.3.1` | Codex 登录、推理与额度界面 | peers 和开发依赖已跟到 `0.1.7-rc.2` |
+| [`WSL043/dsh-codex-subscription`](https://github.com/WSL043/dsh-codex-subscription/blob/6e55f21da9fade22f6edd1f9e789184426c83281/package.json#L1-L125) | `dsh-codex-subscription@2.2.2` | Codex 登录、推理与额度面板 | peers 显式列入 `0.1.7-rc.2` |
+| [`V1ki/dsh-plugin-subscriptions`](https://github.com/V1ki/dsh-plugin-subscriptions/blob/090d964825aa70447230304d00181821b1fbcea5/package.json#L1-L125) | `dsh-plugin-subscriptions@0.9.4` | 多订阅登录、推理与用量管理 | manifest 仍列较早的 DSH 预发布范围，未明确列出本次 rc.2 基线 |
+
+> 来源为各行的 manifest。官方 `0.1.7-rc.2` 的 [`llm-pi-ai` 依赖声明](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.7-rc.2/packages/llm/llm-pi-ai/package.json#L46-L52)是 `@earendil-works/pi-ai ^0.85.1`，与 Model Hub 的 Pi peer 基线已有差距；这属于需要验证的适配差异，不直接证明某插件一定不能加载。
+
+### <a id="auth-quota-official-ui-plugins"></a>给官方第三方路径增加交互的插件
+
+**`dsh-oauth-adapter`。** 当前版本已在官方 `settings.models.footer` 注入登录区域，同时保留独立的 OAuth Accounts 设置页。它列出 `openai-codex`、`github-copilot`、`anthropic`、`kimi-coding`、`openrouter` 和 `xai`，通过官方 `authorization.begin()` 传递提示、输入和取消，随后同步模型路由。登录、凭据记录、刷新和推理继续由官方链路负责。本轮检查的交互协议没有独立额度查询。它比 8 月仅列 Codex/Copilot 的版本更完整，但 provider 表仍是固定枚举，且其 peer 上界早于当前 DSH，不能直接当作已验证的新版本配套。
+
+> 来源：[官方 Models footer 与独立设置页注册](https://github.com/edge-sky/dsh-oauth-adapter/blob/f21c9745b1aead93cc85d589d146605c59e04557/src/client/index.ts#L35-L54)、[提供方与交互协议](https://github.com/edge-sky/dsh-oauth-adapter/blob/f21c9745b1aead93cc85d589d146605c59e04557/src/protocol.ts#L11-L150)、[调用官方登录与同步路由](https://github.com/edge-sky/dsh-oauth-adapter/blob/f21c9745b1aead93cc85d589d146605c59e04557/src/index.ts#L370-L424)。
+
+**`dsh-pi-tui`。** `/login` 的直接运行后端从官方 Authorization 服务动态读取目标，把通知和输入请求转为终端交互；凭据配置端直接使用官方 credential service。它适合在 TUI 中使用官方登录链路，且 manifest 已跟进本次 DSH 基线。它不是普通 Web 的前端插件；文档中的自定义 footer 或 quota 扩展示例也不能作为已经内置供应商额度查询器的证据。
+
+> 来源：[动态枚举官方登录目标](https://github.com/XMoon/dsh-pi-tui/blob/0d307050eb59955ae4e53694f4d5d3a3301509ac/src/runtime/direct/config-direct.ts#L567-L630)、[直接使用官方凭据服务](https://github.com/XMoon/dsh-pi-tui/blob/0d307050eb59955ae4e53694f4d5d3a3301509ac/src/runtime/direct/config-direct.ts#L500-L564)、[无 API Key 配置的路径检查](https://github.com/XMoon/dsh-pi-tui/blob/0d307050eb59955ae4e53694f4d5d3a3301509ac/src/runtime/direct/config-direct.ts#L277-L314)。
+
+#### <a id="model-hub-codex-routes"></a>Model Hub 的官方路由与 native 路由
+
+Model Hub 仍是混合实现，判断“复用官方后端”时要查实际路由和凭据归属，而不是只看 OpenAI Codex 的显示名称：
+
+| 路由 | 登录、凭据与推理归属 | Model Hub 增加的部分 |
+|---|---|---|
+| 官方 `openai-codex` 等 `llm-pi-ai` 路由 | 官方 Authorization flow、`llm-pi-ai` credential record、Pi 刷新与 `PiAiAdapter` | 模型管理界面、授权交互和无 API Key 配置激活 |
+| 内建 `codex`、`qwen-code` | 插件自己的 OAuth、native credential record 与 Native Adapter；底层仍可调用 Pi 协议实现 | 除界面外，还维护这组路由的登录、模型目录和凭据生命周期 |
+
+`codex → openai-codex` 的显示别名只用于归并提供方展示，不会把两个凭据记录合并。本轮回读 Host 注册的授权、提供方、目录与选择服务，未发现独立账号额度查询；`QUOTA` 错误分类与订阅模型的零 token 单价，都不能替代额度读取。
+
+> 来源：[官方与 native 绑定表](https://github.com/yhyfhgs/dsh-model-hub/blob/2bb54c6543c8faac05d2b54162b33f1c80915e1a/src/provider/bindings.ts#L30-L91)、[Codex 路由并存及显示归并说明](https://github.com/yhyfhgs/dsh-model-hub/blob/2bb54c6543c8faac05d2b54162b33f1c80915e1a/src/provider/native/catalog.ts#L220-L280)、[Host 注册的服务范围](https://github.com/yhyfhgs/dsh-model-hub/blob/2bb54c6543c8faac05d2b54162b33f1c80915e1a/src/index.ts#L103-L158)。
+
+### <a id="auth-quota-independent-panels"></a>独立额度与余额面板
+
+这里的额度检测指向供应商查询账号状态。API 钱包余额、订阅滚动窗口、管理员花费报表和本地会话 token 统计是不同数据；选型时还要确认查询身份与当前推理身份是否相同。
+
+**`dsh-plan-quota`。** 这是本轮找到的、明确读取官方 `llm-pi-ai/<provider>` 凭据记录的独立额度插件。它提供 Kimi Coding Plan、DeepSeek API 余额预设和自定义字段映射，以浮层展示查询结果；不接管模型推理或另建登录流程。密钥选择顺序为显式 `apiKey`、显式 credential reference、官方记录、继承的 `apiKeyEnv`，因此配置中同时存在多种凭据时仍需核对实际命中哪一个。
+
+它直接取 OAuth grant 中的 access token，不负责刷新。token 过期时探测可能返回 401，等待 Harness 自己使用该提供方时刷新。其现成预设不含 Codex 专用额度协议；只有自定义 URL 与字段映射，还不足以证明能正确处理 Codex 账号头和多额度池。因此它是“复用官方记录读取额度”的相关候选，而不是已经验证的“官方 Codex 登录后即用额度面板”。
+
+> 来源：[读取官方记录、密钥优先级与过期 token 行为](https://github.com/loneyclown/dsh-plan-quota/blob/b8f0784f665289253caaec3526cfca0e81dbf87d/src/index.ts#L192-L236)、[Bearer 请求与预设解析](https://github.com/loneyclown/dsh-plan-quota/blob/b8f0784f665289253caaec3526cfca0e81dbf87d/src/index.ts#L238-L272)、[配置与界面说明](https://github.com/loneyclown/dsh-plan-quota/blob/b8f0784f665289253caaec3526cfca0e81dbf87d/README.md#L1-L80)。
+
+**`dsh-quota-panel`。** 这是多平台额度/余额浮层，除 API Key 与 Coding Plan 外还提供 ChatGPT 订阅额度。需要区分它的 ChatGPT 身份：源码走插件自己的设备码登录与凭据文件，或读取 Codex CLI 的 `auth.json`，并有自己的刷新逻辑；它不是从官方 `llm-pi-ai/openai-codex` 记录直接读取当前 DSH 登录。源码把自有文件称作 DSH store，也不能据此把它当成官方 credential record。它可以作为独立账号监控面板；与 Model Hub 或官方路由并用时，应确认面板账号确实是推理账号。该包已按 DSH `0.1.7-rc.1` 声明依赖，rc.2 仍未在本轮运行验证。
+
+> 来源：[插件自有 ChatGPT 凭据读取与写入](https://github.com/wenzetan/dsh-quota-panel/blob/63e01f61735b7a6b5be6488745ebd33730c2515d/src/index.ts#L354-L405)、[刷新与设备码登录](https://github.com/wenzetan/dsh-quota-panel/blob/63e01f61735b7a6b5be6488745ebd33730c2515d/src/index.ts#L474-L560)、[提供方目录与 Codex CLI 凭据路径说明](https://github.com/wenzetan/dsh-quota-panel/blob/63e01f61735b7a6b5be6488745ebd33730c2515d/src/index.ts#L850-L890)。
+
+**`dsh-quota`。** 项目覆盖多平台余额、Coding Plan 与用量监控，支持直接 HTTP 查询、已注册的 MCP 查询能力和 `quota_refresh` 工具。它是独立监控层，不是给官方 Authorization 增加登录按钮。本轮读取的支持清单中，OpenAI/Anthropic 管理员 key 对应的是 API 花费报表，应与 ChatGPT/Claude 订阅剩余额度分开；也未据此确认可直接消费官方 Codex OAuth 记录。MCP 路径依赖相应服务已经配置，不能把面板本身视为这些服务的完整安装。
+
+> 来源：[支持平台、凭据要求与查询入口](https://github.com/Minokun/dsh-quota/blob/3dff5d395d708614d508ca2faa60161f4870a46a/README.md#L1-L140)。这一候选的功能范围以 README 核对为主，本轮未对所有提供方的请求与解析逐一审计。
+
+### <a id="auth-quota-subscription-bundles"></a>自带额度的订阅插件
+
+`dsh-codex` 与 `dsh-codex-subscription` 都已有 Codex 额度请求实现，并在 manifest 中跟进 `0.1.7-rc.2`。这两项比单纯登录前端多维护了一组账号和推理能力，采用时需选择明确的路由拥有者。
+
+| 项目 | 登录与凭据 | 推理适配 | 额度实现与接入代价 |
+|---|---|---|---|
+| `dsh-codex@0.3.1` | 自建交互，Pi 登录，独立 `DshCodexCredentialStore` | 复用官方 `PiAiAdapter` | Host 主动读取 Codex usage，解析窗口与额外额度、credits 等；额度跟随插件管理的账号，不是官方 credential record 的透明前端 |
+| `dsh-codex-subscription@2.2.2` | 自建登录协调器、`OPENAI_CODEX_SUBSCRIPTION_OAUTH` 引用及插件账号 vault | 复用官方 `PiAiAdapter` | 使用同一可刷新的登录服务查询 usage，提供缓存、超时与浏览器安全投影；提供方仍叫 `openai-codex`，但凭据归属不同于官方同名路径 |
+| `dsh-plugin-subscriptions@0.9.4` | 自建多提供方 OAuth/凭据存储与刷新 | 自建提供方适配器 | 多订阅用量与账号管理；范围已包括 Codex、Claude、Grok、Copilot、Antigravity。它是替代性的订阅集成，不是只给官方后端补前端 |
+
+> 来源：[`dsh-codex` 的 usage 读取模块与自有凭据存储依赖](https://github.com/Yan-Zero/dsh-codex/blob/307e731779b812e54d5a47ba5174c778fe9c101b/src/usage.ts#L1-L109)、[`dsh-codex-subscription` 的适配器与凭据归属](https://github.com/WSL043/dsh-codex-subscription/blob/6e55f21da9fade22f6edd1f9e789184426c83281/src/index.js#L15-L58)、[usage 的额度解析](https://github.com/WSL043/dsh-codex-subscription/blob/6e55f21da9fade22f6edd1f9e789184426c83281/src/usage.js#L1-L177)、[凭据刷新后的请求与缓存](https://github.com/WSL043/dsh-codex-subscription/blob/6e55f21da9fade22f6edd1f9e789184426c83281/src/usage.js#L199-L310)、[多订阅插件的自有适配器、登录与 usage 模块](https://github.com/V1ki/dsh-plugin-subscriptions/blob/090d964825aa70447230304d00181821b1fbcea5/src/index.ts#L1-L130)。
+
+额度查询和消耗重置权益是不同操作。部分订阅插件同时提供 reset、自动重试或账号调度，选择它们作为候选不代表本次调研已授权启用这些行为。各供应商返回的额度维度也不同，不能只因某项目存在 usage 页面就写成全部账号都有相同的订阅窗口。
+
+### <a id="auth-quota-selection"></a>候选取舍与验收范围
+
+| 使用目标 | 当前相关候选 | 决定前要核对的条件 |
+|---|---|---|
+| 保留官方推理与凭据，为第三方登录增加 Web 前端 | `dsh-oauth-adapter` | 当前版本确已接官方 Models footer；先验证超出其 peer 范围的 DSH rc.2，且它不提供额度 |
+| 通过终端使用官方登录链路 | `dsh-pi-tui` | 已声明当前宿主基线；交互在 TUI，不会给普通 Web 增加额度页 |
+| 给已有官方提供方读取余额或支持的 Coding Plan 额度 | `dsh-plan-quota` | 官方记录读取已在源码中确认；需处理或接受闲置后 token 过期导致的查询失败，并验证具体预设 |
+| 独立观察多平台或另一个 ChatGPT 账号 | `dsh-quota-panel`；按平台考虑 `dsh-quota` | 先确认凭据来源、指标语义和当前宿主兼容性；面板账号不自动等于推理账号 |
+| 同时需要 Codex 登录、推理与现成额度界面 | `dsh-codex` 或 `dsh-codex-subscription` | 两者已跟进当前依赖声明；采用会引入插件自己的凭据生命周期，不能直接视为 Model Hub 官方路径的无损加装 |
+| 使用一套多订阅产品，不要求官方第三方链路保持原样 | `dsh-plugin-subscriptions` | 接受自建适配器与凭据管理，并另核对新版 DSH 兼容性 |
+
+就本轮已检查的候选，**官方第三方登录 Web 前端已有较贴近目标的实现；“沿用官方 Codex credential record、持续刷新同一账号额度、并已验证最新 DSH”的现成组合仍没有被本次证据确认**。Model Hub 本身仍无独立额度查询；`dsh-plan-quota` 最接近官方记录复用，但缺少 Codex 专用读取和主动刷新；`dsh-quota-panel` 有 ChatGPT 额度，却用另一套凭据来源。这个结论限定于本轮候选与源码检查，不宣称社区不存在其他实现。
+
+实际采用前，在隔离 Profile 核对包的发布内容、宿主版本与模型路由拥有者，再验证登录、刷新、模型请求和同账号额度查询。重点覆盖 idle 后过期、切号与退出登录后的缓存失效、401/403/超时及字段缺失的显示，并检查远程访问权限和日志脱敏。查询失败应显示不可用或保留带时间戳的旧值，不能显示为额度耗尽。本段是验收要求，不是已经执行的测试结果。
 
 ## <a id="2026-08-27-file-transfer-artifacts"></a>浏览器文件传输与产物交付
 
