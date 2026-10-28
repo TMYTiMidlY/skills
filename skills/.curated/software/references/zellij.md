@@ -438,7 +438,7 @@ web_server_port 8082
 web_sharing "on"
 show_startup_tips false
 theme "pencil-light-select-blue"
-default_layout "pencil-light"
+default_layout "default"
 ```
 
 公网/反代场景按需把 `web_server_ip` 改为 `0.0.0.0` 并补 `web_server_cert` / `web_server_key`；本机 Caddy 反代或 SSH tunnel 场景保持 `127.0.0.1` 即可。
@@ -495,16 +495,7 @@ web_client {
 }
 ```
 
-对应 `~/.config/zellij/layouts/pencil-light.kdl`：
-
-```kdl
-layout {
-    pane default_fg="#424242" default_bg="#ffffff"
-    pane size=1 borderless=true {
-        plugin location="compact-bar"
-    }
-}
-```
+`default_layout "default"` 表示使用 Zellij 内置默认布局，不额外修改布局：顶部显示 `tab-bar`，底部显示 `status-bar`，无需创建自定义 layout 文件。
 
 ### <a id="osc11-background"></a>终端默认背景（OSC 11）
 
