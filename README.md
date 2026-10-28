@@ -201,30 +201,31 @@ pre-commit run lychee --all-files
 
 ## <a id="agent-instructions"></a>共享指令与发现入口
 
-[AGENTS.md](AGENTS.md) 是统一维护的通用规则，[CLAUDE.md](CLAUDE.md) 是它的兼容软链接。主文件与可选的本地规则 `AGENTS.local.md` 均以仓库根目录为本体，各 harness 的用户级入口只建软链接：
+[AGENTS.md](AGENTS.md) 是统一维护的通用规则，[CLAUDE.md](CLAUDE.md) 是它的兼容软链接。主文件以仓库根目录为本体，各 harness 的用户级入口只建软链接：
 
-| Harness | 主文件入口 → `<repo>/AGENTS.md` | 补充入口 → `<repo>/AGENTS.local.md` | 依据 |
-|---|---|---|---|
-| DeepSeek Harness | `~/.agents/AGENTS.md` | `~/.agents/AGENTS.local.md` | [DSH 指令发现与加载](skills/.curated/harness/references/dsh.md#instruction-discovery) |
-| Claude Code 本地 CLI | `~/.claude/CLAUDE.md` | `~/.claude/AGENTS.local.md` | [官方指令位置](https://code.claude.com/docs/en/memory#choose-where-to-put-claude-md-files) |
-| Codex | `~/.codex/AGENTS.md` | `~/.codex/AGENTS.local.md` | [用户级读取规则](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/codex-home/src/instructions/mod.rs#L40-L83) |
-| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md` | `~/.copilot/AGENTS.local.md` | [官方发现位置](https://github.com/github/docs/blob/b4ab111fb699bb543084d010b56a8aa01e840edb/content/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions.md#L22-L43) |
+| Harness | 主文件入口 → `<repo>/AGENTS.md` | 依据 |
+|---|---|---|
+| DeepSeek Harness | `~/.agents/AGENTS.md` | [DSH 指令发现与加载](skills/.curated/harness/references/dsh.md#instruction-discovery) |
+| Claude Code 本地 CLI | `~/.claude/CLAUDE.md` | [官方指令位置](https://code.claude.com/docs/en/memory#choose-where-to-put-claude-md-files) |
+| Codex | `~/.codex/AGENTS.md` | [用户级读取规则](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/codex-home/src/instructions/mod.rs#L40-L83) |
+| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md` | [官方发现位置](https://github.com/github/docs/blob/b4ab111fb699bb543084d010b56a8aa01e840edb/content/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions.md#L22-L43) |
 
-若设置了 `DSH_AGENTS_HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME` 或 `COPILOT_HOME`，相应入口改用实际配置根。DSH 专用要求仍可放在 `$DSH_HOME/AGENTS.md`；Codex 已有非空 `AGENTS.override.md` 时优先读取它，安装前须先核对。
+若设置了 `DSH_AGENTS_HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME` 或 `COPILOT_HOME`，相应主文件入口改用实际配置根。DSH 专用要求仍可放在 `$DSH_HOME/AGENTS.md`；Codex 已有非空 `AGENTS.override.md` 时优先读取它，安装前须先核对。使用独立 `CODEX_HOME` 的多账号入口需要各自建立主文件链接，共享 `config.toml` 后仍须单独核对，见 [Codex 多账号初始化](skills/.curated/harness/references/codex.md#cc-switch-initialize)。
 
 ### <a id="local-instructions"></a>本地规则
 
-需要本地规则时，在仓库根创建 `AGENTS.local.md`，并在本仓 `.git/info/exclude` 添加 `/AGENTS.local.md`，使它只留在本地。共享主文件要求继续读取入口同目录的这份补充；这是本仓约定，不是各 harness 都原生发现全局 `.local` 文件。
+本机相关内容统一保存为用户家目录下的普通文件 `~/.agents/AGENTS.local.md`，由共享主文件明确要求继续读取。各工具与 Codex 多账号共用这一份补充，主文件的配置根可以不同。这是本仓的读取与维护约定；各 harness 的原生全局发现能力另按其实现判断。
 
-确认入口不存在或已获准处理原有内容后，按表建立两条链接。例如 DSH（将 `<repo>` 换成仓库绝对路径）：
+本地补充的更新范围、篇幅与组织要求见 [AGENTS.md](AGENTS.md)：保留本机配置与可复用经验，按清楚的主题精炼记录，并优先索引已有文档。
+
+确认主文件入口不存在或已获准处理原有内容后，按表建立链接。例如 DSH（将 `<repo>` 换成仓库绝对路径）：
 
 ```bash
 mkdir -p "$HOME/.agents"
 ln -s "<repo>/AGENTS.md" "$HOME/.agents/AGENTS.md"
-ln -s "<repo>/AGENTS.local.md" "$HOME/.agents/AGENTS.local.md"
 ```
 
-其他工具替换目标入口即可；没有本地规则时省略第二条。建好后核对链接目标和实际加载来源，Claude Code 可用 `/context`，Copilot CLI 可用 `/instructions`。Windows 文件软链接权限及 Claude Cowork 的工作目录外链接限制见[官方共享文件说明](https://code.claude.com/docs/en/memory#share-one-file-with-other-coding-tools)。
+其他工具替换主文件的目标入口即可；需要本地规则时，在上述固定路径创建补充文件，保留已有内容。建好后核对主文件链接、实际加载来源和补充文件的读取路径，Claude Code 可用 `/context`，Copilot CLI 可用 `/instructions`。Windows 文件软链接权限及 Claude Cowork 的工作目录外链接限制见[官方共享文件说明](https://code.claude.com/docs/en/memory#share-one-file-with-other-coding-tools)。
 
 > DSH 项目级也采用“基础指令＋本地补充”设计，全局则只自动取 `AGENTS.md`；候选名称、去重与子目录按需加载统一见 [DSH 指令发现与加载](skills/.curated/harness/references/dsh.md#instruction-discovery)。
 
