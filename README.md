@@ -8,7 +8,7 @@
 
 | Skill | 说明 |
 | --- | --- |
-| `manage-skills` | 创建、安装、重构、审查和合并本地 skill 的规范与工作流 |
+| `manage-skills` | 创建、安装、维护、重构、审查和合并本地 skills；探测已有 harness，安装或修复 skills 与 AGENTS.md 等指令入口 |
 | `harness` | Coding agent 编排框架（harness）知识库：介绍 agent loop、工具注入、配置发现、权限、会话与进程/SDK 接口，以及 model / tool / skill 在 runtime 中的位置；含 Agent Skills 官方规范、跨 harness 加载差异与 Kimi Code `has-sub-skill` 私有扩展 |
 | `tool` | Agent tool 的能力边界与执行契约：schema、权限与副作用、错误/重试/取消、CLI / API / MCP adapter；含 Lark CLI 实例 |
 | `git` | Git/jj 提交与历史、隔离工作区、受限网络获取、发版 CI 与 forge/静态站 |
@@ -111,60 +111,44 @@
 
 ## 安装
 
-### 方式一：克隆 + 软链接（推荐）
+推荐调用 [manage-skills](skills/.curated/manage-skills/SKILL.md) 完成安装和后续维护。它负责探测本机已有工具，按你选定的范围安装 skills、配置通用指令入口，并核对现有内容与链接。
+
+### 首次使用 manage-skills
 
 ```bash
-git clone https://github.com/TMYTiMidlY/skills.git <repo>
+git clone https://github.com/TMYTiMidlY/skills.git "<repo>"
 ```
 
-以 `.agents/skills/` 作为唯一的 skill 源，将需要的 skill 链接进去。全局安装就放在 `~/` 下，项目级安装就放在项目根目录下。skill 按类别分布在三个位置，按来源链接：
+将 `<repo>` 换成仓库的实际保存路径。当前助手尚未发现这个 skill 时，可以直接让它读取仓库中的入口并执行，例如：
+
+> 请先读取 `<repo>/skills/.curated/manage-skills/SKILL.md`，用 manage-skills 将 manage-skills、git、harness 安装到用户级共享目录，并为已探测到的 harness 配置通用指令入口。
+
+它会先检查已有工具目录和实际配置根，再决定需要哪些兼容链接；没有发现某个工具目录时会跳过该工具。已有正确链接保持原样，已有独立内容或冲突会先说明并保留。你也可以明确指定项目级范围或其他 skills。
+
+### 后续安装与维护
+
+新装工具、切换账号入口或移动仓库后，再次调用 manage-skills。它会重新探测，只补齐本次发现的缺项、修复可核实的失效链接，并报告新增、保持、冲突和跳过的项目。例如：
+
+> 使用 manage-skills 维护现有用户级安装，重新探测已存在的 harness，补齐缺少的 skills 和主指令入口。
+
+链接直接指向仓库实体，通常拉取仓库更新后即可使用新内容。安装和修复的执行流程、目录映射及验证方法统一维护在 [manage-skills 安装参考](skills/.curated/manage-skills/references/installation.md)。
+
+### <a id="shared-skills"></a>共享 skills 的接入方式
+
+本仓将选定 skills 链接到用户级 `~/.agents/skills/` 或项目级 `.agents/skills/`。DSH、Codex、Copilot CLI、Gemini CLI、Cursor、Amp、pi、Cline、Warp、Windsurf、Roo Code 已有共享目录发现机制；Claude Code 通过自己的 skills 目录接入。具体到所用版本、项目范围和其他工具，由 manage-skills 按[发现范围表](skills/.curated/manage-skills/references/installation.md#skills-discovery)判断。
+
+Skills 和通用指令使用不同的发现规则，安装时需要分别处理，见[共享指令与发现入口](#agent-instructions)。
+
+### 通过 skills CLI 引入 manage-skills
+
+也可以先用 `skills` CLI 安装入口，再调用 manage-skills 完成其余安装与指令配置：
 
 ```bash
-mkdir -p .agents/skills
-
-# 原创：skills/.curated/
-ln -s <repo>/skills/.curated/<skill-name> .agents/skills/
-
-# 嫁接（已人工审核过）：skills/
-ln -s <repo>/skills/<skill-name> .agents/skills/
-
-# 实验性（未人工审核）：skills/.experimental/
-ln -s <repo>/skills/.experimental/<skill-name> .agents/skills/
+bunx skills add TMYTiMidlY/skills --list
+bunx skills add TMYTiMidlY/skills --skill manage-skills -g
 ```
 
-DeepSeek Harness、GitHub Copilot、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等工具原生读取约定范围内的 `.agents/skills/`，无需再建工具专属的目录链接。其他工具需要将各自的 skills 目录链接到 `.agents/skills/`：
-
-| 工具 | 自有 skills 目录 | 链接命令 |
-| --- | --- | --- |
-| Claude Code | `.claude/skills/` | `ln -s ../.agents/skills .claude/skills` |
-| Cursor | `.cursor/skills/` | `ln -s ../.agents/skills .cursor/skills` |
-| Amp | `.config/agents/skills/` | `ln -s ../../.agents/skills .config/agents/skills` |
-| Goose | `.config/goose/skills/` | `ln -s ../../.agents/skills .config/goose/skills` |
-| Junie | `.junie/skills/` | `ln -s ../.agents/skills .junie/skills` |
-| Kiro CLI | `.kiro/skills/` | `ln -s ../.agents/skills .kiro/skills` |
-
-其他工具同理，将其 skills 目录链接到 `.agents/skills/` 即可。
-
-**软链接注意事项：**
-
-- 链接到 skill **目录本身**而非内部单个文件，否则相对引用会断裂。
-- 同名文件或目录已存在时，先核对内容并确认合并或替换方案；获准替换后按删除规则移入回收站，再建链接。直接对现有目录运行 `ln -s` 可能把链接建到它的子目录中。
-- symlink 的目标相对路径按**链接所在目录**解析；不确定层级时可改用绝对路径。
-
-由于软链接直接指向仓库中的文件，对仓库的任何修改都会即时反映到所有链接位置，无需重新安装或手动同步。日常维护只需在仓库目录中编辑、用 `git pull` 拉取更新即可。
-
-**同步规则：**穿透 symlink 对 skill 目录**内部**的读写会落到仓库实体、被 git 跟踪；在工具侧 skills 目录新建的**非 symlink** 条目只活在本地、不进仓库。判断：`readlink -f <path>` 看终点是否落在仓库内。
-
-### 方式二：`skills` CLI
-
-```bash
-bunx skills add TMYTiMidlY/skills            # 安装全部
-bunx skills add TMYTiMidlY/skills --list      # 查看可安装内容
-bunx skills add TMYTiMidlY/skills --skill pdf  # 仅安装指定 skill
-bunx skills update                             # 更新已安装 skills
-```
-
-常用选项：`-g` 全局安装，`-y` 跳过确认。
+`-g` 安装到用户级范围；实际入口与通用指令仍由 manage-skills 检查。
 
 ## 使用
 
@@ -201,33 +185,30 @@ pre-commit run lychee --all-files
 
 ## <a id="agent-instructions"></a>共享指令与发现入口
 
-[AGENTS.md](AGENTS.md) 是统一维护的通用规则，[CLAUDE.md](CLAUDE.md) 是它的兼容软链接。主文件以仓库根目录为本体，各 harness 的用户级入口只建软链接：
+[AGENTS.md](AGENTS.md) 是通用规则的实体文件，[CLAUDE.md](CLAUDE.md) 是它的兼容软链接。调用 manage-skills 安装通用指令时，它会检查已发现工具的实际入口，让各工具复用这一份规则。
 
-| Harness | 主文件入口 → `<repo>/AGENTS.md` | 依据 |
-|---|---|---|
-| DeepSeek Harness | `~/.agents/AGENTS.md` | [DSH 指令发现与加载](skills/.curated/harness/references/dsh.md#instruction-discovery) |
-| Claude Code 本地 CLI | `~/.claude/CLAUDE.md` | [官方指令位置](https://code.claude.com/docs/en/memory#choose-where-to-put-claude-md-files) |
-| Codex | `~/.codex/AGENTS.md` | [用户级读取规则](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/codex-home/src/instructions/mod.rs#L40-L83) |
-| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md` | [官方发现位置](https://github.com/github/docs/blob/b4ab111fb699bb543084d010b56a8aa01e840edb/content/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions.md#L22-L43) |
+### <a id="shared-agent-instructions"></a>共享 AGENTS.md 的支持范围
 
-若设置了 `DSH_AGENTS_HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME` 或 `COPILOT_HOME`，相应主文件入口改用实际配置根。DSH 专用要求仍可放在 `$DSH_HOME/AGENTS.md`；Codex 已有非空 `AGENTS.override.md` 时优先读取它，安装前须先核对。使用独立 `CODEX_HOME` 的多账号入口需要各自建立主文件链接，共享 `config.toml` 后仍须单独核对，见 [Codex 多账号初始化](skills/.curated/harness/references/codex.md#cc-switch-initialize)。
+用户级共享主文件是 `~/.agents/AGENTS.md`。安装时大致会遇到以下情况，完整路径、探测条件与命令由 manage-skills 的[主指令入口表](skills/.curated/manage-skills/references/installation.md#instructions-discovery)维护：
+
+| Harness | 安装时的接入方式 |
+| --- | --- |
+| DSH | 直接使用共享主文件；DSH 专用文件仅保留独有要求 |
+| Codex、Copilot CLI、Gemini CLI、Amp、pi | Skills 可用共享目录，主指令仍需各自入口的兼容链接；Codex 独立账号入口分别检查 |
+| Claude Code 本地 CLI | Skills 与主指令都通过自身目录的兼容入口接入 |
+| Cursor | Skills 可用共享目录；主指令按用户设置或项目级规则处理 |
+
+manage-skills 只为已发现且在本次范围内的工具补齐所需入口。工具配置目录尚未出现时跳过，之后再次调用即可重新发现；已有主文件、override 和独有规则先核对再处理。
 
 ### <a id="local-instructions"></a>本地规则
 
-本机相关内容统一保存为用户家目录下的普通文件 `~/.agents/AGENTS.local.md`，由共享主文件明确要求继续读取。各工具与 Codex 多账号共用这一份补充，主文件的配置根可以不同。这是本仓的读取与维护约定；各 harness 的原生全局发现能力另按其实现判断。
+本机相关内容统一保存为普通文件 `~/.agents/AGENTS.local.md`。仓库根目录保留通用的 `AGENTS.md` 与兼容链接 `CLAUDE.md`；本地补充的实体放在用户家目录。
+
+工具通过上述各自入口加载同一份主规则，主规则再要求模型读取固定的 `~/.agents/AGENTS.local.md`。因此兼容链接用于主指令入口，本地补充只保留这一份普通文件。
 
 本地补充的更新范围、篇幅与组织要求见 [AGENTS.md](AGENTS.md)：保留本机配置与可复用经验，按清楚的主题精炼记录，并优先索引已有文档。
 
-确认主文件入口不存在或已获准处理原有内容后，按表建立链接。例如 DSH（将 `<repo>` 换成仓库绝对路径）：
-
-```bash
-mkdir -p "$HOME/.agents"
-ln -s "<repo>/AGENTS.md" "$HOME/.agents/AGENTS.md"
-```
-
-其他工具替换主文件的目标入口即可；需要本地规则时，在上述固定路径创建补充文件，保留已有内容。建好后核对主文件链接、实际加载来源和补充文件的读取路径，Claude Code 可用 `/context`，Copilot CLI 可用 `/instructions`。Windows 文件软链接权限及 Claude Cowork 的工作目录外链接限制见[官方共享文件说明](https://code.claude.com/docs/en/memory#share-one-file-with-other-coding-tools)。
-
-> DSH 项目级也采用“基础指令＋本地补充”设计，全局则只自动取 `AGENTS.md`；候选名称、去重与子目录按需加载统一见 [DSH 指令发现与加载](skills/.curated/harness/references/dsh.md#instruction-discovery)。
+manage-skills 会检查补充文件的位置和可读性，并区分入口已配置、主文件已注入和补充已实际读取，执行细节见[本机补充](skills/.curated/manage-skills/references/installation.md#local-instructions)。
 
 ## 许可
 

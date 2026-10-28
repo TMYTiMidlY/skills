@@ -121,11 +121,13 @@ Session 创建时采用所选 preset。尚未产生内容的 Session 可以切�
 
 | 范围 | 默认入口 | 用途与加载顺序 |
 |---|---|---|
-| DSH 用户全局 | `$DSH_HOME/AGENTS.md`，默认 `~/.dsh/AGENTS.md` | DSH 专用的用户要求，先加载 |
+| DSH 用户全局 | `$DSH_HOME/AGENTS.md`，默认 `~/.dsh/AGENTS.md` | 可选的 DSH 专用要求；存在时先加载 |
 | 共享用户全局 | `$DSH_AGENTS_HOME/AGENTS.md`，默认 `~/.agents/AGENTS.md` | 供支持该约定的 Agent 工具共享的要求，随后加载 |
 | 项目与当前目录 | 项目根到 Session cwd 路径上各目录的候选文件 | 每个目录依次加载 `AGENTS.md`、`CLAUDE.md`、`AGENTS.local.md`、`CLAUDE.local.md` |
 
 > 来源：[默认指令链、根目录解析与候选名称](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L28-L68)。
+
+复用本仓的通用规则时，在共享用户全局入口安装主文件即可；DSH 用户全局入口仅用于另外保存 DSH 专用要求。
 
 项目根默认是从 cwd 向上找到的最近一个含 `.git` 标记的目录；一路都没有标记时，以 cwd 自身为根。只收录根到 cwd 这条目录链，因此家目录的 `~/AGENTS.md` 只有恰好位于该项目链中时才会加载，并无独立的全局入口地位。探测项目根标记时遇到权限或 I/O 错误，会停止发现并返回原始错误，而不是跳到更上层项目。
 
@@ -324,7 +326,7 @@ DSH `0.2.1-alpha.1` 的适配器仍声明 `^0.87.1`，该范围无法解析到 `
 
 > 来源：[DSH 0.2.1-alpha.1 的依赖范围](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/llm/llm-pi-ai/package.json#L44)、[pi-ai 0.99.1 的目录更新](https://github.com/earendil-works/pi/blob/v0.99.1/packages/ai/CHANGELOG.md#L3-L7)。
 
-### Skills
+### <a id="skills"></a>Skills
 
 `dsh-skill-filesystem` 按顺序扫描项目的 `.dsh/skills`、项目的 `.agents/skills`、显式自定义目录、`$DSH_HOME/skills`，以及 `$DSH_AGENTS_HOME/skills`（默认 `~/.agents/skills`）。较早的根在同名 Skill 冲突时优先。
 
