@@ -10,16 +10,19 @@ app-server 是 Codex 的应用服务端组件，提供会话管理、认证、�
 
 ### <a id="app-server-routing"></a>普通启动的连接方式
 
-直接运行 `codex` 会打开终端交互界面（TUI）。它随后选择在当前进程内运行 app-server，或连接已经存在的独立服务。**不预先运行 `codex app-server`，普通 Codex 也能正常使用；这并不意味着它没有使用 app-server 组件。**
+交互式 `codex` 和 `codex resume` 都通过 app-server 使用会话。在 `0.165.0` 中，`daemon_auto_start` 默认启用：满足共享后台条件的普通本地启动，会创建或复用当前 `CODEX_HOME` 的原生 daemon。旧版“没有后台就嵌入运行”的行为不能直接外推到这个默认入口。
 
-| 启动时的条件 | 普通 `codex` 的行为 | 退出后再次启动 |
+| 启动方式或条件 | 服务端在哪里 | 后续启动 |
 |---|---|---|
-| 没有可复用的独立服务，也未指定远端 | 在当前 CLI 进程内启动服务组件，通过内部通道调用 | CLI 进程结束时，该进程内实例随之结束；再次启动会创建新实例 |
-| 同一 `CODEX_HOME` 的默认控制 socket 可连接，且启动配置允许复用 | TUI 连接已有服务，由独立进程承载会话 | 退出 TUI 不等于停止独立服务；新终端仍可能连接同一进程 |
+| 普通本地 TUI，自动 daemon 开启且配置允许共享 | 原生管理器创建或复用独立 daemon | 同一账号目录的客户端复用它 |
+| `--no-daemon` | 当前 CLI 进程内的 app-server | CLI 退出后该实例结束，下次重建 |
+| 非白名单 `-c`，例如 `model_provider`，或 `--profile` 等排除条件，且没有显式远端 | 不走普通隐式共享路线，使用进程内服务 | 先核实际进程，不能仅凭机器已有 daemon 判断 |
+| 显式 `--remote unix://` | 当前 `CODEX_HOME` 的默认控制端点 | 需先有后台；连接失败报错，不悄悄回落到嵌入模式 |
+| `codex agents` | 连接共享后台的总览界面 | 本地无显式远端时会确保后台启动；不支持 `--no-daemon` |
 
-因此，独立服务是否运行，确实可能改变普通启动的行为，但“机器上有一个 app-server 进程”还不是充分条件。默认服务发现、监听地址和启动配置必须匹配；只通过标准输入输出提供接口、监听其他地址或使用其他 `CODEX_HOME` 的服务，不会因此自动成为当前 TUI 的连接目标。显式 `--remote` 用于指定服务端点。
+> `0.165.0` 源码：[自动启动默认值](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/features/src/lib.rs#L1068-L1073)、[自动启动条件](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/startup_orchestration.rs#L548-L624)、[配置排除项](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/daemon_startup.rs#L61-L125)、[显式端点优先](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/lib.rs#L1056-L1092)、[agents 启动后台](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/cli/src/main.rs#L2536-L2553)。平台限制、显式 feature 设置和自定义 executor 也会影响路线，按实际版本核对。
 
-> 源码：[默认 socket 探测](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/tui/src/lib.rs#L458-L492)、[连接目标和复用条件](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/tui/src/lib.rs#L926-L998)、[进程内实例的停止](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/app-server-client/src/lib.rs#L590-L623)、[远端客户端关闭连接](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/app-server-client/src/remote.rs#L346-L364)。运行实例的结束不等于删除已保存的会话。
+`codex agents` 是客户端，不是模型请求的转发服务；共享模式由 daemon 承载会话并组织上游请求。一个后台可以管理多条会话，不为每条会话渲染一套 TUI。磁盘上的大量历史、已加载的空闲会话与同时执行的会话有不同资源成本，复用后台不构成并发量或内存容量保证。退出界面也不等于后台释放了所有会话，原生写锁边界见[会话监控与恢复](codex-monitoring.md)。
 
 进程内模式使用当前启动的 CLI 程序；连接独立服务时，会话由那个服务进程处理，服务继续使用自身的程序和启动环境。模型菜单也从实际连接的服务取得，所以更新 CLI 文件或重开终端，不一定刷新所用服务。`-m` 只选择模型，本身不表示创建新服务实例。
 
@@ -38,6 +41,20 @@ app-server 是 Codex 的应用服务端组件，提供会话管理、认证、�
 `--listen` 也支持指定其他 socket 路径或 WebSocket 地址；这些非默认端点需由客户端显式连接。daemon 管理器负责进程生命周期，并不是另一套模型或执行环境。
 
 > 源码：[服务命令](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/cli/src/main.rs#L550-L574)、[监听地址的解析](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/app-server-transport/src/transport/mod.rs#L114-L155)、[服务启动和管理子命令的分流](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/cli/src/main.rs#L1332-L1402)、[受管服务的启动](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/app-server-daemon/src/lib.rs#L335-L369)。
+
+### <a id="app-server-environment"></a>启动环境与后台托管
+
+进程内 app-server 使用本次 CLI 的环境；共享 daemon 使用创建它时启动链提供的环境。通过账号入口先导出代理、再启动 Codex，可以让首次自动创建的后台继承代理。复用已有后台时，新终端的变量不会更新旧进程；由 systemd 创建的后台则从 unit 或其启动脚本取得环境，而不是从随后连接的 TUI 取得。代理变量、clashctl 的 shell 集成、监听就绪与环境文件写法由 `network` skill 的 clashctl 与代理启动环境主题维护。
+
+> 原生 daemon 的启动没有清空父环境，但会删除内部 telemetry handoff 并规范化部分路径；这不是环境继承白名单，见[创建后台进程](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-daemon/src/backend/pid_start.rs#L98-L158)和[后台命令环境处理](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-daemon/src/background_command.rs#L16-L99)。子工具是否采用代理仍取决于其环境策略、程序支持及旁路配置。
+
+原生 PID 管理和 systemd 是两种托管选择。前者可由首次 CLI 按需启动，`backend: "pid"` 不表示创建了 user service，也不证明开机自启。若要 systemd 监管，unit 应直接运行前台 `codex app-server --listen unix://`，让 manager 跟踪真实服务进程；一般 unit、linger 与启动顺序归 `software` skill 的 Service / systemd 主题。两种方式都需明确谁负责停启、升级和后台环境，避免让两个管理器竞争同一账号端点。
+
+`codex app-server daemon start` 不会把任意顶层 `-c` 透传给后台。后台的长期配置应先落在它自己的用户级配置中，再启动或在协调任务后刷新实例；客户端某次请求的显式覆盖是另一层。
+
+> 来源：[Start 命令的分流](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/cli/src/main.rs#L1320-L1355)、[原生后台的固定启动参数](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-daemon/src/backend/pid.rs#L389-L424)。
+
+Linux 上可用 `/proc/<pid>/environ` 白名单核对后台的启动环境；配置文件、当前 shell 与进程观测分别记录，代理 URI 的用户信息应脱敏。先验证账号和界面 bootstrap，再在获准后验证模型请求。一次成功启动没有证明间歇网络超时已消失，也没有验收重启后的代理就绪顺序。
 
 ### <a id="app-server-ownership"></a>进程的管理归属
 
@@ -537,9 +554,11 @@ Codex 随附的 `imagegen` skill 还包含公共 API 调用脚本。这个 fallb
 
 > [模型特定校验](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/skills/src/assets/samples/imagegen/scripts/image_gen.py#L181-L202)与 [显式切换要求](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/skills/src/assets/samples/imagegen/SKILL.md#L23-L30)需同时阅读。公共 Image 2／2.5 参数及其版本范围另见 [公共 API 对照](image-gen.md#model-parameters)，不能用旧脚本的拒绝信息代替当前接口规范。
 
-## <a id="cc-switch-multi-account"></a>cc-switch 多账号与共享会话
+## <a id="cc-switch-multi-account"></a>多账号目录与共享会话
 
-需要给不同 ChatGPT 账号建立长期启动入口时，用独立 `CODEX_HOME` 保存各自配置和登录状态；是否共享历史另行决定。这里使用的是 [SaladDay/cc-switch-cli](https://github.com/SaladDay/cc-switch-cli/tree/v5.11.1)，不是同名桌面客户端。以下初始化流程于 2026-10-22 在 Linux / WSL、cc-switch `5.11.1`、Codex `0.163.0` 下实测；其他版本先核对 `--help`。
+不同账号使用独立 `CODEX_HOME`、认证和后台；设置及本地历史是否共享另行决定。Codex 原生支持这种隔离，不需要像只支持整个 `HOME` 隔离的程序那样同时改变 Git、SSH 等工具的家目录。账号可以直接维护原生目录，也可以用 cc-switch 初始化后采用原生入口，或从既有目录迁移，见[原生目录迁移](#native-account-migration)。
+
+下列 cc-switch 初始化流程使用 [SaladDay/cc-switch-cli](https://github.com/SaladDay/cc-switch-cli/tree/v5.11.1)，不是同名桌面客户端；于 2026-10-22 在 Linux / WSL、cc-switch `5.11.1`、Codex `0.163.0` 下实测，其他版本先核对 `--help`。后台选择与兼容恢复另按本文 `0.165.0` 的版本说明。
 
 > `--shared-sessions` 自 5.11 起提供，5.10.1 报 `unexpected argument '--shared-sessions' found`。升级走官方自更新 `cc-switch update`（下载 release 资产并校验 updater 签名，2026-10-28 实测 5.10.1 → 5.11.3），或 install.sh（目标已存在时非交互覆盖需 `CC_SWITCH_FORCE=1`，Linux 自动选 musl 静态构建）。
 
@@ -559,6 +578,10 @@ Codex 随附的 `imagegen` skill 还包含公共 API 调用脚本。这个 fallb
 | 用户级主指令 | 共享目录清单未包含 `AGENTS.md` 或 `AGENTS.override.md`；按实际 `CODEX_HOME` 单独配置 |
 
 共享历史意味着不同账号入口可访问同一批本地会话内容，归档、删除等操作也会影响这批共享数据。它适用于已获准共享历史的账号，不是用户间的数据隔离。创建新账号入口时保持凭据为空，由用户在新入口独立登录；不要复制或链接已有账号的认证文件，也不要把整个源目录复制一遍。
+
+共享设置或数据库不等于共享后台。官方订阅请求的额度由后台实际采用的上游身份及工作区规则决定；把名为账号 B 的客户端强制连接到已登录账号 A 的后台，单改客户端 `CODEX_HOME` 不会自动把 B 的认证交给远端。多账号方案应逐个核对后台读回的身份与所属目录，而不只看函数名或独立文件。相同授权分散到多个后台仍不会增加上游额度，代理入口也不是额度池。
+
+> 账号用量与第三方本地统计的边界见[账号活动与额度](#usage-accounting)。一个账号后台承载多条会话，与每条会话各建一套后台是不同的资源组织方式，见[普通启动的连接方式](#app-server-routing)。
 
 > 源码：[目录命名与共享配置](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L98-L165)、[共享目录、索引与维护锁](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L217-L253)。同一授权被复制到不同目录仍可能竞争刷新，见 [访问令牌的刷新](#auth-refresh)。
 
@@ -616,19 +639,27 @@ ln -s '<repo>/AGENTS.md' '<isolated-codex-home>/AGENTS.md'
 | `cc-switch start codex '<provider-id>' --shared-sessions` | 从 provider 重新生成配置，持有目录级 `.lock`；原生进程退出时将登录状态回写到该 provider | `5.11.1` 对同目录第二个此类启动直接报已有活动实例 |
 | 包装函数指定已初始化的 `CODEX_HOME`，直接运行 `codex` | 使用目录现有配置与凭据；不经过 cc-switch 的配置生成、目录级启动锁和退出回写 | 可沿用原生 Codex 的多实例机制，但同一线程仍受共享写锁约束 |
 
-如果需要原生多开，可以在实际使用的 shell 配置中建立函数。下面例子仅用于官方订阅，且共享历史按原生 `openai` provider 使用；目录替换为预览得到的绝对路径：
+如果需要原生多开，可给每个账号建立直接入口。下面仅示意已完成登录、确认使用官方 provider 的账号目录；文件式认证在该目录的用户级配置中设置 `cli_auth_credentials_store = "file"`，新会话可使用原生默认 `openai`：
 
 ```bash
 codex-account() {
-    CODEX_HOME='<isolated-codex-home>' command codex \
-        -c 'model_provider="openai"' \
-        -c 'cli_auth_credentials_store="file"' "$@"
+    CODEX_HOME='<isolated-codex-home>' command codex "$@"
 }
 ```
 
-cc-switch 生成的配置和受管启动会显式选 `custom` route。改为直接启动时，显式的 `openai` 覆盖用于保持官方入口，并覆盖 resume 从旧线程恢复的 provider；它不是跨任意 provider 合并历史的开关。第三方端点应保留自己的路由，不能照抄该覆盖。共享目录和索引后，仍要核对历史使用的 provider 及 resume 的实际结果。
+实际入口若依赖显式代理，应在调用 `codex` 前准备环境，见[启动环境与后台托管](#app-server-environment)。函数只在加载过它的 shell 中可用；需要让非交互 SSH、Agent 等调用时，可以把同样的入口放入 PATH 内的可执行脚本。两种形态都不依赖 cc-switch 运行时。只有继续使用 cc-switch 初始化或同步的部署，才需要用 provider id 对应其哈希目录；原生目录可以使用自己的稳定名称。
 
-与 bashrc 函数等价的入口形态是 `~/.local/bin/codex-<name>` 可执行脚本：函数只在加载过 `.bashrc` 的交互 shell 里存在，脚本对 agent、非交互 ssh 等所有调用方可见。直连启动只依赖已初始化的 launch 目录，不依赖 cc-switch 运行时；跨机器复刻同一入口时保持 provider id 一致，`<SHA256(provider-id)>` 目录名即相同，初始化后按[账号与存储边界](#cc-switch-storage)的表格核对目录内容即可。
+旧 cc-switch 历史可能保存 `custom` provider。`0.165.0` 中，普通用户配置文件内的 `model_provider = "openai"` 不等于恢复请求的显式覆盖，服务端可能继续采用线程持久化的 provider。对已确认应恢复为官方入口的旧线程，可使用以下兼容路线：
+
+```bash
+CODEX_HOME='<account-home>' codex app-server daemon start &&
+CODEX_HOME='<account-home>' codex --remote unix:// \
+    -c 'model_provider="openai"' resume '<thread-id>'
+```
+
+先启动后台再显式连接，才能同时保留覆盖与共享后台；仅保留 `-c` 会触发[隐式路线排除](#app-server-routing)。已有入口若一直依赖该覆盖，可在 `resume`／`fork` 兼容分支中应用它；恢复按 UUID 查找可避开名称／列表的 provider 过滤。这个覆盖还会采用当前配置的模型和强度，因此需要保留各线程原设定的部署，应只对确认需要兼容的历史启用。第三方端点保留其原路由，不能统一强制为 `openai`。
+
+> 来源：[显式 provider 的来源判定](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/app_server_session/provider_selection.rs#L8-L37)、[恢复请求携带 provider](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/app_server_session/rollout_history.rs#L167-L222)、[模型组覆盖](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/app_server_session.rs#L2258-L2291)。活动或仍有订阅者的已加载线程可能忽略不兼容覆盖，见[重连与重载条件](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/request_processors/thread_processor.rs#L4691-L4745)；不能靠改标题或客户端参数认定它已经换了路由。
 
 > 源码：[目录级启动锁](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L186-L215)、[受管启动的退出回写、provider 与存储覆盖](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L283-L309)。共享模式还拒绝透传 `-c` / `--config`、`--profile` 和 `--oss`，见 [参数门禁](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L25-L40)；需要这些覆盖时先选择并理解直接启动方式。
 
@@ -643,6 +674,22 @@ cc-switch 的 provider 数据和持久目录是两个维护位置。直接启动
 若 `config.toml` 已软链接到共享配置，重新生成前还应核对链接及其目标，防止覆盖共享源文件；重建后复核链接是否保留。
 
 > 源码：[配置重建与凭据来源检测](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L253-L279)、[退出时仅回写认证](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L283-L309)。本节不提供直接改写 cc-switch 数据库的流程。
+
+### <a id="native-account-migration"></a>既有账号迁到原生目录
+
+已初始化的账号目录可以脱离 cc-switch 使用。先定位实际入口、认证存储、共享配置与 SQLite、后台进程和会话树，再迁到稳定的独立目录，例如 `$HOME/.codex-homes/<account>`；迁移目录本身不创建新授权，也不改变上游额度。
+
+1. **协调使用者**：检查该账号所有 CLI、后台、子会话、工具进程、持久队列和 goal。运行任务继续保留；确认空闲后通过原生退出关闭旧使用者，验证旧进程与写者已释放，再移动。不要复制活跃认证后让两份实例并行刷新同一授权。
+2. **保留状态**：文件式认证可随原目录迁移，保持所有权、权限和内容；有效授权通常无需重新登录，过期／吊销或 keyring 存储另行处理。保留历史链接、维护锁、SQLite 设置、主指令和 override，不能只搬认证文件。数据库仍有使用者时，不把单独复制主文件当成完整 WAL 快照。
+3. **兼容历史路径**：检查共享索引是否记录旧目录前缀。需要时在旧位置保留用于旧路径读取兼容的历史链接，使已记录 rollout 路径继续可读；软链接仍按共享目标权限读写，不提供只读隔离。旧入口退出使用，不把整个旧目录软链到新账号家目录而继续让 cc-switch 改写。不要为了搬家批量重写历史正文或 SQLite 路径。
+4. **切换入口**：更新函数／脚本到新 `CODEX_HOME`，由该账号创建自己的后台。已有交互 shell 需重新加载函数，非交互调用核对实际脚本；默认账号和无关后台保持不动。共享数据库和写锁仍只允许同一线程一个后台写者，跨账号续聊前需通过原生生命周期释放旧后台的占用。
+5. **分层验证**：先核认证与共享路径，再从实际终端环境验证新后台身份、代理和历史读取，使用确认已空闲的持久会话测试恢复，最后在获准后单独验证模型请求。空白 TUI 尚未产生持久 rollout 时，退出提示中的 UUID 不足以构成有效 resume 测试。
+
+> 🔬 2026-10-28，Linux／WSL、Codex `0.165.0`：三个账号目录以保持认证文件内容与 inode 的方式迁移，共享设置和历史保留；新后台身份与代理读回匹配，TUI 启动和一条既有会话恢复通过，默认后台未重启。未提交新模型任务，未逐条启动所有历史，也未做系统冷启动或大规模会话压力测试。曾遇到空白诊断线程没有持久 rollout，改用刚完成且无队列／goal 的既有会话验收。
+
+共享默认配置时还要核对文件的加载层级。以用户家目录为 cwd、将默认目录的配置链接给另一个 `CODEX_HOME` 时，同一文件也可能被发现为项目层；该环境曾对冗余 `model_provider` 报 `Ignored unsupported project-local config keys`。新官方会话沿用原生默认值即可，需要选择其他 provider 时按实际用户配置与来源验证，不靠忽略警告判断生效。
+
+> `0.165.0` 的 Unix 控制 socket 在账号目录中公布别名，实际绑定路径在受保护的临时目录中按规范化路径哈希生成，因此“账号目录长就一定无法启动 daemon”不适用于该版本。短目录便于管理，但不应把软链改名或缩短路径当成已证实的路由超时解法，见[绑定与别名](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-transport/src/transport/unix_socket.rs#L101-L142)及[物理端点生成](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-transport/src/transport/unix_socket.rs#L354-L367)。
 
 ### <a id="cc-switch-verification"></a>验收
 
