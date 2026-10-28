@@ -71,6 +71,10 @@ agy-alt() {
 }
 ```
 
+函数只在加载过 `.bashrc` 的交互 shell 里存在；非交互调用（agent、`ssh <host> <command>`）解析不到它。把同样的逻辑写成 `~/.local/bin/agy-<name>` 可执行脚本，对所有调用方可见：实例名取自脚本名，复制改名即得新实例；脚本内每次启动幂等补链（目标存在且链接位置为空才建），免除一次性手工铺链。包装内同时 unset `GEMINI_DIR` / `JETSKI_APP_DATA_DIR`，并把 `XDG_CONFIG_HOME` 等四个 XDG 变量指向实例 HOME 下，避免调用方环境里的绝对路径穿透隔离。
+
+> 🔬 排查多账号入口先分清 shell 形态：非交互 `ssh <host> 'type agy-<name>'` 报 not found 不代表入口不存在（`.bashrc` 的交互守卫提前 return），换 `bash -ic` 再验。（2026-10-28 两台 Linux 实测）
+
 隔离 HOME 内部结构（`~/.agy-homes/<account>/`）：
 
 | 路径 | 类型 | 说明 |
@@ -84,6 +88,10 @@ agy-alt() {
 这样两个入口各自刷新各自凭据、不互相覆盖，同时共享全部历史和配置。
 
 > 并发写 `conversation_summaries.db`（SQLite WAL 模式）在正常使用下安全；避免从两个入口同时打开同一会话即可。
+
+`conversation_summaries.db` 的软链有两种实测可用的形态：只链 `.db`（实例目录不出现 `-wal`/`-shm`，日志文件落在真实文件所在目录），或 `.db`、`-wal`、`-shm` 三者都链（实例内显式指向同一物理库与锁文件）。后者把"共享同一个库"在目录层面表达得直白，脚本幂等补链时三者一起处理最省心。
+
+> 🔬 同一账号先在完全隔离的旧布局登录、再迁到共享布局后，旧实例目录会残留一份仍然有效的 token。迁移后先在新入口确认登录可用且账号一致，再删除旧实例目录。（2026-10-28 实测）
 
 第三方切换工具（[agyw](https://github.com/tranquocthong/agy-switcher)、[agy-cli-manager](https://github.com/zcop/agy-cli-manager)、[agyswap](https://pypi.org/project/agyswap-cli/)）均为全局切换型——切换前须退出所有 agy 进程，不支持并行。
 
