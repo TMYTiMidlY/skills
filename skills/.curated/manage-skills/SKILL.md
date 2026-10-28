@@ -60,7 +60,7 @@ ln -s ../../.agents/skills <target>/.config/agents/skills
 
 ### <a id="instruction-installation"></a>通用指令的安装入口
 
-全局安装或维护 skill 完成后，按[仓库 README 的共享指令与发现入口](../../../README.md#agent-instructions)核对目标 harness 的实际配置根、原有文件及 override。获准后，将原生主文件入口链接到 `<repo>/AGENTS.md`，可选的同目录补充入口链接到 `<repo>/AGENTS.local.md`；补充本体仅本地保留，经用户同意将忽略规则写入本仓 `.git/info/exclude`，已有内容不覆盖。
+全局安装或维护 skill 完成后，按[仓库 README 的共享指令与发现入口](../../../README.md#agent-instructions)核对目标 harness 的实际配置根、原有文件及 override。获准后，将原生主文件入口链接到 `<repo>/AGENTS.md`。本地补充统一保存为 `~/.agents/AGENTS.local.md` 普通文件，按共享主文件中的要求维护；创建或迁移时保留已有内容。
 
 安装后核对链接目标、可读性和实际加载来源。补充文件由共享主文件要求继续读取，不视作所有 harness 的原生全局能力；平台限制和具体路径统一见 README，DSH 的发现机制见 `harness` skill。
 

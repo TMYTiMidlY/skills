@@ -556,6 +556,7 @@ Codex 随附的 `imagegen` skill 还包含公共 API 调用脚本。这个 fallb
 | `.tmp/rollout-maintenance.lock` | 链接到源目录的维护锁 |
 | SQLite 会话索引 | 用 `sqlite_home` 指向按源配置解析出的共享目录，不必等于源 `CODEX_HOME` |
 | `session_index.jsonl` | 各目录保留本地缓存，不做软链接；Codex 会原子替换它 |
+| 用户级主指令 | 共享目录清单未包含 `AGENTS.md` 或 `AGENTS.override.md`；按实际 `CODEX_HOME` 单独配置 |
 
 共享历史意味着不同账号入口可访问同一批本地会话内容，归档、删除等操作也会影响这批共享数据。它适用于已获准共享历史的账号，不是用户间的数据隔离。创建新账号入口时保持凭据为空，由用户在新入口独立登录；不要复制或链接已有账号的认证文件，也不要把整个源目录复制一遍。
 
@@ -591,6 +592,16 @@ sqlite_home = "<shared-sqlite-home>"
 ```
 
 仅有 `sessions` 软链接不足以共享历史数据库。丢失 `sqlite_home` 后，新进程会改用各自 `CODEX_HOME` 下的数据库并补建会话索引，可能在启动时提示 `state db backfill is running`、等待或超时。恢复时先核对新库是否有原共享库没有的会话，再把配置指回已有共享数据库；切换路径本身不迁移或合并数据，保留新库供核对。完成后验证新进程实际解析出的数据库路径和交互式启动，不能只检查配置语法或已有进程。
+
+每个独立 `CODEX_HOME` 还需要用户级主指令入口。共用本仓规则时，将主文件链接到 `<repo>/AGENTS.md`；`<repo>` 是实际的 skills 仓库根目录。先核对源文件与目标入口，保留已有内容，并检查非空 `AGENTS.override.md` 是否会优先生效。确认目标入口不存在后执行：
+
+```bash
+ln -s '<repo>/AGENTS.md' '<isolated-codex-home>/AGENTS.md'
+```
+
+共享 `config.toml` 与用户级指令是两条独立的加载路径。Codex `0.165.0` 内部记录文件来源，但模型可见消息会合并指令正文；单个项目环境的外层目录来自该环境的 cwd，仅有全局指令时可省略目录。本仓共享主文件明确要求读取固定的 `~/.agents/AGENTS.local.md`，各账号共用这份普通文件；本地补充的位置由当前用户家目录确定。这样保留“主文件要求继续读取本地补充”的约定，并明确补充文件的查找依据。
+
+> 源码：[用户级读取与来源记录](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/codex-home/src/instructions/mod.rs#L40-L83)、[模型可见正文拼接](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/agents_md.rs#L377-L419)、[外层目录与内部来源列表](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/agents_md.rs#L473-L498)。完整安装约定见[共享指令与发现入口](../../../../README.md#agent-instructions)。
 
 官方订阅入口使用 `openai-official` 模板，它以空 `auth` 和配置创建 provider；这里不需要填写 API key 或 Base URL。`5.11.1` 的官方模板不接受 `--config` / `--config-file` 或模型、API 字段覆盖，模型等本地设置在初始化后单独配置。默认的 `custom` 创建路径按第三方端点校验，把只含原生官方设置的 `{"auth": {}, "config": "…"}` 直接传给它会因缺少有效 Base URL 被拒绝；应改选官方模板，而不是给订阅入口编造端点。
 
@@ -638,6 +649,7 @@ cc-switch 的 provider 数据和持久目录是两个维护位置。直接启动
 把配置完成、用户登录和真实模型请求分开验收：
 
 - **配置完成**：shell 语法检查通过，实际终端能解析包装函数，`--version` / `login --help` 正常；独立目录和认证路径不是指向其他账号的软链接，共享链接与 `sqlite_home` 均指向预期位置；原启动函数、配置及全局当前 provider 不变。
+- **指令加载**：核对每个实际 `CODEX_HOME` 的主文件与 override，确认链接有效且内容可读；有本地补充时，核对固定路径 `~/.agents/AGENTS.local.md`，并从仓库外核对主文件注入与补充文件的读取。将主文件自动注入、本地补充由模型继续读取、已实际完成读取分别报告，文件存在本身只证明入口已配置。
 - **登录前**：在空凭据、文件存储且无其他认证注入的方案下，初始化后没有认证文件，`codex-account login status` 返回 `Not logged in` 和退出码 1。此时还没有验证账号或模型可用性。
 - **用户登录后**：用户通过 `codex-account` 内的登录入口或 `codex-account login --device-auth` 独立授权，再检查同入口的登录状态和账号；不让用户把 token 粘贴进对话。
 - **实际使用**：在获准后做最小模型请求，并分别核对所需历史可见性、resume 和不同线程并行使用；初始化、帮助命令及配置文件存在都不能替代这些测试。

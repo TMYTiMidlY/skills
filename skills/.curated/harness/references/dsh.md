@@ -137,7 +137,7 @@ Session 创建时采用所选 preset。尚未产生内容的 Session 可以切�
 
 > 来源：[本地补充的设计与默认候选](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/.agents/notes/archived/feature/2026-07-21-local-instruction-overlay.md#L8-L18)。
 
-候选名称按配置精确匹配；默认识别大写复数的 `AGENTS.md`，自定义名称通过 `instructionFileCandidates` 与 `localInstructionFileCandidates` 设置。全局根固定只取 `AGENTS.md`，项目候选配置不会给全局增加 `CLAUDE.md` 或 `.local` overlay。若要单独保存全局本地规则，可在主文件中明确要求 Agent 继续读取加载入口同目录的补充文件；这是主文件驱动的读取约定，DSH 自身不解析 `@path` import。
+候选名称按配置精确匹配；默认识别大写复数的 `AGENTS.md`，自定义名称通过 `instructionFileCandidates` 与 `localInstructionFileCandidates` 设置。全局根固定只取 `AGENTS.md`，项目候选配置不会给全局增加 `CLAUDE.md` 或 `.local` overlay。若要单独保存全局本地规则，可由主文件指定补充文件的读取路径。本仓共享主文件固定要求读取 `~/.agents/AGENTS.local.md`，由各工具共用这一份普通文件；这是主文件驱动的读取约定，DSH 自身不解析 `@path` import。
 
 > 来源：[配置字段](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L38-L68)、[全局候选与本地 overlay 的边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L219-L225)。
 
