@@ -541,6 +541,10 @@ Codex 随附的 `imagegen` skill 还包含公共 API 调用脚本。这个 fallb
 
 需要给不同 ChatGPT 账号建立长期启动入口时，用独立 `CODEX_HOME` 保存各自配置和登录状态；是否共享历史另行决定。这里使用的是 [SaladDay/cc-switch-cli](https://github.com/SaladDay/cc-switch-cli/tree/v5.11.1)，不是同名桌面客户端。以下初始化流程于 2026-10-22 在 Linux / WSL、cc-switch `5.11.1`、Codex `0.163.0` 下实测；其他版本先核对 `--help`。
 
+> `--shared-sessions` 自 5.11 起提供，5.10.1 报 `unexpected argument '--shared-sessions' found`。升级走官方自更新 `cc-switch update`（下载 release 资产并校验 updater 签名，2026-10-28 实测 5.10.1 → 5.11.3），或 install.sh（目标已存在时非交互覆盖需 `CC_SWITCH_FORCE=1`，Linux 自动选 musl 静态构建）。
+
+> 新版首次写数据库时会把 `~/.cc-switch/cc-switch.db` 迁移到新 schema；有其他 cc-switch 进程（TUI / proxy worker）开着库时迁移拒绝执行并报出占用 PID，先退出这些进程再升级。旧版二进制打不开迁移后的库，回退前先备份整个 `~/.cc-switch/`。
+
 ### <a id="cc-switch-storage"></a>账号与存储边界
 
 `CODEX_HOME` 只重定向 Codex 自身的数据，不替换整个 `HOME`。这里隔离的是文件式认证；环境变量或外部宿主另行注入的身份仍须核对，不能仅凭目录不同判定账号不同，见 [凭据的存储形式](#auth-storage)。cc-switch 的 `start codex … --shared-sessions` 为每个 provider 建立持久目录，默认形态为 `<source-home>/.cc-switch-launches/<SHA256(provider-id)>`；实际位置以 `--dry-run` 返回值为准。
@@ -571,6 +575,8 @@ cc-switch start codex '<provider-id>' --shared-sessions -- --help
 ```
 
 `--dry-run` 只预览，不生成启动目录；最后一条才初始化持久目录、共享链接和空凭据来源标记，并运行原生 Codex 帮助后退出，不执行登录或模型任务。这两条启动命令不切换全局当前 provider。若只需要完全独立的历史，可以直接使用专用 `CODEX_HOME`，无需引入共享目录结构。
+
+`--dry-run` 会打印解析出的 `CODEX_HOME` 与 `Shared history:` 源目录；5.11.3 生成的 launch `config.toml` 也会显式写入解析出的 `sqlite_home`。初始化后把这两处与源配置、[账号与存储边界](#cc-switch-storage)的表格互相核对，即可确认共享范围符合预期。
 
 通常各账号共用同一套设置时，可以在初始化后，把各自的 `$CODEX_HOME/config.toml` 软链接到默认配置。先核对配置差异，确认共用的权限策略，备份并移走已有配置，再建立链接；下面两个目录都替换为实际绝对路径，源目录通常是 `~/.codex`：
 
@@ -610,6 +616,8 @@ codex-account() {
 ```
 
 cc-switch 生成的配置和受管启动会显式选 `custom` route。改为直接启动时，显式的 `openai` 覆盖用于保持官方入口，并覆盖 resume 从旧线程恢复的 provider；它不是跨任意 provider 合并历史的开关。第三方端点应保留自己的路由，不能照抄该覆盖。共享目录和索引后，仍要核对历史使用的 provider 及 resume 的实际结果。
+
+与 bashrc 函数等价的入口形态是 `~/.local/bin/codex-<name>` 可执行脚本：函数只在加载过 `.bashrc` 的交互 shell 里存在，脚本对 agent、非交互 ssh 等所有调用方可见。直连启动只依赖已初始化的 launch 目录，不依赖 cc-switch 运行时；跨机器复刻同一入口时保持 provider id 一致，`<SHA256(provider-id)>` 目录名即相同，初始化后按[账号与存储边界](#cc-switch-storage)的表格核对目录内容即可。
 
 > 源码：[目录级启动锁](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L186-L215)、[受管启动的退出回写、provider 与存储覆盖](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L283-L309)。共享模式还拒绝透传 `-c` / `--config`、`--profile` 和 `--oss`，见 [参数门禁](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L25-L40)；需要这些覆盖时先选择并理解直接启动方式。
 
