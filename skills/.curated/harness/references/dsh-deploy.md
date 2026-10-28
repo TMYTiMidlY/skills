@@ -158,7 +158,11 @@ command -v dsh
 node -p 'require("node:fs").realpathSync(process.argv[1])' "$(command -v dsh)"
 ```
 
-systemd user manager 直接执行 `ExecStart`，不会加载交互 shell 的 NVM 初始化。npm 全局安装的 `dsh` 使用 `#!/usr/bin/env node`，所以 unit 同时需要固定 `dsh` 的绝对路径，并在 `PATH` 中包含相应 Node 的 `bin` 目录。
+systemd user manager 直接执行 `ExecStart`，不会加载交互 shell 的 NVM 初始化。npm 全局安装的 `dsh` 使用 `#!/usr/bin/env node`，所以 unit 的入口有两种写法：写死部署时解析出的绝对路径（升级 Node 需要改 unit），或让入口在每次启动时解析 NVM default（写法见[服务配置](#service-config)）。
+
+两种写法都只在进程启动时解析一次 Node。systemd 不监听 `~/.nvm/alias/default` 的变化：切换 default 或安装新版本后，仍需 `systemctl --user restart dsh` 才会用新版本启动。
+
+> 🔬 2026-10-28 实测：Linux 生产机上三个用户级 unit 由写死绝对路径改为 `bash -c '. %h/.nvm/nvm.sh && nvm use --silent default && exec dsh …'`，各重启后均按 default 别名解析到对应 Node 下的 `dsh`。`nvm alias default <未安装版本>` 会被 nvm 拒绝设置、原别名保持不变；删除 default 正指向的已安装版本会让下一次重启失败，是该写法的边界。
 
 源码入口由绝对 Node 路径执行 `<source-checkout>/apps/cli/lib/bin.js`。源码 checkout 按其 `packageManager` 字段选择 pnpm，并在每次切换 tag 后重新安装与构建。Agent 的默认 workspace 来自启动 cwd，因此 `WorkingDirectory` 应指向实际项目目录，与 dsh 的安装或源码目录分开。
 
@@ -174,7 +178,7 @@ loginctl show-user "$USER" -p Linger    # 应为 Linger=yes
 
 开启 linger 需要管理员权限。`Linger=yes` 时，user manager 可以在没有登录会话时运行；`Linger=no` 时，其生命周期跟随用户登录。systemd 用户服务的一般生命周期、网络顺序和凭据边界归 `software` skill 维护。
 
-#### 服务配置
+#### <a id="service-config"></a>服务配置
 
 先创建 Agent workspace，再把 `<node-bin-dir>` 和 `<dsh-executable>` 换成前面解析出的绝对路径：
 
@@ -221,6 +225,17 @@ WantedBy=default.target
 ```ini
 ExecStart=<node-executable> <source-checkout>/apps/cli/lib/bin.js web --no-open --host 127.0.0.1 --port 3080
 ```
+
+跟随 NVM default 的入口把 Node 版本解析留给每次启动，unit 只写命令本身：
+
+```ini
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash -c '. %h/.nvm/nvm.sh && nvm use --silent default && exec dsh web --no-open --host 127.0.0.1 --port 3080'
+```
+
+`nvm use default` 先把对应版本的 `bin` 目录前置到本次进程的 `PATH`，`exec dsh` 随之解析到该版本的全局安装，因此 `Environment=PATH` 里无需再写版本化路径。换版本流程：`nvm install <新版本>`、`nvm alias default <新版本>`、`systemctl --user restart dsh`。
+
+> 来源：[`nvm use` 在当前 shell 中切换版本并修改 `PATH`](https://github.com/nvm-sh/nvm/blob/v0.40.6/README.md#usage)。
 
 `pnpm dlx` 在 service 启动时仍可能下载和解析 package；固定入口把这些工作留在部署阶段。遥测模式及 `DSH_TELEMETRY_DISABLED` 的作用见[遥测数据](dsh.md#telemetry-data)。
 
