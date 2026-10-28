@@ -49,7 +49,7 @@ Google Antigravity 的终端 CLI（`agy`）与桌面版（Antigravity App / IDE�
 ~/.gemini/antigravity-cli/antigravity-oauth-token
 ```
 
-包含 `token.access_token`、`token.refresh_token`、`token.expiry` 和 `id_token`（含账号邮箱）。文件权限 600。WSL 环境下自动走文件存储（日志显示 "Using file-based token storage because WSL environment detected"）；有桌面密钥环的系统可能走 Secret Service（`service=gemini, username=antigravity`）。
+包含 `token.access_token`、`token.refresh_token`、`token.expiry` 和 `id_token`（含账号邮箱）。文件权限 600。WSL 环境下自动走文件存储（日志显示 "Using file-based token storage because WSL environment detected"）；有桌面密钥环的系统走 Secret Service（`service=gemini, username=antigravity`）。**2026-10-28 升级后有 Secret Service 的桌面默认优先 keyring**，`antigravity-oauth-token` 不再落盘，多实例 HOME 隔离对它失效——见下面「keyring 优先与实例隔离」。
 
 **整个登录态就这一个文件**——复制它即可在别处恢复登录，已实测验证（含 refresh token 自动续期）。会话数据库、配置、缓存均不是恢复鉴权所必需。
 
@@ -85,13 +85,30 @@ agy-alt() {
 | `.gitconfig` / `.ssh` / `.config` | 软链 → 真实 HOME | 共享 git 身份和工具配置 |
 | `conversations/` / `brain/` / `implicit/` 等 | 软链 → 真实 HOME | 共享会话历史和压缩数据 |
 
-这样两个入口各自刷新各自凭据、不互相覆盖，同时共享全部历史和配置。
+这样两个入口各自刷新各自凭据、不互相覆盖，同时共享全部历史和配置；2026-10-28 升级后还需按下节屏蔽 keyring，否则两边凭据仍会串到同一条 keyring 记录。
 
 > 并发写 `conversation_summaries.db`（SQLite WAL 模式）在正常使用下安全；避免从两个入口同时打开同一会话即可。
 
 `conversation_summaries.db` 的软链有两种实测可用的形态：只链 `.db`（实例目录不出现 `-wal`/`-shm`，日志文件落在真实文件所在目录），或 `.db`、`-wal`、`-shm` 三者都链（实例内显式指向同一物理库与锁文件）。后者把"共享同一个库"在目录层面表达得直白，脚本幂等补链时三者一起处理最省心。
 
 > 🔬 同一账号先在完全隔离的旧布局登录、再迁到共享布局后，旧实例目录会残留一份仍然有效的 token。迁移后先在新入口确认登录可用且账号一致，再删除旧实例目录。（2026-10-28 实测）
+
+### keyring 优先与实例隔离（2026-10-28 升级后）
+
+🔬 2026-10-29 实测：agy 自动升级（`bin/`、`builtin/` 目录 2026-10-28 14:16 更新）后鉴权改为 ChainedAuth、**优先 keyring**——真实 HOME 的 `antigravity-oauth-token` 不再生成。Secret Service 走 D-Bus、按 Linux 用户共享，**与 HOME 无关**，上述整体替换 HOME 的隔离对它完全失效：两个实例共用同一条 keyring 凭据，一边切换账号另一边数十秒内跟着变（日志证据：真实 HOME 浏览器登录后 40 秒，另一实例启动即 `ChainedAuth: authenticated via keyring (effective: keyring)`、同一账号；二进制含 `github.com/zalando/go-keyring`）。
+
+**修复（已验证）**：实例 wrapper 内把会话总线指向不存在的地址：
+
+```bash
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$H/.cache/agy-no-keyring/bus"
+```
+
+要点：
+
+- **不能只 `unset`**——godbus 在变量缺失时回退 `$XDG_RUNTIME_DIR/bus`，真实会话总线仍可达，keyring 照常工作，屏蔽即失效。
+- 连接立即失败（`connect: no such file or directory`），不是等 keyring 超时；触发二进制内置回退：日志出现 `Failed to load stored token from keyring, falling back to file` / `Failed to save token to keyring, falling back to file`，token 落回实例文件，HOME 隔离恢复生效。
+- 实例中残留的过期文件 token 会被 refresh 自动复活（实测 2026-10-28 的旧 token 于 10-29 直接刷新成功、恢复实例自有账号），无需重新登录；真实 HOME 的 agy 不动，继续走 keyring，两边账号彻底独立。
+- 残留共享点：`plugin-secrets.json` 存于 `$XDG_CONFIG_HOME/antigravity/`；若实例 `.config` 是整目录软链，插件密钥仍两边共享（与账号登录无关；介意时把 `.config` 改为真实目录＋按需软链）。
 
 第三方切换工具（[agyw](https://github.com/tranquocthong/agy-switcher)、[agy-cli-manager](https://github.com/zcop/agy-cli-manager)、[agyswap](https://pypi.org/project/agyswap-cli/)）均为全局切换型——切换前须退出所有 agy 进程，不支持并行。
 
