@@ -28,6 +28,18 @@ app-server 是 Codex 的应用服务端组件，提供会话管理、认证、�
 
 > 源码：[客户端取得模型目录](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/tui/src/app_server_session.rs#L574-L629)。`codex exec` 是另一条入口，所引实现使用进程内服务，不能由它的行为直接推断交互式启动的连接方式，见 [exec 启动入口](https://github.com/openai/codex/blob/87cf20ee491a035036f2d905926df4a0d35951cc/codex-rs/exec/src/lib.rs#L973-L979)。
 
+### <a id="daemon-auth-cache"></a>共享 daemon 的登录态缓存与新会话登录向导排查
+
+daemon 复用意味着**新会话的登录态来自后台的内存缓存，不是磁盘 `auth.json`**。后台在未登录状态下启动、随后另一个进程完成 `/login` 只写磁盘时，后台不会自动重载：此后每个连它的客户端都被报告「未登录」，新开 TUI 命中首跑登录向导；而 `codex login status` 只读本地文件、已在跑的会话自带进程内登录态——三者可以合法地互相矛盾。凭据本身可能完全健康。
+
+> 🔬 2026-10-29 实测（多 home 布局：launcher 导出 `CODEX_HOME` + per-home daemon，`0.165.0`）：daemon 19:09 在尚无 `auth.json` 的 home 上启动；22:08 在另一个进程内完成 ChatGPT 登录并写盘（token 直连后端验证 200、`login status` 显示 Logged in、旧会话正常）；随后新开 TUI 全部跳登录向导。`codex-<name> app-server daemon restart` 让后台从磁盘重读凭据后，PTY 实测新 TUI 直接进主界面（模型与 weekly 额度正常渲染），向导消失。
+
+- 判别「新会话问谁要登录态」：默认控制 socket 可连接即问 daemon（见上表共享行）；`login status` 只读文件。两者不一致时先怀疑后台缓存陈旧，不要急着怀疑凭据损坏或被轮换。
+- 经验规则：凡在 daemon 存活期间做了 `/login`、`logout` 或手工替换 `auth.json`，随后 restart 对应 home 的后台；多 home 布局下每个 home 各有 daemon 与 socket，重启的必须是实际承载会话的那个。
+- 认证内存缓存与「改磁盘登录材料不等于既有后台立即换号」的源码依据见[用量与额度](#usage-accounting)所引 AuthManager 缓存读取及外部身份重载链接。
+
+> **排查视角陷阱**：从受限沙箱（容器、agent 工具沙箱）观测 daemon 会双重失真——进程表看不到宿主进程；home 内控制 socket 是指向 `/tmp` 的软链而沙箱 `/tmp` 独立，`daemon version` 报 ENOENT，制造「后台已死」的假象。结论必须回到实际宿主上下文（用户终端、完整 shell）复核。判断在跑 TUI 属于哪个 home 可查 `/proc/<pid>/environ` 的 `CODEX_HOME`（同用户也可能被 ptrace 策略拒绝，此时按启动命令行与启动时间对照 launcher 推断）。
+
 ### <a id="app-server-launch"></a>独立服务的启动方式
 
 `codex app-server` 启动的是供程序调用的服务端，不会打开普通 Codex 的聊天界面。监听方式决定客户端如何连接，是否常驻则取决于进程由谁启动和管理。
