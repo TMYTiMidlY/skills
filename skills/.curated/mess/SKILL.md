@@ -92,6 +92,13 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 - **会话切换模型后，每轮都报 `400 Missing namespace for function_call`** → Copilot CLI 把 Anthropic 产生的 MCP 调用投影进通用历史时保留了 `mcpServerName` 的事件记录，却没有生成 OpenAI Responses 回放所需的 `functionCallNamespaces` 映射；随后请求在模型响应和 MCP 执行前即被 CAPI 拒绝 → [直达](references/copilot-cli.md#mcp-namespace-roundtrip)
   - 关键词：`Missing namespace for function_call`、`Round-trip the model's function_call item`、`functionCallNamespaces`、`mcpServerName`、`toolu_`、`sessionProjectionRewriteChatHistoryForModelJson`、`切换模型后 400`
 
+### Codex CLI
+
+见 [codex-usage-accounting.md](references/codex-usage-accounting.md)。
+
+- **Terra 一夜的周额度增量高于历史 Sol，怀疑子代理或 500K 计费规则** → 实录显示请求更密、父侧协调负担增加；累计代理数、活动并发、token、账号额度与 API 等价费用需分别核算，子代理附加倍率及订阅扣减机制仍未证实 → [案例](references/codex-usage-accounting.md#overnight-quota-attribution)
+  - 关键词：`token_usage_record`、`thread_token_usage`、`response_id 去重`、`Provider Hub quota-history`、`239 累计与 3 并发`、`272K API 与 500K 默认窗口`、`Sol 订阅长上下文豁免`
+
 ### DeepSeek Harness（dsh Web GUI）
 
 见 [dsh.md](references/dsh.md)。
