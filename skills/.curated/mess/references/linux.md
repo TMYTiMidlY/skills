@@ -230,3 +230,47 @@ link_into_subdirs() {
 #### 测试踩坑
 
 验证 guard 时若**从一个空临时目录** `source` 真 `.envrc`，会得到假的"没跳过也没分发"假象——因为函数在 guard **之前**有 `[[ -e "$src" ]] || return 0`，空目录里 `$PWD/.github/...` 不存在 → 到达 guard 前就早退了。必须**构造带真实 `.github/hooks/safety-net.json` 等源文件 + 一个 child 子目录**的假仓库来测：source 真文件（cwd≠真根）应打印提示且 child 下 0 链；source 副本（cwd=副本自身根）应无提示且 child 下生成 4 条链。
+
+## <a id="caddy-forwardauth-403-umask"></a>鉴权静态站子目录全 403：部署器 umask 造出 0700 目录
+
+> 2026-10-30 | Caddy file_server + forward_auth | Python 部署脚本 | umask | EACCES
+
+### 场景
+
+Caddy `forward_auth`（子请求打到自研认证网关）+ `file_server` 托管静态站：根目录文件（`pdf.html`、`app.js`、`manuscripts.json`）正常，子目录 `pdfjs/*`、`papers/*/*` 对**已登录**用户一律 403。浏览器侧动态 `import()` 只报一句不带状态码的 "Failed to fetch dynamically imported module"。
+
+### 症状与误导链
+
+- 匿名 curl 任何路径都 401 —— 因为 `forward_auth` 在 `file_server` **之前**拒绝，永远看不到下游文件层的真实响应。
+- 认证网关日志全是 204（放行）—— 证明会话没问题，但当时没意识到这已经排除了登录层。
+- 于是先后怀疑：iframe 响应头、Caddy 路由、Cookie 作用域、SSO broker 流程，客户端改了三轮都没用。
+- 转折点：给前端错误信息加上**状态码 + 路径**（`HTTP 403，/pdfjs/pdf.mjs`）——403 不是本网关任何代码路径能产生的值，矛头立刻转向 Caddy 文件层。
+
+### 根因
+
+- Caddy `file_server` 对 `os.Open` 的 **EACCES 返回 403**（不是 404/500）。
+- 部署脚本 `Path.mkdir(parents=True, exist_ok=True)` **继承部署 shell 的 umask**（该环境为 0077）→ 子目录变 `0700`+setgid（2700），仅所有者可进。
+- 站点根目录本身是刻意设的 `2750 root:caddy`（caddy 组可进），所以**根下直放文件全好、进子目录全坏**，制造出"部分文件好部分坏"的假象，看起来像路由或权限规则问题。
+- 文件本身被脚本显式 `chmod 644`（全局可读）——坏的只有目录的 x 位，更隐蔽。
+
+### 解法
+
+```bash
+# 存量修复（目录属主可做，无需 root）：
+chmod g+rx <webroot>/pdfjs <webroot>/papers
+find <webroot>/papers <webroot>/pdfjs -type d -exec chmod g+rx {} +
+
+# 部署器根治：装完文件后显式 chmod，不信任 umask
+for path in root.rglob("*"):
+    if path.is_dir() and not path.is_symlink():
+        os.chmod(path, 0o750)
+```
+
+无 sudo 验证 web 服务器视角：`docker run --rm --read-only -v <webroot>:/srv:ro --user <caddy-uid>:<caddy-gid> alpine head -c 8 /srv/...`，用服务进程的真实 uid/gid 实测文件可读。
+
+### 教训
+
+- **让错误信息自带状态码和路径再排查**。浏览器把动态 import 失败折叠成一句通用错误，一行 `throw new Error(\`...（HTTP ${r.status}，${path}）\`)` 比三轮盲改客户端值钱。
+- **认证层会掩蔽文件层**：forward_auth 站点上匿名探测只能得到 401，"下游 403"必须用已登录会话才能复现。先分清"谁在拒绝"。
+- **部署脚本创建目录必须显式 chmod**：`mkdir` 的默认模式 = `0o777 & ~umask`，CI/agent shell 常是 0077。只 chmod 文件不 chmod 目录就是半个 bug。
+- Caddy file_server 的 403 ≈ 文件系统 EACCES；看到它先 `namei -l <path>` 逐层看目录 x 位。

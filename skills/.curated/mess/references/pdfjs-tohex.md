@@ -50,6 +50,7 @@ pdf.js 用 [TC39 `proposal-arraybuffer-base64`](https://github.com/tc39/proposal
 | 2026-04-13 / 04-25 | LaTeX-Workshop issue [#4851](https://github.com/James-Yu/LaTeX-Workshop/issues/4851) / [#4867](https://github.com/James-Yu/LaTeX-Workshop/issues/4867) 报同款错，维护者一开始只回 "Upgrade your vscode"（敷衍答复，非真正修复） |
 | 2026-05-07 | **LaTeX-Workshop 官方修复** commit [`a248e2a1`](https://github.com/James-Yu/LaTeX-Workshop/commit/a248e2a1d83393dce9c9dbb8f56fcdbe61a47921) "Fix #4882 Use legacy PDF.js dist build files"，随 **v10.15.2** 发布；用户回报 "10.15.2 works" |
 | 2026-07-22 | **jujuleaf**：钉 pdfjs-dist 6.1.200 + 全 legacy + polyfill；commit `b896582` 修构建脚本回归（防止把 legacy worker 覆盖成 standard） |
+| 2026-10-30 | **Pursuit 研究站**（QAtlas 子域 PDF 阅读器）：从钉住的 BlattBot 构建里 vendor 了 **standard** 6.2.108，用户旧浏览器报**压缩形态** `n.toHex is not a function`；换成同版本 `legacy/build/` 两件套（`pdf.mjs` + `pdf.worker.min.mjs`）即修。教训：vendor 第三方 node_modules 时只看了**版本**没看**build 变体**——`build/` 与 `legacy/build/` 的坑在"复制源路径"这一步就埋下 |
 
 **读法**：mess 那次降级发生在**官方 legacy 方案出现之前**，当时降级合理；一个月后上游用 legacy build 定案，jujuleaf 又独立走到同一条官方路线上。
 
