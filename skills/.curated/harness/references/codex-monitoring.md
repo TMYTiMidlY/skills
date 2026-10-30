@@ -1,10 +1,10 @@
 # Codex 会话监控与远程推进
 
-无人值守的 Codex 会话（TUI 挂着、daemon 托管或 `exec` 拉起的长任务）从外部只有两条主线：**观察**看 rollout 会话存档，**推进**用 `codex queue` 排队消息或 `codex exec resume` 无头恢复。本篇整理 rollout 判读、queue 语义、resume 边界、限流退避和监控守则；源码引用锁定 `rust-v0.162.1`（本机实测 CLI 同版本），🔬 标注 2026-10-12 在隔离 `CODEX_HOME`、非 git 目录下的实测，🧭 标注一次性现场观察、未复现验证。app-server 与 daemon 的进程模型见 [Codex 运行时笔记](codex.md#app-server-lifecycle)。
+无人值守的 Codex 会话（TUI 挂着、daemon 托管或 `exec` 拉起的长任务）从外部可以**观察** rollout 与后台状态，也可以在获准后通过 queue、resume 或应用服务 API **干预**。本篇整理 rollout 判读、queue 语义、resume 边界、[多账号恢复与 goal 生命周期](#account-resume)、限流退避和监控守则。原有 queue／exec 部分按 `rust-v0.162.1`，🔬 为 2026-10-12 同版本隔离环境实测，🧭 为未复现的现场观察；多账号恢复专题另按 `rust-v0.165.0` 核对源码，不能用旧版或单一入口的行为概括所有客户端。app-server 与 daemon 的进程模型见 [Codex 运行时笔记](codex.md#app-server-lifecycle)。
 
 ## <a id="rollout-signals"></a>rollout 存档的判读
 
-会话存档是 `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<时间戳>-<会话UUID>.jsonl`，每行一个 JSON 事件。判断会话状态看两样就够：文件 **mtime**（最后写入时间）和**尾部事件类型**。客户端 UI 的显示、进程是否存在都不能替代这份磁盘记录。
+会话存档是 `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<时间戳>-<会话UUID>.jsonl`，每行一个 JSON 事件。初步判断回合进展看文件 **mtime**（最后写入时间）和**尾部事件类型**；判断能否停止或跨账号接管，还要核对后台、工具、队列与 goal。客户端 UI 的显示、进程是否存在都不能替代磁盘记录，存档静默也不能独自证明会话已经空闲或释放写锁。
 
 ### <a id="rollout-tail-events"></a>尾部事件的类型与含义
 
@@ -76,7 +76,7 @@ codex exec resume <会话UUID> '继续'
 Error: thread/resume: thread/resume failed: thread <UUID> already has an active writer (code -32600)
 ```
 
-此时不要反复重试抢锁——用 queue 排队（回合结束自动投递）或 TUI 附加。持有进程死亡后文件锁随进程释放，resume 即可接管（🔬 实测：杀掉进行中回合的进程后 resume 成功）。
+此时先定位持有线程的服务。已获准让原后台继续执行时，可以向它 queue 消息或通过 TUI 附加；**要换账号或只查看、保持暂停时，这两种做法不能代替交接**，排队消息还可能开启新回合。持有进程死亡后文件锁随进程释放（🔬 实测：杀掉进行中回合的进程后 resume 成功），但这不是常规恢复步骤：同一后台可能承载其他任务，强制终止也不保证工具清理完成。空闲后台仍持有写者的情况，见[多账号恢复与 goal 生命周期](#account-resume)。
 
 > 源码：[写锁的 WouldBlock 判定与报错文案](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/rollout/src/writer_lock.rs#L42-L79)、[锁冲突映射为 thread-store conflict](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/thread-store/src/local/mod.rs#L341-L360)。
 
@@ -90,11 +90,77 @@ Not inside a trusted directory and --skip-git-repo-check was not specified.
 
 退出码语义：`1` 是常规错误（上述两种都是），`2` 是用法错误（🔬 实测：给 `exec resume` 传 `-s read-only` 即报 Usage 错误退出 2），`101` 是 Rust 惯例的 **panic** 退出码。panic 不回滚已完成的磁盘写入——文件改动、git 提交是否落盘以仓库实际状态为准，别被 101 吓到；rollout 里表现为回合没有收尾事件，进度按尾部事件判断。
 
+## <a id="account-resume"></a>多账号恢复与 goal 生命周期
+
+本节按 Codex `0.165.0` 源码核对，适用于账号分别使用独立 `CODEX_HOME` 和后台、但共享会话及写锁的部署。要分别核对**后台是否持有会话、是否有执行中的回合、goal 是否允许自主继续、模型请求使用什么身份**；任一项不能替代其他项。
+
+### <a id="account-writer"></a>会话写锁与后台占用
+
+一条会话在同一时间只允许一个后台持有 live writer。按 Interrupt 结束当前回合，并不要求后台卸载该会话；退出 TUI 也只断开这个客户端，后台和其他订阅者可以继续存在。因此“已经不输出了”与“另一个账号能够接手”是不同状态。原生 TUI 在中断正在执行的 Active goal 回合时还有额外的暂停动作，单独调用 `turn/interrupt` 则只提交中断；两种入口都应读回最终 goal 和回合状态，不能用按键成功代替验证。锁文件存在本身也不能证明锁仍被持有，删除锁文件更不能作为释放活跃写者的办法。
+
+`0.165.0` 的默认空闲卸载延迟是 1800 秒，且还需满足没有订阅、没有运行任务等条件，不是按 Interrupt 后固定等待一段时间就一定解锁。临时建立另一个连接调用 `thread/unsubscribe`，只能解除该连接的订阅，不能让其他窗口退出。恢复前应核对实际后台和客户端，而不是按窗口名、PID 记录文件或 rollout 静默时间猜测。
+
+> 源码：[interrupt 请求](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/request_processors/turn_processor.rs#L1622-L1665)、[TUI 额外暂停 goal](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/chatwidget/interaction.rs#L713-L731)、[默认延迟](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/config/mod.rs#L4100-L4101)、[空闲候选计时](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/request_processors/thread_lifecycle.rs#L58-L83)、[连接级 unsubscribe](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/request_processors/thread_processor.rs#L1079-L1104)。原生后台的连接和进程管理归属见[进程的管理归属](codex.md#app-server-ownership)。
+
+公开应用服务 API 没有可直接调用的 `thread/unload` 或 `thread/close`；`thread/closed` 是通知。`thread/archive` 会关闭线程并执行归档，`thread/unarchive` 再恢复归档状态。这是有磁盘与索引副作用的生命周期操作，不是无副作用的“解锁按钮”，也不是一次不可分割的账号交接。
+
+> 源码：[请求方法](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-protocol/src/protocol/common.rs#L583-L597)、[关闭通知](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-protocol/src/protocol/common.rs#L1983)、[归档前关闭](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/request_processors/thread_processor.rs#L1107-L1139)、[归档处理](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/request_processors/thread_processor.rs#L1757-L1848)、[取消归档](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/request_processors/thread_processor.rs#L2161-L2189)。
+
+### <a id="resume-goal"></a>打开会话与启动 goal
+
+**恢复聊天上下文不等于授权 goal 继续研究。** 服务端恢复 goal runtime 时只接续 Active 状态，但完整 TUI 流程还会询问是否恢复暂停的 goal。命令行直接 resume、TUI 历史选择和 agents 总览都有相关调用路径；只检查启动参数里有没有 UUID，覆盖不了界面里后选中的会话。
+
+> 源码：[服务端恢复](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/ext/goal/src/runtime.rs#L412-L433)、[启动恢复](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/app/startup.rs#L1138-L1148)、[历史选择](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/app/session_lifecycle.rs#L1477-L1486)、[agents 总览](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/app/agents_overview.rs#L903-L907)。
+
+该版本的 `Resume paused goal?` 弹窗对 `paused`（暂停）、`blocked`（阻塞）和 `usageLimited`（用量受限）状态开放，默认选项是 **Resume goal**。确认它会发送把 goal 改成 Active 的请求。因此只读回“当前没有 Active goal”，不足以保证随后打开 TUI 不启动研究；也不能凭额度受限状态认定以后不会执行。批量模拟按键时，空闲输入、默认选项和旧画面尤其需要逐步核实。
+
+> 源码：[提示条件与启动动作](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/app/thread_goal_actions.rs#L54-L85)、[菜单默认选项](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/chatwidget/goal_menu.rs#L39-L70)。这些代码证明存在启动路径，不能单凭它们断言某次历史事件究竟由哪个客户端或按键触发。
+
+获准“只恢复会话、保持暂停”时，对可接受直接输入的既有 goal，使用仅修改状态的请求，保留目标、预算与累计记录；先读状态，已经完成的 goal 保持完成，不删除或重建：
+
+```json
+{"method":"thread/goal/set","params":{"threadId":"<thread-id>","status":"paused","origin":"user"}}
+```
+
+这是按用户明确指令暂停的 API 消息示意，`origin` 记录本次操作来源；执行前需完成原生协议初始化并配置请求 ID。若当前有执行中的回合，暂停 goal 之外还需单独处理该回合并验证工具确实停止。旧状态为 `budgetLimited`（goal 预算耗尽）时，请求改为 `paused` 或 `blocked` 会保留原状态，即使同次传入新预算也是如此；只改预算而省略状态也不会把它恢复为 Active。不应为了让界面字面显示 Paused 而清空预算、重建 goal 或重置累计用量。
+
+> v2 API 的状态拼写为 `active`、`paused`、`blocked`、`usageLimited`、`budgetLimited`、`complete`，见[状态枚举](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L820-L828)与[序列化宏](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-protocol/src/protocol/v2/shared.rs#L24-L39)；SQLite 内部的 snake_case 拼写不能直接拿来构造请求。用户来源字段见[请求结构](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L867-L894)。状态更新与保留规则见[既有 goal 的状态更新](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/ext/goal/src/api.rs#L257-L279)、[预算限制状态的保留](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/state/src/runtime/goals.rs#L293-L364)。公开 goal 响应不包含内部 GoalID，见[响应结构](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L834-L848)；若验收要求核对内部 ID，需另有获准的只读证据，不能把目标文字相同当作 ID 未变。
+
+### <a id="account-handoff-checks"></a>跨账号接管的检查顺序
+
+对指定会话的接管，应在已授权范围内依次进行；其中任一步无法证实，就停在当前状态并报告，而不是试着 resume 看会不会开始运行。
+
+1. **定位会话与后台**：确认共享存储、原会话 ID、实际 cwd／分支／未保存成果，以及旧后台和目标账号后台。保存可取得的会话树、goal 状态、目标、预算和累计记录，核对持久队列、活动回合与工具进程。
+2. **核查完整子树**：根线程空闲不能替代子任务空闲。默认 `thread/list` 来源过滤会遗漏子代理，`loaded/list` 也不能证明列出了全部内部节点；持久子树与当前后台的 live 子树还可能不同。存在隐藏、临时、分散持有或无法解释的节点时，停止自动接管。
+3. **落实暂停**：按用户指令处理可直接控制的 goal 和当前回合，读回确认没有新回合或后台工具仍在执行。已完成状态和预算限制保持原有约束。V2 ThreadSpawn 子任务可能不接受公开 `goal/set`，遇到这种情况不能绕过 API 写数据库。
+4. **释放旧写者**：优先协调旧客户端退出并确认原生后台卸载。若考虑归档／取消归档，需要另行确认对目标 thread-spawn 子树的影响和授权；其范围合并持久 agent graph 与所调用后台的 live 子树，不等于任意 fork 历史或外部编排的完整任务树。遇到超时、断连或中途失败，先只读核对实际归档与写者状态，不能盲重试、伪称回滚成功。
+5. **在目标后台恢复并验收**：通过已准备好的禁止意外启动机制恢复原会话，核对真正接手的后台身份、原 ID／树／goal／预算、模型／provider／强度／权限，以及没有意外开启回合。不能偷偷转连旧后台以消除占用报错，否则实际执行仍可能消耗旧账号额度。
+
+> 源码：[线程来源与祖先过滤](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1437-L1440)、[祖先条件](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1487-L1491)、[内部线程的列表过滤](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/request_processors/thread_processor.rs#L2977-L2982)、[持久与 live 子树](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/thread_manager.rs#L1085-L1117)、[子任务直接输入限制](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/request_processors/thread_input.rs#L11-L33)、[goal 请求的门禁](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/request_processors/thread_goal_processor.rs#L326-L380)。
+
+### <a id="resume-accounting"></a>执行身份与额度
+
+额度归属看**实际发出上游模型请求的后台身份和 provider**，不是会话创建者、窗口标题或启动函数名。账号 B 的窗口连接着账号 A 的后台时，窗口名不会把 B 的凭据传给 A；真正转交给 B 的后台后，后续请求才采用 B 的执行身份。第三方 provider 还要分别核实其端点与认证，不能一律按订阅账号推断。
+
+单纯读取历史不等于发出模型请求，但恢复会话可能触发已有 queue 或 Active goal；“打开界面”不能作为零模型用量保证。goal 的 token 累计量参与 token 预算，耗时用于 goal 进度记账；二者不直接等于订阅账单或账号剩余额度。报告时分别记录后台身份、是否实际开启回合、goal 累计量和账号额度遥测，避免混为一个数字。
+
+> 源码：[后台建立 AuthManager](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/lib.rs#L596-L605)、[按 provider 与当前认证解析请求](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/client.rs#L1161-L1184)。后台与客户端的认证边界见[账号与存储边界](codex.md#cc-switch-storage)，订阅统计与第三方本地统计见[账号活动与额度](codex.md#usage-accounting)。模型容量不足、网络超时和账号额度耗尽应分别取证，不能只凭 `high demand` 或 `Reconnecting` 认定额度耗尽。
+
+### <a id="resume-guard"></a>恢复入口的保护范围
+
+若用本地中转程序保护原生 TUI，应在它实际发送 `thread/resume` 时检查具体会话，而不是只匹配 `resume <UUID>` 的命令参数。中转还需在转发恢复前落实暂停，并独立约束随后把 goal 改成 Active 的请求；原生弹窗确认与手动 `/goal resume` 会使用同一种启动请求，并都可标记为用户来源，单看方法或 `origin:"user"` 无法证明用户是否另行明确授权。需要单独的、有会话与当前接管身份约束的启动授权；不能把省略状态的新 goal 请求当作无害写入直接放行。
+
+这种保护只覆盖经过它的客户端。旧窗口、直接连接原生 socket 的程序，以及后台内部 goal 工具和自动恢复路径，仍须分别协调；同一用户下的普通中转不是安全隔离，不能承诺所有进程永不启动 goal。客户端间还需防止旧连接在接管后重新写入；一把只在操作期间持有的外部锁，不能独自禁止原生后台继续运行。
+
+自定义 Unix 中转端点在原生 TUI 中按 Remote 路径处理，不等同于验证过的 LocalDaemon：需明确传递 cwd，并测试权限、配置与 executor；该路径会拒绝 `--add-dir`。传输是 Unix socket 上的 WebSocket，需要保留请求／响应、审批、通知和连接关闭语义。安装前说明这些交互差异，不能把它包装成已与原生完全等价的永久修复。
+
+> 源码：[显式远端分支](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/lib.rs#L1056-L1092)、[本地后台验证](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/startup_orchestration.rs#L109-L134)、[远端 add-dir 限制](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/startup_orchestration.rs#L21-L25)、[Unix WebSocket 客户端](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-client/src/remote.rs#L782-L838)。
+
 ## <a id="rate-limit"></a>限流的判读与退避
 
 rollout 的 `token_count` 事件自带权威限流遥测：`rate_limits` 含 `used_percent`、`window_minutes`、`resets_at`、credits 余额与套餐类型（🔬 本机会话实测可见 `used_percent: 33.0`、`window_minutes: 10080`）。监控脚本直接从 rollout 尾部读这份数据，比盯 UI 弹窗可靠。
 
-🧭 现场经验（未逐一复现，供归因排序）：`high demand` / `Reconnecting` / `stream disconnected` 提示、远端压缩（compact）失败、一分钟左右快速空转的 `task_complete`，背后多半都是限流；上下文打满后的远端压缩同样会被限流拖死，表现为 resume 立刻退出。对策只有退避一条路：queue 排上消息，额度窗口放行后自动续跑；连续重试只是烧配额。
+`high demand`、`Reconnecting`、`stream disconnected`、远端 compact 失败或很快结束的空回合，都需要结合实际服务错误和账号遥测判断：可能是模型容量、网络、认证或额度问题，单凭提示词不能归因为额度耗尽。已证实额度受限时按窗口退避；恢复期间仍按[多账号恢复检查](#account-handoff-checks)处理执行账号与 goal。只有明确授权继续时才 queue 消息；queue 不是按额度重置时间触发的定时器，也不保证卸载的线程自行恢复，投递前提见[投递机制](#queue-mechanism)。
 
 ## <a id="monitoring-rules"></a>无人值守会话的监控守则
 
