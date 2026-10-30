@@ -146,6 +146,39 @@ Not inside a trusted directory and --skip-git-repo-check was not specified.
 
 > 源码：[后台建立 AuthManager](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server/src/lib.rs#L596-L605)、[按 provider 与当前认证解析请求](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/client.rs#L1161-L1184)。后台与客户端的认证边界见[账号与存储边界](codex.md#cc-switch-storage)，订阅统计与第三方本地统计见[账号活动与额度](codex.md#usage-accounting)。模型容量不足、网络超时和账号额度耗尽应分别取证，不能只凭 `high demand` 或 `Reconnecting` 认定额度耗尽。
 
+### <a id="manual-session-maintenance"></a>按需运行的外部维护脚本
+
+需要人工处理某一次占用、而不更改 Codex 本体或启动入口时，可使用[按需维护脚本](../scripts/codex-session-maintenance.py)。控制接口已核对 `0.165.0`／`0.166.0`；脚本只连接指定账号**已经运行**的后台，不登录、不启动／重启后台、不发 `thread/resume`、`turn/start`、goal Active 或 TUI 按键。
+
+先从原会话的 `/status` 取得 UUID，核对实际持有它的后台及 `CODEX_HOME`；`--home` 是本次连接的源账号目录，不会自动换成另一个账号。以下命令从本 skill 根目录运行，替换占位符：
+
+```bash
+uv run scripts/codex-session-maintenance.py inspect \
+  --home '<account-home>' --thread '<thread-id>'
+
+uv run scripts/codex-session-maintenance.py pause \
+  --home '<account-home>' --thread '<thread-id>' \
+  --apply --audit-dir '<private-audit-dir>'
+```
+
+默认和缺少 `--apply` 的调用只检查。`pause` 只修改既有 goal 的状态，保留目标、预算、累计记录与终态；当前回合可能仍在运行，**明确要中断这一轮时**，在 `pause --apply` 后加 `--interrupt`。脚本不会新建 goal、清空队列或中断其他后台。审计目录必须本人所有且为 `0700`；记录只含元数据和目标摘要，不保存历史正文、账号邮箱或凭据。内部 GoalID 能从已有 goal 库只读取得时会直接比较；不能取得时明确标为未核验，`release` 会停止，不用文字相同代替 ID 证据。
+
+若原后台仍持有一个空闲的标准根会话，先人工检查并停止旧窗口、子任务和脱离终端的工具，再显式执行：
+
+```bash
+uv run scripts/codex-session-maintenance.py release \
+  --home '<source-account-home>' --thread '<thread-id>' \
+  --apply --reviewed-idle --audit-dir '<private-audit-dir>'
+```
+
+`--reviewed-idle` 是操作者对人工检查的确认，**不是程序证明了完整子树**。脚本仍拒绝已发现的活动回合、排队、子会话、分散写者、不明后台终端、custom 来源、fork 和已归档成员；复杂任务按[跨账号接管的检查顺序](#account-handoff-checks)逐项人工处理。原写者已经释放时只暂停 goal，不归档；确需释放时才通过归档／取消归档处理所选单根会话，不删除锁文件、不写原生数据库，也不自动接管或继续工作。
+
+原生归档有副作用且可能部分成功。脚本在每次写入前留审计，超时或出错后停止，不盲重试、不假称回滚。若审计确认所选 UUID 留在归档中，可在再次核对空闲状态后，用同样的 `--apply --reviewed-idle --audit-dir` 参数执行 `restore`；它只取消该 UUID 的归档，不递归恢复孩子、不加载运行时。无法确认的情况保留现场再处理。
+
+完成后**退出旧 TUI，再用目标账号入口重新打开原 UUID**；出现 `Resume paused goal?` 时明确选 **Leave paused**。不要把旧只读页的 **R / retry** 当作“只恢复显示”：2026-10-30 的一次现场中，TUI `0.165.0`、后台 `0.166.0`，外部已读回 Paused 后，仅发送一次 `r`（未发 Enter），随后仍观察到 Active 和一个新回合，之后再次暂停并中断。只确认这一现场顺序，尚未证明是缓存动作重放、默认确认或其他客户端触发。
+
+> `0.166.0` 的[goal 请求](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L867-L916)、[队列读取](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L935-L980)、[后台终端读取](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1246-L1277)与所查 `0.165.0` 对应定义一致；这不表示所有运行语义均相同。只读页重附着及恢复后的提示见[恢复路径](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/app/session_lifecycle.rs#L1477-L1486)，默认选项见[goal 菜单](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/tui/src/chatwidget/goal_menu.rs#L39-L70)。
+
 ### <a id="resume-guard"></a>恢复入口的保护范围
 
 若用本地中转程序保护原生 TUI，应在它实际发送 `thread/resume` 时检查具体会话，而不是只匹配 `resume <UUID>` 的命令参数。中转还需在转发恢复前落实暂停，并独立约束随后把 goal 改成 Active 的请求；原生弹窗确认与手动 `/goal resume` 会使用同一种启动请求，并都可标记为用户来源，单看方法或 `origin:"user"` 无法证明用户是否另行明确授权。需要单独的、有会话与当前接管身份约束的启动授权；不能把省略状态的新 goal 请求当作无害写入直接放行。
