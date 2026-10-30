@@ -66,6 +66,8 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
   - 关键词：`127.0.0.11`、`hostname resolving error`、`no such host`、`getent hosts 失败但 IP 直连通`、`存量网络 DNS 损坏`、`tried to kill container, but did not receive an exit event`
 - **子仓库 `git status` 冒出几十个 untracked 分发软链** → 手动 `source` 工作区 `.envrc` 让 `$PWD` 停在子仓库，链铺深一层；而 `core.excludesFile` 里含斜杠的 pattern 是 anchored、只挡仓库根那层 → [直达](references/linux.md#envrc-subdir-links)
   - 关键词：`.envrc`、`direnv`、`link_into_subdirs`、`core.excludesFile`、`gitignore 含斜杠 anchored`、`check-ignore NOT ignored`、`BASH_SOURCE guard`
+- **鉴权静态站子目录全 403，根目录文件正常，登录疑似失效** → 部署脚本 `mkdir` 继承 shell umask 0077 造出 0700 目录，Caddy `file_server` 对 EACCES 返回 403；forward_auth 让匿名探测永远 401，把真凶完全挡住 → [直达](references/linux.md#caddy-forwardauth-403-umask)
+  - 关键词：`file_server 403`、`EACCES`、`forward_auth 掩蔽`、`umask 0077`、`子目录 0700`、`namei -l`、`Failed to fetch dynamically imported module`、`错误信息带状态码再排查`
 
 ### NAS / Synology
 
@@ -82,8 +84,8 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 
 见 [pdfjs-tohex.md](references/pdfjs-tohex.md)。
 
-- **旧浏览器打开 PDF 全白，报 `hashOriginal.toHex is not a function`** → pdf.js 从 `5.4.624` 起删掉了 `Uint8Array.prototype.toHex` 的手写 fallback，standard build 无条件依赖这个很新的 TC39 API；官方唯一正解是改用 legacy build，不是降级也不是自己写 polyfill → [直达](references/pdfjs-tohex.md#symptom)
-  - 关键词：`hashOriginal.toHex is not a function`、`Uint8Array.toHex`、`pdfjs-dist`、`legacy build`、`legacy/build/pdf.worker.min.mjs`、`PDF 预览全白`
+- **旧浏览器打开 PDF 全白，报 `hashOriginal.toHex is not a function`（压缩构建里是 `n.toHex is not a function`）** → pdf.js 从 `5.4.624` 起删掉了 `Uint8Array.prototype.toHex` 的手写 fallback，standard build 无条件依赖这个很新的 TC39 API；官方唯一正解是改用 legacy build，不是降级也不是自己写 polyfill → [直达](references/pdfjs-tohex.md#symptom)
+  - 关键词：`hashOriginal.toHex is not a function`、`n.toHex is not a function`、`Uint8Array.toHex`、`pdfjs-dist`、`legacy build`、`legacy/build/pdf.worker.min.mjs`、`PDF 预览全白`
 
 ### Copilot CLI
 
