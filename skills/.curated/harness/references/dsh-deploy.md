@@ -348,7 +348,11 @@ ExecStart=<dsh-executable> web --no-open --host 127.0.0.1 --port <instance-port>
 
 ### <a id="startup-environment"></a>启动环境与凭据
 
-启动器负责向 DSH Host 提供环境；DSH 不会自动读取与 patch 相邻的环境文件。可以把实例需要的环境保存在它自己的 `$DSH_HOME/profiles/<profile>/<env-file>`，设置为运行身份可读的 `0600`。MCP 的 `config.env`／`config.headers` 表达式与子进程转发规则见[持久 MCP 配置](dsh.md#mcp-persistent-configuration)及[子进程环境](dsh.md#child-process-environment)。
+DSH `0.2.1-rc.2` 的原生环境入口按同名变量依次取：进程继承的环境 → 启动工作目录的 `.env` → `$DSH_HOME/.env`（默认 `~/.dsh/.env`）。启动器先确定 DSH home，再读取文件并将接受的值补入运行时 `process.env`；`.env` 不能设置 `DSH_HOME`。
+
+> 来源：[环境文件的校验、加载顺序与运行时赋值](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/boot/app-boot/src/index.ts#L162-L258)。
+
+自定义文件（例如 `$DSH_HOME/profiles/<profile>/<env-file>`）由 shell 或 service manager 显式加载；仅把它放在 patch 旁不会自动生效。文件权限设为运行身份可读的 `0600`。MCP 的 `config.env`／`config.headers` 表达式与子进程转发规则见[持久 MCP 配置](dsh.md#mcp-persistent-configuration)及[子进程环境](dsh.md#child-process-environment)。
 
 systemd直接启动DSH与由脚本先加载环境再`exec dsh`是两种启动入口。应核对真正创建Host的启动链；仅看到unit的`Environment`没有某个键，不能排除脚本后续加载了环境。通用service／linger语义由`software` skill维护。
 
