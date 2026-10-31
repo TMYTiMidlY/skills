@@ -87,12 +87,26 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 - **旧浏览器打开 PDF 全白，报 `hashOriginal.toHex is not a function`（压缩构建里是 `n.toHex is not a function`）** → pdf.js 从 `5.4.624` 起删掉了 `Uint8Array.prototype.toHex` 的手写 fallback，standard build 无条件依赖这个很新的 TC39 API；官方唯一正解是改用 legacy build，不是降级也不是自己写 polyfill → [直达](references/pdfjs-tohex.md#symptom)
   - 关键词：`hashOriginal.toHex is not a function`、`n.toHex is not a function`、`Uint8Array.toHex`、`pdfjs-dist`、`legacy build`、`legacy/build/pdf.worker.min.mjs`、`PDF 预览全白`
 
+### MinerU 转录（VLM）
+
+见 [mineru-vlm.md](references/mineru-vlm.md)。
+
+- **MinerU 转出的 full.md 里 grep 数字/常见单词命中率异常，逐字引用与原文对不上** → VLM 的静默误识四类（均已与 PDF 文本层对照坐实）：ff 连字系统性丢一个 f（全库 `eficient`×1650/`diferent`×1751）、LaTeX 数学环境内数字被空格拆散（`$1 0 2 4 0$`，精确 grep 全失效）、弯引号误认成上标 66/99（PDF 层字节是 U+201C/201D）、游离字符混入行内公式；pdftotext 错得张扬、VLM 错得沉默，两层互补，逐字引用回对 PDF → [直达](references/mineru-vlm.md#症状-fullmd-检索命中率异常逐字引用对不上)
+  - 关键词：`full.md grep 不中`、`eficient`、`diferent`、`suficient`、`1 0 2 4 0`、`MinerU 错字`、`引号 66 99`、`ff 连字丢 f`、`VLM 静默错误`、`pdftotext 对照`
+
 ### Copilot CLI
 
 见 [copilot-cli.md](references/copilot-cli.md)。
 
 - **会话切换模型后，每轮都报 `400 Missing namespace for function_call`** → Copilot CLI 把 Anthropic 产生的 MCP 调用投影进通用历史时保留了 `mcpServerName` 的事件记录，却没有生成 OpenAI Responses 回放所需的 `functionCallNamespaces` 映射；随后请求在模型响应和 MCP 执行前即被 CAPI 拒绝 → [直达](references/copilot-cli.md#mcp-namespace-roundtrip)
   - 关键词：`Missing namespace for function_call`、`Round-trip the model's function_call item`、`functionCallNamespaces`、`mcpServerName`、`toolu_`、`sessionProjectionRewriteChatHistoryForModelJson`、`切换模型后 400`
+
+### Codex CLI
+
+见 [codex-usage-accounting.md](references/codex-usage-accounting.md)。
+
+- **Terra 一夜的周额度增量高于历史 Sol，怀疑子代理或 500K 计费规则** → 实录显示请求更密、父侧协调负担增加；累计代理数、活动并发、token、账号额度与 API 等价费用需分别核算，子代理附加倍率及订阅扣减机制仍未证实 → [案例](references/codex-usage-accounting.md#overnight-quota-attribution)
+  - 关键词：`token_usage_record`、`thread_token_usage`、`response_id 去重`、`Provider Hub quota-history`、`239 累计与 3 并发`、`272K API 与 500K 默认窗口`、`Sol 订阅长上下文豁免`
 
 ### DeepSeek Harness（dsh Web GUI）
 

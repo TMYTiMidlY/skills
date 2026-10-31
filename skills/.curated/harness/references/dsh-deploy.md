@@ -258,7 +258,7 @@ systemctl --user show dsh.service \
 curl -fsS -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:3080/
 ```
 
-预期是 `enabled`、`active/running`、HTTP 200，且 `NRestarts` 不再持续增长；首次正常启动通常为 0。失败时用 `systemctl --user status dsh.service` 与 `journalctl --user -u dsh.service` 查看 `EADDRINUSE`、入口路径或依赖加载错误。再执行一次 `systemctl --user restart dsh.service`，确认服务独立于当前交互 shell。
+预期是 `enabled`、`active/running`、HTTP 响应符合部署的认证策略，且 `NRestarts` 不再持续增长；首次正常启动通常为 0。未启用认证的入口可返回 200，启用认证时匿名 401 只证明受保护入口可达，还需另验登录后的交互。失败时用 `systemctl --user status dsh.service` 与 `journalctl --user -u dsh.service` 查看 `EADDRINUSE`、入口路径或依赖加载错误。新部署验收可重启一次，确认服务独立于当前交互 shell；已有实例先协调任务并取得停启授权。
 
 #### 运行数据
 
@@ -350,6 +350,10 @@ ExecStart=<dsh-executable> web --no-open --host 127.0.0.1 --port <instance-port>
 
 启动器负责向 DSH Host 提供环境；DSH 不会自动读取与 patch 相邻的环境文件。可以把实例需要的环境保存在它自己的 `$DSH_HOME/profiles/<profile>/<env-file>`，设置为运行身份可读的 `0600`。MCP 的 `config.env`／`config.headers` 表达式与子进程转发规则见[持久 MCP 配置](dsh.md#mcp-persistent-configuration)及[子进程环境](dsh.md#child-process-environment)。
 
+需要显式 HTTP 代理时，把所需变量放进真正创建 Host 的启动链，而不是只在后来打开的终端里设置。systemd 直接启动 DSH、由脚本先加载环境再 `exec dsh`，是两种有效入口；仅看到 unit 的 `Environment` 没有代理键，不能排除脚本加载了环境。clashctl 的 shell 集成、代理变量与服务就绪检查由 `network` skill 的 clashctl 与代理启动环境主题维护；通用 service／linger 语义由 `software` skill 维护。
+
+Host 环境会参与本地子进程及 stdio MCP 的环境构造，但 `0.2.1-rc.2` 还会做名称筛选、代理补充和调用方显式覆盖，见[子进程环境](dsh.md#child-process-environment)。因此应分别核 Host 和实际 child，不能把“父进程有变量”写成“所有程序一定采用同样代理”。
+
 直接 shell 启动时，先导入自己信任、且采用 shell 赋值语法的文件；source 会执行文件内容，凭据文件只放受信任的赋值：
 
 ```sh
@@ -368,7 +372,11 @@ EnvironmentFile=<absolute-dsh-home>/profiles/<profile>/<env-file>
 
 系统 unit 的 drop-in 保存到 `/etc/systemd/system/<unit>.d/20-environment.conf`，user unit 保存到 `~/.config/systemd/user/<unit>.d/20-environment.conf`。修改 unit／drop-in 后 `daemon-reload` 再停启原实例；只修改环境文件值时重启原实例。核对 `systemctl show <unit> -p EnvironmentFiles -p ActiveState -p SubState`，用户服务使用 `systemctl --user`。PATH 同时包含 Plugin 管理需要的 pnpm，以及实际会调用的 MCP／子进程程序；stdio MCP 使用绝对 command 路径。
 
-> 来源：[systemd EnvironmentFile 的格式和读取时机](https://github.com/systemd/systemd/blob/v255/man/systemd.exec.xml#L2458-L2527)。
+> 来源：[systemd EnvironmentFile 的格式和读取时机](https://github.com/systemd/systemd/blob/v255/man/systemd.exec.xml#L2704-L2800)。
+
+验收时先确认监听进程属于哪个 unit，再核 `FragmentPath`、drop-in 和实际启动脚本，仅提取代理变量等必要白名单并遮蔽 URI 凭据。Linux 的 `/proc/<pid>/environ` 反映 exec 时的环境区，不能当成 Node 后续修改过的全部 `process.env`；DSH 的 HTTP policy 也可能规范化运行时变量。Host 的启动环境、当前环境文件及实际 child 的启动环境分别记录，避免从一个位置推断另一个位置。
+
+> 🔬 2026-10-28，Linux／WSL、DSH `0.2.1-rc.2`：已运行的用户服务通过启动脚本导入环境文件，Host 与三个 stdio MCP child 均观测到代理。当前 clashctl 导出文件与 Host 的 `ALL_PROXY` 不同，child 的 `NO_PROXY` 还含补入的 loopback 条目。该核查没有重启 Host／代理或系统，没有发送模型请求；服务 `enabled`、`active` 和入口可达不代替冷启动顺序与出站验证。
 
 ### <a id="other-supervisors"></a>macOS、Windows、容器与应用启动器
 

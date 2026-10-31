@@ -121,11 +121,13 @@ Session 创建时采用所选 preset。尚未产生内容的 Session 可以切�
 
 | 范围 | 默认入口 | 用途与加载顺序 |
 |---|---|---|
-| DSH 用户全局 | `$DSH_HOME/AGENTS.md`，默认 `~/.dsh/AGENTS.md` | DSH 专用的用户要求，先加载 |
+| DSH 用户全局 | `$DSH_HOME/AGENTS.md`，默认 `~/.dsh/AGENTS.md` | 可选的 DSH 专用要求；存在时先加载 |
 | 共享用户全局 | `$DSH_AGENTS_HOME/AGENTS.md`，默认 `~/.agents/AGENTS.md` | 供支持该约定的 Agent 工具共享的要求，随后加载 |
 | 项目与当前目录 | 项目根到 Session cwd 路径上各目录的候选文件 | 每个目录依次加载 `AGENTS.md`、`CLAUDE.md`、`AGENTS.local.md`、`CLAUDE.local.md` |
 
 > 来源：[默认指令链、根目录解析与候选名称](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L28-L68)。
+
+复用本仓的通用规则时，在共享用户全局入口安装主文件即可；DSH 用户全局入口仅用于另外保存 DSH 专用要求。
 
 项目根默认是从 cwd 向上找到的最近一个含 `.git` 标记的目录；一路都没有标记时，以 cwd 自身为根。只收录根到 cwd 这条目录链，因此家目录的 `~/AGENTS.md` 只有恰好位于该项目链中时才会加载，并无独立的全局入口地位。探测项目根标记时遇到权限或 I/O 错误，会停止发现并返回原始错误，而不是跳到更上层项目。
 
@@ -137,7 +139,7 @@ Session 创建时采用所选 preset。尚未产生内容的 Session 可以切�
 
 > 来源：[本地补充的设计与默认候选](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/.agents/notes/archived/feature/2026-07-21-local-instruction-overlay.md#L8-L18)。
 
-候选名称按配置精确匹配；默认识别大写复数的 `AGENTS.md`，自定义名称通过 `instructionFileCandidates` 与 `localInstructionFileCandidates` 设置。全局根固定只取 `AGENTS.md`，项目候选配置不会给全局增加 `CLAUDE.md` 或 `.local` overlay。若要单独保存全局本地规则，可在主文件中明确要求 Agent 继续读取加载入口同目录的补充文件；这是主文件驱动的读取约定，DSH 自身不解析 `@path` import。
+候选名称按配置精确匹配；默认识别大写复数的 `AGENTS.md`，自定义名称通过 `instructionFileCandidates` 与 `localInstructionFileCandidates` 设置。全局根固定只取 `AGENTS.md`，项目候选配置不会给全局增加 `CLAUDE.md` 或 `.local` overlay。若要单独保存全局本地规则，可由主文件指定补充文件的读取路径。本仓共享主文件固定要求读取 `~/.agents/AGENTS.local.md`，由各工具共用这一份普通文件；这是主文件驱动的读取约定，DSH 自身不解析 `@path` import。
 
 > 来源：[配置字段](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L38-L68)、[全局候选与本地 overlay 的边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L219-L225)。
 
@@ -324,7 +326,7 @@ DSH `0.2.1-alpha.1` 的适配器仍声明 `^0.87.1`，该范围无法解析到 `
 
 > 来源：[DSH 0.2.1-alpha.1 的依赖范围](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-alpha.1/packages/llm/llm-pi-ai/package.json#L44)、[pi-ai 0.99.1 的目录更新](https://github.com/earendil-works/pi/blob/v0.99.1/packages/ai/CHANGELOG.md#L3-L7)。
 
-### Skills
+### <a id="skills"></a>Skills
 
 `dsh-skill-filesystem` 按顺序扫描项目的 `.dsh/skills`、项目的 `.agents/skills`、显式自定义目录、`$DSH_HOME/skills`，以及 `$DSH_AGENTS_HOME/skills`（默认 `~/.agents/skills`）。较早的根在同名 Skill 冲突时优先。
 
@@ -551,7 +553,7 @@ Host Plugin、Agent 工具、MCP server 和遥测处理的是不同权限主体�
 
 ### <a id="child-process-environment"></a>子进程环境与凭据过滤
 
-子进程是 DSH Host 另行启动的程序进程，例如 Shell 命令或 stdio MCP server；Host 是父进程，两者的环境变量分别属于各自的进程。DSH 的环境过滤发生在为子进程准备继承环境时，控制的是从 Host 默认复制哪些变量，不是清理 DSH 自己的环境。它由 `dsh-subprocess` 的 `scrubbedParentEnv()` 定义，本地子进程服务使用它构造执行环境；stdio MCP transport 虽由 Host 中的 MCP SDK 启动进程，也复用同一个过滤函数。HTTP MCP 没有这条子进程路径，认证配置见[MCP](#mcp-persistent-configuration)。
+子进程是 DSH Host 另行启动的程序进程，例如 Shell 命令或 stdio MCP server；Host 是父进程，两者的环境变量分别属于各自的进程。以下按 `0.2.1-rc.2` 描述：`dsh-subprocess` 的 `scrubbedParentEnv()` 先筛选 Host 环境中的名称，再应用 HTTP 代理环境补充层；本地子进程服务与 stdio MCP transport 复用它，随后各自合并显式环境。HTTP MCP 没有这条子进程路径，认证配置见[MCP](#mcp-persistent-configuration)。
 
 `process.env` 是当前 Node.js 进程的环境变量对象。过滤函数每次遍历 Host 当前的 `process.env`，建立一个新对象；它既不修改 Host 的原环境，也不把任何值替换成脱敏字符串。名称筛选等价于下面的代码：
 
@@ -566,17 +568,21 @@ for (const [name, value] of Object.entries(process.env)) {
 
 这段筛选依次排除没有值的项、名称包含 `KEY` / `PASSWORD` / `SECRET` / `TOKEN` 任一片段的项，以及名称以 `DSH_` 开头的项。两类名称匹配都不区分大小写；匹配的是任意子串，不要求词边界，所以名称中偶然含有 `KEY` 的普通变量也会被移除。其余变量保留原值，包括空字符串。
 
-| Host 中的变量名示例 | 默认继承结果 | 原因 |
+| Host 中的变量名示例 | 名称筛选阶段的结果 | 原因 |
 |---|---|---|
 | `DEEPSEEK_API_KEY`、`LOCAL_MCP_TOKEN` | 移除 | 名称含 `KEY` 或 `TOKEN` |
 | `db_password`、`APP_SECRET` | 移除 | 名称含 `PASSWORD` 或 `SECRET`，大小写不影响匹配 |
 | `DSH_HOME`、`dsh_session_id` | 移除 | 名称以 `DSH_` 开头，避免继承旧的 Harness 身份与运行事实 |
-| `PATH`、`HOME`、`LANG`、`HTTPS_PROXY` | 原值保留 | 名称未匹配过滤规则 |
+| `PATH`、`HOME`、`LANG`、`HTTPS_PROXY` | 原值保留 | 名称未匹配；代理变量还需经过下述补充层 |
 | `CODEX_HOME`、`PORTAL_ALLOW_LOCAL_EXEC`、`SSH_AUTH_SOCK` | 原值保留 | 同样未匹配；不是仅传给名字所指的某个工具 |
 
-筛选后的对象只是子进程环境的基底。调用方显式提供的 `env` 随后补充或覆盖它：本地子进程服务取 `spec.env`，stdio MCP 取已经求值的 `config.env`。因此，显式指定的 token 或当前 `DSH_*` 运行事实可以重新加入，不会再被这次继承过滤删除。本地子进程服务合并时，POSIX 按区分大小写的键覆盖，Windows 按不区分大小写的键覆盖；该服务还允许显式 `undefined` 删除一个变量，而 MCP 的 `config.env` 只接受字符串值。
+名称筛选后，`proxyEnvironmentForChild()` 在有活动代理策略时构造补充层：HTTP／HTTPS 若已由用户显式命名，保留原始大小写取值；未命名的 scheme 使用解析后的策略值。`NO_PROXY` 使用补入 loopback 地址后的列表，`ALL_PROXY` 不属于这一层的回写字段。能安全交给 Node 解析 HTTP 代理值时还加入 `NODE_USE_ENV_PROXY=1`；为其他工具保留的 SOCKS scheme 不会因此被 Node 强行接管。
 
-> 来源：[继承环境过滤函数与名称规则](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/subprocess/subprocess/src/index.ts#L37-L66)；[本地子进程的显式环境合并](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/subprocess/subprocess-local/src/spawn.ts#L29-L47)；[MCP 复用过滤函数并合并配置](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-rc.1/packages/mcp/mcp-client/src/transport.ts#L15-L49)。上述规则已与 `0.1.2-rc.1` 安装产物核对。
+> 这是 `0.2.1-rc.2` 相对只描述名称筛选的旧记录需要补充的一层：Host 的 HTTP policy 支持 `http:`／`https:` 代理，curl 等子程序可另行支持 SOCKS。代理值存在、Node 接受变量与实际请求走代理是不同验证项；端口、变量优先级、clashctl 和旁路配置由 `network` skill 的代理启动环境主题维护。
+
+经过名称筛选与代理补充后，对象仍只是子进程环境的基底。调用方显式提供的 `env` 随后补充或覆盖它：本地子进程服务取 `spec.env`，stdio MCP 取已经求值的 `config.env`。因此，显式指定的 token 或当前 `DSH_*` 运行事实可以重新加入，不会再被这次继承过滤删除。本地子进程服务合并时，POSIX 按区分大小写的键覆盖，Windows 按不区分大小写的键覆盖；该服务还允许显式 `undefined` 删除一个变量，而 MCP 的 `config.env` 只接受字符串值。
+
+> 来源：[名称过滤与代理补充](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/subprocess/subprocess/src/index.ts#L47-L80)、[子进程代理值与 Node 标记](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/util/http-proxy/src/install.ts#L262-L279)、[回写字段及支持协议](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/util/http-proxy/src/policy.ts#L33-L60)、[本地显式环境合并](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/subprocess/subprocess-local/src/spawn.ts#L36-L54)、[MCP 继承与显式覆盖](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/mcp/mcp-client/src/transport.ts#L15-L44)。关键逻辑已与该版本安装产物核对。DSH policy 的 `NO_PROXY` matcher 不匹配 CIDR，与其他程序的 bypass 语义需分别核对，见[匹配规则](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/util/http-proxy/src/policy.ts#L268-L295)。
 
 这是一种按名称避免凭据被默认继承的启发式过滤，不是环境变量白名单，也不检查变量值。秘密若存放在不匹配的名称下，仍可能被继承；例如代理 URL 内的认证信息不会仅因其值包含密码就被删除。普通 Host Plugin 仍可读取共享环境，in-process subagent 也不因创建新 Session 获得独立进程环境。第三方程序自行启动后代进程或读取其他凭据来源，不受这次环境构造约束。
 

@@ -1,100 +1,29 @@
 ---
 name: manage-skills
-description: 创建、安装、重构、审查或合并本地 skill 时使用。核心是维护清晰的能力边界、渐进式文档结构、可追踪的安装链接与一致的仓库规范。
+description: 创建、安装、维护、重构、审查或合并本地 skill，以及安装和修复 AGENTS.md 等共享指令入口时使用。先探测已有 harness 与实际配置根，再按范围补齐共享目录和兼容链接。
 ---
 
 # Manage Skills
 
-按任务选择入口：写改 skill 先读 [写作规范](references/conventions.md)，审查读 [审查流程](references/review.md)，单篇深度重构读 [重构流程](references/refactor.md)，合并分叉读 [合并流程](references/merge.md)。安装或卸载才执行下面的安装流程；解释和审查本身不授权安装、覆盖或清理。
+按任务选择入口：安装、维护和卸载先读[安装与维护](references/installation.md)，写改 skill 先读[写作规范](references/conventions.md)，审查读[审查流程](references/review.md)，单篇深度重构读[重构流程](references/refactor.md)，合并分叉读[合并流程](references/merge.md)。解释和审查本身不授权安装、覆盖或清理。
 
-## 安装 / 卸载 skill
+## <a id="installation"></a>安装与维护
 
-前提：skills 仓库已克隆到本机某个目录；下文用 `<repo>` 表示该仓库根目录，不假定具体安装路径。
+本 skill 负责执行安装、探测与修复。路径表、平台链接方式和命令统一维护在[安装与维护参考](references/installation.md)，README 向用户介绍安装预期并引导调用本 skill。
 
-### 路径
+1. 沿用用户已说明的 skills、用户级或项目级范围，以及实际仓库位置；只询问影响执行的关键缺口。
+2. 每次重新[探测已有 harness 与配置根](references/installation.md#environment-discovery)。未发现工具配置目录时跳过其兼容入口；用户明确要求初始化该工具时再创建。
+3. 核对现有链接、独立安装和主指令内容，按[差异处理规则](references/installation.md#installation-plan)决定新增、保持、修复或确认冲突；保留用户已有内容。
+4. 将选定 skill 链入相应共享目录。分别核对工具对共享 skills 和共享主指令的支持，只为已发现且在授权范围内的工具补齐需要的兼容入口。
+5. 按[验收与报告](references/installation.md#validation)核对实际落点与可读性，并分别报告入口配置和真实加载结果。再次运行时只处理新发现的缺项与变化。
 
-skill 在仓库里分三处，按实际位置链：
+### <a id="instruction-installation"></a>通用指令与本机补充
 
-| 位置 | 含义 | 源路径 |
-|---|---|---|
-| `skills/.curated/` | 原创（MIT） | `<repo>/skills/.curated/<name>` |
-| `skills/` | 嫁接（已人工审核过） | `<repo>/skills/<name>` |
-| `skills/.experimental/` | 实验（未人工审核） | `<repo>/skills/.experimental/<name>` |
+安装或维护 `AGENTS.md` 等主指令入口也走上述探测流程，按[主指令入口表](references/installation.md#instructions-discovery)执行。本机补充统一保存为 `~/.agents/AGENTS.local.md` 普通文件，位置与维护边界见[本机补充](references/installation.md#local-instructions)。
 
-### 安装（两层软链）
+### 卸载与失效链接
 
-**第 1 层·skill 级**：把要用的 skill 从仓库软链进 `<target>/.agents/skills/<name>`（`<target>` 是 `~/` 全局或 `<project>/` 项目级）：
-
-```bash
-mkdir -p <target>/.agents/skills
-ln -s <源路径> <target>/.agents/skills/<name>
-```
-
-Windows 下如果创建目录 symlink 提示需要管理员权限，而源和目标都在本地 NTFS 目录，可以用 junction 代替：
-
-```powershell
-New-Item -ItemType Junction -Path "<target>\.agents\skills\<name>" -Target "<源路径>"
-```
-
-Junction 是文件系统级目录链接，不是 `.lnk` 快捷方式；工具按 `<target>/.agents/skills/<name>/SKILL.md` 读取时会直接落到仓库实体。仅链接本地目录时 junction 足够；需要链接文件、网络路径、WSL 路径或相对路径时仍优先使用 symlink。
-
-**第 2 层·工具级**：Claude Code / Cursor / Amp / Junie 等都有各自的 skills 目录（`.claude/skills/`、`.cursor/skills/` …）。把**整个**工具目录软链到 `.agents/skills/`，让所有工具共享同一份：
-
-```bash
-ln -s ../.agents/skills <target>/.claude/skills
-ln -s ../.agents/skills <target>/.cursor/skills
-ln -s ../../.agents/skills <target>/.config/agents/skills
-# 其他工具按目标目录层级调整相对路径，完整表见仓库 README
-```
-
-**原生扫 `.agents/skills/` 的 CLI 不需要第 2 层**：DeepSeek Harness、GitHub Copilot CLI、Gemini CLI、Codex、Cline、Warp、Windsurf、Roo Code 等可从各自约定的项目级 `.agents/skills/` 和个人级 `~/.agents/skills/` 发现 skill。将 skill 链入共享目录后，按目标工具的项目根与扫描范围验证发现结果，无需再建工具专属目录。
-
-⚠️ 易踩坑：**项目级**的 skill 约定目录只有 `.github/skills`、`.agents/skills`、`.claude/skills` 三种，**没有** `.copilot/skills`。`~/.copilot/skills` 只在 home（个人级）下有效；别照着"个人级 `~/.copilot/skills`"在项目里建 `<project>/.copilot/skills` 软链——没有 CLI 会把它当项目级 skill 读。
-
-注意：symlink 的目标相对路径是按**链接所在目录**解析的；不确定层级时用绝对路径更稳。
-
-好处：
-
-- **统一修改**：任一处编辑都落到仓库实体，所有工具同步可见
-- **git 追踪**：改动走仓库 git，有历史、可回滚、便于协作
-
-### <a id="instruction-installation"></a>通用指令的安装入口
-
-全局安装或维护 skill 完成后，按[仓库 README 的共享指令与发现入口](../../../README.md#agent-instructions)核对目标 harness 的实际配置根、原有文件及 override。获准后，将原生主文件入口链接到 `<repo>/AGENTS.md`，可选的同目录补充入口链接到 `<repo>/AGENTS.local.md`；补充本体仅本地保留，经用户同意将忽略规则写入本仓 `.git/info/exclude`，已有内容不覆盖。
-
-安装后核对链接目标、可读性和实际加载来源。补充文件由共享主文件要求继续读取，不视作所有 harness 的原生全局能力；平台限制和具体路径统一见 README，DSH 的发现机制见 `harness` skill。
-
-### 安装前先扫环境、冲突就问不自动改
-
-**工具目录已有用户自己的内容时**：如果 `<target>/.claude/skills/`（或其它工具目录）已存在、不是 symlink、里面有用户自己装的 skill，说明用户之前按各工具原生方式装过，**不要直接覆盖**。告诉用户“这里有 N 个条目，要不要迁进 `.agents/skills/` 统一管理再建整目录软链？”，等用户点头。
-
-**单 skill 同名 / 同能力冲突时**：遍历目标范围下所有 `.<tool>/skills/*/SKILL.md`，读每份 frontmatter 的 `name` 和 `description`，和准备装的这份比对：
-
-- **name 相同**：告知用户“`<name>` 已在 `<某路径>` 下装过”，问要不要换成本仓库的 symlink；同意就把旧的移回收站再建 symlink。
-- **name 不同但 description 在讲同一能力**：告知用户这是同一能力的另一实现，让他决定保留哪份。
-
-**只报告、不自动改**，等用户确认。
-
-### 卸载
-
-卸载只移除目标安装位置的软链，不删除仓库里的 skill 本体，其他安装位置仍可使用。遵循当前环境的删除规则；本仓 `AGENTS.md` 指定使用 `trash-put`，不能因为只是软链而自动改用永久删除。工具不可用或平台不同，先确认获准的处理方式，不自行放宽限制：
-
-```bash
-# 确认这是目标安装软链，并已获准卸载后执行
-trash-put <target>/.agents/skills/<name>
-```
-
-### 重构后死链排查
-
-skill 在仓库里改过路径（重命名、迁进 `.curated/` 等）会让旧 symlink 变成死链：
-
-```bash
-for link in <target>/.agents/skills/*; do
-  [ -L "$link" ] && [ ! -e "$link" ] && printf '%s\n' "$link"
-done
-```
-
-找到断的 → 移回收站 → 按新源路径重链。
+仅处理用户指定的安装入口，保留仓库实体和独有内容，按[卸载与失效链接](references/installation.md#uninstall-repair)执行。
 
 ## 写 / 改 skill 的规范
 

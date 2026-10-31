@@ -23,6 +23,8 @@ OpenWrt 的设备支持、首次安装、镜像类型、升级恢复、BusyBox/p
 
 Mihomo 产品与配置发现、GUI 配置链、流量选择、协议性能、REST API、TUN 路由下的 TCP 端口探测，以及 DNS / WebRTC 泄漏原理和探测见 [references/mihomo.md](references/mihomo.md)。
 
+[clashctl](https://github.com/nelvko/clashctl) 的入口与包装器副作用、shell 代理变量、常驻程序的启动环境、systemd 环境声明与分层验收见 [clashctl / Mihomo 代理环境](references/clashctl.md)。Codex / DSH 的后台、账号与子进程策略由 `harness` skill 对应主题说明；只读排查先审查入口，不凭 `status`、`--help` 或 `--version` 名称假定命令无副作用。
+
 ## 共享 Linux 节点
 
 Mihomo TUN、systemd-resolved、EasyTier、双层 Caddy / OAuth 和多用户 Web 服务的组合部署见 [references/setup.md](references/setup.md)。新增用户时读 [按用户组织配置](references/setup.md#routes)和 [接入流程](references/setup.md#user-provisioning)；UID 端口分配由 `software` skill 的 Service / systemd 主题说明。Mihomo 本身的配置与泄漏机制见 [references/mihomo.md](references/mihomo.md)。
