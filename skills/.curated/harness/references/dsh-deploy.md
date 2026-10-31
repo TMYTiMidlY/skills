@@ -348,7 +348,11 @@ ExecStart=<dsh-executable> web --no-open --host 127.0.0.1 --port <instance-port>
 
 ### <a id="startup-environment"></a>启动环境与凭据
 
-启动器负责向 DSH Host 提供环境；DSH 不会自动读取与 patch 相邻的环境文件。可以把实例需要的环境保存在它自己的 `$DSH_HOME/profiles/<profile>/<env-file>`，设置为运行身份可读的 `0600`。MCP 的 `config.env`／`config.headers` 表达式与子进程转发规则见[持久 MCP 配置](dsh.md#mcp-persistent-configuration)及[子进程环境](dsh.md#child-process-environment)。
+DSH `0.2.1-rc.2` 的原生环境入口按同名变量依次取：进程继承的环境 → 启动工作目录的 `.env` → `$DSH_HOME/.env`（默认 `~/.dsh/.env`）。启动器先确定 DSH home，再读取文件并将接受的值补入运行时 `process.env`；`.env` 不能设置 `DSH_HOME`。代理变量允许放在 DSH home 的文件中，配置方法见[出站 HTTP 代理](#outbound-proxy)。
+
+> 来源：[环境文件的校验、加载顺序与运行时赋值](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/boot/app-boot/src/index.ts#L162-L258)。
+
+自定义文件（例如 `$DSH_HOME/profiles/<profile>/<env-file>`）由 shell 或 service manager 显式加载；仅把它放在 patch 旁不会自动生效。文件权限设为运行身份可读的 `0600`。MCP 的 `config.env`／`config.headers` 表达式与子进程转发规则见[持久 MCP 配置](dsh.md#mcp-persistent-configuration)及[子进程环境](dsh.md#child-process-environment)。
 
 需要显式 HTTP 代理时，把所需变量放进真正创建 Host 的启动链，而不是只在后来打开的终端里设置。systemd 直接启动 DSH、由脚本先加载环境再 `exec dsh`，是两种有效入口；仅看到 unit 的 `Environment` 没有代理键，不能排除脚本加载了环境。clashctl 的 shell 集成、代理变量与服务就绪检查由 `network` skill 的 clashctl 与代理启动环境主题维护；通用 service／linger 语义由 `software` skill 维护。
 
@@ -377,6 +381,30 @@ EnvironmentFile=<absolute-dsh-home>/profiles/<profile>/<env-file>
 验收时先确认监听进程属于哪个 unit，再核 `FragmentPath`、drop-in 和实际启动脚本，仅提取代理变量等必要白名单并遮蔽 URI 凭据。Linux 的 `/proc/<pid>/environ` 反映 exec 时的环境区，不能当成 Node 后续修改过的全部 `process.env`；DSH 的 HTTP policy 也可能规范化运行时变量。Host 的启动环境、当前环境文件及实际 child 的启动环境分别记录，避免从一个位置推断另一个位置。
 
 > 🔬 2026-10-28，Linux／WSL、DSH `0.2.1-rc.2`：已运行的用户服务通过启动脚本导入环境文件，Host 与三个 stdio MCP child 均观测到代理。当前 clashctl 导出文件与 Host 的 `ALL_PROXY` 不同，child 的 `NO_PROXY` 还含补入的 loopback 条目。该核查没有重启 Host／代理或系统，没有发送模型请求；服务 `enabled`、`active` 和入口可达不代替冷启动顺序与出站验证。
+
+### <a id="outbound-proxy"></a>出站 HTTP 代理
+
+以下方法已核对 DSH `0.2.1-rc.2`。先确认目标实例实际的 `DSH_HOME` 和代理的 HTTP／mixed 监听入口，再把需要的键合入该 home 下已有的 `.env`，保留其中的 API key 等其他配置；使用 dotenv 赋值语法，无需 `export` 或手动 source：
+
+```dotenv
+http_proxy=http://<proxy-host>:<http-port>
+https_proxy=http://<proxy-host>:<http-port>
+no_proxy=localhost,127.0.0.1,::1,.internal.example
+```
+
+同一 DSH home 下的各 Profile 共用这份默认值；实例需要不同出口时使用各自的 DSH home，或由启动器提供覆盖值。同名变量优先采用启动进程继承的值。代理解析另有大小写优先级：非空小写优先、大写兜底，因此同时检查两种拼写，避免文件中的小写值与启动器导出的大写值相互遮蔽。需要兼容只认大写的子工具时，同步配置相同值的 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`。`all_proxy`／`ALL_PROXY` 可为两种协议兜底；HTTPS 在未指定时还会回退到 HTTP 代理。
+
+> 项目工作目录的 `.env` 设置代理变量会被启动器拒绝；用户自己的 `$DSH_HOME/.env` 才有此权限。代理 URL 使用 `http://` 或 `https://`，SOCKS／PAC 值会被报告并跳过。`no_proxy` 支持主机、域名后缀与可选端口，CIDR 网段不参与匹配；loopback 始终直连。来源：[代理取值与绕过规则](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/util/http-proxy/README.zh.md#L48-L79)。
+
+修改文件后，在已授权的窗口重启**原 DSH 实例**；这是启动时解析的进程级策略，设置页刷新或 Profile 热重载不能替代重启。含凭据的代理 URL 同样会进入部分工具子进程的环境，文件设为 `0600`，诊断只展示必要变量并遮蔽 URI 凭据。
+
+`dsh` 在加载第一个插件前，由内置库 `@deepseek-ai/dsh-http-proxy` 解析策略、构造 Undici `ProxyAgent` 并调用 `setGlobalDispatcher()`。使用全局 `fetch` 的 LLM／Web／HTTP MCP 请求由此路由；这层位于 Cordis 插件配置树之外，`dump-config` 和模型凭据设置都不是它的完整观察入口。主进程的这条路径也不依赖 Node 26 自动读取代理变量；子进程的筛选与 `NODE_USE_ENV_PROXY` 补充另见[子进程环境](dsh.md#child-process-environment)。
+
+> 来源：[启动期安装与 fetch 调用范围](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/util/http-proxy/README.zh.md#L25-L44)、[ProxyAgent 工厂与全局 dispatcher 安装](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/util/http-proxy/src/install.ts#L131-L223)。OTLP 遥测、workflow／Node PTC 等独立执行环境有不同边界，见[传输限制](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/util/http-proxy/README.zh.md#L105-L112)。WebUI 内 iframe 的请求由用户浏览器发出，浏览器代理单独核对。
+
+验收按[启动环境核查](#startup-environment)确认实例、文件与变量来源，再结合一次获准的真实请求、代理日志和对应 PID 的连接归属核实出口。Linux 的 `/proc/<pid>/environ` 只反映 exec 时的环境区；即使其中没有 proxy，也应继续检查 DSH home 的 `.env` 与运行时代理初始化。另起 shell 的 `env`、单独执行一次 curl，分别只能说明那份子进程环境和 curl 的行为。
+
+> 🔬 2026-10-31，Linux、DSH `0.2.1-rc.2`／Node `26.5.0`：隔离探针清除继承的代理变量后，调用原启动库与代理库，变量来源仍解析为 home `.env` 的 `user-env`，外部 HTTPS URL 判定走所配 HTTP 代理，本机 Web URL 判定直连；探针未发送网络请求。同一 Node 进程中新增变量后，`process.env` 与新子进程可读到，而 proc 环境区仍无该变量。这验证了配置解析及 proc 观察盲区，真实流量仍按上一段验收。
 
 ### <a id="other-supervisors"></a>macOS、Windows、容器与应用启动器
 
