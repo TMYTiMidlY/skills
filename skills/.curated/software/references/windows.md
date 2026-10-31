@@ -194,7 +194,7 @@ journalctl --list-boots        # 排查重启时间点一律以它为准
 
 WSL 里的 systemd 服务不能阻止空闲停机——[微软文档](https://learn.microsoft.com/en-us/windows/wsl/systemd)明说 "systemd services will NOT keep your WSL instance alive"。默认 `instanceIdleTimeout` 15 s、`vmIdleTimeout` 60 s：最后一个 wsl 客户端退出后发行版先停、VM 随后停，wslrelay 转发和所有入口一起消失。靠挂 `sleep infinity` / detached `sleep 86400` 当 keepalive 的旧方案废弃：保活随进程或任务退出而丢，还常驻占一个客户端。
 
-现行方案（2026-10-19 在 1810 / MY.Tan 的 Ubuntu 实测通过）：
+现行方案（2026-10-19 在 WSL2 Ubuntu 实测通过）：
 
 1. 属主 Windows 用户的 `%UserProfile%\.wslconfig` 加（[官方键说明](https://learn.microsoft.com/en-us/windows/wsl/wsl-config#general-wsl-settings)）：
 

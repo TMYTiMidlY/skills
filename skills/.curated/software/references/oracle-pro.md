@@ -26,7 +26,7 @@ thinking_effort=extended
 ```powershell
 Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentList @(
   "--remote-debugging-port=9222",
-  "--user-data-dir=C:\Users\MY.Tan\.chrome-chatgpt-oracle",
+  "--user-data-dir=C:\Users\<WindowsUser>\.chrome-chatgpt-oracle",
   "https://chatgpt.com/"
 )
 ```
@@ -51,7 +51,7 @@ Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" -ArgumentL
 把 WSL 中的 Oracle 工作区复制到 Windows 临时目录：
 
 ```powershell
-$src="\\wsl.localhost\Ubuntu\home\timidly\oracle"
+$src="\\wsl.localhost\Ubuntu\home\<user>\oracle"
 $dst="$env:TEMP\oracle-win-demo"
 robocopy $src $dst /E /XD node_modules .git dist .oracle /XF "*.log"
 Set-Location $dst

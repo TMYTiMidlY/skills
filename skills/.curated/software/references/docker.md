@@ -93,11 +93,11 @@ docker run -v /:/host -it alpine chroot /host   # 把宿主根挂进容器，秒
   - **保留 `sudo docker`**（有密码门 + 审计）；
   - **细粒度 sudoers 规则**只放行特定 docker 子命令。
 
-## 本次 HFNL 实操记录（2026-07-19）
+## Ubuntu 24.04 多用户环境实操记录（2026-07-19）
 
-- **机器**：HFNL（`10.144.18.100`），Ubuntu 24.04.1 LTS（noble），x86_64；装前无任何 docker/containerd 包。
+- **机器**：Ubuntu 24.04.1 LTS（noble），x86_64；装前无任何 docker/containerd 包。
 - **装法**：上面的官方 apt 仓库法，一字不差。
 - **装到的版本**：Docker Engine **29.6.2**、containerd.io 2.2.6、buildx 0.35.0、compose v5.3.1；`docker.service` enabled + active，`hello-world` 通过。
-- **多用户**：机器有 3 个普通用户（`network` uid 1000、`timidly` uid 1001、`agony` uid 1002），**都已在 sudo 组**。按要求把 **`timidly`、`agony`** 加进 docker 组（`docker:x:983:timidly,agony`），**`network` 未加**（用户明确排除）。
-- **验证**：以 `timidly` 非 root、`sg docker -c "docker run --rm hello-world"` 通过；已提醒两位用户其现有会话需重登（或 `newgrp docker`）才自动带上 docker 组。
-- **远程执行**：全程经 portal MCP（`remote_exec` + `use_sudo`）在 HFNL 上跑；sudo 口令走 `portal sudo set HFNL` 带外缓存、不进对话。
+- **多用户**：机器有 3 个普通用户（`user0` uid 1000、`user1` uid 1001、`user2` uid 1002），**都已在 sudo 组**。按要求把 **`user1`、`user2`** 加进 docker 组（`docker:x:983:user1,user2`），**`user0` 未加**（用户明确排除）。
+- **验证**：以 `user1` 非 root、`sg docker -c "docker run --rm hello-world"` 通过；已提醒两位用户其现有会话需重登（或 `newgrp docker`）才自动带上 docker 组。
+- **远程执行**：全程经 portal MCP（`remote_exec` + `use_sudo`）在目标主机上跑；sudo 口令走 `portal sudo set <host>` 带外缓存、不进对话。

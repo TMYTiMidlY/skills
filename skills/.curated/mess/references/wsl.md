@@ -10,16 +10,16 @@
 
 ### 症状
 
-- 目标 `ssh.git.<自建域名>:222`（自建 Forgejo 内置 SSH）。该域名 DNS：外部机器解析真实 IP `<公网 IP>`；**1810 这台（Windows 宿主 + 内嵌 WSL）解析为 Mihomo fake-ip `198.18.x`**。
+- 目标 `ssh.git.<自建域名>:222`（自建 Forgejo 内置 SSH）。该域名 DNS：外部机器解析真实 IP `<公网 IP>`；**目标机器（Windows 宿主 + 内嵌 WSL）解析为 Mihomo fake-ip `198.18.x`**。
 - 多设备 `ssh -T git@…:222` / `git fetch` 实测：
-  - 本机 Ag-Workstation（也有 Mihomo，但解析真实 IP）✅；RackNerd / BSCC-M9 / Mac-mini（外部）✅
-  - **1810 Windows 宿主机（解析 fake-ip）✅** —— `ssh.exe -T` 回 `Permission denied (publickey)`，即端点已连通
-  - **1810 WSL 本体（解析同一 fake-ip）❌** —— `Connection timed out during banner exchange`；`git fetch` 约 3/5、或 rc=124 超时
+  - 另一台开发机（也有 Mihomo，但解析真实 IP）✅；其余外部机器 ✅
+  - **目标机 Windows 宿主机（解析 fake-ip）✅** —— `ssh.exe -T` 回 `Permission denied (publickey)`，即端点已连通
+  - **目标机 WSL 本体（解析同一 fake-ip）❌** —— `Connection timed out during banner exchange`；`git fetch` 约 3/5、或 rc=124 超时
 - 即「同一台物理机，Windows 宿主机连得上、内嵌 WSL 连不上」。
 
 ### 排查中的实测值
 
-- WSL 内绕开公网的路径都正常：`ssh -p222 git@127.0.0.1`（docker-proxy→容器）3/3；`git@10.144.18.10`（mesh，被 TUN `route-exclude` 覆盖）3/3 且 0.6s → 服务端/容器本身没问题。
+- WSL 内绕开公网的路径都正常：`ssh -p222 git@127.0.0.1`（docker-proxy→容器）3/3；`git@<宿主机组网IP>`（mesh，被 TUN `route-exclude` 覆盖）3/3 且 0.6s → 服务端/容器本身没问题。
 - WSL 强制真实 IP `git@<公网 IP>`（TUN 仍开）：1/3，仍偶发超时。
 - Mihomo 运行态（宿主机 interop `curl http://127.0.0.1:9090/configs` 与 `/rules`）：
   - `tun.enable=true`、`dns-hijack:["any:53"]`、fake-ip 段在用、`route-exclude-address:["10.144.0.0/16"]`
@@ -34,8 +34,8 @@
 
 ### 让它恢复的动作
 
-- 经 9090 把 TUN 切一次：`curl.exe -X PATCH http://127.0.0.1:9090/configs -d '{"tun":{"enable":false}}'` 再 `-d '{"tun":{"enable":true}}'`（或在 Mihomo GUI 切 TUN 开关）。之后 1810 WSL 经 fake-ip 访问该自建服务恢复。
-- TUN 无关的稳定备选（本次未采用）：把该 remote 指向 mesh `10.144.18.10:222`（被 `route-exclude` 覆盖，开不开 TUN 都 0.6s 稳）。
+- 经 9090 把 TUN 切一次：`curl.exe -X PATCH http://127.0.0.1:9090/configs -d '{"tun":{"enable":false}}'` 再 `-d '{"tun":{"enable":true}}'`（或在 Mihomo GUI 切 TUN 开关）。之后该机 WSL 经 fake-ip 访问该自建服务恢复。
+- TUN 无关的稳定备选（本次未采用）：把该 remote 指向 mesh `<宿主机组网IP>:222`（被 `route-exclude` 覆盖，开不开 TUN 都 0.6s 稳）。
 
 ## <a id="periodic-outage"></a>「总是断网」：断窗恒定 ~5 分钟的周期性中断
 
@@ -204,7 +204,7 @@ Zellij 按同样的顺序恢复：先检查和备份 `tokens.db`，让数据库�
 
 ## <a id="vhdx-host-starvation"></a>「组网正常却入口全断」：WSL 服务握手即断、502 与守护进程成批死亡
 
-> 2026-10-17 | Windows 多用户共享机 1810（EasyTier 节点 10.144.18.10）| WSL2 Ubuntu-24.04，注册在另一个 Windows 用户名下（无该用户密码）| 对外链路：入口 VPS Caddy → EasyTier mesh → Windows portproxy 10.144.18.10:6100/61000 → wslrelay → guest 内 sshd / caddy 网关
+> 2026-10-17 | Windows 多用户共享机（EasyTier 节点 `<宿主机组网IP>`）| WSL2 Ubuntu-24.04，注册在另一个 Windows 用户名下（无该用户密码）| 对外链路：入口 VPS Caddy → EasyTier mesh → Windows portproxy `<宿主机组网IP>`:6100/61000 → wslrelay → guest 内 sshd / caddy 网关
 >
 > 记录原则：机制链有两处（宿主盘是否瞬时见底、进程段错误与内存峰值的关系）没拿到直接证据，按事实 / 研判分开写。
 >
@@ -214,7 +214,7 @@ Zellij 按同样的顺序恢复：先检查和备份 `tokens.db`，让数据库�
 
 ### 症状
 
-- `ssh <wsl-别名>`（10.144.18.10:6100）：TCP 能建连，随即 `kex_exchange_identification: Connection closed by remote host`。
+- `ssh <wsl-别名>`（`<宿主机组网IP>`:6100）：TCP 能建连，随即 `kex_exchange_identification: Connection closed by remote host`。
 - 该 WSL 承载的 `*.<user>.<zone>` 域名全部 502（入口 Caddy 上游不可达）；第一反应是「它从 easytier 掉线了」。
 - mesh 层正常：peer 表 p2p 直连 0% 丢包、ping 通、宿主 Windows 自己的 SSH 也正常。
 

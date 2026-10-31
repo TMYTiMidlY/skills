@@ -8,10 +8,10 @@
 
 ### 场景
 
-需要在一台有公网 IP 的 VPS 上，把外部访问的 UDP 端口段转发到内网/隧道里的另一台机器，例如：
+需要在一台有公网 IP 的 VPS 上，把外部访问的 UDP 端口段转发到内网/隧道里的另一台机器（例如饥荒联机版服务端；DMP 平台与游戏端口段完整部署见 [software `references/dmp.md`](../../software/references/dmp.md#udp-range-forwarding)）：
 
 ```text
-VPS_PUBLIC_IP:11000-11009/udp -> 10.144.18.10:11000-11009/udp
+VPS_PUBLIC_IP:11000-11009/udp -> <组网内网IP>:11000-11009/udp
 ```
 
 远端机器已有 Caddy 承载 80/443/TCP，目标内网地址通过 `tun0` 可达。起初选择内核 NAT：`prerouting dnat` + `postrouting masquerade`。
@@ -77,7 +77,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/gost -L udp://:11000-11009/10.144.18.10:11000-11009
+ExecStart=/usr/local/bin/gost -L udp://:11000-11009/<组网内网IP>:11000-11009
 Restart=always
 RestartSec=3s
 
@@ -103,9 +103,9 @@ sudo systemctl disable --now gost-dst-udp
 - 从另一台公网机器向 `VPS_PUBLIC_IP:11000-11009/udp` 发测试包后，GOST 日志显示每个端口都建立了到目标内网地址的转发：
 
 ```text
-CLIENT_IP:CLIENT_PORT <-> 10.144.18.10:11000
+CLIENT_IP:CLIENT_PORT <-> <组网内网IP>:11000
 ...
-CLIENT_IP:CLIENT_PORT <-> 10.144.18.10:11009
+CLIENT_IP:CLIENT_PORT <-> <组网内网IP>:11009
 ```
 
 日志里出现 `inputBytes`，说明公网 UDP 包确实进入 GOST 并被转发到内网目标。测试包没有业务协议语义，目标服务不回包时可能看到 `outputBytes=0`，这不影响“公网 UDP 端口段已经转发到内网地址”的结论。
@@ -142,13 +142,13 @@ move_if_exists() {
 
 ## <a id="docker-embedded-dns"></a>容器解析不了 compose 服务名，IP 直连正常
 
-> 2026-07-05 | Docker Desktop 29.4.2 on WSL2（1810 = `10.144.18.10`）| 涉及 `forgejo_forgejo`、`dmp_default`、`qatlas-postgres_default` 三个 compose 网络
+> 2026-07-05 | Docker Desktop 29.4.2 on WSL2 | 涉及同机多个长期运行的 compose bridge 网络（如 `forgejo_forgejo`、`dmp_default`、`<pg-project>_default`）
 
 > 记录原则：根因**没有坐实**，只确认了"是什么"和"怎么修"，如实标注。
 
 ### 症状
 
-- 自建 Forgejo 的公网 web 入口返回 HTTP 500（Caddy 反代到内网 `http://10.144.18.10:3000`），页面是 Forgejo 自己吐出的"服务器内部错误"（不是 Caddy 502，说明请求已到达应用层，不是反代或证书问题）。
+- 自建 Forgejo 的公网 web 入口返回 HTTP 500（Caddy 反代到内网 `http://<宿主机组网IP>:3000`），页面是 Forgejo 自己吐出的"服务器内部错误"（不是 Caddy 502，说明请求已到达应用层，不是反代或证书问题）。
 - `docker logs forgejo` 报：
   ```
   failed to connect to `user=forgejo database=forgejo`: hostname resolving error: lookup db on 127.0.0.11:53: no such host
@@ -158,7 +158,7 @@ move_if_exists() {
 ### 排查关键转折
 
 - 第一反应容易误判成"Postgres 挂了"或"网络路由/防火墙坏了"，但 IP 直连成功已经排除这两种可能，问题被精确限定在 DNS 这一层（Docker 每个 bridge 网络自带的内置 DNS `127.0.0.11`）。
-- 顺手查了同一台机器上另外两个不相关项目的网络（`dmp_default`、`qatlas-postgres_default`），**同样解析不出各自的 compose 服务名**——说明不是 forgejo 自己配置错了，而是这台机器上"服役较久的网络"整体性地方 DNS 出了问题。
+- 顺手查了同一台机器上另外两个不相关项目的网络（`dmp_default`、`<pg-project>_default`），**同样解析不出各自的 compose 服务名**——说明不是 forgejo 自己配置错了，而是这台机器上"服役较久的网络"整体性地方 DNS 出了问题。
 - 关键对照实验：`docker network create dns-test-scratch` 建一个全新网络，挂一次性容器测 DNS，**完全正常**。→ 证明不是 Docker Desktop 整体宕掉，是"存量网络"的内置 DNS 状态损坏，新建网络不受影响。这一步是从"盲猜重启大法"转向"精确定位"的关键。
 
 ### 根因
@@ -172,28 +172,28 @@ cd <项目目录> && docker compose down && docker compose up -d
 ```
 重建该项目的 network 即可，对 forgejo、dmp 两个项目一次性有效。数据不受影响（用的是 bind mount `./data:/data`，不是具名 volume，`down` 默认不删数据）。
 
-`qatlas-postgres` 那次 `docker compose down` 连续两次卡在 daemon 级错误 `tried to kill container, but did not receive an exit event`（容器本身仍 running/healthy，没有数据风险），改用 `docker rm -f <name>` 强制移除后再 `docker compose up -d` 解决——这个停止失败究竟是否与本次 DNS 故障同源，没有确凿证据，值得下次复现时留意（也可能是另一件事：见 [Postgres 崩溃恢复卡在 end-of-recovery checkpoint 不动](nas.md#pg-checkpoint-slow)）。
+另一个 Postgres 项目那次 `docker compose down` 连续两次卡在 daemon 级错误 `tried to kill container, but did not receive an exit event`（容器本身仍 running/healthy，没有数据风险），改用 `docker rm -f <name>` 强制移除后再 `docker compose up -d` 解决——这个停止失败究竟是否与本次 DNS 故障同源，没有确凿证据，值得下次复现时留意（也可能是另一件事：见 [Postgres 崩溃恢复卡在 end-of-recovery checkpoint 不动](nas.md#pg-checkpoint-slow)）。
 
 ### 教训
 
 - **诊断三件套**：`getent hosts <目标>` 解析失败 + 同目标 IP 直连成功（排除路由/防火墙）+ 全新网络 DNS 正常（排除 Docker Desktop 全局宕机）→ 精确定位到"个别存量网络的内置 DNS 状态损坏"，而不是病急乱投医式地重启整个 Docker Desktop 或宿主机。
 - 修复动作本身很轻（`down/up` 重建网络），但**遇到停不掉的容器不要用 `docker kill <name>`**——Copilot CLI 的 bash 工具安全策略会把它当成裸 `kill` 命令拦截（"must specify at least one numeric PID"），需要改用 `docker rm -f <name>`（内部等效于强制 SIGKILL 后移除）。
-- 一台机器上一次性检查"是不是所有存量网络都中招"很值——本次三个项目一起中招，如果只查 forgejo 一个，会漏掉 dmp/qatlas-postgres 也需要顺手修。
+- 一台机器上一次性检查"是不是所有存量网络都中招"很值——本次三个项目一起中招，如果只查 forgejo 一个，会漏掉同机其他 compose 项目也需要顺手修。
 
 ## <a id="envrc-subdir-links"></a>子仓库 `git status` 冒出几十个 untracked 分发软链
 
 > 2026-07-10 | direnv + git `core.excludesFile` | 工作区根 `.envrc` 向各子仓库分发 Copilot 配置软链
 
-工作区根有个 direnv `.envrc`，里面 `link_into_subdirs` 把根上的 `.agents/skills`、`.mcp.json`、`.github/hooks/safety-net.json`、`.github/instructions/global.instructions.md` 软链分发到**每个直接子目录**（`for sub in "$PWD"/*/`），让每个子仓库各有一份配置。这些分发链本应被工作区级 `core.excludesFile`（`<workspace-root>/.timidly-excludes`）忽略、不进任何 git diff。
+工作区根有个 direnv `.envrc`，里面 `link_into_subdirs` 把根上的 `.agents/skills`、`.mcp.json`、`.github/hooks/safety-net.json`、`.github/instructions/global.instructions.md` 软链分发到**每个直接子目录**（`for sub in "$PWD"/*/`），让每个子仓库各有一份配置。这些分发链本应被工作区级 `core.excludesFile`（`<workspace-root>/.workspace-excludes`）忽略、不进任何 git diff。
 
 ### 症状
 
 - 在某个子仓库 `<child-repo>` 里 `git status`，冒出**几十个 untracked**：`<subdir>/.agents/`、`<subdir>/.github/`，遍布该仓库**每一个子目录**，全是本该被忽略的分发软链。
-- `core.excludesFile` 确认生效（`git config --show-origin core.excludesFile` 指向 `.timidly-excludes`），但 `git check-ignore -v <subdir>/.agents/skills` 返回 **NOT ignored**。
+- `core.excludesFile` 确认生效（`git config --show-origin core.excludesFile` 指向 `.workspace-excludes`），但 `git check-ignore -v <subdir>/.agents/skills` 返回 **NOT ignored**。
 
 ### 排查关键转折
 
-1. **anchored pattern**：`.timidly-excludes` 里的忽略项大多**含斜杠**（`.agents/skills`、`.github/hooks/safety-net.json`…）。gitignore 语义下，含斜杠的 pattern **锚定到仓库根**——只匹配 `<repo>/.agents/skills`，匹配不到 `<repo>/<subdir>/.agents/skills`。唯一不含斜杠的 `.mcp.json` 是 unanchored、匹配任意深度，所以子目录里的 `.mcp.json` 软链**没**进 `git status`——这一对照正好点出"斜杠=锚定"是漏出主因。
+1. **anchored pattern**：`.workspace-excludes` 里的忽略项大多**含斜杠**（`.agents/skills`、`.github/hooks/safety-net.json`…）。gitignore 语义下，含斜杠的 pattern **锚定到仓库根**——只匹配 `<repo>/.agents/skills`，匹配不到 `<repo>/<subdir>/.agents/skills`。唯一不含斜杠的 `.mcp.json` 是 unanchored、匹配任意深度，所以子目录里的 `.mcp.json` 软链**没**进 `git status`——这一对照正好点出"斜杠=锚定"是漏出主因。
 2. **软链指向暴露触发方式**：漏出的软链指向 `<child-repo>/.agents/skills`（上一层），说明 `link_into_subdirs` 是以 `$PWD=<child-repo>` 跑的。但 `<child-repo>` 自己没有 `.envrc`。→ 只可能是**有人在 `<child-repo>` 里手动 `source <workspace-root>/.envrc`**：direnv 正常加载会先 cd 到 `.envrc` 所在目录（`$PWD`=工作区根，只分发到各子仓库根这一层），而手动 `source` 保持 cwd 不变、`$PWD` 停在子仓库里，于是 `for sub in "$PWD"/*/` 把链铺进了子仓库的**每个子目录**，深了一层。
 
 ### 根因

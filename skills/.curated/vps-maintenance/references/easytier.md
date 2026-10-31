@@ -376,14 +376,14 @@ disable_udp_hole_punching = false
 
 ## 排障记录
 
-### Alibaba ↔ DESKTOP 慢速（2026-05）
+### 云端入口 VPS ↔ 桌面节点慢速（2026-05）
 
-现象：`iperf3 -c 10.144.18.66 -p 5201` 一度只有 1-2 Mbit/s，TCP 重传很高，`easytier-cli peer` 显示 DESKTOP peer loss 约 9%。Caddy 本身只是反代到 `10.144.18.10`，不是瓶颈。
+现象：`iperf3 -c <目标节点虚拟IP> -p 5201` 一度只有 1-2 Mbit/s，TCP 重传很高，`easytier-cli peer` 显示桌面节点 peer loss 约 9%。Caddy 本身只是反代到 `<后端节点虚拟IP>`，不是瓶颈。
 
 消融测试结论：
 
 - 重启 EasyTier 后重新建链 / 重新打洞是从 1-2 Mbit/s 恢复到几十 Mbit/s 的主因；回到原始配置后仍有约 25.9 Mbit/s，没有再掉回 1-2 Mbit/s。
 - `enable_quic_proxy = true` 对 Caddy 反代方向有明确意义，`easytier-cli proxy` 能看到 `Quic` 连接，适合保留。
-- `multi_thread = true` 不是决定项，但完整配置组在测试中跑到约 93.3 Mbit/s，去掉后约 37.0 Mbit/s；考虑到 Alibaba 有多路 Caddy 反代和远控连接，默认保留。
+- `multi_thread = true` 不是决定项，但完整配置组在测试中跑到约 93.3 Mbit/s，去掉后约 37.0 Mbit/s；考虑到入口 VPS 有多路 Caddy 反代和远控连接，默认保留。
 - `mtu` 从 1380 改 1360 不是关键；`mtu = 1380 + enable_quic_proxy = true` 仍可跑到约 53.2 Mbit/s。因此模板不为这次问题额外改 MTU。
 - `enable_kcp_proxy = false` 只是显式默认值，不写入模板。
