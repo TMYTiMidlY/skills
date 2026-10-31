@@ -2,6 +2,7 @@
 
 > WSL2 与 Windows 宿主共享或代理网络栈时产生的怪现象，以及 WSL 里 `systemd --user` 的故障。共同点是：在 WSL 内部单看查不出原因，必须把宿主机侧一起纳入观测。
 
+
 ## <a id="periodic-outage"></a>「总是断网」：断窗恒定 ~5 分钟的周期性中断
 
 > 2026-06-22 | WSL2 mirrored networking（eth0 直接是宿主机 LAN 段）+ EasyTier mesh | 校园网：有线接入（认证网关是「身份认证系统」门户）+ WiFi 接入（另一网段）
@@ -169,7 +170,7 @@ Zellij 按同样的顺序恢复：先检查和备份 `tokens.db`，让数据库�
 
 ## <a id="vhdx-host-starvation"></a>「组网正常却入口全断」：WSL 服务握手即断、502 与守护进程成批死亡
 
-> 2026-10-17 | Windows 多用户共享机 1810（EasyTier 节点 10.144.18.10）| WSL2 Ubuntu-24.04，注册在另一个 Windows 用户名下（无该用户密码）| 对外链路：入口 VPS Caddy → EasyTier mesh → Windows portproxy 10.144.18.10:6100/61000 → wslrelay → guest 内 sshd / caddy 网关
+> 2026-10-17 | Windows 多用户共享机（EasyTier 节点 `<宿主机组网IP>`）| WSL2 Ubuntu-24.04，注册在另一个 Windows 用户名下（无该用户密码）| 对外链路：入口 VPS Caddy → EasyTier mesh → Windows portproxy `<宿主机组网IP>`:6100/61000 → wslrelay → guest 内 sshd / caddy 网关
 >
 > 记录原则：机制链有两处（宿主盘是否瞬时见底、进程段错误与内存峰值的关系）没拿到直接证据，按事实 / 研判分开写。
 >
@@ -179,7 +180,7 @@ Zellij 按同样的顺序恢复：先检查和备份 `tokens.db`，让数据库�
 
 ### 症状
 
-- `ssh <wsl-别名>`（10.144.18.10:6100）：TCP 能建连，随即 `kex_exchange_identification: Connection closed by remote host`。
+- `ssh <wsl-别名>`（`<宿主机组网IP>`:6100）：TCP 能建连，随即 `kex_exchange_identification: Connection closed by remote host`。
 - 该 WSL 承载的 `*.<user>.<zone>` 域名全部 502（入口 Caddy 上游不可达）；第一反应是「它从 easytier 掉线了」。
 - mesh 层正常：peer 表 p2p 直连 0% 丢包、ping 通、宿主 Windows 自己的 SSH 也正常。
 

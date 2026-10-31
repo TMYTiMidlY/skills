@@ -14,7 +14,7 @@ Anthropic 在 2024-11-25 的公告里开源了 MCP，定位原文是「a new sta
 
 各家源码开放度不同，本篇把证据类型和核对时间放在对应章节附近：
 
-- **配置发现、枚举与修改**：优先采用厂商官方文档，并用 1810 已安装的 CLI 核对实际命令面；Codex 另挂锁到 commit SHA 的配置 loader / MCP CLI 源码，Gemini CLI 未安装则明确标出未做 live 验证。滚动文档按文中日期理解。
+- **配置发现、枚举与修改**：优先采用厂商官方文档，并用本地已安装的 CLI 核对实际命令面；Codex 另挂锁到 commit SHA 的配置 loader / MCP CLI 源码，Gemini CLI 未安装则明确标出未做 live 验证。滚动文档按文中日期理解。
 - **工具名装配**：Codex、Gemini CLI 真开源，行为挂锁到 commit SHA 的 file:line；Copilot CLI、Claude Code、Cursor 闭源 / minified，按 live MCP 观测或官方文档记录，并就地注明日期与未公开边界。
 - **能力消费面**（Resources / Prompts / 结果内容块）：按各家官方文档或开源源码核对，文档核对日期就地注明，Codex 挂 commit SHA；「文档未提及」指截至核对日，不代表永远不支持。DSH 的行为见 [dsh.md](dsh.md#mcp)（锚定 dsh-v0.1.2-rc.1）。
 
@@ -325,9 +325,9 @@ copilot mcp add github --env GITHUB_PERSONAL_ACCESS_TOKEN=YOUR_GITHUB_PAT -- doc
 copilot mcp get github
 ```
 
-这会新增 config key `github`，与内置的 `github-mcp-server` 分开。GitHub 网页示例当前把选项写成 `-e`，但 1810 的 Copilot CLI `1.0.81-9` 实测报 `unknown option '-e'`；上面改用该版本支持的 `--env`。它的值会写入用户配置，只放最小权限 PAT，且不要提交该配置。完整说明见 [`github/github-mcp-server` 的 Copilot CLI 安装指南](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-copilot-cli.md)。
+这会新增 config key `github`，与内置的 `github-mcp-server` 分开。GitHub 网页示例当前把选项写成 `-e`，但 Copilot CLI `1.0.81-9` 实测报 `unknown option '-e'`；上面改用该版本支持的 `--env`。它的值会写入用户配置，只放最小权限 PAT，且不要提交该配置。完整说明见 [`github/github-mcp-server` 的 Copilot CLI 安装指南](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-copilot-cli.md)。
 
-> 依据：[GitHub 官方 MCP 文档](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)与[加载优先级](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#mcp-server-loading-priority)（2026-08-26 核）；1810 实测 Copilot CLI `1.0.81-9` 的 `copilot mcp --help`、`list --help` 与 `get --help`。更细的 walk-up 与历史版本行为见 [Copilot CLI 配置发现](copilot-discovery.md)。
+> 依据：[GitHub 官方 MCP 文档](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)与[加载优先级](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#mcp-server-loading-priority)（2026-08-26 核）；实测 Copilot CLI `1.0.81-9` 的 `copilot mcp --help`、`list --help` 与 `get --help`。更细的 walk-up 与历史版本行为见 [Copilot CLI 配置发现](copilot-discovery.md)。
 
 ### Claude Code
 
@@ -352,7 +352,7 @@ claude mcp get github
 
 第一条把本机 Docker 进程注册为 `github`；server 首次启动时走浏览器登录，回调端口只绑定 loopback。默认 scope 是当前项目的 local；要跨项目使用，再按需加 `--scope user`。PAT 版本和无 Docker 的 binary 版本见 [`github/github-mcp-server` 的 Claude 安装指南](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-claude.md)。
 
-> 依据：[Claude Code MCP 官方文档](https://code.claude.com/docs/en/mcp)（2026-08-26 核）；1810 实测 Claude Code `2.1.202` 的 `claude mcp --help` 与 `list --help`。Claude Code 闭源，scope 合并和 WebSocket 枚举边界按官方文档记录。
+> 依据：[Claude Code MCP 官方文档](https://code.claude.com/docs/en/mcp)（2026-08-26 核）；实测 Claude Code `2.1.202` 的 `claude mcp --help` 与 `list --help`。Claude Code 闭源，scope 合并和 WebSocket 枚举边界按官方文档记录。
 
 ### Codex
 
@@ -394,7 +394,7 @@ env = { GITHUB_OAUTH_CALLBACK_PORT = "8085" }
 
 保存后重启 Codex，再用 `/mcp` 看连接和工具。完整说明见 [`github/github-mcp-server` 的 Codex 安装指南](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-codex.md)。
 
-> 依据：[OpenAI MCP 官方文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)；`openai/codex@4ef836f` 的[配置层发现](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/config/src/loader/mod.rs#L103-L121)、[MCP 子命令与参数](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L46-L98)、[list 的枚举边界](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L627-L700)及[用户级写入](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L349-L441)；1810 实测 Codex CLI `0.149.1`。
+> 依据：[OpenAI MCP 官方文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)；`openai/codex@4ef836f` 的[配置层发现](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/config/src/loader/mod.rs#L103-L121)、[MCP 子命令与参数](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L46-L98)、[list 的枚举边界](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L627-L700)及[用户级写入](https://github.com/openai/codex/blob/4ef836f883c38ba6d39e6920f335ce6452b7de33/codex-rs/cli/src/mcp_cmd.rs#L349-L441)；实测 Codex CLI `0.149.1`。
 
 #### <a id="codex-github-auth-helper"></a>GitHub HTTP MCP 的凭据 helper
 
@@ -468,7 +468,7 @@ gemini extensions install https://github.com/github/github-mcp-server
 
 该方式连接 GitHub 托管的 server，并要求环境或 `~/.gemini/.env` 中存在 `GITHUB_MCP_PAT`。若明确要本机 Docker 版，上游没有给 `gemini mcp add` 命令，而是要求把 Docker `command` / `args` 写进 `~/.gemini/settings.json`；见 [`github/github-mcp-server` 的 Gemini CLI 安装指南](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-gemini-cli.md)。
 
-> 依据：[Gemini CLI MCP 官方文档](https://geminicli.com/docs/tools/mcp-server/)与[配置层文档](https://geminicli.com/docs/reference/configuration/)（2026-08-26 核）。1810 未安装 Gemini CLI，本节未做 live 验证；命令、路径和 trust 行为按官方文档记录。
+> 依据：[Gemini CLI MCP 官方文档](https://geminicli.com/docs/tools/mcp-server/)与[配置层文档](https://geminicli.com/docs/reference/configuration/)（2026-08-26 核）。当前环境未安装 Gemini CLI，本节未做 live 验证；命令、路径和 trust 行为按官方文档记录。
 
 ### Cursor
 
@@ -499,7 +499,7 @@ Cursor CLI 文档把配置优先级概括为“project → global → nested”�
 
 随后用 `agent mcp list-tools github` 验证。PAT 和托管 HTTP 版本见 [`github/github-mcp-server` 的 Cursor 安装指南](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-cursor.md)。
 
-> 依据：[Cursor MCP 配置文档](https://cursor.com/docs/mcp)与[Cursor CLI MCP 文档](https://cursor.com/docs/cli/mcp)（2026-08-26 核）；1810 实测 Cursor CLI `2026.08.11-e8db854` 的 `agent mcp --help`。Cursor 闭源，父目录重名合并的未公开部分保持未定。
+> 依据：[Cursor MCP 配置文档](https://cursor.com/docs/mcp)与[Cursor CLI MCP 文档](https://cursor.com/docs/cli/mcp)（2026-08-26 核）；实测 Cursor CLI `2026.08.11-e8db854` 的 `agent mcp --help`。Cursor 闭源，父目录重名合并的未公开部分保持未定。
 
 ## <a id="synthesis"></a>横向综合
 

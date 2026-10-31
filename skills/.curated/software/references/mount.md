@@ -254,7 +254,7 @@ wiki 模板里的 `After=network-online.target` 在 **user unit 里无效**—�
 
 #### 反复重启、间隔 ~100s：SMB server 地址漂移（`host =` 写了 IP literal）
 
-**`rclone.conf` 的 `host =` 字段写 NetBIOS/DNS hostname，不要写 IP literal。** 现场 SMB server 经常被运维迁机器、换网段、改 DHCP 池——一旦 IP 漂移，写 IP literal 的 rclone 直接连不上，service 进入“`Type=notify` 90s 超时 → `Restart=always` 每 ~100s 重试”的循环。同 share 上跑内核 `mount.cifs` 的机器（如 1810）通常是写 `//Quantum/Team`，因为 hostname 路径只需要本机 `/etc/hosts` 改一行就跟得上。
+**`rclone.conf` 的 `host =` 字段写 NetBIOS/DNS hostname，不要写 IP literal。** 现场 SMB server 经常被运维迁机器、换网段、改 DHCP 池——一旦 IP 漂移，写 IP literal 的 rclone 直接连不上，service 进入“`Type=notify` 90s 超时 → `Restart=always` 每 ~100s 重试”的循环。同 share 上跑内核 `mount.cifs` 的机器通常是写 `//Quantum/Team`，因为 hostname 路径只需要本机 `/etc/hosts` 改一行就跟得上。
 
 **hostname 解析的权威来源是“已经 work 的那台机器”。** 多机部署同一 share 时，新机器直接抄那台 work 机的 `/etc/hosts` 里关于这个 SMB host 的映射（例：`10.100.158.91  Quantum`），别去自己探/猜/写错的别名。本机能 ping 通 hostname + 445 端口 reachable 后，`rclone.conf` 的 `host =` 改成 hostname，重启 service 即可。
 

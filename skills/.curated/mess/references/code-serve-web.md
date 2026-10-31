@@ -10,7 +10,7 @@
 
 ### 症状
 
-- `code serve-web` 通过 `10.144.18.10:8080` 正常，`127.0.0.1:8080` 页面空白
+- `code serve-web` 通过组网内网 IP `<组网IP>:8080` 正常，`127.0.0.1:8080` 页面空白
 - Console：`Uncaught Error: !!! NLS MISSING: 17116 !!!`
 - Ctrl+Shift+R / 无痕模式均无效
 
@@ -27,7 +27,7 @@
 1. Chrome `Accept-Language` 含 `zh-CN` → 服务器注入 `https://www.vscode-unpkg.net/.../zh-cn/nls.messages.js`
 2. HTML 先加载英文 NLS（17287 条），再加载中文 NLS（17109 条）→ 中文直接覆盖 `globalThis._VSCODE_NLS_MESSAGES`
 3. 中文语言包翻译不完整，缺少 index 17109-17286 → `d(17116, null)` 抛出异常 → 页面崩溃
-4. 10.144.18.10 能用是因为该 IP 到 CDN 的请求失败，英文 NLS 保持不变 — “能用”不是因为它做对了什么，而是因为它恰好失败了
+4. `<组网IP>` 能用是因为该路径下到 CDN 的请求失败，英文 NLS 保持不变 — “能用”不是因为它做对了什么，而是因为它恰好失败了
 
 ### 解决
 
@@ -56,13 +56,13 @@
 2. **「Caddyfile 内存配置 ≠ 磁盘文件，下次 reload 就炸」** — 自己 `cat` 时用 `head -300` 截断了 308 行的文件，看不到末尾才加的 :8081 段；其实是一致的。**教训：用 `awk '/marker/,/^}$/'` 或 `wc -l` 确认覆盖完整，别盲目 `head`。**
 3. **「Caddy + caddy-security 在 HTTP/2 上 ws upgrade 有 bug」** — 用户当年给 :8080 加了 `protocols h1` 是确实的旁证，但浏览器收到 caddy 不支持 H2 ws upgrade 时会自动降级 H1，新加的 :8081 也用了 H1，无关。
 4. **「`header_up -Sec-WebSocket-Extensions` 干扰 ws 协商」** — 不是。
-5. **「`--server-base-path /code` 是必需 workaround」** — 来自唯一对照组 1810 ✅ 的启动差异，但本机 WSL 加了 base-path 仍然卡 → 推翻自己。
-6. **「`--default-folder` 太大触发扩展加载死循环」** — 1810 唯一不带的参数，但后续证据否决。
+5. **「`--server-base-path /code` 是必需 workaround」** — 来自唯一对照组主机 B ✅ 的启动差异，但本机 WSL 加了 base-path 仍然卡 → 推翻自己。
+6. **「`--default-folder` 太大触发扩展加载死循环」** — 对照组主机 B 唯一不带的参数，但后续证据否决。
 
 真正的突破点：
 
 1. **改 caddy 加 `log code_8081`** 看 :8081 access log → 看到所有 ws upgrade 都是 101 OK + 立刻被关，证明 **caddy 干干净净**。
-2. **决定性的“换上游”交叉实验**：把 :8081 反代上游临时从 `10.144.18.88:8080`（本机 WSL）换成 `10.144.18.10:8080`（已知 ✅ 的 1810），其它字节完全一致 → :8081 立刻通。锅 100% 在本机/Ali 的 vscode server，**完全不在 caddy/网络/auth**。
+2. **决定性的“换上游”交叉实验**：把 :8081 反代上游临时从 `<本机WSL组网IP>:8080`（本机 WSL）换成 `<对照组主机组网IP>:8080`（已知 ✅ 的对照组主机），其它字节完全一致 → :8081 立刻通。锅 100% 在本机/云端实例的 vscode server，**完全不在 caddy/网络/auth**。
 3. **拉 vscode launcher 的 trace 日志**（Ali 上的 service 已启用 `--log trace`，普通用户 `journalctl -u code-serve-web` 不需要 sudo 就能读）→ 看到反复打：
    ```
    debug server (upgrade expected but low level API in use) websocket upgrade failed
@@ -234,7 +234,7 @@ example.com {
 
 ## <a id="chatgpt-opensidebar-dep"></a>Codex 扩展报 `command 'chatgpt.openSidebar' not found`
 
-> 2026-09-27 | serve-web 1.136.1 (pinned `a44adf7f`) | openai.chatgpt 26.917.62051（26.917.61114 起引入问题）| 多用户实例中 timidly 一例
+> 2026-09-27 | serve-web 1.136.1 (pinned `a44adf7f`) | openai.chatgpt 26.917.62051（26.917.61114 起引入问题）| 多用户实例中单用户复现
 
 ### 症状
 

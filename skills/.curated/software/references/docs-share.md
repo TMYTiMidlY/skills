@@ -125,7 +125,7 @@ mc alias rm rfsadmin
 | 现象 | 原因 / 修法 |
 |---|---|
 | 改了内容 push 后桶没更新 | 看 forgejo Actions run 是否成功；最常见是 DinD 短暂连不上 `data.forgejo.org` 拉 `actions/checkout` 超时（21s 那种）。**下次 push 会带上当前 main tree 整体 sync**，不用回头 rerun |
-| 浏览器贴 `.md` URL 看到的不是排版页是 md 原文 | 边缘 Caddy 没装 Accept rewrite（如 `47.102.36.175:9000` Alibaba 直暴 RustFS 入口），只支持方式 B；换装了 rewrite 的 `s3.tmytimidly.com` 入口，或改用 `viewer.html?doc=<URL>` |
+| 浏览器贴 `.md` URL 看到的不是排版页是 md 原文 | 边缘 Caddy 没装 Accept rewrite（如直连裸 RustFS `:9000` 入口），只支持方式 B；换装了 rewrite 的 S3 域名入口，或改用 `viewer.html?doc=<URL>` |
 | md 渲染了但**图片全裂**（403） | 用了相对图但没走 bundle；给文档第一行加 `<!-- docs-share:bundle -->`，push 后分享 `<名>.bundle.md` |
 | `viewer.html?doc=` 打开空白 / 报错 | `?doc=` 必须是**可 fetch** 的 URL（私有桶用 presigned）；presigned 与 viewer **同源**才无 CORS；浏览器需能访问 markdeep CDN |
 | presigned 链接 403 / 过期 | `X-Amz-Expires` 到期重新生成；或 host 不匹配（SigV4 签名含 host，跨入口 alias 签出的链接互不能用）；或受限 key 被删 / 改 policy |

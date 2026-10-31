@@ -49,7 +49,7 @@ failed to initialize logging driver: database is blocked
 
 ## <a id="pg-checkpoint-slow"></a>Postgres 崩溃恢复卡在 end-of-recovery checkpoint 不动
 
-> 2026-07-05 | Postgres 17 + pgvector（`qatlas-postgres` 容器）| PGDATA 挂在 NAS（Synology DSM 建 iSCSI Target/LUN）→ Windows iSCSI Initiator → `wsl --mount` 挂进 WSL2 为 `/dev/sdg` → `/mnt/qatlas-pg`（ext4）
+> 2026-07-05 | Postgres 17 + pgvector（`<pg-container>` 容器）| PGDATA 挂在 NAS（Synology DSM 建 iSCSI Target/LUN）→ Windows iSCSI Initiator → `wsl --mount` 挂进 WSL2 为 `/dev/sdg` → `/mnt/nas-pg`（ext4）
 
 > 记录原则：这次判断一度是错的（"卡死"），事后才发现只是慢。如实记录当时凭什么下的判断、以及这个判断方法本身的局限。
 
@@ -57,9 +57,9 @@ failed to initialize logging driver: database is blocked
 
 - 因为处理另一件事（见 [容器解析不了 compose 服务名，IP 直连正常](linux.md#docker-embedded-dns)）被迫 `docker rm -f` 强制移除了这个 Postgres 容器，重建后触发崩溃恢复：WAL redo 阶段正常（约56秒，LSN 持续增长，日志有真实进度），之后进入 `checkpoint starting: end-of-recovery immediate wait`。
 - 这一步之后看起来彻底不动了：
-  - `docker top qatlas-postgres` 显示 checkpointer 进程长期处于 **`Ds`**（不可中断磁盘睡眠）状态，CPU 恒为 `0.00%`。
+  - `docker top <pg-container>` 显示 checkpointer 进程长期处于 **`Ds`**（不可中断磁盘睡眠）状态，CPU 恒为 `0.00%`。
   - `docker stats` 的 **BlockIO 字节计数器**在相隔 20 秒、90 秒、10 分钟、直到最终 **21+ 分钟**的多次复测中，数值分毫不变（`153MB / 176kB` 恒定）。
-  - `/mnt/qatlas-pg` 挂载本身当时查询（`df -h`、`ls`）响应迅速正常——不支持"整条 iSCSI 链路当前彻底断线"这么简单的解释。
+  - `/mnt/nas-pg` 挂载本身当时查询（`df -h`、`ls`）响应迅速正常——不支持"整条 iSCSI 链路当前彻底断线"这么简单的解释。
 
 ### 排查关键转折
 
@@ -80,7 +80,7 @@ failed to initialize logging driver: database is blocked
 
 ### 解决 / 结果
 
-什么都没做，纯等待。容器最终变回 `healthy`，`pg_isready` 确认 accepting connections，容器内 DNS（`getent hosts qatlas-postgres`）也恢复正常（说明它和 [容器解析不了 compose 服务名](linux.md#docker-embedded-dns) 那次 Docker DNS 故障其实是同时叠加、但彼此独立的两件事）。
+什么都没做，纯等待。容器最终变回 `healthy`，`pg_isready` 确认 accepting connections，容器内 DNS（`getent hosts <pg-service>`）也恢复正常（说明它和 [容器解析不了 compose 服务名](linux.md#docker-embedded-dns) 那次 Docker DNS 故障其实是同时叠加、但彼此独立的两件事）。
 
 ### 教训
 

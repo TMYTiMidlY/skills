@@ -136,9 +136,9 @@ Poppler 可能对少数合法 CJK PDF 静默渲染空白；出现“退出码为
 通过 pandoc 转 HTML 再用 ebook-convert 生成 PDF，支持 KaTeX 数学公式：
 
 ```bash
-pandoc input.md -o timidly_temp.html -s --katex
-ebook-convert timidly_temp.html output.pdf --embed-all-fonts --pdf-default-font-size 14
-trash-put timidly_temp.html
+pandoc input.md -o temp_export.html -s --katex
+ebook-convert temp_export.html output.pdf --embed-all-fonts --pdf-default-font-size 14
+trash-put temp_export.html
 ```
 
 - `--katex`：使用 KaTeX 渲染数学公式

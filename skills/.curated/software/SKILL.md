@@ -125,7 +125,7 @@ OpenAlex 官方 CLI 的 uv 全局安装、API key / 匿名预算与计费、DOI 
 
 ## Docker（安装 + 多用户共用）
 
-Ubuntu 上装 Docker Engine 的**官方推荐方式**（apt 仓库法，非 `get.docker.com` 便捷脚本）与让多个非 root 用户共用见 [references/docker.md](references/docker.md)：官方 apt 仓库法完整步骤（modern `signed-by` keyring、arch/codename 动态取、Engine+CLI+containerd+buildx+compose 五件套）、多用户共用（`usermod -aG docker` 把用户加进包安装时自动建好的 `docker` 组 = 免 sudo 读写 `/var/run/docker.sock`）、**组变更生效时机的坑**（`usermod -aG` 只改组数据库、已登录会话要**重登**才生效，`newgrp`/`sg docker -c` 可不重登临时激活并顺带验证，`id -nG <user>` 查库 vs 无参 `id -nG` 查当前会话的区别）、以及**安全取舍**（docker 组 ≈ 免密 root，`-v /:/host` 一行提权；可信开发机常规做法 / 给 sudoer 加风险不变 / 给非 sudoer 加 = 变相发 root，替代方案 rootless Docker、`sudo docker`、细粒度 sudoers）。含一次 HFNL（Ubuntu 24.04）实操记录。
+Ubuntu 上装 Docker Engine 的**官方推荐方式**（apt 仓库法，非 `get.docker.com` 便捷脚本）与让多个非 root 用户共用见 [references/docker.md](references/docker.md)：官方 apt 仓库法完整步骤（modern `signed-by` keyring、arch/codename 动态取、Engine+CLI+containerd+buildx+compose 五件套）、多用户共用（`usermod -aG docker` 把用户加进包安装时自动建好的 `docker` 组 = 免 sudo 读写 `/var/run/docker.sock`）、**组变更生效时机的坑**（`usermod -aG` 只改组数据库、已登录会话要**重登**才生效，`newgrp`/`sg docker -c` 可不重登临时激活并顺带验证，`id -nG <user>` 查库 vs 无参 `id -nG` 查当前会话的区别）、以及**安全取舍**（docker 组 ≈ 免密 root，`-v /:/host` 一行提权；可信开发机常规做法 / 给 sudoer 加风险不变 / 给非 sudoer 加 = 变相发 root，替代方案 rootless Docker、`sudo docker`、细粒度 sudoers）。含一次 Ubuntu 24.04 多用户环境实操记录。
 
 ## Coolify 与 Dokploy（自托管 PaaS）
 
@@ -134,3 +134,7 @@ Ubuntu 上装 Docker Engine 的**官方推荐方式**（apt 仓库法，非 `get
 ## Tavotto（论文图可视化编辑器：安装与本地运行）
 
 matplotlib 论文图的可视化编辑器（改动存 override、源脚本不动、出版规范预检、矢量导出）；uv 安装、普通用户 systemd 常驻、Host/Origin 接入约束、会话兑换与重启恢复见 [references/tavotto.md](references/tavotto.md)。公网统一认证、代理凭据管理与上游会话代持转用 `network` skill。
+
+## DMP（饥荒联机版管理平台）容器化部署与运维
+
+`miracleEverywhere/dst-management-platform-api`（DMP）容器化部署、两阶段自定义端口基准构建、运行期 `./app/*` 挂载卷与上游源码树就地共存、Windows + WSL2 + Docker Desktop 下发行版 VHDX 迁移与 bind mount 落盘边界、非交互 SSH 会话下通过计划任务拉起 Docker Desktop 与 `docker-credential-desktop` 报错处理、公网双机分工转发（WebUI `127.0.0.1` 经 `portproxy` 暴露 + UDP 游戏端口段转发与双向抓包验收）、容器内 SteamCMD 更新排障（`entry-point.sh` 无条件解压覆盖旧版、Steam 更新源域名变迁、`proxychains4` IPv4 限制与 `epoll_ctl` 断言冲突、Docker 默认 `seccomp` 因 `CVE-2026-31431` 拦截 32 位 `socketcall` 报 `CreateBoundSocket ... (38)`、直接改 `steamcmd.sh` 触发 `BVerifyInstalledFiles` CRC 自校验回滚、用 `/usr/local/bin/bash` 垫片零侵入注入 `STEAM_PLATFORM=linux64` 并自动重排 `+force_install_dir` 参数顺序、以及旧 `appmanifest_343050.acf` 触发历史 manifest 匿名 `Access Denied` 报 `state is 0x6` 的两种解法），以及创意工坊模组管理（检索/下载/启用三阶段链路、以 SQLite `dmp.db` 的 `rooms.mod_data` 为单一事实源防手改丢失、WebUI 面板安装与 Agent 本地 API 零停机快速安装）见 [references/dmp.md](references/dmp.md)。

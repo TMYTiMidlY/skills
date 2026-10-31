@@ -15,7 +15,7 @@
 
 示例：
     ./mineru_large_pdf.py \\
-        --input 'https://47.102.36.175/share/mineru-upload/foo.pdf' \\
+        --input 'https://example.com/share/mineru-upload/foo.pdf' \\
         --work-dir mineru_work/foo \\
         --pages-per-part 198 --overlap 2
 """
