@@ -42,20 +42,29 @@ sudo ufw delete allow 443/tcp
 
 ### 创建普通用户
 
-可以先非交互创建用户，最后再提示用户设置密码（sudo 需要）。加固完成前保持 root 登录，避免切换到 `<USERNAME>` 导致 sudo 无法非交互执行。
+按执行方式选择命令：
 
-```bash
-useradd -m <USERNAME>
-# Debian 系用 sudo 组，RHEL 系用 wheel 组
-usermod -aG sudo <USERNAME>   # Debian/Ubuntu
-usermod -aG wheel <USERNAME>  # RHEL/CentOS
-```
+- **指导用户在终端手动执行（Debian/Ubuntu）**：直接使用交互式的 `adduser`，一步完成家目录创建、默认 `/bin/bash` 配置与密码设置（Full Name 等信息一路回车跳过），再加入 `sudo` 组：
 
-所有步骤完成后，提示用户手动设置密码：
+  ```bash
+  adduser <USERNAME>
+  usermod -aG sudo <USERNAME>
+  ```
 
-```bash
-passwd <USERNAME>
-```
+- **Agent 非交互执行（或 RHEL/CentOS）**：使用 `useradd` 先非交互创建用户，最后再提示用户设置密码（sudo 需要）。必须显式加上 `-s /bin/bash`（Debian/Ubuntu 上 `useradd` 默认分配 `/bin/sh` 即 `dash`，无方向键历史、Tab 路径补全与 `.bashrc`）。加固完成前保持 root 登录，避免切换到 `<USERNAME>` 导致 sudo 无法非交互执行：
+
+  ```bash
+  useradd -m -s /bin/bash <USERNAME>
+  # Debian 系用 sudo 组，RHEL 系用 wheel 组
+  usermod -aG sudo <USERNAME>   # Debian/Ubuntu
+  usermod -aG wheel <USERNAME>  # RHEL/CentOS
+  ```
+
+  所有非交互步骤完成后，提示用户手动设置密码：
+
+  ```bash
+  passwd <USERNAME>
+  ```
 
 ### 部署 SSH 密钥
 
