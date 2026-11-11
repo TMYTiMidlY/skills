@@ -207,6 +207,50 @@ with Codex() as codex:
 
 上层 agent 或外部工具提供的材料，使用 `ExternalMessage(tool_name="parent_agent", content=task_text)` 作为整个 `thread.run(...)` 输入，使其保持工具输出的指令优先级。可信任务约束通过宿主的 developer instructions 等入口提供；外部材料本身不建立用户授权或审批。
 
+### <a id="sdk-threads-and-cwd"></a>工作目录、会话恢复与并发编排
+
+SDK 把进程连接（`Codex` / `AsyncCodex`）、会话线程（`Thread` / `AsyncThread`）与单轮执行（`TurnHandle` / `TurnResult`）分成三层，工作目录与会话状态可按粒度分别控制：
+
+| 控制点 | 入口与参数 | 作用范围与注意事项 |
+|---|---|---|
+| 进程启动目录 | `CodexConfig(cwd="...")` | 指定 `codex app-server` 子进程的 OS 工作目录 |
+| 线程默认目录 | `thread_start(cwd="...")` | 为新建线程绑定独立工作目录；同一 `app-server` 下的并发线程可指向不同目录或 worktree |
+| 恢复 / 分叉目录 | `thread_resume(thread_id, cwd="...")`、`thread_fork(thread_id, cwd="...")` | 恢复或从已有历史分叉线程时覆盖后续轮次的工作目录 |
+| 单轮临时目录 | `thread.run(input, cwd="...")`、`thread.turn(input, cwd="...")` | 仅覆盖本次 `turn/start` 的执行目录 |
+
+**持久化与 `resume` 条件**：
+- `thread_start(ephemeral=True)` 只在当前 `app-server` 进程内存中维护线程，不写入磁盘 rollout 文件；客户端退出后再调用 `thread_resume(thread_id)` 会报错 `JSON-RPC error -32600: no rollout found for thread id <id>`。
+- 省略 `ephemeral`（或设为 `False`）时，会话持久化到实际 `CODEX_HOME` 的 `sessions/YYYY/MM/DD/rollout-<timestamp>-<thread_id>.jsonl`。记录 `thread.id` 后：
+  1. 可在新的 Python 进程中调用 `codex.thread_resume(thread_id, cwd=..., sandbox=..., approval_mode=...)` 恢复该线程并继续 `thread.run(...)`，或调用 `thread.read(include_turns=True)` 读取历史轮次（`include_turns=False` 仅返回 `info.thread.cwd`、`info.thread.path` 等元数据）；
+  2. 也可在同一 `CODEX_HOME`（或软链共享同一 `sessions/` 目录的账号）下直接执行终端命令 `codex resume <thread_id>` 接续交互，反之终端产生的持久化会话也可由 SDK `thread_resume` 接管。
+
+**单进程多 Thread 并发分片**：上层编排器将任务拆分为多个子任务并行执行时，无需像 `codex exec` 那样拉起多个 CLI 子进程。单个 `Codex`（配合 `ThreadPoolExecutor`）或 `AsyncCodex`（配合 `asyncio.gather`）即可在同一条 `app-server` stdio 管道上并发调用 `thread_start(...)` 与 `thread.run(...)`，共享同一套 `AuthManager` 登录态。注意线程 ID 位于 `thread.id`（或 `TurnHandle.thread_id`），而 `thread.run(...)` 返回的 `TurnResult` 仅含本轮 `id`（turn ID）、`status`、`final_response`、`items`、`usage`、`duration_ms` 与 `error`，不含 `thread_id` 属性。
+
+```python
+import asyncio
+from openai_codex import ApprovalMode, AsyncCodex, CodexConfig, Sandbox
+
+async def run_shard(codex: AsyncCodex, name: str, workdir: str, prompt: str) -> tuple[str, str, str]:
+    thread = await codex.thread_start(
+        model="gpt-6.1-sol",
+        cwd=workdir,
+        sandbox=Sandbox.read_only,
+        approval_mode=ApprovalMode.deny_all,
+        # 省略 ephemeral 以持久化 rollout，后续可用 codex.thread_resume(thread.id) 恢复
+    )
+    result = await thread.run(prompt)
+    return name, thread.id, result.final_response or ""
+
+async def main() -> None:
+    config = CodexConfig(codex_bin="<Codex 可执行文件绝对路径>")
+    async with AsyncCodex(config) as codex:
+        shards = [("shard-a", "/path/to/dir_a", "任务 A"), ("shard-b", "/path/to/dir_b", "任务 B")]
+        results = await asyncio.gather(*(run_shard(codex, *s) for s in shards))
+```
+
+> 源码：[同步与异步 `thread_start` / `thread_resume` / `thread_fork` / `Thread.run`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L135-L286)、[异步线程与 `TurnHandle`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L389-L774)、[`TurnResult` 数据结构](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/_run.py#L21-L35)。
+> 🔬 2026-11-11 实测：单 `codex app-server` 子进程内并发运行 4 个 `gpt-6.1-sol` 只读线程完成分片盘点；对 `ephemeral=True` 线程跨进程执行 `thread_resume` 复现 `-32600: no rollout found`；对持久化 rollout 执行跨进程 `thread_resume(..., cwd=...)` 并调用 `thread.read(include_turns=False)`，确认 `info.thread.cwd` 已更新且 `info.thread.path` 指向对应 `rollout-*.jsonl`。
+
 ### <a id="sdk-auth"></a>现有登录态与多账号目录
 
 Python SDK 自动复用 Codex 已有认证。默认启动实现复制父进程环境，再合并 `CodexConfig.env`；Codex 子进程按实际 `CODEX_HOME` 读取配置和认证来源，并维护原生登录与刷新。文件式认证位于该目录的 `auth.json`，其他存储方式见 [订阅登录凭据](#subscription-auth)。同一系统用户、同一配置根且凭据存储可访问时，可沿用现有 ChatGPT 登录；脚本无需自行提取 token 或另填 API key。
