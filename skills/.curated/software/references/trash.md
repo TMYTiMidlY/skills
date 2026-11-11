@@ -87,3 +87,28 @@ else if (empty) {
 - trash-cli：源码 `trashcli/put/trasher.py`（docstring 明示两个卷内 trash 目录先试 `$volume/.Trash/$uid` 再试 `$volume/.Trash-$uid`）、`trashcli/lib/trash_dirs.py`；`trash_dir_checker.py` 强制 trash 目录与待删文件同卷（否则 `DifferentVolumes`），`security_check.py` 查 `.Trash` 父目录 sticky 位。
 
 Windows/WSL 下 `/mnt/c` NTFS、与 Windows 资源管理器回收站互不可见的专属角度见 [windows.md](windows.md)。
+
+## 改写 `HOME` / `XDG_DATA_HOME` 的多账号隔离环境：影子回收站盲区与不改 `HOME` 的根治方案
+
+`trash-cli` 与 `gio trash` 决定家卷（home trash）路径时，**完全依赖当前进程的环境变量**（源码 `trashcli/lib/trash_dirs.py` + `trashcli/lib/user_info.py`）：
+
+```python
+def home_trash_dir_path_from_env(environ):
+    if 'XDG_DATA_HOME' in environ:
+        return ['%(XDG_DATA_HOME)s/Trash' % environ]
+    elif 'HOME' in environ:
+        return ['%(HOME)s/.local/share/Trash' % environ]
+    return []
+```
+
+- **为什么改写 `HOME` 会产生隐形影子回收站**：
+  - 凡是通过整体替换 `HOME`（或同时改写 `XDG_DATA_HOME`）实现多账号隔离的旧式包装脚本（例如早期把 `HOME` 指到 `~/.agy-homes/<account>` 的 Antigravity CLI 包装），会让该实例内派生的所有子进程（如 agent `run_command` 跑的 `trash-put`）把 `$h/.local/share/Trash` 当成家卷回收站。
+  - 因为 `~/.agy-homes/<account>` 与工作区位于同一文件系统（`/home` 卷），`trash-put` 的同卷校验（`Gate.SameVolume`）直接通过，被删文件被静默 `rename` 进 `~/.agy-homes/<account>/.local/share/Trash/{files,info}/`。
+  - 当切回普通终端（`HOME=/home/<user>`）执行 `trash-list`、`trash-rm`、`trash-empty` 或直接检查 `~/.local/share/Trash` 时，`SingleUserInfoProvider` 只看真实家目录的回收站；**哪怕加 `--all-users`，`AllUsersInfoProvider` 也只遍历 `pwd.getpwall()` 的 `pw_dir`**，绝不会扫描 `~/.agy-homes/*/`——导致隔离环境里删掉的几十 GB 数据（实测 16 个旧克隆共 **55 GB**）在普通终端下完全隐形、清理时整批漏掉。
+- **彻底根治与排查方法**：
+  1. **架构级根治（多账号隔离绝不改写 `HOME`）**：多账号隔离必须使用只重定向应用自身数据目录的原生参数或专用变量——如 Codex 用 `CODEX_HOME`、mcode 用 `MINIMAX_DATA_DIR`、Copilot 用 `COPILOT_HOME`，而 **Antigravity CLI（`agy`）应使用二进制内置隐藏旗标 `--gemini_dir=/home/<user>/.agy-homes/<account>/.gemini`**（逆向 `main.init.1` 证实，完整包装见 `harness` skill 的 `antigravity.md`），**全程保持 `$HOME` 为真实家目录不变**。不改 `HOME`，就不需要靠逐个补软链或修补 `XDG_*` 去围堵子进程，从根源上消灭影子回收站与重复缓存。
+  2. **盘点与旧实例存量合并**：排查历史遗留的假 `HOME` 隔离环境时，先全盘搜索是否存在分裂的回收站目录：
+     ```bash
+     find ~ -maxdepth 4 -type d -path '*/.local/share/Trash/files' 2>/dev/null
+     ```
+     若除 `~/.local/share/Trash/files` 外还扫出 `~/.agy-homes/<account>/.local/share/Trash/files` 等独立目录，将其中的 `files/<name>` 与 `info/<name>.trashinfo` 成对（重名追加 `_1`、`_2`）同卷 `rename` 合并回主回收站 `~/.local/share/Trash/`。
