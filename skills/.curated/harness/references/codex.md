@@ -1,6 +1,6 @@
 # Codex 运行时笔记
 
-本篇介绍 Codex app-server 的运行形态、CLI 启动行为、进程管理、终端显示与复制、桌面端 projectless 会话的目录与提示词、用量与额度统计、上下文配置、协作模式、内置生图工具、cc-switch 多账号与共享会话，以及订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
+本篇介绍 Codex app-server 的运行形态、CLI 启动行为、进程管理、SDK 程序化调用与多账号登录态复用、终端显示与复制、桌面端 projectless 会话的目录与提示词、用量与额度统计、上下文配置、协作模式、内置生图工具、cc-switch 多账号与共享会话，以及订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
 
 ## <a id="app-server-lifecycle"></a>Codex app-server
 
@@ -150,6 +150,96 @@ codex app-server daemon version
 使用 systemd 通过 `bash -c` 执行 app-server 管理脚本时，脚本文本会先经过 systemd 的参数处理，再交给 Bash。启用环境替换时，`${…}` 可能被提前展开；调用方加单引号不能阻止这一层处理。把复杂脚本放进独立文件、只向服务管理器传递文件路径，可以减少多层展开的干扰。
 
 > 来源：[systemd 命令参数的环境替换](https://github.com/systemd/systemd/blob/v239/man/systemd.service.xml#L1008-L1067)。内联脚本需要核对每层转义，关闭展开的选项也应先确认可用性。通用服务管理知识归 `software` skill。
+
+## <a id="programmatic-control"></a>SDK 与程序化调用
+
+让其他 agent 委派编码任务时，可以把完整 Codex runtime 封装成上层的一个工具：上层传入任务，Codex 自己组织模型请求、工具执行、沙箱与会话循环，再返回结果。SDK 提供语言内的客户端 API；app-server 提供进程外的控制协议。跨厂商接入层级与选型见 [Coding-agent SDK 对照](sdk.md#integration-layers)。
+
+| 入口 | 调用方式与进程关系 | 适用任务 |
+|---|---|---|
+| Python `openai-codex` | SDK 默认启动专用 `codex app-server --listen stdio://` 子进程，通过双向 JSON-RPC 控制它 | 在 Python 中运行任务、收集结果、消费事件、继续或恢复线程 |
+| TypeScript `@openai/codex-sdk` | 所核实现启动 `codex exec --experimental-json`，读取 JSONL 事件 | 在 Node.js 中运行任务、流式接收事件、按 thread ID 继续工作 |
+| 直接连接 app-server | 调用方处理连接、初始化、请求、通知和服务端审批请求 | 自建客户端，需要直接管理认证、历史、事件与审批交互 |
+
+> `0.167.1` 源码：[Python 子进程与环境](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/client.py#L242-L281)、[TypeScript exec 参数](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/typescript/src/exec.ts#L94-L106)。两种 SDK 的底层入口按语言分别核对；滚动阅读入口：[Codex SDK](https://learn.chatgpt.com/docs/codex-sdk)、[App Server](https://learn.chatgpt.com/docs/app-server)（2026-11-11 核）。
+
+### <a id="python-sdk-protocol"></a>Python SDK 的调用过程
+
+`Codex(config)` 创建客户端时启动子进程，发送 `initialize`，收到响应后再发送 `initialized`。`thread_start()` 经 `thread/start` 创建线程；`thread.run(...)` 启动 turn 并消费其事件，收到对应 `turn/completed` 后收集最终文本、items 和 usage。需要边运行边消费事件时使用 `thread.turn(...).stream()`；对应的 handle 还提供 `steer()` 和 `interrupt()`。退出 `with Codex(...)` 时 SDK 关闭它持有的子进程。
+
+```mermaid
+flowchart LR
+    A[上层 agent 或脚本] <-->|函数调用与结果| B[Python SDK]
+    B <-->|stdio JSON-RPC| C[专用 Codex app-server]
+    C <-->|模型请求与输出| D[模型服务]
+    C --> E[本地工具与工作区]
+```
+
+该默认 SDK 路线创建自己的进程和线程；当前终端 TUI 的对话不会自动进入新线程。登录身份、工作目录和 thread ID 分别控制认证、工作区与会话上下文。普通 TUI 的共享 daemon 路线见 [普通启动的连接方式](#app-server-routing)。
+
+> 源码：[客户端构造与初始化](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L83-L105)、[握手与子进程回收](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/client.py#L283-L325)、[turn 事件与结果收集](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L810-L843)。
+
+### <a id="python-sdk-smoke"></a>最小调用与权限设置
+
+前提是已有可用的 Codex 登录。以下示例保存为 `smoke.py`，用 `uv run smoke.py` 执行；依赖隔离在 uv 环境中。示例省略模型参数，沿用当前 Codex 配置。`Codex()` 默认使用 SDK 包配套的固定版本 runtime；需要复现已安装 CLI 的行为时，再显式设置 `CodexConfig(codex_bin="<Codex 可执行文件绝对路径>")`。
+
+```python
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["openai-codex==0.167.1"]
+# ///
+from openai_codex import ApprovalMode, Codex, Sandbox
+
+with Codex() as codex:
+    thread = codex.thread_start(
+        sandbox=Sandbox.read_only,
+        approval_mode=ApprovalMode.deny_all,
+        ephemeral=True,
+        developer_instructions="这是连通性测试。直接回答，不调用工具。",
+    )
+    result = thread.run("请只回复：SDK 调用成功")
+    print(result.final_response)
+```
+
+`Sandbox.read_only` 限制工具写入，`ApprovalMode.deny_all` 拒绝提权请求；“不调用工具”的指令用于约束本次测试流程。这个 SDK 版本的审批枚举是 `deny_all` 与 `auto_review`，对应值应按 Python API 选择。`ephemeral=True` 创建内存线程；需要后续恢复时省略它、保存 `thread.id`，并在同一会话存储中使用 `thread_resume(id)`。
+
+> 来源：[配套 runtime 与运行结果](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/docs/getting-started.md#L14-L20)、[运行、流式控制与外部消息](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/docs/getting-started.md#L53-L99)、[审批枚举与底层策略映射](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/_approval_mode.py#L13-L35)。
+
+上层 agent 或外部工具提供的材料，使用 `ExternalMessage(tool_name="parent_agent", content=task_text)` 作为整个 `thread.run(...)` 输入，使其保持工具输出的指令优先级。可信任务约束通过宿主的 developer instructions 等入口提供；外部材料本身不建立用户授权或审批。
+
+### <a id="sdk-auth"></a>现有登录态与多账号目录
+
+Python SDK 自动复用 Codex 已有认证。默认启动实现复制父进程环境，再合并 `CodexConfig.env`；Codex 子进程按实际 `CODEX_HOME` 读取配置和认证来源，并维护原生登录与刷新。文件式认证位于该目录的 `auth.json`，其他存储方式见 [订阅登录凭据](#subscription-auth)。同一系统用户、同一配置根且凭据存储可访问时，可沿用现有 ChatGPT 登录；脚本无需自行提取 token 或另填 API key。
+
+> 来源：[SDK 的认证复用](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/README.md#L14-L34)、[环境继承与覆盖](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/client.py#L258-L278)。认证来源、缓存与刷新条件按 [凭据存储](#auth-storage)和[令牌刷新](#auth-refresh)核对。
+
+`codex-<account>` 若是切换 `CODEX_HOME` 的 Bash 函数，先读取其定义，核实真正的账号目录、可执行文件和代理环境。SDK 的 `codex_bin` 接受可执行文件路径；Shell 函数需转换成等价的环境设置。已有账号目录可这样交给 SDK：
+
+```python
+from openai_codex import Codex, CodexConfig
+
+config = CodexConfig(
+    codex_bin="<Codex 可执行文件绝对路径>",
+    env={"CODEX_HOME": "<已初始化账号目录的绝对路径>"},
+)
+with Codex(config) as codex:
+    account = codex.account()
+    # 使用上面的 thread_start / run 流程执行任务。
+```
+
+切换 `CODEX_HOME` 同时选择该目录的配置、凭据、日志和会话存储；需要共享设置或历史时，按 [多账号目录与共享会话](#cc-switch-multi-account)核对实际链接。换账号目录后应新建对应的 SDK 客户端。沿用登录身份不会自动复制父 agent 的上下文；恢复旧 thread 还要求目标账号目录能访问相应历史，并采用兼容的 provider。
+
+验证缓存登录时，先在目标环境检查 `codex login status`，再用 `codex.account()` 读取服务端认证状态，最后执行一次最小模型请求。检查时移除测试进程中可能覆盖身份的 `OPENAI_API_KEY`、`CODEX_API_KEY`、`CODEX_ACCESS_TOKEN`；仅输出必要的认证状态与测试结果，保留原认证文件。凭据存在和状态读取成功，分别与模型请求成功记录。
+
+> 🔬 2026-11-11 实测：Linux、Python SDK `0.167.1`，显式使用已安装 CLI `0.167.0`；默认目录与一个独立 `CODEX_HOME` 的 ChatGPT 登录均完成只读、临时线程的真实模型请求，未传入 API key。独立目录由 Shell 账号函数确认，其认证文件与默认目录不同；另用 SDK 配套 runtime `0.167.1` 执行本文最小示例，也返回“SDK 调用成功”。本次覆盖账号选择和请求成功，未测试令牌临期刷新及多进程长期并发。
+
+### <a id="codex-mcp-migration"></a>Codex MCP server 的迁移
+
+旧 `codex mcp-server` 命令与独立 `codex-mcp-server` binary 已移除，原先以 `codex()` / `codex-reply()` 调用 Codex 的接入需要迁移。新任务可封装 SDK 函数；需要直接控制认证、历史、审批和流式事件时连接 app-server。上层只接受 MCP 时，由适配层把 MCP 工具调用转换成 SDK 或 app-server 操作，并管理 thread ID、取消、超时与进程回收。
+
+app-server 使用专用 JSON-RPC 方法；原 MCP 客户端配置需要连同协议调用一起修改。Codex 连接外部 MCP 工具的能力仍由 `codex mcp` 管理，见 [MCP 客户端配置](mcp.md#config-discovery)。
+
+> 版本依据：[0.167.1 CLI 的 MCP 与 app-server 子命令](https://github.com/openai/codex/blob/rust-v0.167.1/codex-rs/cli/src/main.rs#L144-L175)。滚动迁移入口：[官方 MCP server 移除说明](https://learn.chatgpt.com/docs/mcp-server)（2026-11-11 核）明确移除旧入口，并将直接使用 app-server 的命令标为实验性质、尚不支持生产工作负载；新集成应分别核对 SDK 与直接协议接口的支持范围。
 
 ## <a id="terminal-clipboard"></a>终端界面与 Zellij Web 复制
 
@@ -717,7 +807,7 @@ cc-switch 的 provider 数据和持久目录是两个维护位置。直接启动
 
 ## <a id="subscription-auth"></a>订阅登录凭据
 
-复用 Codex 订阅生图时，先确认身份从哪里取得、谁负责更新以及调用方会写回什么。能读取一份登录材料，只说明取得了凭据，不等于它适用于任意 OpenAI 端点，也不等于可以让多个程序独立刷新同一授权。
+复用 Codex 订阅登录时，先确认身份从哪里取得、谁负责更新以及调用方会写回什么。通过 SDK 运行完整 Codex runtime 的接法见 [现有登录态与多账号目录](#sdk-auth)；下面介绍图片代理等外部组件接入时的凭据结构与刷新边界。能读取一份登录材料，只说明取得了凭据，不等于它适用于任意 OpenAI 端点，也不等于可以让多个程序独立刷新同一授权。
 
 ### <a id="auth-storage"></a>凭据的存储形式
 

@@ -2,6 +2,8 @@
 
 MCP 是连接 AI 应用与外部系统的开放协议；同一台 server 接进不同客户端，能力怎么消费、工具叫什么名字、配置从哪发现，各家做法并不相同。本篇先在 [MCP 概览](#capability-surfaces)讲清协议自身的模型，再按能力逐项对照 Copilot CLI、Claude Code、Codex、Gemini CLI、Cursor 的做法——[Tools 的命名](#tool-naming)、[Resources 的消费入口](#resources-entry)、[Prompts 的消费入口](#prompts-entry)、[工具结果的内容块](#tool-result-blocks)——最后是跨能力的[配置发现](#config-discovery)与[横向综合](#synthesis)。DeepSeek Harness（DSH）作为第六个对照点在各节出现，细节在 [dsh.md](dsh.md#mcp) 展开。
 
+本文中的 Codex 主要承担外部 MCP server 的客户端角色。将完整 Codex 交给其他 agent 调用时，使用 [SDK 或 app-server](codex.md#programmatic-control)；旧官方 `codex mcp-server` / `codex-mcp-server` 已移除，其 [迁移边界](codex.md#codex-mcp-migration)与这里的 `codex mcp add/list` 分开核对。
+
 ## <a id="capability-surfaces"></a>MCP 概览
 
 Anthropic 在 2024-11-25 的公告里开源了 MCP，定位原文是「a new standard for connecting AI assistants to the systems where data lives, including content repositories, business tools, and development environments」，并称它「provides a universal, open standard for connecting AI systems with data sources, replacing fragmented integrations with a single protocol」。生态报道后来常把它比作 AI 应用的 USB-C 接口（如 Ars Technica 的报道标题「MCP: The new "USB-C for AI"」）；注意这个类比出自新闻，公告原文里没有。架构上（spec 2025-06-18）MCP 是 client-host-server 三方模型：host 进程装载并管理多个 client、每个 client 与一台 server 保持一条基于 JSON-RPC 的有状态会话，双方在初始化时做能力协商；server 通过三类 primitive 暴露能力。
@@ -261,7 +263,7 @@ Prompts 在协议里是 user-controlled：server 预制提示词模板，设想�
 
 **Gemini CLI** 把 prompts 做成斜杠命令，执行时由 CLI 调 `prompts/get` 把参数代进模板，取回最终提示词发给模型；传参支持 `--key=value` 和位置参数两种写法，官方文档以一个写 haiku 的 prompt server 为例走完了全程。
 
-**Codex** 客户端侧不消费 prompts：源码里 `prompts/list` / `prompts/get` 只出现在 Codex 自己作为 MCP server 的实现（`mcp-server` crate）里，连接外部 server 的客户端路径上没有 prompts 消费。
+**Codex** 的已核客户端路径未提供 prompts 消费入口。`0.167.1` 补核 `core`、`rmcp-client` 与 `codex-mcp` 源码，未见 `prompts/list` / `prompts/get` 调用；本表按这个检查范围记录。完整 Codex 的外部程序调用方式见 [SDK 与程序化调用](codex.md#programmatic-control)。
 
 **Cursor** 能力表标 Supported（"Templated messages and workflows for users"），入口细节未展开。
 
@@ -269,7 +271,7 @@ Prompts 在协议里是 user-controlled：server 预制提示词模板，设想�
 
 **DSH** 没有消费接口，而且不是做了一半：harness 核心没有「用户从预制列表挑提示词」的交互模型，MCP prompts 在它这里没有挂载点（见 [dsh.md](dsh.md#mcp)）。
 
-> 来源：[Claude Code MCP 文档的 Use MCP prompts as commands（2026-09-03 核）](https://code.claude.com/docs/en/mcp)、[Gemini CLI 的 MCP prompts as slash commands（2026-09-03 核）](https://geminicli.com/docs/tools/mcp-server/)、Codex 源码 `openai/codex@5af6979986` 的 [mcp-server 侧 prompts 处理](https://github.com/openai/codex/blob/5af6979986/codex-rs/mcp-server/src/message_processor.rs#L329-L333)（仅 server 角色）、[Cursor 能力表（2026-09-03 核）](https://cursor.com/docs/mcp)、[Copilot CLI 文档（2026-09-03 核）](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)；DSH 见 [dsh.md](dsh.md#mcp)。
+> 来源：[Claude Code MCP 文档的 Use MCP prompts as commands（2026-09-03 核）](https://code.claude.com/docs/en/mcp)、[Gemini CLI 的 MCP prompts as slash commands（2026-09-03 核）](https://geminicli.com/docs/tools/mcp-server/)、Codex [0.167.1 MCP 客户端源码](https://github.com/openai/codex/tree/rust-v0.167.1/codex-rs/rmcp-client/src)（2026-11-11 补核，检查范围见正文）、[Cursor 能力表（2026-09-03 核）](https://cursor.com/docs/mcp)、[Copilot CLI 文档（2026-09-03 核）](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)；DSH 见 [dsh.md](dsh.md#mcp)。
 
 ## <a id="tool-result-blocks"></a>工具结果的内容块
 

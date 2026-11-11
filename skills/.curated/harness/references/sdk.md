@@ -5,8 +5,7 @@ shell、权限与会话循环的 **agent runtime**（agent 运行时）。这不
 即使 SDK 支持再多语言，也仍要自己补齐缺失的 harness。
 
 本文把容易混在一起的三件事拆开：接入层级、运行时所有权、传输协议；再对照 Copilot、
-Claude、Codex 的官方 agent SDK。事实快照更新于 **2026-07-14**；上游源码链接锁到 tag 或 commit，
-滚动版本在写入产品文档前仍应重新核对。
+Claude、Codex 的官方 agent SDK。横向对照基线为 **2026-07-14**；Codex 的 SDK 运行入口与 MCP server 迁移补核于 **2026-11-11**。上游源码链接锁到 tag 或 commit，滚动版本在写入产品文档前仍应重新核对。
 
 ## <a id="integration-layers"></a>接入层级
 
@@ -52,8 +51,8 @@ app-server 或 ACP 这类可持续交互入口。扩展入口则适合“功能�
 
 | 传输 / 协议 | 典型形态 | 特点 |
 |---|---|---|
-| **stdio + JSONL** | Codex SDK、Pi RPC | 子进程可长期存活；逐行消息便于流式读取，不等于 one-shot |
-| **stdio / TCP + JSON-RPC** | Copilot SDK runtime connection | 一条双向连接承载请求、通知、事件和取消；schema 与版本协商是兼容性边界 |
+| **stdio + JSONL** | Codex TypeScript SDK 的 exec 入口、Pi RPC | 按行交换消息；Codex exec 输出运行事件，会话续接通过 thread ID 交给后续调用 |
+| **stdio / TCP + JSON-RPC** | Codex Python SDK 的 app-server 入口、Copilot SDK runtime connection | 一条双向连接承载请求、通知、事件和取消；JSONL 可作为消息分帧方式，schema 与版本协商另行核对 |
 | **ACP** | `copilot --acp`、通用 ACP agent | 定义 client ↔ agent 的会话、prompt、权限和更新语义；通常仍需选定 stdio 等底层传输 |
 | **HTTP + SSE / WebSocket / webhook** | OpenCode helper server、远程 daemon | 易部署和横向扩展；取消、背压、双向权限交互通常要额外设计 |
 
@@ -81,7 +80,9 @@ HTTP 适合粗粒度服务边界；进程内扩展 ABI 或紧密的双向 agent 
 |---|---|---|---|
 | **GitHub Copilot SDK** | TypeScript、Python、Go、.NET、Java、Rust | 六种 SDK 控制 “the same engine behind Copilot CLI”；Node / Python / .NET 默认带 runtime，Go / Java / Rust 默认从 PATH 找 CLI | SDK 仓库 MIT；Copilot CLI engine 不在该开源仓库中 |
 | **Claude Agent SDK** | TypeScript、Python | SDK 驱动 Claude Code runtime | Python SDK 源码 MIT；TypeScript SDK 为 All Rights Reserved；Claude Code runtime 闭源；两者使用受 Anthropic Commercial Terms 约束 |
-| **OpenAI Codex SDK** | TypeScript、Python | TypeScript SDK spawn `codex` CLI 并经 stdio 交换 JSONL；Python 包依赖 CLI binary 包 | CLI、SDK 与 Rust runtime 同仓，整仓 Apache-2.0 |
+| **OpenAI Codex SDK** | TypeScript、Python | TypeScript SDK 启动 `codex exec --experimental-json`；Python SDK 启动专用 app-server 并经 stdio 交换 JSON-RPC，发布包依赖配套 CLI binary | CLI、SDK 与 Rust runtime 同仓，整仓 Apache-2.0 |
+
+> Codex `0.167.1` 的运行入口分别见 [TypeScript exec](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/typescript/src/exec.ts#L94-L106)与 [Python app-server](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/client.py#L242-L281)。Python 最小调用、登录态复用与多账号 `CODEX_HOME` 选择统一维护在 [Codex 程序化调用](codex.md#programmatic-control)；旧官方 MCP server 的状态见 [迁移说明](codex.md#codex-mcp-migration)。
 
 包名：Copilot 为 `@github/copilot-sdk`、`github-copilot-sdk`、`GitHub.Copilot.SDK`、
 `github.com/github/copilot-sdk/go`、`com.github:copilot-sdk-java`、`github-copilot-sdk` crate；
@@ -97,7 +98,9 @@ Claude 为 `@anthropic-ai/claude-agent-sdk`、`claude-agent-sdk`；Codex 为
 |---|---|---|
 | **Copilot** | `CopilotClient.start/createSession/resumeSession`；`session.send()`、`sendAndWait()`、`on()`、`abort()`、`disconnect()`、`setModel()` | `assistant.turn_start/end`、`tool.execution_start/complete`、`session.idle/task_complete` 等事件；内置 coding tools、permission handler 与可恢复 session |
 | **Claude** | Python `query()`；交互式 `ClaudeSDKClient.connect/query/receive_response/interrupt`；TypeScript `query({ prompt, options })` | `ClaudeAgentOptions` 覆盖工具、权限、`cwd`、`max_turns`、MCP、hooks、agents、skills、plugins、`can_use_tool` 与 `session_store`；`ResultMessage.session_id` 可恢复会话 |
-| **Codex** | TypeScript `startThread().run()` / `runStreamed()` / `resumeThread()`；Python `thread_start()` / `thread_resume()` / `thread.run()` / `thread.turn().stream()` | `ThreadEvent` 包含 thread / turn / item 生命周期与 fatal `error`；`ThreadItem` 包含命令执行、文件修改、MCP、Web 搜索、todo、reasoning、agent message 与 non-fatal `error` |
+| **Codex** | TypeScript `startThread().run()` / `runStreamed()` / `resumeThread()`；Python `thread_start()` / `thread_resume()` / `thread.run()` / `thread.turn().stream()` | TypeScript 的 `ThreadEvent` / `ThreadItem` 描述生命周期、工具和消息；Python 消费 app-server 通知，由 `TurnHandle` 提供流式事件、steer / interrupt 和最终结果收集 |
+
+> Python `0.167.1` 的 [turn handle 与事件收集](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L810-L843)与 TypeScript JSONL 事件分别理解；运行任务时保留各 SDK 自身的事件类型。
 
 > 来源：Copilot [Node quick start](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/README.md#L30-L61)、[session API](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/session.ts#L254-L337) 与 [session event types](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/generated/session-events.ts#L3054-L3081)；Claude [Python README](https://github.com/anthropics/claude-agent-sdk-python/blob/528265fa09da954f0a0da1bf31e16db32b510138/README.md#L33-L132) 与 [`ClaudeAgentOptions`](https://github.com/anthropics/claude-agent-sdk-python/blob/528265fa09da954f0a0da1bf31e16db32b510138/src/claude_agent_sdk/types.py#L1726-L2067)；Codex [`ThreadEvent`](https://github.com/openai/codex/blob/bc8222b8d9e44377a3d7c7b7970e32e7c29ec34f/sdk/typescript/src/events.ts#L68-L82)、[`ThreadItem`](https://github.com/openai/codex/blob/bc8222b8d9e44377a3d7c7b7970e32e7c29ec34f/sdk/typescript/src/items.ts#L97-L128) 与 [Python SDK README](https://github.com/openai/codex/blob/bc8222b8d9e44377a3d7c7b7970e32e7c29ec34f/sdk/python/README.md).
 
@@ -105,7 +108,7 @@ Claude 为 `@anthropic-ai/claude-agent-sdk`、`claude-agent-sdk`；Codex 为
 
 - Copilot runtime 的 `baseDirectory` 默认是 `~/.copilot`，包含 session state、配置等；精确磁盘布局属于 runtime 实现细节。
 - Claude 从 `ResultMessage.session_id` 恢复会话；底层 CLI 使用本地 JSONL，Python SDK 另有 `session_store` 协议可接外部存储。
-- Codex 明确把 thread 持久化到 `~/.codex/sessions`，通过 `resumeThread(id)` / `thread_resume(id)` 恢复。
+- Codex 的持久化线程使用其配置根下的会话存储，默认 `~/.codex/sessions`，通过 `resumeThread(id)` / `thread_resume(id)` 恢复；Python 的 `ephemeral=True` 用于内存线程。多账号目录、历史共享与 provider 的条件见 [Codex 登录态复用](codex.md#sdk-auth)。
 
 > 来源：Copilot [`baseDirectory`](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/types.ts#L214-L247)；Codex [thread persistence](https://github.com/openai/codex/blob/bc8222b8d9e44377a3d7c7b7970e32e7c29ec34f/sdk/typescript/README.md#L100-L104)；Claude `session_store` 见上方类型定义。
 
