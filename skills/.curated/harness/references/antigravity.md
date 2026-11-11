@@ -17,6 +17,8 @@ Google Antigravity 的终端 CLI（`agy`）与桌面版（Antigravity App / IDE�
 | `--model <name>` | 指定模型 |
 | `--mode auto` | 自动审批模式（安全命令不询问） |
 | `--output-format stream-json` | 机器可读输出 |
+| `--gemini_dir <path>` | **隐藏旗标**（被 `main.hideFlagsForExternal` 从 `--help` 隐藏）：指定 `.gemini` 目录路径（绝对路径直接生效，相对路径相对于 `$HOME`），用于多账号隔离而不污染 `$HOME` |
+| `--app_data_dir <rel>` | **隐藏旗标**：相对于 `GeminiDir` 的应用数据子目录名（默认 `"antigravity-cli"`；注意 `conversation_summaries.db` 按 `app_data_dir` 列过滤会话，多账号共享会话历史时应保持默认值 `"antigravity-cli"`，只改 `--gemini_dir`） |
 
 **关键斜杠命令**：`/context` 查看上下文用量、`/compact` 手动压缩、`/resume` 列出并恢复会话、`/usage` 查看额度、`/plan` 规划模式。
 
@@ -59,33 +61,58 @@ Google Antigravity 的终端 CLI（`agy`）与桌面版（Antigravity App / IDE�
 
 已运行进程不受磁盘文件替换影响——必须退出旧进程才能彻底切换。
 
-### 双账号隔离（已验证方案）
+### 双账号隔离（已验证根治方案：内置隐藏旗标 `--gemini_dir`，严禁替换 `HOME`）
 
-agy 不提供只重定向自身数据目录的环境变量（不像 Codex 有 `CODEX_HOME` 只改工具数据路径、不影响 git/SSH 等其他 `$HOME` 引用）。**唯一已验证的隔离方式是整个替换 `HOME`**——这意味着 git、SSH、工具配置也跟着换，需要额外软链回来。二进制中的 `ANTIGRAVITY_APP_DATA_DIR`、`ANTIGRAVITY_GEMINI_DIR`、`JETSKI_APP_DATA_DIR` 属于插件子命令入口，不改变主 CLI 数据目录。
+🔬 2026-11-12 二进制逆向与实测核实：
 
-在 `.bashrc` 中定义包装函数（类似 `codex-gth`）：
+- **内置隐藏旗标 `--gemini_dir`**：虽然 `agy` 的环境变量 `ANTIGRAVITY_APP_DATA_DIR` / `ANTIGRAVITY_GEMINI_DIR` / `JETSKI_APP_DATA_DIR` 仅用于插件子命令，且 `agy --help` 看不到数据目录参数，但逆向 `main.init.1`（`0xa5c299f`）证实二进制在全局 `flag.CommandLine` 上原生注册了两个旗标（仅被 `main.hideFlagsForExternal` 从 `--help` 面板隐藏）：
+  1. `--gemini_dir`（默认 `".gemini"`）：`"Path where Gemini files are stored. If absolute path, will set directly, otherwise relative to home directory"`
+  2. `--app_data_dir`（默认 `"antigravity-cli"`）：`"Path where application data is stored, relative to GeminiDir"`
+- **全链路生效验证**：
+  - `main.main` 在分发子命令（`models`、`mcp`、`plugin`、`agents`、`remote-control` 等，预扫描 `--help` 时亦自动跳过 `-` 前缀旗标）、启动 TUI / `--print`（`entrypoints.launchCLI` → `resolveGeminiDirPath` → `backend.NewServerBackend` → `auth.NewCLITokenStorage`）及启动语言服务（`language_server.setUpFS` → `local.SetGeminiDir`）之前统一执行 `flag.CommandLine.Parse`；甚至 `agy` 内部派生子进程（如后台 updater / remote-agent，`0xa25f733`、`0xa570a40`）也会自动透传 `--gemini_dir=<val>`。
+  - **为什么只传 `--gemini_dir` 而保持 `--app_data_dir` 默认值 `"antigravity-cli"`**：`conversation_summaries.db` 表含 `app_data_dir` 列，检索历史会话时固定过滤 `WHERE app_data_dir = ?`（默认值为 `'antigravity-cli'`）。只重定向 `--gemini_dir="$real_home/.agy-homes/$name/.gemini"` 并保持 `app_data_dir` 为 `"antigravity-cli"`，多账号实例即可通过软链无缝共享全部历史会话。
+- **为什么严禁再用替换 `HOME` 的旧方案**：
+  - 旧方案把 `HOME` 改写成 `~/.agy-homes/<name>`，会导致 `agy` 及其 `run_command` 派生的全部子进程（`trash-put`、`lake`、`elan`、`uv`、`git`、`ssh`、`codex` 等）把假 `HOME` 当成用户家目录：不仅 `trash-put` 会在 `~/.agy-homes/<name>/.local/share/Trash` 下产生普通终端 `trash-list` / `trash-empty`（含 `--all-users`）完全看不见的**隐形影子回收站**（实测漏掉 16 个旧克隆共 **55 GB**），还会造成 `.cache`（实测冗余 **22 GB**）、`.elan` 等缓存翻倍；靠逐个补顶层软链或覆写 `XDG_*` 只是围堵症状。
+  - 改用 `--gemini_dir` 后，**全程不修改 `$HOME`**（且通过 `export HOME="${HOME%%/.agy-homes/*}"` 自动纠正可能残留的旧面板环境），从根源上消除一切假 `HOME` 派生问题，无需在实例目录下软链任何顶层点文件，也无需覆写 `XDG_*`。
+
+在 `.bashrc` 中定义多账号实例包装函数（或写成 `~/.local/bin/agy-<name>` 可执行脚本，对非交互 `ssh <host> <cmd>` 与子进程均可见）：
 
 ```bash
-agy-alt() {
-    HOME="$HOME/.agy-homes/<account>" command agy "$@"
-}
+_agy_instance() (
+  set -euo pipefail
+  name="$1"; shift
+  real_home="${HOME%%/.agy-homes/*}"
+  bin="$real_home/.local/bin/agy"
+  gdir="$real_home/.agy-homes/$name/.gemini"
+  # 首次启动自动幂等铺齐 .gemini 下的共享软链，绝不触碰 $HOME
+  mkdir -p "$gdir/antigravity-cli"
+  [ -e "$gdir/config" ] || [ -L "$gdir/config" ] || ln -s "$real_home/.gemini/config" "$gdir/config"
+  for gitem in annotations brain conversations conversation_summaries.db conversation_summaries.db-shm conversation_summaries.db-wal history.jsonl implicit jetski_state.pbtxt mcp presence; do
+    if [ ! -e "$gdir/antigravity-cli/$gitem" ] && [ ! -L "$gdir/antigravity-cli/$gitem" ]; then
+      ln -s "$real_home/.gemini/antigravity-cli/$gitem" "$gdir/antigravity-cli/$gitem"
+    fi
+  done
+  export HOME="$real_home"
+  export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
+  unset GEMINI_DIR JETSKI_APP_DATA_DIR 2>/dev/null || true
+  exec "$bin" "--gemini_dir=$gdir" "$@"
+)
 ```
 
-函数只在加载过 `.bashrc` 的交互 shell 里存在；非交互调用（agent、`ssh <host> <command>`）解析不到它。把同样的逻辑写成 `~/.local/bin/agy-<name>` 可执行脚本，对所有调用方可见：实例名取自脚本名，复制改名即得新实例；脚本内每次启动幂等补链（目标存在且链接位置为空才建），免除一次性手工铺链。包装内同时 unset `GEMINI_DIR` / `JETSKI_APP_DATA_DIR`，并把 `XDG_CONFIG_HOME` 等四个 XDG 变量指向实例 HOME 下，避免调用方环境里的绝对路径穿透隔离。
+> 🔬 排查多账号入口先分清 shell 形态：若只定义在 `.bashrc` 中，非交互 `ssh <host> 'type agy-<name>'` 报 not found 不代表入口不存在（`.bashrc` 的交互守卫提前 return），换 `bash -ic` 再验。（2026-10-28 两台 Linux 实测）
 
-> 🔬 排查多账号入口先分清 shell 形态：非交互 `ssh <host> 'type agy-<name>'` 报 not found 不代表入口不存在（`.bashrc` 的交互守卫提前 return），换 `bash -ic` 再验。（2026-10-28 两台 Linux 实测）
-
-隔离 HOME 内部结构（`~/.agy-homes/<account>/`）：
+实例 `.gemini` 内部结构（`~/.agy-homes/<account>/.gemini/`）：
 
 | 路径 | 类型 | 说明 |
 |---|---|---|
-| `.gemini/antigravity-cli/antigravity-oauth-token` | 独立文件 | 该账号的凭据，**不能软链** |
-| `.gemini/antigravity-cli/settings.json` | 软链 → 真实 HOME | 共享主题、默认模型 |
-| `.gemini/config` | 软链 → 真实 HOME | 共享 MCP、skills、projects |
-| `.gitconfig` / `.ssh` / `.config` | 软链 → 真实 HOME | 共享 git 身份和工具配置 |
-| `conversations/` / `brain/` / `implicit/` 等 | 软链 → 真实 HOME | 共享会话历史和压缩数据 |
+| `antigravity-cli/antigravity-oauth-token` | 独立文件 | 该账号的凭据，**不能软链** |
+| `antigravity-cli/settings.json` | 独立文件或软链 | 各账号可独立保存默认模型（`/model`）与 `trustedWorkspaces`；`agy` 保存设置时走临时文件原子 rename |
+| `config` | 软链 → `~/.gemini/config` | 共享 `mcp_config.json`、`hooks.json`、skills、projects |
+| `antigravity-cli/{conversations,brain,implicit,presence,annotations,history.jsonl,jetski_state.pbtxt,mcp,conversation_summaries.db*}` | 软链 → `~/.gemini/antigravity-cli/…` | 共享会话历史、压缩数据、MCP schema 与活跃锁（`presence` 必须共享以通过 Ovis `/proc/<pid>/fd` realpath 校验） |
 
-这样两个入口各自刷新各自凭据、不互相覆盖，同时共享全部历史和配置；2026-10-28 升级后还需按下节屏蔽 keyring，否则两边凭据仍会串到同一条 keyring 记录。
+> **旧版假 `HOME` 实例目录的存量清理**：若机器曾跑过改写 `HOME="$h"` 的旧版包装，先检查 `~/.agy-homes/<account>/.local/share/Trash/{files,info}` 是否残留影子回收站条目（按 FreeDesktop 重名规则追加 `_1`、`_2`，将 `files/<name>` 与 `info/<name>.trashinfo` 成对同卷 `rename` 合并回 `~/.local/share/Trash/`），并将旧版仍在运行的进程过渡期内的顶层目录（`.local`、`.cache` 等）合并回真实 `HOME`。
+
+这样每个账号入口各自刷新各自的 `antigravity-oauth-token`、不互相覆盖，同时 `$HOME` 保持真实家目录不变、共享全部会话历史与唯一回收站；2026-10-28 升级后还需按下节屏蔽 keyring，否则两边凭据仍会串到同一条 keyring 记录。
 
 > 并发写 `conversation_summaries.db`（SQLite WAL 模式）在正常使用下安全；避免从两个入口同时打开同一会话即可。
 
@@ -95,20 +122,20 @@ agy-alt() {
 
 ### keyring 优先与实例隔离（2026-10-28 升级后）
 
-🔬 2026-10-29 实测：agy 自动升级（`bin/`、`builtin/` 目录 2026-10-28 14:16 更新）后鉴权改为 ChainedAuth、**优先 keyring**——真实 HOME 的 `antigravity-oauth-token` 不再生成。Secret Service 走 D-Bus、按 Linux 用户共享，**与 HOME 无关**，上述整体替换 HOME 的隔离对它完全失效：两个实例共用同一条 keyring 凭据，一边切换账号另一边数十秒内跟着变（日志证据：真实 HOME 浏览器登录后 40 秒，另一实例启动即 `ChainedAuth: authenticated via keyring (effective: keyring)`、同一账号；二进制含 `github.com/zalando/go-keyring`）。
+🔬 2026-10-29 实测：agy 自动升级（`bin/`、`builtin/` 目录 2026-10-28 14:16 更新）后鉴权改为 ChainedAuth、**优先 keyring**——默认实例的 `antigravity-oauth-token` 不再生成。Secret Service 走 D-Bus、按 Linux 用户共享，**与 `--gemini_dir` 路径无关**，仅靠重定向目录对它完全失效：两个实例共用同一条 keyring 凭据，一边切换账号另一边数十秒内跟着变（日志证据：默认实例浏览器登录后 40 秒，另一实例启动即 `ChainedAuth: authenticated via keyring (effective: keyring)`、同一账号；二进制含 `github.com/zalando/go-keyring`）。
 
 **修复（已验证）**：实例 wrapper 内把会话总线指向不存在的地址：
 
 ```bash
-export DBUS_SESSION_BUS_ADDRESS="unix:path=$H/.cache/agy-no-keyring/bus"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
 ```
 
 要点：
 
 - **不能只 `unset`**——godbus 在变量缺失时回退 `$XDG_RUNTIME_DIR/bus`，真实会话总线仍可达，keyring 照常工作，屏蔽即失效。
-- 连接立即失败（`connect: no such file or directory`），不是等 keyring 超时；触发二进制内置回退：日志出现 `Failed to load stored token from keyring, falling back to file` / `Failed to save token to keyring, falling back to file`，token 落回实例文件，HOME 隔离恢复生效。
-- 实例中残留的过期文件 token 会被 refresh 自动复活（实测 2026-10-28 的旧 token 于 10-29 直接刷新成功、恢复实例自有账号），无需重新登录；真实 HOME 的 agy 不动，继续走 keyring，两边账号彻底独立。
-- 残留共享点：`plugin-secrets.json` 存于 `$XDG_CONFIG_HOME/antigravity/`；若实例 `.config` 是整目录软链，插件密钥仍两边共享（与账号登录无关；介意时把 `.config` 改为真实目录＋按需软链）。
+- 连接立即失败（`connect: no such file or directory`），不是等 keyring 超时；触发二进制内置回退：日志出现 `Failed to load stored token from keyring, falling back to file` / `Failed to save token to keyring, falling back to file`，token 落回 `--gemini_dir` 下的 `antigravity-cli/antigravity-oauth-token` 文件，账号隔离即生效。
+- 实例中残留的过期文件 token 会被 refresh 自动复活（实测 2026-10-28 的旧 token 于 10-29 直接刷新成功、恢复实例自有账号），无需重新登录；默认 `agy` 不动，继续走 keyring，两边账号彻底独立。
+- 残留共享点：`plugin-secrets.json` 存于 `$XDG_CONFIG_HOME/antigravity/`（与账号登录无关）。
 
 第三方切换工具（[agyw](https://github.com/tranquocthong/agy-switcher)、[agy-cli-manager](https://github.com/zcop/agy-cli-manager)、[agyswap](https://pypi.org/project/agyswap-cli/)）均为全局切换型——切换前须退出所有 agy 进程，不支持并行。
 
