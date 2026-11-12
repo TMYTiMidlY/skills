@@ -251,6 +251,55 @@ async def main() -> None:
 > 源码：[同步与异步 `thread_start` / `thread_resume` / `thread_fork` / `Thread.run`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L135-L286)、[异步线程与 `TurnHandle`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L389-L774)、[`TurnResult` 数据结构](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/_run.py#L21-L35)。
 > 🔬 2026-11-11 实测：单 `codex app-server` 子进程内并发运行 4 个 `gpt-6.1-sol` 只读线程完成分片盘点；对 `ephemeral=True` 线程跨进程执行 `thread_resume` 复现 `-32600: no rollout found`；对持久化 rollout 执行跨进程 `thread_resume(..., cwd=...)` 并调用 `thread.read(include_turns=False)`，确认 `info.thread.cwd` 已更新且 `info.thread.path` 指向对应 `rollout-*.jsonl`。
 
+### <a id="sdk-task-delegation"></a>目标级任务委派与原生子代理分工
+
+通过 SDK 或 `app-server` 驱动 Codex 时，被调用对象已是包含上下文检索、方案规划、工具循环与原生子代理池（`multi_agent_v2`）的完整 coding-agent runtime。上层编排器与 Codex 主会话按**工作区与验收契约**分工，让 Codex 自主承担任务拆解与内部并发：
+
+| 层次 | 负责事项 |
+|---|---|
+| 上层编排器 | 准备持久工作区（如复用已有 `git worktree`）与干净的工具环境（仅对模型或代码托管域名按需配置代理，保持构建与产物缓存直连）；声明目标范围、写入边界与最终外部门禁（如整包编译、测试与静态审计），在轮次完成后执行独立验收 |
+| Codex 主线程与 `multi_agent_v2` | 排查跨文件根因与依赖顺序，自行制定修复或实现计划；在同一 `cwd` 下按需派生内部子代理并行推进独立子问题，跑通本地闭环后汇总提交 |
+
+确定由上层多开线程还是交由会话内部并发时，以**是否需要独立文件系统工作树**为判据：原生 `multi_agent_v2` 子代理共享父线程的 `cwd`、审批与沙箱设置（见 [Worktree 支持横向对照](worktree.md)），适合围绕同一工作树并行调研、审阅或协同修改无冲突模块；仅当多条分支或并行集成树需要彼此隔离的磁盘写入时，才由上层分配多个持久 `cwd` 与对应线程，并向每个线程交付各自完整的闭环目标。
+
+> 若上层替 Codex 在外部把同一闭环任务切碎成零散文件批次、逐批拉起未启用 `multi_agent_v2` 的一次性 `codex exec` 子进程并写死每步执行命令或低线程参数，既会切断跨文件依赖判断、闲置原生子代理动态调度，又会因最慢批次形成木桶效应，并反复承受工作区初始化与附属 MCP 服务冷启动开销。
+
+通过 Python SDK 向目标线程开放原生子代理并发时，可通过 `CodexConfig(config_overrides=...)` 或 `thread_start(config=...)` 显式启用 `multi_agent_v2` 并指定会话总并发槽位：
+
+```python
+from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox
+
+config = CodexConfig(
+    codex_bin="<Codex 可执行文件绝对路径>",
+    env={"CODEX_HOME": "<已初始化账号目录的绝对路径>"},
+)
+with Codex(config) as codex:
+    thread = codex.thread_start(
+        cwd="<持久 worktree 绝对路径>",
+        sandbox=Sandbox.workspace_write,
+        approval_mode=ApprovalMode.auto_review,
+        config={
+            "features": {
+                "multi_agent_v2": {
+                    "enabled": True,
+                    # M 含主线程本身（M=1 表示 0 个子代理，M=5 允许主线程 + 4 个并行子代理）
+                    "max_concurrent_threads_per_session": 5,
+                }
+            }
+        },
+    )
+    result = thread.run("修复当前分支全部编译与测试报错并保持公理与静态检查通过。")
+```
+
+| 配置键 | 口径与运行时行为 |
+|---|---|
+| `features.multi_agent_v2.enabled = true` | 显式选择 v2 子代理工具集，避免跟随历史线程或旧开关漂移 |
+| `features.multi_agent_v2.max_concurrent_threads_per_session = M` | 含主线程在内的会话总并发上限（最小为 `1`）；未单设时由旧键 `agents.max_concurrent_threads_per_session = N` 折算为 `N + 1` |
+| `features.multi_agent_v2.root_agent_usage_hint_text` / `subagent_usage_hint_text` | 覆盖默认角色使用提示；省略时 `resolve_usage_hints()` 会拼接当前 `max_concurrency` 槽位数进入 developer 消息 |
+
+> 源码（`73a1148c9c775c2a4616ce5096291740a00ed68a` 与 `rust-v0.167.1`）：[`CodexConfig.config_overrides` 与 `thread_start(config=...)`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/client.py#L194-L265)、[`thread_start` 参数传递](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L137-L165)、[`resolve_multi_agent_v2_config` 优先级与 `N + 1` 折算](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/core/src/config/mod.rs#L2708-L2728)、[`resolve_usage_hints` 默认槽位提示拼接](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/core/src/session/multi_agents.rs#L101-L137)、[子线程创建后向同一 `app-server` 连接附加事件监听](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/app-server/src/lib.rs#L1185-L1205)。
+> 运行时边界：会话执行容量在 Rust 端首次初始化后绑定于当前服务实例，若编排器需在轮间动态升降 `M`，应在轮次边界重建专用 `app-server` 并用 `thread_resume(thread.id)` 恢复原线程；同时固定上述两条 `*_usage_hint_text`，可避免槽位数变动改写 developer 消息前缀而影响上下文缓存命中。Python SDK 的 `TurnHandle.stream()` 仅订阅主轮自身的 `turn_id`（见 [`api.py` 订阅实现](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L840-L855) 与 [`_message_router.py` 路由分支](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/_message_router.py#L270-L295)），需要观测子代理实时事件时应在底层连接分发前旁路监听通知。
+
 ### <a id="sdk-sandbox-overrides"></a>编排器的沙箱参数与配置继承
 
 通过 SDK 或 app-server 驱动分片任务时，实际生效的沙箱策略按“配置层栈 → 线程生命周期 → 单轮执行”逐级覆盖；上层只要显式传入非空参数，就会压过下层配置：
