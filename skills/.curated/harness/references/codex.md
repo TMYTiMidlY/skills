@@ -251,6 +251,32 @@ async def main() -> None:
 > 源码：[同步与异步 `thread_start` / `thread_resume` / `thread_fork` / `Thread.run`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L135-L286)、[异步线程与 `TurnHandle`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L389-L774)、[`TurnResult` 数据结构](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/_run.py#L21-L35)。
 > 🔬 2026-11-11 实测：单 `codex app-server` 子进程内并发运行 4 个 `gpt-6.1-sol` 只读线程完成分片盘点；对 `ephemeral=True` 线程跨进程执行 `thread_resume` 复现 `-32600: no rollout found`；对持久化 rollout 执行跨进程 `thread_resume(..., cwd=...)` 并调用 `thread.read(include_turns=False)`，确认 `info.thread.cwd` 已更新且 `info.thread.path` 指向对应 `rollout-*.jsonl`。
 
+### <a id="sdk-sandbox-overrides"></a>编排器的沙箱参数与配置继承
+
+通过 SDK 或 app-server 驱动分片任务时，实际生效的沙箱策略按“配置层栈 → 线程生命周期 → 单轮执行”逐级覆盖；上层只要显式传入非空参数，就会压过下层配置：
+
+| 优先级（低 → 高） | 配置项 / 调用入口 | 取值写法与继承行为 |
+|---|---|---|
+| 配置层栈 | `config.toml` 的 `sandbox_mode`（见[配置层栈](#config-layering)） | `"read-only"` / `"workspace-write"` / `"danger-full-access"`；新线程未收到显式覆盖时沿用该值 |
+| 线程生命周期 | JSON-RPC `thread/start` · `thread/resume` · `thread/fork` 的 `sandbox`<br>Python SDK `thread_start` · `thread_resume` · `thread_fork` 的 `sandbox` | Wire 字符串同上；SDK 传 `Sandbox.read_only` / `workspace_write` / `full_access`（映射为 `"danger-full-access"`）。传 `None`（省略字段）继承配置层栈，非空覆盖线程默认策略 |
+| 单轮执行 | JSON-RPC `turn/start` 的 `sandboxPolicy`<br>Python SDK `thread.run` · `thread.turn` 的 `sandbox` | Wire 为标记联合 `{"type": "readOnly" \| "workspaceWrite" \| "dangerFullAccess"}`；SDK 仍传 `Sandbox` 枚举。传 `None` 沿用当前线程策略，非空仅覆盖本轮执行 |
+
+编写或排查分片调度器时，按以下契约收口权限参数：
+
+1. **区分“省略继承”与“显式默认”**：若希望沿用各账号或仓库的 `config.toml`，分片未填 `sandbox` 时保持 `None`（JSON-RPC 请求省略该键），避免用 `spec.get("sandbox", "workspace-write")` 把缺省分片静默改写成显式降权覆盖。
+2. **对齐线程级与单轮级的协议形态**：若由调度器统一指定策略，线程创建 / 恢复与每轮 `turn` 入口应共用同一解析结果。混用原始 JSON-RPC 与 Python `AsyncThread.turn` 时，需同时对齐 wire 字符串与 `Sandbox` 枚举（`Sandbox.full_access` 的枚举值为 `"full-access"`，而 `thread/start` 的 wire 值为 `"danger-full-access"`）：
+
+   ```python
+   raw = spec.get("sandbox")  # 保持 None 则继承 config.toml；或显式统一缺省值
+   wire_sb = "danger-full-access" if raw in ("danger-full-access", "full-access") else raw
+   sdk_sb = Sandbox.full_access if wire_sb == "danger-full-access" else (Sandbox(wire_sb) if wire_sb else None)
+   ```
+
+3. **隔离授权边界并核验运行态 worker**：沙箱（`sandbox`）与审批（`approvalPolicy` / `approval_mode`）独立生效；`danger-full-access` 仅在用户已授权的工作目录与分片边界内启用。更新分片配置、调度器默认值或 `config.toml` 后，需在新建或重连后的轮次中实测原先受限的操作，确认在跑 worker 已切换到目标策略。
+
+> 源码：[`Sandbox` 枚举与线程 / 单轮 wire 映射](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/_sandbox.py#L14-L72)、[线程创建 / 恢复 / 分叉的 `sandbox` 透传](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L155-L286)、[`Thread.run` / `Thread.turn` 的 `sandbox_policy` 透传](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L581-L665)。
+> 2026-11-13 编排器排障记录：多账号全局 `config.toml` 已设 `sandbox_mode = "danger-full-access"`，但自建分片调度器对未显式配置 `sandbox` 的分片回退填入 `"workspace-write"`，并在 `thread/start`、`thread/resume` 与 `AsyncThread.turn` 同时传入，覆盖了全局配置；补齐各分片配置并统一调度器缺省值后恢复一致（基于调度器与 SDK `0.167.1` 源码静态核对，未重放旧进程运行态）。
+
 ### <a id="sdk-auth"></a>现有登录态与多账号目录
 
 Python SDK 自动复用 Codex 已有认证。默认启动实现复制父进程环境，再合并 `CodexConfig.env`；Codex 子进程按实际 `CODEX_HOME` 读取配置和认证来源，并维护原生登录与刷新。文件式认证位于该目录的 `auth.json`，其他存储方式见 [订阅登录凭据](#subscription-auth)。同一系统用户、同一配置根且凭据存储可访问时，可沿用现有 ChatGPT 登录；脚本无需自行提取 token 或另填 API key。
