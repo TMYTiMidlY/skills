@@ -9,7 +9,7 @@ Git 与 jj 的日常操作、隔离工作区、受限网络获取、发版 / 发
 
 ## PostgreSQL 读写性能
 
-量化 PostgreSQL 读写性能受哪些因素影响，按三层拆开讲机理、测法与实测：**容器层**（数据卷不过 overlayfs 所以 I/O ≈ 原生，代价在 `/dev/shm` 默认 64MB、`stop_grace_period` 默认 10 秒等别处；SSD+HDD 混用时用 tablespace 做冷热分层的目标形态，以及原生安装 vs Docker 落地这套分层的成本对照——Docker 一次性配置略麻烦、但容器内路径是稳定抽象，换盘换机器不用碰库里的 tablespace 定义）、**介质层**（硬 RAID 卡后面 `ROTA` 不可信要用 `storcli` 问介质与缓存保护模块，BBU 坏会静默降级 WriteThrough；校验型 RAID 的写惩罚；写缓存打穿前后 fsync 差 64 倍并解释了 checkpoint 单文件 fsync 565 秒的事故——附「`Ds` 状态 + BlockIO 计数器不变无法区分卡死与巨慢、观察窗口要匹配单次操作量级」的诊断教训；SSD 镜像 / HDD 阵列 / 网络 LUN 横向实测，fsync 差到 1600 倍而顺序带宽反向）、**网络层**（千兆链路上限与延迟构成、经 Windows iSCSI Initiator + WSL2 的完整链路对读数归因的影响；**精简置备空洞读法**把网络与磁盘瓶颈分开，据此定出「顺序读卡网络、随机读卡磁盘、存储端 CPU 有 15 倍余量」；队列深度扫描，`dd`/`hdparm` 相当于 QD=1 会低估 36%）。另含共用的指标口径与 `fio` / `pgbench` 基线命令、PG 的数据布局与参数（`random_page_cost` 随介质设、`work_mem` 是每节点每并行进程一份）、以及迁移相关的 zstd vs gzip 实测与 `pg_restore` 出错仍返回 0 必须加 `--exit-on-error`，见 [references/postgresql.md](references/postgresql.md)。
+先区分事务提交、查询扫描与备份恢复的工作负载，再沿 WAL、数据文件、容器挂载、介质和网络定位瓶颈。指标选择、WAL 组提交、`pg_test_fsync` 与代表性 `pgbench` 测试的分工，及历史实测的适用边界见 [references/postgresql.md](references/postgresql.md)。单次同步延迟不能直接换算整库 TPS，也不能用它证明容器与原生性能相同；存储微基准的通用方法由 `io` skill 负责。该文同时保留 tablespace 分层、参数和跨机迁移案例。
 
 ## SSH
 

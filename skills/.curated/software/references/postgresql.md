@@ -15,138 +15,132 @@
 
 ## <a id="metrics"></a>指标与测量方法
 
-三层变量共用同一套指标和同一套 fio 基线，先在这里讲清楚，后面三章只给各自的机理与实测。
+先识别工作负载，再选择存储指标。这里采用 PostgreSQL 17 的机制说明；历史数值是前述迁移环境的记录，不是本次重新跑出的基准。缺少原始输出或配置时，应保留“不足以归因”的结论。
 
-### <a id="io-metrics"></a>数据库敏感的 I/O 指标
+### <a id="io-metrics"></a>工作负载与 I/O 指标
 
-一般人测盘只看一个数：顺序读写速度（`hdparm -t`、`dd` 跑出来的 MB/s）。**对数据库来说这个数几乎没用。**
-
-数据库真正吃的是另外三个：
-
-| 指标 | 通俗解释 | 影响什么 |
+| 工作负载 | 重点观察 | 不能直接得出的结论 |
 |---|---|---|
-| **fsync 延迟** | 「确认这笔数据真落盘了」要等多久 | 每次事务提交，**最关键** |
-| **随机 IOPS** | 每秒能处理多少个零散的小块读写 | 索引查找、随机扫描 |
-| 顺序带宽 | 连续大块数据的传输速度 | 全表扫描、备份、恢复 |
+| 单连接小事务，同步提交 | 完整事务延迟、WAL 写入与同步、网络往返 | 事务延迟不等于单次文件 fsync 延迟 |
+| 高并发小事务 | TPS、尾延迟、组提交、CPU 和锁等待 | `1 / fsync 延迟` 不是整库吞吐上限 |
+| 索引访问、随机扫描 | 缓存命中、实际读量、随机读延迟与 IOPS | 随机写结果不能代替随机读结果 |
+| 大表扫描、备份、恢复 | 顺序吞吐、CPU / 压缩与网络 | 顺序带宽不能被一概排到最后 |
 
-fsync 延迟排第一，是因为**每提交一次事务都要等一次 fsync**——这个延迟直接乘在每秒事务数上。顺序带宽排最后，是因为数据库很少真在做纯顺序 I/O。
+正常的持久化写事务先保证相关 WAL（预写日志）满足提交时的同步要求，不必在每次提交时把该事务修改的所有数据页刷盘。WAL 是顺序写入；组提交允许多个事务共享一次 WAL 刷盘。因此，“8 KiB 随机写一次、同步一次”只是一个存储访问模式，不是完整的 PostgreSQL 提交路径。
 
-这个排序不是修辞：本次实测里，8 盘 HDD 阵列的顺序读比 SSD 镜像还快一倍，fsync 却慢 83 倍（数据见[后端横向实测](#media-benchmark)）。只看带宽会直接得出「用 HDD 阵列」的错误结论。
+> 依据：[PostgreSQL 17 · WAL](https://www.postgresql.org/docs/17/wal-intro.html)与[组提交](https://www.postgresql.org/docs/17/wal-configuration.html)。
 
-> 也因此 `hdparm -t` 和 `dd` 这类工具不适合给数据库选盘——它们量的正好是数据库最不在乎的那个维度。
+对比前记录 `fsync`、`synchronous_commit`、`wal_sync_method` 以及同步复制配置。异步提交可以在日志持久化前返回，配置了同步复制时提交等待还可能包含备库；不同持久性要求的结果不能直接排名。不要为了提高基准成绩关闭 `fsync`，也不要把异步提交与关闭 `fsync` 的风险混为一谈。
 
-### <a id="fio-baseline"></a>fio 基准命令与参数语义
+> 配置语义见 [PostgreSQL 17 · WAL 参数](https://www.postgresql.org/docs/17/runtime-config-wal.html)及[异步提交](https://www.postgresql.org/docs/17/wal-async-commit.html)。
 
-`fio` 是唯一能把上面三个数分开量的常用工具。三条命令覆盖全部：
+### <a id="fio-baseline"></a>存储微基准与 WAL 同步测试
+
+`fio` 测量的是所选文件或设备的访问模式；它不包含 SQL、锁、WAL 组提交和查询执行。8 KiB 只是一个块大小，不因它接近默认数据页大小就自动等价于数据库行为。通用 fio 准备、随机 / 顺序读写与安全边界由 `io` skill 负责。
+
+比较 WAL 所在文件系统的同步方法，可以使用 `pg_test_fsync`。先把 `BENCH_ROOT` 指向**已获准、位于相同文件系统但不属于 PGDATA / pg_wal 的独立测试目录**，确认负载窗口和可用空间；不能拿现有数据库文件充当测试文件：
 
 ```bash
-# ① fsync 延迟（最重要）：单线程 8K 随机写，每写一笔就 fsync
-#    模拟的就是数据库提交事务
-fio --name=commit --filename=/path/testfile --size=2G \
-    --bs=8k --rw=randwrite --ioengine=libaio \
-    --iodepth=1 --fsync=1 --direct=1 \
-    --runtime=25 --time_based
-
-# ② 随机写 IOPS：深队列并发
-fio --name=wiops --filename=/path/testfile --size=4G \
-    --bs=8k --rw=randwrite --ioengine=libaio \
-    --iodepth=32 --numjobs=4 --direct=1 \
-    --runtime=25 --time_based --group_reporting
-
-# ③ 随机读 IOPS
-fio --name=riops --filename=/path/testfile --size=4G \
-    --bs=8k --rw=randread --ioengine=libaio \
-    --iodepth=32 --numjobs=4 --direct=1 \
-    --runtime=25 --time_based --group_reporting
+bench=$(mktemp -d "${BENCH_ROOT:?请先设置获准的独立测试目录}/.pg-fsync.XXXXXX") || exit 1
+pg_test_fsync -f "$bench/test.out" || exit 1
+trash-put "$bench"
 ```
 
-几个参数的意思，因为选错了结果会完全不同：
+这给出不同 WAL 同步方法的相对成本，不给出数据库 TPS，也不验证设备的断电可靠性。测试失败时保留诊断，确认残留路径后再移至回收站。
 
-- `--direct=1`：绕过操作系统的页缓存。**不加这个测的就是内存速度**，数字漂亮但没意义。
-- `--iodepth`：同时压多少个请求，见[队列深度的语义与瓶颈判读](#queue-depth)。
-- `--fsync=1`：每写一笔就强制落盘，这才是数据库提交的真实行为。
-- `--bs=8k`：对齐 PostgreSQL 的默认页大小，量出来的数才和数据库行为对得上。
-- 测试文件写在要评估的那个文件系统上，测完记得删。
+> 用途与限制见 [PostgreSQL 17 · pg_test_fsync](https://www.postgresql.org/docs/17/pgtestfsync.html)。实际 WAL 同步方式可能使用显式同步调用或同步写选项，不能把所有方法都当作同一种 `fsync()` 调用。
 
-### <a id="queue-depth"></a>队列深度的语义与瓶颈判读
+使用 fio 补测时，明确区分缓冲 I/O、direct I/O 与持久化同步。`direct=1` 不等于绕过所有设备缓存或保证持久化；缓冲模式也不一定只测内存。原文的 `libaio + direct=1 + fsync=1` 参数组合不能单凭命令行证明每次写都执行了预想的同步，应核对原始 sync 统计。测显式同步成本时可用 `psync + direct=0 + fsync=1` 的独立文件微基准，但仍不将其命名为事务提交测试。
 
-`--iodepth` 是「同时在飞的请求数」。`dd` 和 `hdparm` 默认都是发一个等一个（相当于 QD=1），所以它们的读数在高延迟设备上会被严重低估——同一套网络存储，QD 从 1 提到 8，顺序读涨了 36%（数据见[队列深度扫描下的顺序读](#qd-sweep)）。
+> [fio 3.39 · fsync 参数](https://github.com/axboe/fio/blob/fio-3.39/HOWTO.rst#L1403-L1419)明确提醒，非缓冲 I/O 下可能不执行该同步。历史数字保留在后文，不能用新的参数说明反向补造旧测量的条件。
 
-反过来，扫一遍队列深度也能告诉你瓶颈在哪：
+### <a id="queue-depth"></a>队列深度与并发
 
-- **提高 QD 速度明显上升** → 之前卡在**延迟**上（在等往返，不是带宽不够）
-- **提高 QD 速度几乎不变** → 已经**撞到带宽天花板**
+fio 的 `iodepth` 是每个 job 的目标在途请求数，实际深度还受引擎、内核和提交方式影响，必须核对输出中的深度分布。提高深度后吞吐上升说明此前并发未充分利用路径；出现平台期可能是设备、链路、CPU、锁或限速所致，不能只凭曲线断定带宽耗尽。排队还可能增加尾延迟。
 
-### <a id="write-cache-bias"></a>写缓存对 fsync 读数的干扰
+`dd` 的同步用户态调用不能直接等同于底层设备始终 QD=1，预读和回写也会形成设备请求。后文记录的约 36% 差异只属于那组测量条件，不是所有工具读数的修正系数。
 
-存储设备（RAID 卡、NAS 控制器）都有写缓存。数据量小又是顺序的时候，缓存全吃下，立刻回一句「写好了」，fsync 看起来飞快；一旦进入持续随机写，缓存被打穿，每一笔都得真等磁盘，性能直接塌方。本次实测里同样是「8K 写 + fsync」，两种测法差了 64 倍（数据与事故见[写缓存打穿与 checkpoint 停滞](#write-cache-breakdown)）。
+> 参数语义见 [fio 3.39 · HOWTO](https://github.com/axboe/fio/blob/fio-3.39/HOWTO.rst)。历史数值见[队列深度扫描](#qd-sweep)。
 
-规避办法只有两条：
+### <a id="write-cache-bias"></a>写缓存、同步与稳态
 
-- 随机写的范围要**大到打穿缓存**（远超缓存容量，比如上面命令里的 `--size=4G` 起步，缓存大就再加）
-- 或者干脆在真实负载下观察，别在空闲时随手测一发就下结论
+具备有效掉电保护且正确处理 flush 的控制器缓存可以合法地加速同步写；“还在缓存中”不等于持久化失败。易失性缓存虚假确认 flush 则是可靠性问题，不能靠扩大文件来证明安全。
+
+原案例的小量顺序写与大范围随机写同时改变了工作集和访问模式，读数相差约 64 倍不能单独归因为缓存容量，更不能把随机数据文件同步成本换算为 WAL 提交延迟。评估持续负载应固定模式和并发、记录时间序列，再逐项改变工作集及持续时间；“大于缓存”或“至少 4 GiB”都不是充分条件。
+
+> 设备缓存与刷盘契约见 [PostgreSQL 17 · Reliability](https://www.postgresql.org/docs/17/wal-reliability.html)。原数字及 checkpoint 日志见[历史同步测试](#write-cache-breakdown)。
 
 ### <a id="pgbench"></a>pgbench 端到端复核
 
-fio 量的是块设备，最终还得看 PostgreSQL 自己跑出什么数。`pgbench` 是随 PG 发行的标准压测工具：
+先确认目标是**已建立、允许破坏性初始化的独立测试数据库**。`pgbench -i` 会删除并重建同名 `pgbench_*` 表，不能在业务库里随手运行。按可用空间和所需缓存状态选择规模，不仅与 `shared_buffers` 比较，还要考虑操作系统页缓存及工作集访问分布。
+
+下面分组展示命令，不表示应在未确认数据库身份时整段执行。先设定 `TEST_DB` 和 `SCALE`，核对连接的主机、端口、用户及数据库：
 
 ```bash
-pgbench -i -s 1000 <db>              # 初始化；规模因子决定数据集大小，要大到超过 shared_buffers
-pgbench -c 16 -j 8 -T 300 <db>       # 读写混合（TPC-B 类），每笔事务都提交 → 直接压 fsync
-pgbench -c 32 -j 8 -T 300 -S <db>    # -S 只读，压的是缓存命中与 CPU，不碰 fsync
+: "${TEST_DB:?请先设置并核对独立测试数据库名}"
+: "${SCALE:?请按测试目标与可用空间设置规模因子}"
+pgbench -i -s "$SCALE" "$TEST_DB" || exit 1
+
+# 单连接读写：观察完整事务路径
+pgbench -c 1 -j 1 -T 300 -P 10 -r "$TEST_DB" || exit 1
+# 并发读写：同时观察吞吐、延迟、锁与 CPU，不只看同步次数
+pgbench -c 16 -j 8 -T 300 -P 10 -r "$TEST_DB" || exit 1
+# 只读点查：可能命中缓存，也可能产生实际数据读取；不是大表扫描测试
+pgbench -c 32 -j 8 -T 300 -P 10 -r -S "$TEST_DB" || exit 1
 ```
 
-`<多盘服务器>` 的 SSD 镜像上，按 [PostgreSQL 的数据布局与参数](#pg-tuning) 那组配置实测：
+每组保持可比的初始化与预热条件并重复运行，记录失败事务；需要尾延迟时保存事务日志。`-c` 是客户端会话数，`-j` 是压测客户端线程数，不是 PostgreSQL 并行查询进程数。默认脚本只是 TPC-B-like 工作负载，并非正式 TPC-B 结果；大表扫描或业务 SQL 应另用代表性自定义脚本，不从 `-S` 点查推断。
+
+> 初始化风险、参数和自定义脚本见 [PostgreSQL 17 · pgbench](https://www.postgresql.org/docs/17/pgbench.html)。
+
+`<多盘服务器>` 的 SSD 镜像上，原记录在[该组配置](#pg-tuning)下得到：
 
 ```
-读写（TPC-B，16 连接）:  11,523 TPS，延迟 1.39 ms
-只读（32 连接）:        331,931 TPS，延迟 0.096 ms
+读写（TPC-B-like，16 连接）:  11,523 TPS，延迟 1.39 ms
+只读（32 连接）:             331,931 TPS，延迟 0.096 ms
 ```
 
-读写那个 11,523 TPS 就是 fsync 延迟的直接体现——0.089 ms 的提交延迟才撑得起这个数。同一套配置放到 `<NAS>` 上（fsync 143 ms），理论上限大约每秒 7 笔。两者相差三个数量级，而**容器与原生的差别在这个尺度下根本看不见**——这也是下一章的出发点。
+这些数字描述该次负载，不是单次 fsync 的倒数。16 个并发会话与 1.39 ms 平均延迟约对应 1.15 万 TPS，体现的是并发事务的完成速率；不能据此认定事务只花 0.089 ms。类似地，不能从 NAS 的 143 ms 随机写同步读数推导整库“最多 7 TPS”，也不能据此证明容器零开销。定位提交瓶颈还需同时核对 WAL、锁、CPU、数据读取和复制等待。
 
 ## <a id="container"></a>容器：Docker 与原生部署的 I/O 路径
 
-「用 Docker 跑还是 `apt` 装的原生跑更快」是个常问的问题，答案是**几乎没区别**，前提是数据别放错地方。这一章讲清楚为什么，以及容器化真正要付的代价在哪。
+部署方式与存储路径应分别验证。把数据库数据放到持久卷上可以避开容器可写层，但“没有经过某一层”不足以证明整体性能与原生相同。
 
-### <a id="volume-vs-overlay"></a>数据卷与 overlayfs 的分工
+### <a id="volume-vs-overlay"></a>数据卷与容器可写层
 
-Docker 的存储分两层：
+采用 OverlayFS 的容器可写层可能带来写时复制开销；Docker 也有其他存储后端。普通本地 volume / bind mount 可以让数据不经过该可写层，但实际路径仍取决于宿主文件系统、卷驱动、资源限制，以及是否经过虚拟机或远端存储。named volume 与 bind mount 的管理方式不同，不能不看后端就宣称性能相同。
 
-- **容器可写层**走 overlayfs（写时复制），确实慢，但那是给临时文件用的
-- **数据卷**（无论 named volume 还是 bind mount）是宿主机文件系统上的普通目录，**直接绕过 overlayfs**
+先核对 PGDATA、WAL 和 tablespace 的实际挂载，再在相同版本、存储、数据和资源限制下做对照。
 
-数据库的数据目录一定挂在卷上，所以走的是第二条路，和原生装读写同一块盘没有本质差别。
-
-> 顺带澄清两个容易混的名词：**named volume** 是 Docker 自己管、放在它的 data-root 下；**bind mount** 是你指定宿主机的某个路径挂进去。两者都不过 overlayfs，性能上没区别，区别只在谁负责管理生命周期。详见 [Docker 文档 · Bind mounts](https://docs.docker.com/engine/storage/bind-mounts/)。
+> [Docker · Volumes](https://docs.docker.com/engine/storage/volumes/)说明了卷与可写层的区别；这是非版本化说明，具体后端与默认值仍需核对实际 Docker 版本和部署配置。
 
 ### <a id="container-costs"></a>容器化的代价清单
 
-容器化真正的代价在别处，和 I/O 路径无关：
+除实际 I/O 路径外，还需要核对这些运行条件：
 
 | 项目 | 情况 |
 |---|---|
-| 磁盘 I/O | ≈ 原生 |
-| 网络 | 默认 bridge 有 NAT 开销；内部服务走环回或自定义网络时可忽略 |
-| 共享内存 | 容器默认 `/dev/shm` 只有 64 MB，**数据库会撞墙**，要显式调大 |
+| 磁盘 I/O | 相同本地挂载可避开可写层；是否等同原生需要对照测量 |
+| 网络 | bridge、host、虚拟机及远端链路各有路径差异，不能统一忽略 |
+| 共享内存 | 核对 `/dev/shm` 容量和并行操作需求；原案例 64 MB 不足，不代表所有数据库操作都会失败 |
 | 内核级调优 | HugePages 之类在容器里配置更麻烦（不是做不到） |
 | 大版本升级 | 换镜像 tag **不会**自动升级数据目录，仍需 `pg_upgrade` 或 dump/restore |
-| 关闭时限 | 默认 10 秒就 SIGKILL，不够 PG 干净关闭，会导致下次启动走崩溃恢复 |
+| 关闭时限 | 核对停止信号、宽限时间与实测关闭耗时；超过时限被强杀会影响下次启动 |
 
 前两条里那个 64 MB 的 `/dev/shm` 是真会咬人的——本次实测中建向量索引时直接报 `could not resize shared memory segment`，索引没建成。这两项在 compose 里各一行就好：
 
 ```yaml
-shm_size: "2gb"           # 默认 64MB，并行查询和建索引会撞墙
-stop_grace_period: 2m     # 默认 10 秒，给 PG 留够时间做关闭前的 checkpoint
+shm_size: "2gb"           # 本例取值，仍需按并行工作负载核对
+stop_grace_period: 2m     # 本例宽限时间，不保证任何负载都能在 2 分钟内关闭
 ```
 
 ### <a id="tiering-design"></a>SSD 与 HDD 混用的分层设计
 
 `<多盘服务器>` 同时有 2 片 SSD（快、容量小）和 8 片 HDD（慢、容量大）。想「容量吃 HDD、速度吃 SSD」，PostgreSQL 侧的抓手是 **tablespace**——把不同的表 / 索引落到不同的挂载点上。
 
-目标形态：
+针对本案例低延迟目标可评估以下分层；操作前另行安排迁移、锁等待、备份和容量检查：
 
-- **PGDATA 整体放 SSD**。里面装着系统表、`pg_wal`、`pg_xact` 和临时文件，全是小块随机写加 fsync 密集的东西，一寸都不该放机械盘。
+- **本案例将 PGDATA 放在 SSD**，以改善随机访问和同步延迟；不能把其中的 WAL、表页和临时文件统称为同一种随机写负载。其他部署仍按延迟目标、容量、耐久性和成本判断。
 - **HDD 上开一个 tablespace，只收冷数据**——只读的、靠大块顺序扫描的历史表：
 
   ```sql
@@ -154,7 +148,7 @@ stop_grace_period: 2m     # 默认 10 秒，给 PG 留够时间做关闭前的 c
   ALTER TABLE big_archive SET TABLESPACE cold_data;
   ```
 
-- **表体和索引可以分开放**。索引查找是典型随机读，最吃 SSD；把表体放 HDD、索引留在默认 tablespace（SSD）往往是性价比最高的一刀：
+- **表体和索引可以分开放**。但索引扫描仍可能回表，索引单独加速并不保证查询加速；结合缓存命中、执行计划和实际访问量验证：
 
   ```sql
   CREATE INDEX idx_archive_ts ON big_archive (created_at) TABLESPACE pg_default;
@@ -166,7 +160,7 @@ stop_grace_period: 2m     # 默认 10 秒，给 PG 留够时间做关闭前的 c
   ALTER TABLESPACE cold_data SET (random_page_cost = 4, effective_io_concurrency = 2);
   ```
 
-- **临时文件别往 HDD 放**。大排序 / 哈希溢出写的是随机块，`temp_tablespaces` 指到机械盘等于把最痛的负载送去最慢的地方，留在 SSD。
+- **临时文件按溢出工作负载选盘**。外部排序和哈希溢出包含批量写入、归并或分批读取，不全是随机块；同时测量吞吐、并发争用与查询延迟，再决定 `temp_tablespaces`。
 
 机制上必须知道的一点：tablespace 在磁盘上就是 `PGDATA/pg_tblspc/<oid>` 下的一个**符号链接**，指向 `LOCATION`。由此带来三个连锁后果：
 
@@ -229,13 +223,11 @@ CREATE TABLESPACE cold_data LOCATION '/mnt/cold';
 
 ### <a id="container-measured"></a>部署方式的实测差异
 
-本次**没有做同机 Docker vs 原生的 A/B 对照**，所以「两者性能相同」这条是机理推断加侧面印证，不是直接实测：
+本次**没有做同机 Docker vs 原生的 A/B 对照**，因此容器开销尚未在该环境中量化。11,523 TPS 与 0.089 ms 同步读数不能作为“两者相同”的侧面证明，它们来自不同测量对象。
 
-- **机理**：数据卷不过 overlayfs，容器进程读写的是宿主文件系统上的同一批 inode，路径上只多了 namespace 与 cgroup 的记账。
-- **侧面印证**：容器里跑出的 pgbench 读写 11,523 TPS，与该 SSD 的 fsync 延迟（0.089 ms）推出的上限吻合，没观察到额外损耗（见 [pgbench 端到端复核](#pgbench)）。
-- **外部佐证**：Felter 等人用 fio 系统比较过原生、Docker 与 KVM 的块 I/O，结论是走数据卷的 Docker 与原生基本持平（[An Updated Performance Comparison of Virtual Machines and Linux Containers, ISPASS 2015](https://doi.org/10.1109/ISPASS.2015.7095802)）。
+复测时保持 PostgreSQL 版本、数据、实际存储路径、CPU / 内存额度、同步设置和并发一致，分别采集吞吐及延迟。卷绕过可写层只是机制线索，不排除资源限制、虚拟机、卷驱动和网络带来的其他成本。
 
-置信度：高。真正会咬人的从来不是 I/O 路径，而是[上面那张代价清单](#container-costs)里的默认值——尤其 64 MB 的 `/dev/shm`。相比之下，换一块盘带来的差距在下一章。
+> 原文引用的 [ISPASS 2015 容器与虚拟机性能论文](https://doi.org/10.1109/ISPASS.2015.7095802)保留为历史阅读材料，不能替代当前环境的配对测试。该篇论文的结果不在本次修订中重新复现。
 
 ## <a id="media"></a>存储介质：本地 SSD 镜像、HDD 阵列与网络 LUN
 
@@ -286,7 +278,7 @@ storcli64 /c0/eall/sall show     # 物理盘：Med 列才是真的介质类型�
 | 小量**顺序**写（总共 2.4 MB） | **2.22 ms** |
 | 8 GB 范围内**随机**写 | **143 ms** |
 
-**这解释了一次真实事故**：这个库的容器被强制移除后触发崩溃恢复，WAL redo 阶段约 56 秒正常跑完，随后进入 `checkpoint starting: end-of-recovery immediate wait`，二十多分钟看起来像死机。它最终自己跑完了，日志给出精确耗时：
+**另一次真实事故记录了恢复检查点的长延迟**：这个库的容器被强制移除后触发崩溃恢复，WAL redo 阶段约 56 秒正常跑完，随后进入 `checkpoint starting: end-of-recovery immediate wait`，二十多分钟看起来像死机。它最终自己跑完了，日志给出精确耗时：
 
 ```
 checkpoint complete: wrote 1514626 buffers (24.1%); ...
@@ -294,7 +286,7 @@ write=675.878 s, sync=727.911 s, total=1406.334 s;
 sync files=79, longest=565.499 s, average=9.186 s
 ```
 
-150 万个脏页远超缓存容量，于是每一笔都在等盘：**单个文件的 fsync 最长 565 秒**，整个 checkpoint **1406 秒**。
+日志记录了约 150 万个缓冲区的写出、**单个文件同步最长约 565 秒**、整个 checkpoint 约 **1406 秒**。它证明该次恢复的写出和同步耗时很长，但不能仅凭这些字段断定每次写都在等待物理盘，也不能将检查点耗时当作普通事务提交延迟。
 
 事故里更值钱的是诊断层面的教训——**当时判定为「卡死」，这个判断是错的**：
 
@@ -304,29 +296,24 @@ sync files=79, longest=565.499 s, average=9.186 s
 
 > 完整排查过程与当时的错误推理记录见 `mess` skill 的 NAS / iSCSI 已知坑章节。
 
-也就是说，2.22 ms 那个数字如果被当成选型依据，会低估真实提交延迟整整两个数量级。
+2.22 ms 与 143 ms 属于不同条件的存储微基准，不是两种真实事务延迟。原始测试与恢复日志都应保留，但需要分别解释。
 
 ### <a id="media-benchmark"></a>后端横向实测
 
-同一套 fio 参数（8K 块）下三套存储的对比：
+下表保留原文汇总的三套存储读数。本文未附全部原始 fio 输出，解释前应核对引擎、缓存模式、同步统计及并发；不能把不同指标互相代入。
 
 | 指标 | 企业级 SATA SSD<br>（2 片 RAID1） | 大容量 HDD 阵列<br>（8 片 RAID50） | `<NAS>` iSCSI<br>（千兆网） |
 |---|---|---|---|
 | **fsync 延迟** | **0.089 ms** | 7.4 ms | **143 ms**（随机写下） |
-| 同步提交吞吐 | 3,550 /s | 109 /s | ~7 /s |
+| 原记录的同步测试吞吐（非 pgbench TPS） | 3,550 /s | 109 /s | ~7 /s |
 | 随机写 IOPS | 39,448 | 1,446 | 646 |
 | 随机读 IOPS | 89,285 | —（缓存污染） | 1,462 |
 | 顺序读 | 572 MB/s | **1,214 MB/s** | 106 MB/s |
 | 顺序写 | — | — | 34 MB/s |
 
-用 fsync 延迟这一列排序，差距是压倒性的：SSD 比 `<NAS>` 快 **1600 倍**，比 HDD 阵列快 **83 倍**。对照[容器那一章](#container-measured)的结论——换介质带来的是三个数量级，换部署方式带来的是测不出来。
+0.089 / 7.4 / 143 ms 的记录相差约 83 倍和 1600 倍，但这个比例不等于数据库整体加速比，也不能量化[容器开销](#container-measured)。
 
-两个反直觉的点：
-
-- **HDD 阵列的顺序读（1,214 MB/s）是 SSD（572 MB/s）的两倍多**——八盘并发的带宽优势。但这个数对数据库没用，正是[数据库敏感的 I/O 指标](#io-metrics)那节要防的误判。
-- **`<NAS>` 的随机读 IOPS（1,462）比本地 HDD 阵列（1,446）还略高**——盘数和缓存配置的差异，网络存储不必然更差。
-
-真正拉开差距的始终是 fsync 那一行。
+HDD 阵列的顺序读 1,214 MB/s 高于 SSD 镜像的 572 MB/s，可能对大扫描、备份等任务有价值；事务工作负载则还需看同步、随机访问和等待。另一个原文比较存在口径错误：NAS 的 1,462 是**随机读** IOPS，而 HDD 的 1,446 是**随机写** IOPS，不能据此比较两者随机读性能。HDD 随机读仍保留为缺失，不能补猜。
 
 ## <a id="network"></a>网络链路：千兆 iSCSI
 
@@ -419,21 +406,25 @@ fio --name=b --filename=/dev/sdX --rw=randread --bs=4k \
 
 **数据放哪：**
 
-- **数据目录放 SSD**，这是最重要的一条。如果容量放不下，就按[SSD 与 HDD 混用的分层设计](#tiering-design)做 tablespace 分层：
-  - 必须放 SSD：`pg_wal`（每次提交都写）、所有索引、向量索引、频繁 join 的热表
-  - 可以放 HDD：只读的、大块顺序扫描的冷数据
-- **WAL 和数据放同一块 SSD 完全可以**。「WAL 单独放一块盘」是机械盘时代的做法，目的是避免磁头来回寻道；SSD 没有寻道，这条不再适用。
-- **别把数据库放在带校验 RAID 的机械盘阵列上**，尤其在[缓存保护模块坏掉](#identify-media)的情况下。
+先用代表性负载确认 WAL 同步、随机访问、扫描还是并发争用占主导，再做[分层](#tiering-design)。本案例将数据库放到 SSD；这不是“所有索引必须 SSD、所有 HDD 阵列都不能存数据库”的通用规则。
 
-**参数怎么跟着盘调：**
+WAL 与数据可以共用 SSD，也可能因带宽、排队或同步延迟相互影响。是否使用独立设备要做对照；“SSD 没有机械寻道”并不意味着独立 WAL 存储永远无益。无论选择何种介质，都不能用失效的缓存保护或关闭持久性要求来换取漂亮结果。
+
+> WAL 所在设备与同步方法的关系见 [PostgreSQL 17 · WAL Configuration](https://www.postgresql.org/docs/17/wal-configuration.html)。
+
+**参数怎么跟着负载调：**
+
+下面保留原案例的起点，不把存储介质名称直接映射成固定参数：
 
 ```
-# SSD
-random_page_cost = 1.1          # 随机读几乎和顺序读一样便宜
-effective_io_concurrency = 200  # 能同时压很多请求
+# 原案例的候选取值，需用实际查询和并发验证
+random_page_cost = 1.1
+effective_io_concurrency = 200
 ```
 
-`random_page_cost` 是告诉查询规划器「随机读比顺序读贵多少倍」。默认值 4 是给机械盘的；SSD 上设成 1.1，规划器才敢用索引而不是傻乎乎全表扫。设错了不会报错，只会让它一直选错执行计划。混用介质时按 tablespace 单独覆盖，写法见[分层设计](#tiering-design)。
+`random_page_cost` 是规划器对非顺序页读取的成本估计，要相对 `seq_page_cost` 及 CPU 成本理解；默认 4.0 已包含缓存命中假设，不是机械盘延迟的直接倍数。1.1 不是所有 SSD 的标准答案，顺序扫描也不天然是错误计划。结合统计信息和代表性查询的执行计划验证，混合介质可以按 tablespace 覆盖。
+
+> 依据：[PostgreSQL 17 · Planner Cost Constants](https://www.postgresql.org/docs/17/runtime-config-query.html#RUNTIME-CONFIG-QUERY-CONSTANTS)。
 
 **内存参数按机器实配，别照抄。** `<多盘服务器>`（125 GiB 内存 / 48 线程）上实测跑得不错的一组：
 
@@ -445,7 +436,7 @@ work_mem = 128MB                   # ⚠️ 这是每个排序/哈希节点的�
 max_wal_size = 32GB
 ```
 
-`work_mem` 那条要特别当心：它是**每个排序或哈希节点、每个并行工作进程**各用一份。100 个连接 × 几个节点 × 并行度，理论峰值能到几十 GB。保守做法是全局设小（16–32 MB），需要大内存的分析查询单独 `SET LOCAL` 调高。
+`work_mem` 不是每个连接的总内存上限：一条查询可以有多个同时活动的内存操作，多个会话和并行执行会进一步放大用量；哈希操作还受 `hash_mem_multiplier` 影响。原先 16–32 MB 的全局建议也只可作为候选值，需按并发和实际查询预算；需要时对受控事务使用 `SET LOCAL`，不要把 128 MB 直接乘连接数当成精确峰值。
 
 > 参数语义以 [PostgreSQL 17 文档 · Resource Consumption](https://www.postgresql.org/docs/17/runtime-config-resource.html) 为准；上面这组数值是本次实测的可用配置，不是普适推荐。
 
