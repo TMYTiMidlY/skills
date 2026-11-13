@@ -2,8 +2,9 @@
 # /// script
 # requires-python = ">=3.9"
 # ///
-"""Patch Copilot CLI app.js —— 一把梭补几个「stock 无配置可改」的行为，全部只改
-pkg cache 里运行时真正跑的 app.js（见 harness/references/copilot-patch.md）。
+"""Patch Copilot CLI bundle —— 一把梭补几个「stock 无配置可改」的行为，全部只改
+pkg cache 里运行时真正跑的 CLI bundle（1.0.105+ 为 cli-main.js，旧版为 app.js；见
+harness/references/copilot-patch.md）。
 
 设计目标：**跑成功就不用手改**。每个 patch 相互独立、各带幂等 marker、锚点用稳定
 字面量 + 反向引用捕获混淆名、命中数必须唯一才落；写前 node --check，
@@ -21,9 +22,9 @@ pkg cache 里运行时真正跑的 app.js（见 harness/references/copilot-patch
      `modelsIsTieredTokenPrices`、`effortLevel`/`contextTier`）而非整段表达式形状。
   5. 能降级就不放弃：clearpoint 找不到模型对象时退化成「保留上次设置」而不是 SKIP。
 
-新版 native profile（1.0.83）：整组适配启动、主会话切换与模型选择器；
-使用有权使用的档位、保留显式选择，默认模型标记跟随用户配置，不修改 native 二进制。
-该组所有入口必须同时命中；缺少入口时报 SKIP，不把 native 迁移当成 N/A。
+新版 native profile（1.0.83-1.0.110）：整组适配启动、启动覆盖层、主会话切换与模型选择器；
+使用有权使用的档位、保留显式选择，用户配置了默认模型时优先于组织下发的默认模型并同步默认标记，
+不修改 native 二进制。该组所有入口必须同时命中；缺少入口时报 SKIP，不把 native 迁移当成 N/A。
 
 旧版 JS profile（对 1.0.78-2 实测命中；不同形态回落 form A 或 skip/n-a）：
   retry-maxretries  默认重试配置对象 maxRetries 5→10（GOAWAY/瞬断更耐抗）
@@ -84,12 +85,20 @@ def pkg_roots():
             seen.add(r); out.append(r)
     return out
 
-def app_js_files():
-    files = set()
+def bundle_files():
+    """每个版本目录取实际承载 CLI 主逻辑的 bundle：1.0.105+ 拆出 cli-main.js，旧版在 app.js。"""
+    vdirs = set()
     for root in pkg_roots():
-        files.update(glob.glob(root + "/*/*/app.js"))  # <platform>/<version>/app.js
-        files.update(glob.glob(root + "/*/app.js"))
-    return sorted(files)
+        for name in ("cli-main.js", "app.js"):
+            for p in glob.glob(root + f"/*/*/{name}") + glob.glob(root + f"/*/{name}"):
+                vdirs.add(os.path.dirname(p))
+    out = []
+    for d in sorted(vdirs):
+        cm = os.path.join(d, "cli-main.js")
+        out.append(cm if os.path.isfile(cm) else os.path.join(d, "app.js"))
+    return out
+
+app_js_files = bundle_files
 
 def _vkey(v):
     """SemVer 优先级排序键：正式版 > 它的预发布版（`1.0.69` > `1.0.69-2`），数字预发布
@@ -388,13 +397,41 @@ def p_tiers_startup(src):
            f"内置默认 tier -> long_context ({var}={opts}.context??{st}.contextTier)", "apply"
 
 
-NATIVE_MARKER = "tmy-native-defaults-v2"
-NATIVE_V1_DIGEST = "9b011a4c7faabcc0856a2d5d18a7ae4225798b209bb13e397e1c7b923b00a6d1"
+NATIVE_MARKER = "tmy-native-defaults-v4"
+NATIVE_PREVIOUS_DIGESTS = {
+    "tmy-native-defaults-v1": "9b011a4c7faabcc0856a2d5d18a7ae4225798b209bb13e397e1c7b923b00a6d1",
+    "tmy-native-defaults-v2": "8d6d495e6a9d08aec0f542dc4585f769347ee1766997a4a4a85a026c41f0ed79",
+    "tmy-native-defaults-v3": "ad1dc54464eb13ffe3daf18cc5ad3df27f53f767714ec4dda361aca895d58752",
+}
 NATIVE_HELPER = r"""
-/*tmy-native-defaults-v2*/
+/*tmy-native-defaults-v4*/
 const __tmyNativeDefaults = (() => {
     let launch = {};
+    const initializedSessions = new Set();
     const present = value => value !== undefined && value !== null;
+    const trimmed = value => typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+    const rowModelId = row => row.modelId ?? row.value;
+    function findAvailableRow(rowsList, modelId, providerId) {
+        if (!present(modelId)) return undefined;
+        const candidates = rowsList.filter(
+            row => (rowModelId(row) === modelId || row.value === modelId) && row.availability === "available");
+        return (present(providerId)
+            ? candidates.find(row => row.providerId === providerId) : undefined) ?? candidates[0];
+    }
+    function hasLoadedModelCatalog(h, sid, rowsList) {
+        if (typeof h.sessionModelListCacheSnapshot === "function") {
+            const cached = h.sessionModelListCacheSnapshot(sid);
+            return Array.isArray(cached) && cached.length > 0;
+        }
+        return rowsList.some(row => row.availability === "available" && rowModelId(row) !== "auto");
+    }
+    function nativeSessionId(session) {
+        if (!session || session.isRemote || session.isLocalAttach) return undefined;
+        if (typeof session === "string") return session;
+        if ("nativeSessionId" in session) return session.nativeSessionId;
+        if (session.api && "nativeSessionId" in session.api) return session.api.nativeSessionId;
+        return session.sessionId;
+    }
     function rows(handle) {
         const projection = handle.snapshot();
         if (!Array.isArray(projection.rows))
@@ -409,29 +446,54 @@ const __tmyNativeDefaults = (() => {
             throw new Error("Copilot defaults patch: unknown reasoning effort levels");
         return level;
     }
-    function defaults(h, row, config) {
+    function defaults(h, row, config = {}) {
         const effort = row.effortLevels?.includes(config.effortLevel)
             ? config.effortLevel : highest(h, row);
         const tier = present(config.contextTier) ? config.contextTier : "long_context";
+        const tiers = row.contextTiers ?? row.contextTierSegments;
         return {
             effort,
-            tier: row.contextTierSegments?.some(item => item.key === tier) ? tier : undefined
+            tier: tiers?.some(item => item.key === tier) ? tier : undefined
         };
     }
     function current(h, sessionId) {
         return h.modelCliSessionEnvironmentSnapshot({sessionId});
     }
-    function modelRow(h, sessionId, modelId, selection = {}) {
+    function pickerRows(h, sessionId, selection = {}, streamerMode = false) {
+        if (!present(sessionId)) return [];
         const handle = new h.CliModelPickerHandle({
-            sessionId, targetKind: "session",
+            sessionId, targetKind: "session", streamerMode,
+            staffMicrosoft: Boolean(selection.staffMicrosoft),
             resolvedCurrentModel: selection.selectedModel,
+            resolvedCurrentProviderId: selection.selectedProviderId,
             resolvedCurrentReasoningEffort: selection.reasoningEffort,
             resolvedCurrentContextTier: selection.contextTier
         });
-        return rows(handle).rows.find(row => row.value === modelId && row.availability === "available");
+        return rows(handle).rows;
+    }
+    function modelRow(h, sessionId, modelId, selection = {}, streamerMode = false, providerId) {
+        return findAvailableRow(
+            pickerRows(h, sessionId, selection, streamerMode),
+            modelId,
+            providerId ?? selection.selectedProviderId);
     }
     function builtinSession(h, sessionId) {
-        return h.sessionByokDiscoveredModelIds(sessionId).length === 0;
+        return present(sessionId) && h.sessionByokDiscoveredModelIds(sessionId).length === 0;
+    }
+    async function loadUserSettings(h, session, settingsContext) {
+        if (!settingsContext && typeof session?.getConfigDir !== "function") {
+            return {
+                model: launch.configModel,
+                effortLevel: launch.configReasoningEffort,
+                contextTier: launch.configContextTier
+            };
+        }
+        const context = settingsContext ?? {
+            configDir: session.getConfigDir(), homeDirectory: h.pathOsHomeDir(), environment: process.env
+        };
+        const loaded = await h.userSettingsLoadWithWarning(context);
+        if (loaded.warning) throw new Error(loaded.warning);
+        return loaded.settings ?? {};
     }
     function startup(h, input) {
         launch = input;
@@ -446,13 +508,14 @@ const __tmyNativeDefaults = (() => {
     }
     function picker(h, options, config = {}, scope, isRemote = false) {
         const handle = new h.CliModelPickerHandle(options);
-        if (isRemote || options.targetKind !== "session" || scope === "repo" || scope === "local" ||
-            !builtinSession(h, options.sessionId)) return handle;
+        if (isRemote || !present(options.sessionId) || options.targetKind !== "session" ||
+            scope === "repo" || scope === "local" || !builtinSession(h, options.sessionId))
+            return handle;
         const effortChoices = new Set(), tierChoices = new Set();
         function project() {
             const initial = rows(handle);
             for (const row of initial.rows) {
-                if (row.current || row.value === "auto" || row.availability !== "available") continue;
+                if (row.current || rowModelId(row) === "auto" || row.availability !== "available") continue;
                 const desired = defaults(h, row, config);
                 if (!effortChoices.has(row.value) && present(desired.effort) && row.effort !== desired.effort)
                     handle.setReasoningEffort(row.value, desired.effort);
@@ -460,12 +523,13 @@ const __tmyNativeDefaults = (() => {
                     handle.setContextTier(row.value, desired.tier);
             }
             const projection = rows(handle);
-            const preferred = projection.rows.find(row => row.value === config.model && row.availability === "available");
+            const userModel = trimmed(process.env.COPILOT_MODEL) ?? trimmed(config.model);
+            const preferred = findAvailableRow(projection.rows, userModel, config.modelProviderId);
             return {...projection, rows: projection.rows.map(row => {
                 const desired = defaults(h, row, config);
                 const result = {...row};
                 if (preferred) result.isDefault = row.value === preferred.value;
-                if (!row.current && row.availability === "available" && row.value !== "auto") {
+                if (!row.current && row.availability === "available" && rowModelId(row) !== "auto") {
                     // Native prefilled values are also flagged "Explicit"; track real UI choices instead.
                     result.reasoningEffortExplicit = effortChoices.has(row.value) ||
                         (present(config.effortLevel) && config.effortLevel === desired.effort);
@@ -499,27 +563,35 @@ const __tmyNativeDefaults = (() => {
             },
             postEnablement(modelId) {
                 const result = handle.postEnablement(modelId);
-                const row = project().rows.find(item => item.value === modelId && item.availability === "available");
+                const row = findAvailableRow(project().rows, modelId);
                 return row ? {...result, contextTier: row.contextTier,
                     reasoningPicker: row.reasoningPicker ?? result.reasoningPicker} : result;
             }
         };
     }
-    async function initialize(h, handle, session, input) {
-        const before = handle.refresh().snapshot;
-        const result = await handle.initialize(input);
+    async function initialize(h, handle, session, input, streamerMode = false) {
+        const before = handle.refresh(streamerMode).snapshot;
+        const result = await handle.initialize(input, streamerMode);
         const selected = result.snapshot;
-        if (input.isRemote || selected.isAuto || !selected.selectedModel ||
-            !builtinSession(h, session.sessionId)) return result;
+        const sid = nativeSessionId(session);
+        if (input.isRemote || !present(sid) || selected.isAuto || !selected.selectedModel ||
+            !builtinSession(h, sid)) return result;
         try {
-            const row = modelRow(h, session.sessionId, selected.selectedModel, selected);
+            const row = modelRow(h, sid, selected.selectedModel, selected, streamerMode);
             if (!row) return result;
+            const preserved = initializedSessions.has(sid) ||
+                (typeof h.sessionScalarCreatedFromEvents === "function"
+                    ? h.sessionScalarCreatedFromEvents(sid)
+                    : before.ready === true);
+            initializedSessions.add(sid);
             const desired = defaults(h, row, {
                 effortLevel: input.fallbackReasoningEffort, contextTier: input.fallbackContextTier
             });
-            const effort = !present(input.cliReasoningEffort) && !present(before.reasoningEffort)
+            const effort = !present(input.cliReasoningEffort) &&
+                (!preserved || !present(before.reasoningEffort))
                 ? desired.effort ?? selected.reasoningEffort : selected.reasoningEffort;
-            const tier = !present(input.cliContextTier) && !present(before.contextTier)
+            const tier = !present(input.cliContextTier) &&
+                (!preserved || !present(before.contextTier))
                 ? desired.tier ?? selected.contextTier : selected.contextTier;
             if (effort === selected.reasoningEffort && tier === selected.contextTier) return result;
             const changed = await session.model.switchTo({
@@ -528,7 +600,7 @@ const __tmyNativeDefaults = (() => {
             });
             if (changed.status !== "applied" && changed.status !== "unchanged")
                 throw new Error(`Copilot defaults patch: startup selection ${changed.status}`);
-            const refreshed = handle.refresh();
+            const refreshed = handle.refresh(streamerMode);
             return {...result, ...refreshed, snapshot: {...result.snapshot, ...refreshed.snapshot}};
         } catch (error) {
             await session.log({level: "error", type: "model_defaults_patch",
@@ -536,18 +608,83 @@ const __tmyNativeDefaults = (() => {
             throw error;
         }
     }
+    async function startupOverlay(h, session, input) {
+        const sid = nativeSessionId(session);
+        if (!present(sid) || !builtinSession(h, sid))
+            return session.model.applyStartupOverlay(input);
+        const config = await loadUserSettings(h, session);
+        const userModel = trimmed(process.env.COPILOT_MODEL) ?? trimmed(config.model);
+        let nextInput = input;
+        if (!present(trimmed(input.cliModel)) && !present(trimmed(input.repoModel)) && present(userModel)) {
+            const available = pickerRows(h, sid, current(h, sid));
+            if (!hasLoadedModelCatalog(h, sid, available) || Boolean(
+                    findAvailableRow(available, userModel, config.modelProviderId))) {
+                nextInput = {
+                    ...input,
+                    deviceManagedModel: undefined,
+                    serverManagedModel: undefined,
+                    policyHelperModel: undefined,
+                    managedReasoningEffort: undefined,
+                    managedContextTier: undefined
+                };
+            }
+        }
+        const result = await session.model.applyStartupOverlay(nextInput);
+        if (result?.status !== "applied" || result.deferred) return result;
+        const selected = current(h, sid);
+        if (selected.isAuto || !selected.selectedModel) return result;
+        const row = modelRow(h, sid, selected.selectedModel, selected);
+        if (!row) return result;
+        const hasManaged = present(trimmed(nextInput.deviceManagedModel)) ||
+            present(trimmed(nextInput.serverManagedModel)) ||
+            present(trimmed(nextInput.policyHelperModel));
+        const explicitEffort = present(trimmed(nextInput.repoModel))
+            ? nextInput.repoReasoningEffort
+            : (hasManaged ? nextInput.managedReasoningEffort : undefined);
+        const explicitTier = present(trimmed(nextInput.repoModel))
+            ? nextInput.repoContextTier
+            : (hasManaged ? nextInput.managedContextTier : undefined);
+        const desired = defaults(h, row, {
+            effortLevel: explicitEffort ?? config.effortLevel,
+            contextTier: explicitTier ?? config.contextTier
+        });
+        const effort = !present(launch.cliReasoningEffort) && !present(explicitEffort)
+            ? desired.effort ?? selected.reasoningEffort : selected.reasoningEffort;
+        const tier = !present(launch.cliContextTier) && !present(explicitTier)
+            ? desired.tier ?? selected.contextTier : selected.contextTier;
+        if (effort !== selected.reasoningEffort || tier !== selected.contextTier) {
+            await session.model.switchTo({
+                modelId: selected.selectedModel, reasoningEffort: effort, contextTier: tier,
+                source: "startup", modelChangeScope: "session"
+            });
+        }
+        return result;
+    }
+    async function headlessStartupSwitch(h, session, input, fallback = {}) {
+        const userModel = trimmed(process.env.COPILOT_MODEL) ?? trimmed(fallback.userSettings?.model);
+        if (input.source === "managed_settings" && present(fallback.resolvedModel) && present(userModel)) {
+            const next = {
+                ...input,
+                modelId: fallback.resolvedModel,
+                providerId: fallback.providerId,
+                source: "startup"
+            };
+            if (present(fallback.contextTier)) next.contextTier = fallback.contextTier;
+            else delete next.contextTier;
+            await session.model.switchTo(next);
+            return fallback.resolvedModel;
+        }
+        await session.model.switchTo(input);
+        return input.modelId;
+    }
     async function switchTo(h, session, input) {
-        if (session.isRemote || input.repoScope || input.modelId === "auto" ||
+        const sid = nativeSessionId(session);
+        if (!present(sid) || input.repoScope || input.modelId === "auto" ||
             !["model_command", "model_picker"].includes(input.source) ||
-            !builtinSession(h, session.sessionId)) return session.model.switchTo(input);
-        const context = input.pickerPersistence?.settingsContext ?? {
-            configDir: session.getConfigDir(), homeDirectory: h.pathOsHomeDir(), environment: process.env
-        };
-        const loaded = await h.userSettingsLoadWithWarning(context);
-        if (loaded.warning) throw new Error(loaded.warning);
-        const config = loaded.settings ?? {};
-        const selected = current(h, session.sessionId);
-        const row = modelRow(h, session.sessionId, input.modelId, selected);
+            !builtinSession(h, sid)) return session.model.switchTo(input);
+        const config = await loadUserSettings(h, session, input.pickerPersistence?.settingsContext);
+        const selected = current(h, sid);
+        const row = modelRow(h, sid, input.modelId, selected, false, input.providerId);
         if (!row) return session.model.switchTo(input);
         const desired = defaults(h, row, config);
         const sameModel = input.modelId === selected.selectedModel;
@@ -577,11 +714,16 @@ const __tmyNativeDefaults = (() => {
             result.__tmyContextTier = desired.tier;
         return result;
     }
-    function headlessOptions(result) {
-        return {reasoningEffort: result.reasoningEffort,
-            ...(present(result.__tmyContextTier) ? {contextTier: result.__tmyContextTier} : {})};
+    function headlessOptions(result, reasoningEffort = result.reasoningEffort) {
+        return {
+            ...(present(reasoningEffort) ? {reasoningEffort} : {}),
+            ...(present(result.__tmyContextTier) ? {contextTier: result.__tmyContextTier} : {})
+        };
     }
-    return {startup, picker, initialize, switchTo, headless, headlessOptions};
+    return {
+        startup, picker, initialize, startupOverlay,
+        headlessStartupSwitch, switchTo, headless, headlessOptions
+    };
 })();
 /*tmy-native-defaults-end*/
 """
@@ -621,40 +763,117 @@ def js_object_end(src, start):
     raise ValueError("unterminated object in native call")
 
 
-def native_hooks_complete(src, marker):
-    hooks = ("startup", "picker", "initialize", "headless", "headlessOptions")
-    return (src.count(f"/*{marker}*/") == 1 and
-            "/*tmy-native-defaults-end*/" in src and
-            all(src.count(f"__tmyNativeDefaults.{name}(") == 1 for name in hooks) and
-            src.count("__tmyNativeDefaults.switchTo(") == 2)
-
-
-def upgrade_native_v1(src):
-    """Upgrade the known v1 helper without restoring stock code or losing unrelated bundle edits."""
-    marker = "tmy-native-defaults-v1"
+def native_hooks_complete(src, marker, legacy=False):
     start = src.find(f"/*{marker}*/")
     end_marker = "/*tmy-native-defaults-end*/"
     end = src.find(end_marker, start)
-    if start < 0 or end < 0 or not native_hooks_complete(src, marker):
-        return None, "incomplete v1 native hooks; refusing to upgrade", "skip"
+    if start < 0 or end < 0:
+        return False
+    rest = src[:start] + src[end + len(end_marker):]
+    hooks = (("startup", "picker", "initialize", "headless", "headlessOptions")
+             if legacy else
+             ("startup", "picker", "initialize", "startupOverlay", "headless", "headlessOptions"))
+    headless_managed_expected = 1 if (not legacy and '"managed_settings"' in rest) else 0
+    return (src.count(f"/*{marker}*/") == 1 and
+            all(rest.count(f"__tmyNativeDefaults.{name}(") == 1 for name in hooks) and
+            rest.count("__tmyNativeDefaults.headlessStartupSwitch(") == headless_managed_expected and
+            rest.count("__tmyNativeDefaults.switchTo(") == 2)
+
+
+def _find_overlay_and_headless_managed_edits(src, alias):
+    """Locate startupOverlay (all native versions) and headlessStartupSwitch (1.0.105+)."""
+    edits = []
+    overlays = list(re.finditer(
+        r'([\w$]+)\.model\.applyStartupOverlay\((\{deviceManagedModel:[^{}]*\})\)', src))
+    if len(overlays) != 1:
+        raise ValueError(f"startup model overlay count={len(overlays)} (want 1)")
+    ov = overlays[0]
+    edits.append((ov.start(), ov.end(),
+                  f"__tmyNativeDefaults.startupOverlay({alias},{ov.group(1)},{ov.group(2)})"))
+
+    if '"managed_settings"' in src:
+        managed_calls = []
+        for call in re.finditer(r'await ([\w$]+)\.model\.switchTo\(\{', src):
+            obj_s = call.end() - 1
+            obj_e = js_object_end(src, obj_s)
+            args = src[obj_s:obj_e]
+            if src[obj_e] == ")" and '"managed_settings"' in args:
+                managed_calls.append((call, obj_s, obj_e, args))
+        if len(managed_calls) != 1:
+            raise ValueError(f"headless managed_settings switch count={len(managed_calls)} (want 1)")
+        call, obj_s, obj_e, args = managed_calls[0]
+        sess = call.group(1)
+        assign = re.match(r'\),([\w$]+)=([\w$]+)', src[obj_e:])
+        if not assign:
+            raise ValueError("headless managed_settings target assignment changed")
+        out_var, model_var = assign.groups()
+        if f"modelId:{model_var}," not in args:
+            raise ValueError("headless managed_settings modelId binding changed")
+        back = src[max(0, call.start() - 1200):call.start()]
+        res_matches = list(re.finditer(
+            r'([\w$]+)=await ' + re.escape(alias) +
+            r'\.modelResolverResolveSelectedModelNative\(\{[^{}]*'
+            r'currentSessionModel:\{[^{}]*\},userSettingsJson:JSON\.stringify\(([\w$]+)\)[^{}]*\}\),'
+            r'([\w$]+)=\1\.info\.resolvedModel\?\?void 0', back))
+        if len(res_matches) != 1:
+            raise ValueError(f"headless model resolver binding count={len(res_matches)} (want 1)")
+        res_var, user_settings_var, resolved_var = res_matches[0].groups()
+        tier_fn_m = re.search(r'\.\.\.([\w$]+)\(' + re.escape(model_var) + r'\)!==void 0\?'
+                              r'\{contextTier:\1\(' + re.escape(model_var) + r'\)\}:\{\}', args)
+        if not tier_fn_m:
+            raise ValueError("headless managed_settings contextTier helper binding changed")
+        tier_fn = tier_fn_m.group(1)
+        fallback = (f"{{resolvedModel:{resolved_var},providerId:{res_var}.providerId,"
+                    f"contextTier:{tier_fn}({resolved_var}),userSettings:{user_settings_var}}}")
+        edits.append((call.start(), obj_e + assign.end(),
+                      f"{out_var}=await __tmyNativeDefaults.headlessStartupSwitch("
+                      f"{alias},{sess},{args},{fallback})"))
+    return edits
+
+
+def upgrade_native_defaults(src, marker):
+    """Upgrade known helpers without restoring stock code or losing unrelated bundle edits."""
+    start = src.find(f"/*{marker}*/")
+    end_marker = "/*tmy-native-defaults-end*/"
+    end = src.find(end_marker, start)
+    if start < 0 or end < 0 or not native_hooks_complete(src, marker, legacy=True):
+        return None, f"incomplete {marker} native hooks; refusing to upgrade", "skip"
     end += len(end_marker)
-    if hashlib.sha256(src[start:end].encode()).hexdigest() != NATIVE_V1_DIGEST:
-        return None, "v1 native helper was modified; refusing to overwrite it", "skip"
-    calls = list(re.finditer(
-        r'__tmyNativeDefaults\.picker\(([\w$]+),(\{[^{}]*\}),__tmySettings,([\w$]+)\),\[([^\]]*)\]', src))
-    if len(calls) != 1:
-        return None, f"v1 picker hook count={len(calls)} (want 1)", "skip"
-    call = calls[0]
-    alias, options, scope, deps = call.groups()
-    sessions = re.findall(r'(?:\{|,)sessionId:([\w$]+)\.sessionId', options)
-    if len(sessions) != 1 or call.start() < end:
-        return None, "v1 picker session binding changed", "skip"
-    session = sessions[0]
-    replacement = (f"__tmyNativeDefaults.picker({alias},{options},__tmySettings,{scope},"
-                   f"{session}.isRemote===!0),[{session}.isRemote,{deps}]")
-    src = src[:call.start()] + replacement + src[call.end():]
+    if hashlib.sha256(src[start:end].encode()).hexdigest() != NATIVE_PREVIOUS_DIGESTS[marker]:
+        return None, f"{marker} native helper was modified; refusing to overwrite it", "skip"
+    alias_m = re.search(r'__tmyNativeDefaults\.startup\(([\w$]+),', src)
+    if not alias_m:
+        return None, f"{marker} native module alias not found", "skip"
+    alias = alias_m.group(1)
+    try:
+        extra_edits = []
+        if marker == "tmy-native-defaults-v1":
+            calls = list(re.finditer(
+                r'__tmyNativeDefaults\.picker\(([\w$]+),(\{[^{}]*\}),__tmySettings,([\w$]+)\),\[([^\]]*)\]', src))
+            if len(calls) != 1:
+                return None, f"v1 picker hook count={len(calls)} (want 1)", "skip"
+            call = calls[0]
+            _, options, scope, deps = call.groups()
+            sessions = re.findall(r'(?:\{|,)sessionId:([\w$]+)\.sessionId', options)
+            if len(sessions) != 1 or call.start() < end:
+                return None, "v1 picker session binding changed", "skip"
+            session = sessions[0]
+            extra_edits.append((call.start(), call.end(),
+                                f"__tmyNativeDefaults.picker({alias},{options},__tmySettings,{scope},"
+                                f"{session}.isRemote===!0),[{session}.isRemote,{deps}]"))
+        for s_pos, e_pos, rep in _find_overlay_and_headless_managed_edits(src, alias):
+            if s_pos < end:
+                raise ValueError("overlay hook overlaps helper header")
+            extra_edits.append((s_pos, e_pos, rep))
+        extra_edits.sort()
+        if any(left[1] > right[0] for left, right in zip(extra_edits, extra_edits[1:])):
+            raise ValueError("upgrade edits overlap")
+    except ValueError as error:
+        return None, str(error), "skip"
+    for s_pos, e_pos, rep in reversed(extra_edits):
+        src = src[:s_pos] + rep + src[e_pos:]
     src = src[:start] + NATIVE_HELPER.strip() + src[end:]
-    return src, "native defaults v1 -> v2: preserve remote picker defaults", "apply"
+    return src, f"{marker} -> {NATIVE_MARKER}: 1.0.110 + startup overlay defaults", "apply"
 
 
 def p_native_defaults(src):
@@ -668,8 +887,9 @@ def p_native_defaults(src):
         if native_hooks_complete(src, NATIVE_MARKER):
             return None, "", "already"
         return None, "native defaults marker exists but the hook group is incomplete", "skip"
-    if "tmy-native-defaults-v1" in src:
-        return upgrade_native_v1(src)
+    for marker in NATIVE_PREVIOUS_DIGESTS:
+        if marker in src:
+            return upgrade_native_defaults(src, marker)
     if "__tmyNativeDefaults" in src or "tmy-native-defaults-v" in src:
         return None, "unknown native defaults revision; restore the matching backup first", "skip"
     edits = []
@@ -681,9 +901,12 @@ def p_native_defaults(src):
         return matches[0]
 
     try:
-        ctor = one(r'new ([\w$]+)\.CliModelPickerHandle\((\{[^{}]*\})\),\[([^\]]*)\]',
-                   label="native picker construction")
-        alias, options, deps = ctor.groups()
+        ctors = [m for m in re.finditer(r'new ([\w$]+)\.CliModelPickerHandle\((\{[^{}]*\})\)', src)
+                 if "resolvedCurrentModel:" in m.group(2)]
+        if len(ctors) != 1:
+            raise ValueError(f"native picker construction count={len(ctors)} (want 1)")
+        ctor = ctors[0]
+        alias, options = ctor.groups()
         components = []
         back = max(0, ctor.start() - 6000)
         for candidate in re.finditer(r'([\w$]+)=\(\{', src[back:ctor.start()]):
@@ -697,31 +920,46 @@ def p_native_defaults(src):
             raise ValueError(f"native picker component count={len(components)} (want 1)")
         name, props, props_start = components[0]
         scope = one(r'(?:^|,)scope:([\w$]+)', props, "picker scope").group(1)
-        session = one(r'(?:\{|,)sessionId:([\w$]+)\.sessionId',
-                      options, "picker session").group(1)
+        session = one(r'(?:^|,)session:([\w$]+)', props, "picker session").group(1)
         edits.append((props_start, props_start, "__tmySettings:__tmySettings,"))
         edits.append((ctor.start(), ctor.end(),
                       f"__tmyNativeDefaults.picker({alias},{options},__tmySettings,{scope},"
-                      f"{session}.isRemote===!0),[{session}.isRemote,"
-                      f"__tmySettings?.model,__tmySettings?.effortLevel,"
-                      f"__tmySettings?.contextTier,{deps}]"))
+                      f"{session}.isRemote===!0)"))
+        memo_tail = src[ctor.end():ctor.end() + 1200]
+        direct_deps = re.match(r',\[([^\]]*)\]\)' , memo_tail)
+        if direct_deps:
+            deps_open = ctor.end() + 2
+        else:
+            block_deps = one(r'return\{handle:[\w$]+,projection:[\w$]+\}\},\[([^\]]*)\]\)',
+                             memo_tail, "picker useMemo deps")
+            deps_open = ctor.end() + block_deps.start(1)
+        edits.append((deps_open, deps_open,
+                      f"{session}.isRemote,__tmySettings?.model,"
+                      f"__tmySettings?.effortLevel,__tmySettings?.contextTier,"))
 
-        caller = one(r'\.createElement\(' + re.escape(name) + r',\{modelListRevision:',
+        caller = one(r'\.createElement\(' + re.escape(name) + r',\{',
                      label="native picker caller")
         nearby = src[max(0, caller.start() - 6000):caller.start()]
         config = one(r'config:([\w$]+),builtInDeclaredModels:', nearby, "picker config").group(1)
         prop_start = src.index("{", caller.start())
         edits.append((prop_start + 1, prop_start + 1, f"__tmySettings:{config},"))
 
+        headless_result = None
         for native_name, hook in (("modelCliStartupConfiguration", "startup"),
                                   ("modelCliHeadlessConfiguration", "headless")):
-            call = one(re.escape(alias) + r'\.' + native_name + r'\(\{', label=native_name)
-            obj_start = call.end() - 1
-            obj_end = js_object_end(src, obj_start)
-            if src[obj_end] != ")":
-                raise ValueError(f"{native_name} argument shape changed")
+            candidates = []
+            for m in re.finditer(re.escape(alias) + r'\.' + native_name + r'\(\{', src):
+                o_start = m.end() - 1
+                o_end = js_object_end(src, o_start)
+                if src[o_end] == ")" and (hook != "startup" or "cliReasoningEffort:" in src[o_start:o_end]):
+                    candidates.append((m, o_start, o_end))
+            if len(candidates) != 1:
+                raise ValueError(f"{native_name} count={len(candidates)} (want 1)")
+            call, obj_start, obj_end = candidates[0]
             extra = ""
             if hook == "headless":
+                headless_result = one(r'([\w$]+)=$', src[max(0, call.start() - 200):call.start()],
+                                      "headless result binding").group(1)
                 initial = one(r'initialModel:([\w$]+)\.modelId',
                               src[obj_start:obj_end], "headless initial model").group(1)
                 extra = f",{initial}.reasoningEffort"
@@ -729,10 +967,14 @@ def p_native_defaults(src):
                           f"__tmyNativeDefaults.{hook}({alias},{src[obj_start:obj_end]}{extra})"))
 
         init = one(r'([\w$]+)\.initialize\((\{cliModel:[^{}]*'
-                   r'isRemote:([\w$]+)\.isRemote===!0\})\)', label="interactive model initialization")
-        handle, args, session = init.groups()
+                   r'isRemote:([\w$]+)\.isRemote===!0\})(?:,([\w$]+))?\)',
+                   label="interactive model initialization")
+        handle, args, session, streamer = init.groups()
+        extra = f",{streamer}" if streamer else ""
         edits.append((init.start(), init.end(),
-                      f"__tmyNativeDefaults.initialize({alias},{handle},{session},{args})"))
+                      f"__tmyNativeDefaults.initialize({alias},{handle},{session},{args}{extra})"))
+
+        edits.extend(_find_overlay_and_headless_managed_edits(src, alias))
 
         switches = {"picker": [], "command": []}
         for call in re.finditer(r'([\w$]+(?:\.[\w$]+)*)\.model\.switchTo\(\{', src):
@@ -741,26 +983,49 @@ def p_native_defaults(src):
             args = src[start:end]
             if src[end] != ")":
                 continue
-            if "pickerPersistence:{" in args and "compactionDecision:" in args:
-                switches["picker"].append((call, end, args))
-            elif call.group(1).endswith(".session.instance") and all(
+            if call.group(1).endswith(".session.instance") and all(
                     key in args for key in ("modelChangeScope:", "compactionDecision:", "source:")):
-                switches["command"].append((call, end, args))
+                switches["command"].append((call.start(), end + 1, call.group(1), args))
+            elif "pickerPersistence:{" in args and "compactionDecision:" in args:
+                switches["picker"].append((call.start(), end + 1, call.group(1), args))
+        if not switches["picker"]:
+            # 1.0.109+ builds the picker switch payload into a local variable first.
+            for m in re.finditer(
+                    r'let ([\w$]+)=\{modelId:[^{}]*pickerPersistence:\{reasoningEffortExplicit:[^{}]*'
+                    r'settingsContext:\{[^{}]*\}\}\};return [\w$]+\?\.admittedModelApi\?'
+                    r'[\w$]+\.admittedModelApi\.switchTo\(\1\):[\w$]+\?\.restoreAgentModel\?'
+                    r'([\w$]+)\.restoreAgentModel\(\1\):(\2\.model\.switchTo\(\1\))', src):
+                payload_var, sess_var, _ = m.groups()
+                switches["picker"].append((m.start(3), m.end(3), sess_var, payload_var))
         for kind, calls in switches.items():
             if len(calls) != 1:
                 raise ValueError(f"{kind} model switch count={len(calls)} (want 1)")
-            call, end, args = calls[0]
-            edits.append((call.start(), end + 1,
-                          f"__tmyNativeDefaults.switchTo({alias},{call.group(1)},{args})"))
+            c_start, c_end, target, args = calls[0]
+            edits.append((c_start, c_end,
+                          f"__tmyNativeDefaults.switchTo({alias},{target},{args})"))
 
-        update = one(r'([\w$]+)\.reasoningEffort!==void 0&&await Promise\.resolve\('
-                     r'([\w$]+)\.options\.update\(\{reasoningEffort:\1\.reasoningEffort\}\)\)',
+        effort = f"{headless_result}.reasoningEffort"
+        effective = re.findall(r'let ([\w$]+)=[\w$]+\?\?' + re.escape(effort) + r';if\(', src)
+        if len(effective) > 1:
+            raise ValueError(f"headless effective effort count={len(effective)} (want 0 or 1)")
+        extra = ""
+        if effective:
+            effort = effective[0]
+            extra = f",{effort}"
+        update = one(re.escape(effort) + r'!==void 0&&'
+                     r'(?:(!([\w$]+)&&(\([^()]+\))&&))?'
+                     r'await Promise\.resolve\(([\w$]+)\.options\.update\(\{reasoningEffort:' +
+                     re.escape(effort) + r'\}\)\)',
                      label="headless effort application")
-        result, session = update.groups()
+        not_jn, _, inner_cond, session = update.groups()
+        if not_jn:
+            cond_expr = (f"{not_jn}(({effort}!==void 0&&{inner_cond})||"
+                         f"{headless_result}.__tmyContextTier!==void 0)")
+        else:
+            cond_expr = f"({effort}!==void 0||{headless_result}.__tmyContextTier!==void 0)"
         edits.append((update.start(), update.end(),
-                      f"({result}.reasoningEffort!==void 0||{result}.__tmyContextTier!==void 0)"
-                      f"&&await Promise.resolve({session}.options.update("
-                      f"__tmyNativeDefaults.headlessOptions({result})))"))
+                      f"{cond_expr}&&await Promise.resolve({session}.options.update("
+                      f"__tmyNativeDefaults.headlessOptions({headless_result}{extra})))"))
         edits.sort()
         if any(left[1] > right[0] for left, right in zip(edits, edits[1:])):
             raise ValueError("native defaults edits overlap")
@@ -823,7 +1088,7 @@ def process(path, node):
     if r.returncode != 0:
         print(f"    -> not written: node --check failed: {r.stderr.strip()[:300]}"); return False
     if open(path, encoding="utf-8").read() != src0:
-        print("    -> not written: app.js changed during patching"); return False
+        print("    -> not written: bundle changed during patching"); return False
     if not os.path.exists(path + BACKUP_SUFFIX):
         shutil.copy2(path, path + BACKUP_SUFFIX)
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=os.path.dirname(path),
@@ -848,9 +1113,9 @@ def main():
     mode = "REVERT" if REVERT else ("APPLY" if APPLY else "DRY-RUN")
     tag = " (latest-only)" if LATEST_ONLY else ""
     tag += " (strict)" if STRICT else ""
-    print(f"mode={mode}{tag}  node={node or '(none)'}  found {len(files)} app.js\n")
+    print(f"mode={mode}{tag}  node={node or '(none)'}  found {len(files)} bundle(s)\n")
     if not files:
-        print("no app.js found under pkg cache roots.")
+        print("no CLI bundle found under pkg cache roots.")
         if STRICT: sys.exit(1)
         return
     if REVERT:
