@@ -260,6 +260,8 @@ async def main() -> None:
 | 上层编排器 | 准备持久工作区（如复用已有 `git worktree`）与干净的工具环境（仅对模型或代码托管域名按需配置代理，保持构建与产物缓存直连）；声明目标范围、写入边界与最终外部门禁（如整包编译、测试与静态审计），在轮次完成后执行独立验收 |
 | Codex 主线程与 `multi_agent_v2` | 排查跨文件根因与依赖顺序，自行制定修复或实现计划；在同一 `cwd` 下按需派生内部子代理并行推进独立子问题，跑通本地闭环后汇总提交 |
 
+> 子进程同时注入出站代理与直连产物缓存域名（如对象存储或 CDN 缓存桶）时，需同时设置小写 `no_proxy` 与大写 `NO_PROXY`（例如 `localhost,127.0.0.1,::1,<cache-domain>`）：Python `urllib` / `requests` 读取 `no_proxy`，而 `curl` 等原生工具读取 `NO_PROXY`，只设单侧会导致其中一类下载仍绕经本地代理超时或断连。
+
 确定由上层多开线程还是交由会话内部并发时，以**是否需要独立文件系统工作树**为判据：原生 `multi_agent_v2` 子代理共享父线程的 `cwd`、审批与沙箱设置（见 [Worktree 支持横向对照](worktree.md)），适合围绕同一工作树并行调研、审阅或协同修改无冲突模块；仅当多条分支或并行集成树需要彼此隔离的磁盘写入时，才由上层分配多个持久 `cwd` 与对应线程，并向每个线程交付各自完整的闭环目标。
 
 > 若上层替 Codex 在外部把同一闭环任务切碎成零散文件批次、逐批拉起未启用 `multi_agent_v2` 的一次性 `codex exec` 子进程并写死每步执行命令或低线程参数，既会切断跨文件依赖判断、闲置原生子代理动态调度，又会因最慢批次形成木桶效应，并反复承受工作区初始化与附属 MCP 服务冷启动开销。
@@ -358,14 +360,14 @@ with Codex(config) as codex:
 
 | 控制面 | 协议入口与做法 | 缓存与运行态约束 |
 |---|---|---|
-| 账号隔离与水位切换 | 按账号拆分独立租约库与并发控制器；轮次边界调用 `account/rateLimits/read` 读取 `primary` / `secondary` 的 `usedPercent` 与 `credits` | 单账号容量波动仅收缩本账号槽位；按水位单向切换账号时先清空旧 `thread_id` 再调用 `thread/start`，禁止跨账号 `thread_resume` |
+| 账号隔离与水位切换 | 按账号拆分独立租约库与并发控制器；轮次边界调用 `account/rateLimits/read` 读取 `primary` / `secondary` 的 `usedPercent` 与 `credits`，并捕获 `Your workspace is out of credits` 等配额耗尽错误触发故障转移 | 单账号容量波动仅收缩本账号槽位。各 `CODEX_HOME` 使用独立 `sessions/` 目录时，切换账号需清空旧 `thread_id` 改走 `thread/start`；各 `CODEX_HOME` 按[多账号目录与共享会话](#cc-switch-multi-account)软链共享同一 `sessions/` 与 `thread-writer-locks/` 时，待原 `app-server` 退出或释放线程写锁后，可在备用账号的新客户端上直接 `thread_resume(thread_id)` 无损续跑原上下文（若旧写锁未释放会报 `-32600: thread <id> already has an active writer`） |
 | 重连去重与自适应阶梯 | 旁路监听底层通知中的 `error`（`willRetry=true` 或 `Reconnecting... k/n`），以 `(thread_id, turn_id)` 为主键将整段重试聚合成一次 `(workers, subagents)` 阶梯下调，稳定窗口后逐级恢复 | 避免同一回合多次重连把并发度瞬间压到底；已持有租约的热轮继续运行直至边界 |
 | 轮间延迟引导 | 将收缩新增子任务的调度提示按键合并暂存，追加到下一轮 `turn/start` 的用户输入末尾 | 禁止对流式重连中的回合调用 `TurnHandle.steer()`，避免打断底层退避循环或因回合状态切换产生竞态失败 |
 | 动态扩缩容与前缀稳定 | 固定 `root_agent_usage_hint_text`、`subagent_usage_hint_text` 与 `developer_instructions`；轮间变更子代理上限 `S` 时重建专用 `app-server` 并同账号 `thread_resume` | 绕过 Rust 端 `AgentExecutionLimiter` 的 `OnceLock` 单次初始化限制，同时保持 developer 消息前缀字节一致以维持高上下文缓存命中率 |
 | 分片门禁解耦与合入衔接 | 各分片独占互不相交的目标子集与本地分支，轮内仅跑分片级增量校验，全量重型门禁收口到集成工作区执行 | 控制每分片本地构建线程数以防耗尽宿主 CPU / swap 或受其他分片遗留文件阻塞；同账号 `thread_resume` 历史主线程做合入收尾前，先提交确定性合入结果并在提示词中显式解除早先轮次的跨分片禁改约束 |
 
 > 源码：[`account/rateLimits/read` 请求与 `ErrorNotification.willRetry` 字段](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L7928-L7933)、[`ErrorNotification` 定义](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L11450-L11458)、[`TurnHandle.steer` / `AsyncTurnHandle.steer`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L810-L875)、[`AgentExecutionLimiter` 的 `OnceLock` 容量上限](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/core/src/agent/control/execution.rs#L46-L82)。限流遥测与跨账号接管检查见[限流的判读与退避](codex-monitoring.md#rate-limit)与[多账号恢复与 goal 生命周期](codex-monitoring.md#account-resume)。
-> 🔬 2026-11-12/13 实测（Linux，Python SDK `0.167.1` + CLI `0.167.0`/`0.167.1`）：localhost 抓包验证默认槽位 `2 → 3` 会改变 developer 提示词，固定两条 `*_usage_hint_text` 后跨槽位请求前缀保持一致，同账号 `thread_resume` 长历史轮次实测缓存命中率保持在 99.5% 以上；双独立账号各拆分为 `4 workers × 2 subagents` 独立状态库并解耦分片增量门禁后，8 个工作树并行推进期间 `overloads=0`。
+> 🔬 2026-11-12/13 实测（Linux，Python SDK `0.167.1` + CLI `0.167.0`/`0.167.1`）：localhost 抓包验证默认槽位 `2 → 3` 会改变 developer 提示词，固定两条 `*_usage_hint_text` 后跨槽位请求前缀保持一致，同账号 `thread_resume` 长历史轮次实测缓存命中率保持在 99.5% 以上；双独立账号各拆分为 `4 workers × 2 subagents` 独立状态库并解耦分片增量门禁后，8 个工作树并行推进期间 `overloads=0`。另在两个共享 `sessions/` 软链的 `CODEX_HOME` 间实测：主用账号运行中途触发 `Your workspace is out of credits` 退出并关闭原 `app-server` 后，改用备用账号 `CODEX_HOME` 新建 `AsyncCodex` 对同一批 `thread_id` 执行 `thread_resume` 均一次成功（耗时约 40–65 秒，RPC 超时宜设为 120 秒），完整保留长对话与工作树推进上下文。
 
 ### <a id="codex-mcp-migration"></a>Codex MCP server 的迁移
 
