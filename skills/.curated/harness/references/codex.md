@@ -352,6 +352,21 @@ with Codex(config) as codex:
 
 > 🔬 2026-11-11 实测：Linux、Python SDK `0.167.1`，显式使用已安装 CLI `0.167.0`；默认目录与一个独立 `CODEX_HOME` 的 ChatGPT 登录均完成只读、临时线程的真实模型请求，未传入 API key。独立目录由 Shell 账号函数确认，其认证文件与默认目录不同；另用 SDK 配套 runtime `0.167.1` 执行本文最小示例，也返回“SDK 调用成功”。本次覆盖账号选择和请求成功，未测试令牌临期刷新及多进程长期并发。
 
+### <a id="sdk-fleet-backpressure"></a>多账号分片编排与容量退避
+
+在多工作树、多账号（独立 `CODEX_HOME`）下长期并发驱动 Codex 分片时，上层编排器围绕账号隔离、容量退避、缓存前缀稳定与门禁解耦组织控制闭环，在跑满配额的同时避免触发持续 `at capacity` 重连风暴：
+
+| 控制面 | 协议入口与做法 | 缓存与运行态约束 |
+|---|---|---|
+| 账号隔离与水位切换 | 按账号拆分独立租约库与并发控制器；轮次边界调用 `account/rateLimits/read` 读取 `primary` / `secondary` 的 `usedPercent` 与 `credits` | 单账号容量波动仅收缩本账号槽位；按水位单向切换账号时先清空旧 `thread_id` 再调用 `thread/start`，禁止跨账号 `thread_resume` |
+| 重连去重与自适应阶梯 | 旁路监听底层通知中的 `error`（`willRetry=true` 或 `Reconnecting... k/n`），以 `(thread_id, turn_id)` 为主键将整段重试聚合成一次 `(workers, subagents)` 阶梯下调，稳定窗口后逐级恢复 | 避免同一回合多次重连把并发度瞬间压到底；已持有租约的热轮继续运行直至边界 |
+| 轮间延迟引导 | 将收缩新增子任务的调度提示按键合并暂存，追加到下一轮 `turn/start` 的用户输入末尾 | 禁止对流式重连中的回合调用 `TurnHandle.steer()`，避免打断底层退避循环或因回合状态切换产生竞态失败 |
+| 动态扩缩容与前缀稳定 | 固定 `root_agent_usage_hint_text`、`subagent_usage_hint_text` 与 `developer_instructions`；轮间变更子代理上限 `S` 时重建专用 `app-server` 并同账号 `thread_resume` | 绕过 Rust 端 `AgentExecutionLimiter` 的 `OnceLock` 单次初始化限制，同时保持 developer 消息前缀字节一致以维持高上下文缓存命中率 |
+| 分片门禁解耦与合入衔接 | 各分片独占互不相交的目标子集与本地分支，轮内仅跑分片级增量校验，全量重型门禁收口到集成工作区执行 | 控制每分片本地构建线程数以防耗尽宿主 CPU / swap 或受其他分片遗留文件阻塞；同账号 `thread_resume` 历史主线程做合入收尾前，先提交确定性合入结果并在提示词中显式解除早先轮次的跨分片禁改约束 |
+
+> 源码：[`account/rateLimits/read` 请求与 `ErrorNotification.willRetry` 字段](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L7928-L7933)、[`ErrorNotification` 定义](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L11450-L11458)、[`TurnHandle.steer` / `AsyncTurnHandle.steer`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L810-L875)、[`AgentExecutionLimiter` 的 `OnceLock` 容量上限](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/core/src/agent/control/execution.rs#L46-L82)。限流遥测与跨账号接管检查见[限流的判读与退避](codex-monitoring.md#rate-limit)与[多账号恢复与 goal 生命周期](codex-monitoring.md#account-resume)。
+> 🔬 2026-11-12/13 实测（Linux，Python SDK `0.167.1` + CLI `0.167.0`/`0.167.1`）：localhost 抓包验证默认槽位 `2 → 3` 会改变 developer 提示词，固定两条 `*_usage_hint_text` 后跨槽位请求前缀保持一致，同账号 `thread_resume` 长历史轮次实测缓存命中率保持在 99.5% 以上；双独立账号各拆分为 `4 workers × 2 subagents` 独立状态库并解耦分片增量门禁后，8 个工作树并行推进期间 `overloads=0`。
+
 ### <a id="codex-mcp-migration"></a>Codex MCP server 的迁移
 
 旧 `codex mcp-server` 命令与独立 `codex-mcp-server` binary 已移除，原先以 `codex()` / `codex-reply()` 调用 Codex 的接入需要迁移。新任务可封装 SDK 函数；需要直接控制认证、历史、审批和流式事件时连接 app-server。上层只接受 MCP 时，由适配层把 MCP 工具调用转换成 SDK 或 app-server 操作，并管理 thread ID、取消、超时与进程回收。
