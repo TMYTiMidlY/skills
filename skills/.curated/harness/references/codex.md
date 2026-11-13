@@ -1,6 +1,6 @@
 # Codex 运行时笔记
 
-本篇介绍 Codex app-server 的运行形态、CLI 启动行为、进程管理、SDK 程序化调用与多账号登录态复用、终端显示与复制、桌面端 projectless 会话的目录与提示词、用量与额度统计、上下文配置、协作模式、内置生图工具、cc-switch 多账号与共享会话，以及订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
+本篇介绍 Codex app-server 的运行形态、CLI 启动行为、进程管理、SDK 程序化调用与多账号登录态复用、终端显示与复制、桌面端 projectless 会话的目录与提示词、用量与额度统计、上下文配置、协作模式、内置生图工具、多账号目录与共享会话（原生目录直接初始化、cc-switch 及 Herdr／Ovis 窗格会话绑定），以及订阅登录凭据。图片生成和编辑的区别、遮罩、外部应用接入及 CLIProxyAPI 调用和并发处理见 [Codex 订阅生图接入](image-gen.md)。
 
 ## <a id="app-server-lifecycle"></a>Codex app-server
 
@@ -792,7 +792,7 @@ Codex 随附的 `imagegen` skill 还包含公共 API 调用脚本。这个 fallb
 
 ## <a id="cc-switch-multi-account"></a>多账号目录与共享会话
 
-不同账号使用独立 `CODEX_HOME`、认证和后台；设置及本地历史是否共享另行决定。Codex 原生支持这种隔离，不需要像只支持整个 `HOME` 隔离的程序那样同时改变 Git、SSH 等工具的家目录。账号可以直接维护原生目录，也可以用 cc-switch 初始化后采用原生入口，或从既有目录迁移，见[原生目录迁移](#native-account-migration)。
+不同账号使用独立 `CODEX_HOME`、认证和后台；设置及本地历史是否共享另行决定。Codex 原生支持这种隔离，不需要像只支持整个 `HOME` 隔离的程序那样同时改变 Git、SSH 等工具的家目录。账号可以按[原生目录的直接初始化](#native-account-initialize)一步建齐，也可以用 cc-switch 初始化后采用原生入口，或按[原生目录迁移](#native-account-migration)从既有目录迁出。
 
 下列 cc-switch 初始化流程使用 [SaladDay/cc-switch-cli](https://github.com/SaladDay/cc-switch-cli/tree/v5.11.1)，不是同名桌面客户端；于 2026-10-22 在 Linux / WSL、cc-switch `5.11.1`、Codex `0.163.0` 下实测，其他版本先核对 `--help`。后台选择与兼容恢复另按本文 `0.165.0` 的版本说明。
 
@@ -911,6 +911,44 @@ cc-switch 的 provider 数据和持久目录是两个维护位置。直接启动
 
 > 源码：[配置重建与凭据来源检测](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L253-L279)、[退出时仅回写认证](https://github.com/SaladDay/cc-switch-cli/blob/v5.11.1/src-tauri/src/cli/codex_shared_launch.rs#L283-L309)。本节不提供直接改写 cc-switch 数据库的流程。
 
+### <a id="native-account-initialize"></a>原生目录的直接初始化
+
+未部署 cc-switch 的机器可直接建立 `$HOME/.codex-homes/<account>`，共享默认 `~/.codex` 的设置、会话和 SQLite 索引，同时保持凭据与后台独立。动手前先检查默认目录是否有正在执行的会话或后台任务，保持活动任务不受干扰。
+
+1. **补齐源目录共享目标**：全新或尚未使用归档、迁移功能的源目录可能缺少部分子目录与维护锁。建立软链接前先在源目录补齐，使新账号链接立即有效：
+
+   ```bash
+   mkdir -p ~/.codex/sessions ~/.codex/archived_sessions \
+     ~/.codex/thread-writer-locks ~/.codex/rollout-migrations ~/.codex/.tmp
+   touch ~/.codex/.tmp/rollout-maintenance.lock
+   chmod 600 ~/.codex/.tmp/rollout-maintenance.lock
+   ```
+
+2. **配置共享源 `config.toml`**：在 `~/.codex/config.toml`（权限 `0600`）顶层显式固定共享数据库路径与文件式认证存储；沙箱与审批策略按目标用户的实际边界确认，不默认照搬全放行配置：
+
+   ```toml
+   sqlite_home = "/home/<user>/.codex"
+   cli_auth_credentials_store = "file"
+   ```
+
+3. **建立独立账号目录与共享链接**：创建 `$HOME/.codex-homes/<account>`（权限 `0700`）及其 `.tmp`、`tmp` 子目录，将设置、主指令和共享会话目录软链接到源位置；`auth.json` 保持缺省待用户独立登录，`session_index.jsonl` 保留为非软链接普通文件（需要立即看到既有会话标题时可复制一份初始副本）：
+
+   ```bash
+   acct_home="$HOME/.codex-homes/<account>"
+   mkdir -p "$acct_home/.tmp" "$acct_home/tmp"
+   chmod 700 "$HOME/.codex-homes" "$acct_home" "$acct_home/.tmp" "$acct_home/tmp"
+
+   ln -sfn "$HOME/.codex/config.toml" "$acct_home/config.toml"
+   ln -sfn "$HOME/.agents/AGENTS.md" "$acct_home/AGENTS.md"
+   ln -sfn "$HOME/.codex/sessions" "$acct_home/sessions"
+   ln -sfn "$HOME/.codex/archived_sessions" "$acct_home/archived_sessions"
+   ln -sfn "$HOME/.codex/thread-writer-locks" "$acct_home/thread-writer-locks"
+   ln -sfn "$HOME/.codex/rollout-migrations" "$acct_home/rollout-migrations"
+   ln -sfn "$HOME/.codex/.tmp/rollout-maintenance.lock" "$acct_home/.tmp/rollout-maintenance.lock"
+   ```
+
+4. **配置交互函数与可执行脚本**：在 `~/.bashrc` 定义 `codex-<account>` 包装函数，并在 `~/.local/bin/codex-<account>`（权限 `0755`）放置同等逻辑的可执行脚本，使交互终端、窗格管理器及非交互子进程均使用同一 `CODEX_HOME` 与代理环境。代理静默导出写法由 `network` skill 的 `clashctl` 与代理启动环境主题维护。
+
 ### <a id="native-account-migration"></a>既有账号迁到原生目录
 
 已初始化的账号目录可以脱离 cc-switch 使用。先定位实际入口、认证存储、共享配置与 SQLite、后台进程和会话树，再迁到稳定的独立目录，例如 `$HOME/.codex-homes/<account>`；迁移目录本身不创建新授权，也不改变上游额度。
@@ -926,6 +964,62 @@ cc-switch 的 provider 数据和持久目录是两个维护位置。直接启动
 共享默认配置时还要核对文件的加载层级。以用户家目录为 cwd、将默认目录的配置链接给另一个 `CODEX_HOME` 时，同一文件也可能被发现为项目层；该环境曾对冗余 `model_provider` 报 `Ignored unsupported project-local config keys`。新官方会话沿用原生默认值即可，需要选择其他 provider 时按实际用户配置与来源验证，不靠忽略警告判断生效。
 
 > `0.165.0` 的 Unix 控制 socket 在账号目录中公布别名，实际绑定路径在受保护的临时目录中按规范化路径哈希生成，因此“账号目录长就一定无法启动 daemon”不适用于该版本。短目录便于管理，但不应把软链改名或缩短路径当成已证实的路由超时解法，见[绑定与别名](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-transport/src/transport/unix_socket.rs#L101-L142)及[物理端点生成](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/app-server-transport/src/transport/unix_socket.rs#L354-L367)。
+
+### <a id="herdr-session-binding"></a>Herdr 与 Ovis 窗格会话绑定及 Hook 信任
+
+在 Herdr `0.9.x` 与 Ovis 管理的终端窗格中运行 Codex（宿主服务与反代配置由 `software` skill 的 Herdr 与 Ovis 主题维护），需要让每个窗格内的会话启动事件向当前窗格准确上报 `agent_session_id`，并让 Ovis 读取到对应的会话记录：
+
+1. **窗格内启用 `--no-daemon`**：Herdr 为窗格 shell 注入 `HERDR_ENV=1`、`HERDR_PANE_ID` 与 `HERDR_SOCKET_PATH`。若沿用默认共享 daemon，后台在窗格外或首个窗格启动，后续窗格复用该后台时，`SessionStart` hook 在后台进程内执行，缺少当前窗格的 `HERDR_PANE_ID` 或沿用旧窗格标识，导致会话与窗格绑定失效。统一包装器在检测到 `HERDR_ENV` 非空时，对普通会话启动自动前置 `--no-daemon`（显式传入 `--no-daemon`、`--remote*`，或执行 `queue`、`agents`、`app-server`、`exec-server`、`remote-control` 子命令时保持原参数）；共享 `config.toml` 同时设 `daemon_auto_start = false`，兼顾新账号首次 `/login` 时避免后台缓存未登录状态：
+
+   ```bash
+   _codex_wrap() {
+       local bin="$1"; shift
+       if [ -n "${HERDR_ENV:-}" ]; then
+           local inject=1 a
+           for a in "$@"; do
+               case "$a" in
+                   --no-daemon|--remote*|queue|agents|app-server|exec-server|remote-control)
+                       inject=0; break ;;
+               esac
+           done
+           [ "$inject" = 1 ] && set -- --no-daemon "$@"
+       fi
+       _clashctl_on_if_unset
+       command "$bin" "$@"
+   }
+   ```
+
+2. **按 `CODEX_HOME` 分别安装 Hook 并共享 `sessions`**：默认目录与每个独立 `$HOME/.codex-homes/<account>` 各自读取本目录下的 `hooks.json`。先在未建立 `config.toml` 软链接前执行 `CODEX_HOME='<codex-home>' herdr integration install codex`，生成各自的 `herdr-agent-state.sh` 与 `hooks.json`（权限收紧为 `0600`），再移除独立目录中由安装器生成的临时 `config.toml` 并改建指向源配置的软链接。Ovis 根据上报的 `agent_session_id` 在 `~/.codex/sessions` 下检索 rollout 文件；独立账号通过前文的 `sessions` 软链接写回同一目录后，Ovis 可直接展示结构化聊天视图，各账号也能互读和恢复会话。
+
+3. **开启 `hooks` 特性并写入 `trusted_hash`**：Codex `0.166.0+` 要求在 `[features]` 中设置 `hooks = true`，并对非受管用户级 `hooks.json` 校验 `[hooks.state."<hooks.json绝对路径>:session_start:0:0"]` 的 `trusted_hash`；缺少或哈希不匹配时标记为 `Untrusted`／`Modified` 并跳过执行。`herdr integration install codex` 不会自动写入 `trusted_hash`，预填时按 `NormalizedHookIdentity`（`event_name` 为 `"session_start"`，handler 补齐默认 `"async": false`，对象键递归排序后序列化为紧凑 JSON）计算 SHA-256：
+
+   ```python
+   import hashlib, json
+
+   data = json.load(open("<codex-home>/hooks.json", encoding="utf-8"))
+   handler = dict(data["hooks"]["SessionStart"][0]["hooks"][0])
+   handler.setdefault("async", False)
+   ident = {"event_name": "session_start", "hooks": [handler]}
+   trusted_hash = "sha256:" + hashlib.sha256(
+       json.dumps(ident, sort_keys=True, separators=(",", ":")).encode("utf-8")
+   ).hexdigest()
+   ```
+
+   将默认目录与各独立账号目录计算出的 `trusted_hash` 一并写入共享 `~/.codex/config.toml`：
+
+   ```toml
+   [features]
+   hooks = true
+   daemon_auto_start = false
+
+   [hooks.state."/home/<user>/.codex/hooks.json:session_start:0:0"]
+   trusted_hash = "sha256:<default-hook-sha256>"
+
+   [hooks.state."/home/<user>/.codex-homes/<account>/hooks.json:session_start:0:0"]
+   trusted_hash = "sha256:<account-hook-sha256>"
+   ```
+
+> 源码：[Hook 信任状态与 `hook_hash`](https://github.com/openai/codex/blob/rust-v0.167.1/codex-rs/hooks/src/engine/discovery.rs#L836-L1029)、[配置规范化指纹 `version_for_toml`](https://github.com/openai/codex/blob/rust-v0.167.1/codex-rs/config/src/fingerprint.rs#L54-L65)。🔬 2026-11-13，Ubuntu Linux、Codex CLI `0.166.0`（受管后台组件 `0.167.2`）、Herdr integration `v10`：默认目录与两个原生多账号目录按上述流程配置后，`herdr integration status` 均识别为 `current (v10)`，交互函数与非交互脚本的代理及 `--no-daemon` 注入验证通过。
 
 ### <a id="cc-switch-verification"></a>验收
 

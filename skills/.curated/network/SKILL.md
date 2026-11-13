@@ -23,7 +23,7 @@ OpenWrt 的设备支持、首次安装、镜像类型、升级恢复、BusyBox/p
 
 Mihomo 产品与配置发现、GUI 配置链、流量选择、协议性能、REST API、TUN 路由下的 TCP 端口探测，以及 DNS / WebRTC 泄漏原理和探测见 [references/mihomo.md](references/mihomo.md)。
 
-[clashctl](https://github.com/nelvko/clashctl) 的入口与包装器副作用、shell 代理变量、常驻程序的启动环境、systemd 环境声明与分层验收见 [clashctl / Mihomo 代理环境](references/clashctl.md)。Codex / DSH 的后台、账号与子进程策略由 `harness` skill 对应主题说明；只读排查先审查入口，不凭 `status`、`--help` 或 `--version` 名称假定命令无副作用。
+[clashctl](https://github.com/nelvko/clashctl) 的入口与包装器副作用（含用户级旧入口遮蔽判别与静默代理注入）、shell 代理变量与零值端口回退、常驻程序的启动环境、systemd 环境声明与分层验收见 [clashctl / Mihomo 代理环境](references/clashctl.md)。Codex / DSH 的后台、账号与子进程策略由 `harness` skill 对应主题说明；只读排查先审查入口，不凭 `status`、`--help` 或 `--version` 名称假定命令无副作用。
 
 ## 共享 Linux 节点
 

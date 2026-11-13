@@ -6,7 +6,7 @@
 
 ## <a id="entrypoints"></a>入口与部署包装器
 
-先确认 `clashctl` 在当前 shell 中是函数、别名还是可执行文件，再读取对应启动文件与包装脚本。Bash 可用 `type -t clashctl` 与 `type -P clashctl` 分别查看入口类型和 PATH 中的程序位置；函数可能调用后者，二者的权限和副作用应分别核对。安装根目录从实际入口或 `CLASHCTL_HOME` 确认，配置与订阅文件按敏感数据处理。
+先确认 `clashctl` 在当前 shell 中是函数、别名还是可执行文件，再读取对应启动文件与包装脚本。Bash 可用 `type -a clashctl`（或分别用 `type -t clashctl` 与 `type -P clashctl`）同时核对当前 shell 函数与 `PATH` 中的程序位置：`which clashctl` 是外部命令，只搜索 `PATH` 中的可执行文件，无法识别交互 shell 已定义的同名函数。机器从用户级 `$HOME/.clashctl` 迁到系统级 `/opt/clashctl` 后，若 `~/.bashrc` 仍残留旧版 `CLASHCTL_HOME=$HOME/.clashctl` 加载块，交互终端调用 `clashctl sub` 会落入旧目录函数并显示陈旧订阅，而 `which clashctl` 仍返回 `/usr/local/bin/clashctl`。确认旧用户级 `mihomo.service` 已停用（`inactive` / `disabled`）且无进程引用后，将 `~/.bashrc` 改为加载 `/etc/profile.d/clashctl.sh`，把旧 `$HOME/.clashctl` 与残留用户 unit 移入回收站并执行 `systemctl --user daemon-reload`。安装根目录从实际生效入口和 `CLASHCTL_HOME` 确认，配置与订阅文件按敏感数据处理。
 
 上游 shell 命令与内核生命周期分别处理：
 
@@ -19,6 +19,28 @@
 > 来源：[开启代理](https://github.com/nelvko/clashctl/blob/4ec42a9f33108a16281bdad4eace7ccce94ae3b2/scripts/cmd/on.sh#L3-L16)、[导出代理变量](https://github.com/nelvko/clashctl/blob/4ec42a9f33108a16281bdad4eace7ccce94ae3b2/scripts/cmd/on.sh#L32-L67)、[关闭与停止选项](https://github.com/nelvko/clashctl/blob/4ec42a9f33108a16281bdad4eace7ccce94ae3b2/scripts/cmd/off.sh#L3-L29)。
 
 外层集成要另外审查。在已核对的一种系统级包装结构中，加载脚本只定义函数并导出 `CLASHCTL_HOME`，加载本身不启用代理；管理员程序却在其他子命令成功返回后刷新并重写 shell 参数文件。因此，经该包装器执行的 `status`、`--help`、`--version` 也可能写文件。这是额外集成层的源码行为，不归因于上述公共提交，也不外推到其他安装。
+
+供 CLI 或编码 agent 启动前按需注入代理的包装函数，若直接调用交互式 `clashctl on`，会在每次未设代理时向标准输出打印启用提示，污染非交互命令或结构化协议输出。上述系统级包装结构提供只输出 `export` 语句的无提示入口（如 `/usr/local/bin/clashctl --shell-on`，从 `/etc/clashctl-shell.env` 读取参数），可在检测到 `http_proxy` / `HTTP_PROXY` 未设置时静默 `eval` 并在异常端口时回退到已知的本地监听端口：
+
+```bash
+_clashctl_on_if_unset() {
+    case "${HTTP_PROXY:-}${http_proxy:-}" in
+        ""|*:0|*:0/*)
+            if [ -x /usr/local/bin/clashctl ]; then
+                eval "$(/usr/local/bin/clashctl --shell-on 2>/dev/null)" || true
+            fi
+            case "${http_proxy:-}${HTTP_PROXY:-}" in
+                ""|*:0|*:0/*)
+                    export http_proxy='http://127.0.0.1:7890' https_proxy='http://127.0.0.1:7890'
+                    export HTTP_PROXY="$http_proxy" HTTPS_PROXY="$https_proxy"
+                    export all_proxy='socks5h://127.0.0.1:7890' ALL_PROXY='socks5h://127.0.0.1:7890'
+                    export no_proxy='localhost,127.0.0.1,::1' NO_PROXY='localhost,127.0.0.1,::1'
+                    ;;
+            esac
+            ;;
+    esac
+}
+```
 
 只读检查先读取自己的入口和集成脚本，再直接查询服务管理器、监听与进程元数据；不能仅凭命令名称认定无副作用。加载 shell 集成本身也以已读脚本为准，仅执行已审查且受信任的版本。
 
@@ -69,6 +91,10 @@ export NO_PROXY="$no_proxy"
 ```
 
 绕过列表按实际内网需求补充，并在目标客户端验证。宽泛的域名后缀、私网网段或 `*` 可能使请求直连；大小写值冲突时先理清客户端优先级，不依赖偶然选中某一份值。含用户名、密码或私密参数的代理 URL 不写进示例、日志或公开报告。
+
+上游 `set_system_proxy` 从 `runtime.yaml` 提取 `mixed-port`、`port`、`socks-port` 后，用 `${http_port:-${mixed_port}}` 和 `${socks_port:-${mixed_port}}` 生成代理地址。Bash 的 `:-` 仅在变量为空或未定义时采用回退值；若订阅配置显式写出 `port: 0` 或 `socks-port: 0`，非空字符串 `"0"` 会阻止回退到 `mixed-port`，导出无效的 `http://127.0.0.1:0` 或 `socks5h://127.0.0.1:0`（系统包装器刷新 `/etc/clashctl-shell.env` 时同样写入 `:0`）。仅使用 `mixed-port` 时在订阅或合成配置中省略值为 `0` 的 `port` / `socks-port`；若主机上已有运行中进程持有独立 `socks-port`（例如 `7891`）的 `ALL_PROXY` 环境变量，切换订阅时保留对应 `socks-port` 监听可避免中断存量进程的 SOCKS 连接。
+
+> 来源：[端口提取与 `:-` 回退展开](https://github.com/nelvko/clashctl/blob/4ec42a9f33108a16281bdad4eace7ccce94ae3b2/scripts/cmd/on.sh#L32-L52)。
 
 ## <a id="service-environment"></a>systemd 与其他启动器
 
