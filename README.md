@@ -197,6 +197,7 @@ pre-commit run lychee --all-files
 | DSH | 直接使用共享主文件；DSH 专用文件仅保留独有要求 |
 | Codex、Copilot CLI、Gemini CLI、Amp、pi | Skills 可用共享目录，主指令仍需各自入口的兼容链接；Codex 独立账号入口分别检查 |
 | Claude Code 本地 CLI | Skills 与主指令都通过自身目录的兼容入口接入 |
+| Antigravity | 项目级 skills 可用共享目录，用户级 skills 与主指令通过兼容入口接入；独立 `--gemini_dir` 入口分别检查 |
 | Cursor | Skills 可用共享目录；主指令按用户设置或项目级规则处理 |
 
 manage-skills 只为已发现且在本次范围内的工具补齐所需入口。工具配置目录尚未出现时跳过，之后再次调用即可重新发现；已有主文件、override 和独有规则先核对再处理。
