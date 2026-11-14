@@ -190,15 +190,15 @@ pre-commit run lychee --all-files
 
 ### <a id="shared-agent-instructions"></a>共享 AGENTS.md 的支持范围
 
-用户级共享主文件是 `~/.agents/AGENTS.md`（链向本仓 [AGENTS.md](AGENTS.md)）。安装时按工具的发现规则只保留一处入口，让每个工具直接读取这一份完整规则：原生读取 `~/.agents/AGENTS.md` 的工具直接使用该文件；支持读取自身配置目录下 `AGENTS.md` 的工具，保持文件名不变建立同名软链接；只读取自有文件名的工具，再将该文件软链接到共享主文件。完整路径、探测条件与命令由 manage-skills 的[主指令入口表](skills/.curated/manage-skills/references/installation.md#instructions-discovery)维护：
+用户级统一以 `~/.agents/AGENTS.md` 软链接指向本仓 [AGENTS.md](AGENTS.md)，各工具入口再统一汇总到 `~/.agents/AGENTS.md`，按工具的发现规则只保留一处入口读取这一份完整规则：原生读取 `~/.agents/AGENTS.md` 的工具直接使用该文件；支持读取自身配置目录下 `AGENTS.md` 的工具，保持文件名不变将该 `AGENTS.md` 软链接到 `~/.agents/AGENTS.md`；只读取自有文件名的工具，再将该专属文件软链接到 `~/.agents/AGENTS.md`。完整路径、探测条件与命令由 manage-skills 的[主指令入口表](skills/.curated/manage-skills/references/installation.md#instructions-discovery)维护：
 
 | Harness | 安装时的接入方式 |
 | --- | --- |
 | DSH | 直接读取 `~/.agents/AGENTS.md`；DSH 专用文件仅保留独有要求 |
-| Codex、Amp、pi | Skills 可用共享目录，主指令在各实际配置根下建立同名 `AGENTS.md` 软链接；Codex 独立账号入口分别检查 |
-| Antigravity | 项目级 skills 可用共享目录，用户级 skills 链接到 `config/skills`；主指令在各 `.gemini` 或独立 `--gemini_dir` 下建立同名 `AGENTS.md` 软链接 |
+| Codex、Amp、pi | Skills 可用共享目录，主指令在各实际配置根下将同名 `AGENTS.md` 软链接到 `~/.agents/AGENTS.md`；Codex 独立账号入口分别检查 |
+| Antigravity | 项目级 skills 可用共享目录，用户级 skills 链接到 `config/skills`；主指令在各 `.gemini` 或独立 `--gemini_dir` 下将同名 `AGENTS.md` 软链接到 `~/.agents/AGENTS.md` |
 | Copilot CLI、Gemini CLI | Skills 可用共享目录，主指令将各自专属文件名软链接到 `~/.agents/AGENTS.md` |
-| Claude Code 本地 CLI | Skills 与 `CLAUDE.md` 都通过自身目录的软链接接入 |
+| Claude Code 本地 CLI | Skills 软链接到 `~/.agents/skills`，`CLAUDE.md` 软链接到 `~/.agents/AGENTS.md` |
 | Cursor | Skills 可用共享目录；主指令按用户设置或项目级规则处理 |
 
 manage-skills 只为已发现且在本次范围内的工具补齐所需入口。工具配置目录尚未出现时跳过，之后再次调用即可重新发现；已有主文件、override、旧版引导文件和独有规则先核对再处理。

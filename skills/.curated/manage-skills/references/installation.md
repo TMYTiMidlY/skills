@@ -111,10 +111,10 @@ Skills 与主指令分别发现。下表的配置根必须先经过[环境探测
 | [pi](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/src/core/resource-loader.ts#L67-L120) | `~/.pi/agent`，或实际 `PI_CODING_AGENT_DIR` | 该根下的 `AGENTS.md` | 否 |
 | [Cursor](https://cursor.com/docs/rules) | `~/.cursor` 或项目已有的 `.cursor` | 用户规则通过设置管理；项目内可用根目录 `AGENTS.md` | 未列为用户级入口 |
 
-用户级安装通用指令时，先将 `~/.agents/AGENTS.md` 软链到 `<repo>/AGENTS.md`，再按各已发现配置根的读取能力选定**唯一一处**入口指向该共享主文件（也可直接链向 `<repo>/AGENTS.md`），确保每个工具直接读到完整规则且只加载一份：
+用户级安装通用指令统一经 `~/.agents/AGENTS.md` 中转收敛：仅共享主文件 `~/.agents/AGENTS.md` 软链到 `<repo>/AGENTS.md`，其余各已发现配置根按读取能力只保留**唯一一处**兼容入口并统一软链到 `~/.agents/AGENTS.md`，使仓库路径调整时只需维护一处，同时确保每个工具直接读到完整规则且只加载一份：
 
 1. **原生读取 `~/.agents/AGENTS.md` 的工具**（如 DSH）：直接使用共享主文件，自身配置根下不另建同源链接；`~/.dsh/AGENTS.md` 仅留给确需隔离的 DSH 专用要求。
-2. **读取自身配置根下 `AGENTS.md` 的工具**（如 Codex 及各独立 `CODEX_HOME`、Antigravity 的 `~/.gemini` 及各独立 `--gemini_dir`、Amp、pi）：保持文件名不变，在该配置根下建立同名 `AGENTS.md` 软链接。
+2. **读取自身配置根下 `AGENTS.md` 的工具**（如 Codex 及各独立 `CODEX_HOME`、Antigravity 的 `~/.gemini` 及各独立 `--gemini_dir`、Amp、pi）：保持文件名不变，将该配置根下的 `AGENTS.md` 软链接到 `~/.agents/AGENTS.md`。
 3. **仅读取自有指令文件名的工具**（如 Claude Code 的 `CLAUDE.md`、Copilot CLI 的 `copilot-instructions.md`、Gemini CLI 的 `GEMINI.md`）：将该专属文件名软链接到 `~/.agents/AGENTS.md`。
 
 ```bash
@@ -131,7 +131,7 @@ ln -s ../.agents/AGENTS.md "$HOME/.claude/CLAUDE.md"
 ln -s ../.agents/AGENTS.md "$HOME/.copilot/copilot-instructions.md"
 ```
 
-链接前核对目标位置、同级指令文件（如 Codex 的 `AGENTS.override.md`、`.gemini` 下的 `GEMINI.md`）以及 `$HOME` 根目录是否遗留 `~/AGENTS.md`、`~/CLAUDE.md`。若既有文件只是旧版引导包装、重复副本或多余同源入口，向用户说明差异，在将独有规则并入 `<repo>/AGENTS.md` 或获准替换后按删除规则移入回收站，再保留单一软链入口；确属某工具独有的规则才单独保留。用户级规则统一收敛在 `~/.agents/` 与各工具配置根内，回收 `$HOME` 根目录遗留入口可防止工具在家目录下向上查找时重复加载。仅使用 Antigravity 时在各 `.gemini` 根下只链 `AGENTS.md`；若本机同时使用 Gemini CLI 共用 `~/.gemini`，可再将 `~/.gemini/GEMINI.md` 软链到同一目标（Antigravity 同目录累积加载 `AGENTS.md` 与 `GEMINI.md` 时按 realpath 去重，同源软链只注入一次，而两份独立文件会叠加加载）。项目级安装使用项目实际支持的 `AGENTS.md`、`CLAUDE.md` 等入口；项目已有规则先保留并核对合并范围。仅有项目级入口的工具按项目处理，避免把项目能力描述成全局文件发现能力。
+链接前核对目标位置、同级指令文件（如 Codex 的 `AGENTS.override.md`、`.gemini` 下的 `GEMINI.md`）以及 `$HOME` 根目录是否遗留 `~/AGENTS.md`、`~/CLAUDE.md`。若既有文件只是旧版引导包装、重复副本或多余同源入口，向用户说明差异，在将独有规则并入 `<repo>/AGENTS.md` 或获准替换后按删除规则移入回收站，再保留单一软链入口；既有软链若绕过 `~/.agents/AGENTS.md` 直接指向 `<repo>/AGENTS.md`，维护时同样回收旧链并改指 `~/.agents/AGENTS.md`；确属某工具独有的规则才单独保留。用户级规则统一收敛在 `~/.agents/` 与各工具配置根内，回收 `$HOME` 根目录遗留入口可防止工具在家目录下向上查找时重复加载。仅使用 Antigravity 时在各 `.gemini` 根下只链 `AGENTS.md`；若本机同时使用 Gemini CLI 共用 `~/.gemini`，可再将 `~/.gemini/GEMINI.md` 软链到同一目标（Antigravity 同目录累积加载 `AGENTS.md` 与 `GEMINI.md` 时按 realpath 去重，同源软链只注入一次，而两份独立文件会叠加加载）。项目级安装使用项目实际支持的 `AGENTS.md`、`CLAUDE.md` 等入口；项目已有规则先保留并核对合并范围。仅有项目级入口的工具按项目处理，避免把项目能力描述成全局文件发现能力。
 
 > Claude Code 新版可按设置读取项目级 `AGENTS.md`；用户级兼容安装仍使用上表入口。更深入的配置发现与版本差异由 `harness` skill 维护，安装时按所用版本核实。
 
