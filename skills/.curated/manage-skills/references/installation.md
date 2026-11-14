@@ -106,26 +106,32 @@ Skills 与主指令分别发现。下表的配置根必须先经过[环境探测
 | [Claude Code 本地 CLI](https://code.claude.com/docs/en/memory#choose-where-to-put-claude-md-files) | `~/.claude`，或实际 `CLAUDE_CONFIG_DIR` | 该根下的 `CLAUDE.md` | 否 |
 | [GitHub Copilot CLI](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#custom-instructions-locations) | `~/.copilot`，或实际 `COPILOT_HOME` | 该根下的 `copilot-instructions.md` | 否 |
 | [Gemini CLI](https://geminicli.com/docs/cli/gemini-md/) | `~/.gemini` | `~/.gemini/GEMINI.md`，按默认上下文文件名 | 否 |
-| [Antigravity](https://antigravity.google/docs/rules) | `~/.gemini` 和已核实的独立 `--gemini_dir` | 各实际配置根下的 `AGENTS.md`（`GEMINI.md` 未占用时也可共用） | 否 |
+| [Antigravity](https://antigravity.google/docs/rules) | `~/.gemini` 和已核实的独立 `--gemini_dir` | 各实际配置根下的 `AGENTS.md` | 否 |
 | [Amp](https://ampcode.com/docs/customize/agents-md) | `~/.config/amp`，或核实的实际配置根 | 该根下的 `AGENTS.md` | 否 |
 | [pi](https://github.com/earendil-works/pi/blob/8479bd8/packages/coding-agent/src/core/resource-loader.ts#L67-L120) | `~/.pi/agent`，或实际 `PI_CODING_AGENT_DIR` | 该根下的 `AGENTS.md` | 否 |
 | [Cursor](https://cursor.com/docs/rules) | `~/.cursor` 或项目已有的 `.cursor` | 用户规则通过设置管理；项目内可用根目录 `AGENTS.md` | 未列为用户级入口 |
 
-用户级安装通用指令时，将共享主文件链接到 `<repo>/AGENTS.md`；需要兼容入口的已发现工具，再将其主指令文件链接到同一份规则。也可直接链接仓库中的实体。链接前检查原有内容；Codex 非空 `AGENTS.override.md` 的优先级也要核对。
+用户级安装通用指令时，先将 `~/.agents/AGENTS.md` 软链到 `<repo>/AGENTS.md`，再按各已发现配置根的读取能力选定**唯一一处**入口指向该共享主文件（也可直接链向 `<repo>/AGENTS.md`），确保每个工具直接读到完整规则且只加载一份：
+
+1. **原生读取 `~/.agents/AGENTS.md` 的工具**（如 DSH）：直接使用共享主文件，自身配置根下不另建同源链接；`~/.dsh/AGENTS.md` 仅留给确需隔离的 DSH 专用要求。
+2. **读取自身配置根下 `AGENTS.md` 的工具**（如 Codex 及各独立 `CODEX_HOME`、Antigravity 的 `~/.gemini` 及各独立 `--gemini_dir`、Amp、pi）：保持文件名不变，在该配置根下建立同名 `AGENTS.md` 软链接。
+3. **仅读取自有指令文件名的工具**（如 Claude Code 的 `CLAUDE.md`、Copilot CLI 的 `copilot-instructions.md`、Gemini CLI 的 `GEMINI.md`）：将该专属文件名软链接到 `~/.agents/AGENTS.md`。
 
 ```bash
 # 确认共享入口缺失后安装
 mkdir -p "$HOME/.agents"
 ln -s "<repo>/AGENTS.md" "$HOME/.agents/AGENTS.md"
 
-# 仅当实际 CODEX_HOME / .gemini 已存在、目标主文件缺失时执行
-ln -s "$HOME/.agents/AGENTS.md" "<实际 CODEX_HOME>/AGENTS.md"
-ln -s "$HOME/.agents/AGENTS.md" "<实际 .gemini 目录>/AGENTS.md"
-# 若 `$HOME/.gemini/GEMINI.md` 缺失且无独立定制规则，也可按需共用：
-# ln -s ../.agents/AGENTS.md "$HOME/.gemini/GEMINI.md"
+# 仅在对应配置根已存在、目标缺失或已获准替换时执行：
+# 保持同名 AGENTS.md（Codex、Antigravity、Amp、pi 等）
+ln -s "$HOME/.agents/AGENTS.md" "<实际配置根>/AGENTS.md"
+
+# 自有指令文件名（Claude Code、Copilot CLI；同装 Gemini CLI 时再补 ~/.gemini/GEMINI.md）
+ln -s ../.agents/AGENTS.md "$HOME/.claude/CLAUDE.md"
+ln -s ../.agents/AGENTS.md "$HOME/.copilot/copilot-instructions.md"
 ```
 
-Antigravity 会在同目录下累积加载 `AGENTS.md` 与 `GEMINI.md`（按 realpath 去重）；若 `.gemini` 或独立 `--gemini_dir` 中已有常规 `GEMINI.md`，应保留原文件并只补充 `AGENTS.md` 软链，不覆盖既有本地规则。DSH 共用通用规则时只需共享主文件；`~/.dsh/AGENTS.md` 留给可选的 DSH 专用要求，已有独有内容时保留。项目级安装使用项目实际支持的 `AGENTS.md`、`CLAUDE.md` 等入口；项目已有规则先保留并核对合并范围。仅有项目级入口的工具按项目处理，避免把项目能力描述成全局文件发现能力。
+链接前核对目标位置、同级指令文件（如 Codex 的 `AGENTS.override.md`、`.gemini` 下的 `GEMINI.md`）以及 `$HOME` 根目录是否遗留 `~/AGENTS.md`、`~/CLAUDE.md`。若既有文件只是旧版引导包装、重复副本或多余同源入口，向用户说明差异，在将独有规则并入 `<repo>/AGENTS.md` 或获准替换后按删除规则移入回收站，再保留单一软链入口；确属某工具独有的规则才单独保留。用户级规则统一收敛在 `~/.agents/` 与各工具配置根内，回收 `$HOME` 根目录遗留入口可防止工具在家目录下向上查找时重复加载。仅使用 Antigravity 时在各 `.gemini` 根下只链 `AGENTS.md`；若本机同时使用 Gemini CLI 共用 `~/.gemini`，可再将 `~/.gemini/GEMINI.md` 软链到同一目标（Antigravity 同目录累积加载 `AGENTS.md` 与 `GEMINI.md` 时按 realpath 去重，同源软链只注入一次，而两份独立文件会叠加加载）。项目级安装使用项目实际支持的 `AGENTS.md`、`CLAUDE.md` 等入口；项目已有规则先保留并核对合并范围。仅有项目级入口的工具按项目处理，避免把项目能力描述成全局文件发现能力。
 
 > Claude Code 新版可按设置读取项目级 `AGENTS.md`；用户级兼容安装仍使用上表入口。更深入的配置发现与版本差异由 `harness` skill 维护，安装时按所用版本核实。
 
