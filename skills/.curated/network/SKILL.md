@@ -19,11 +19,13 @@ OpenWrt 的设备支持、首次安装、镜像类型、升级恢复、BusyBox/p
 
 把外部Wi-Fi接入本地网络时，AP/station/网关/CPE的角色组合、路由/桥接/伪桥接、NAT与代理位置、Captive Portal、Eduroam、无线传播与漫游、分层测量、整网设备可见性、定向CPE选型、主动/被动PoE、户外安装、穿窗布线、无线Mesh及校园接入案例见 [references/external-wifi-access.md](references/external-wifi-access.md)。
 
-## Mihomo / Clash 客户端与泄漏控制
+## <a id="mihomo"></a>Mihomo 内核与系统接管
 
-Mihomo 产品与配置发现、GUI 配置链、流量选择、协议性能、REST API、TUN 路由下的 TCP 端口探测，以及 DNS / WebRTC 泄漏原理和探测见 [references/mihomo.md](references/mihomo.md)。
+内核分发与有效配置发现、GUI 配置链、规则和 Provider、TUN 路由、Windows 逐用户系统代理、DNS/WebRTC 控制、私网中转原理、协议性能、控制 API 和连接诊断见 [Mihomo](references/mihomo.md)。受阻节点入口经已有私网中转时读[出站中转架构](references/mihomo.md#private-relay)；应用到核心的系统代理问题读 [Windows 系统代理](references/mihomo.md#system-proxy)。
 
-[clashctl](https://github.com/nelvko/clashctl) 的入口与包装器副作用（含用户级旧入口遮蔽判别与静默代理注入）、shell 代理变量与零值端口回退、常驻程序的启动环境、systemd 环境声明与分层验收见 [clashctl / Mihomo 代理环境](references/clashctl.md)。Codex / DSH 的后台、账号与子进程策略由 `harness` skill 对应主题说明；只读排查先审查入口，不凭 `status`、`--help` 或 `--version` 名称假定命令无副作用。
+## <a id="clashctl"></a>clashctl 托管与代理环境
+
+安装权限与非特权探测、入口函数和部署包装器、订阅与生成配置生命周期、独立中转订阅、shell 环境、零值端口回退现象、常驻程序启动环境与服务验收见 [clashctl](references/clashctl.md)。只读排查先读取实际入口；包装器的 help/status 也可能提权或写盘，服务停机时的静默注入还可能触发密码等待。具体后台、账号与子进程策略由 `harness` skill 对应主题说明。
 
 ## 共享 Linux 节点
 
