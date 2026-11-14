@@ -87,6 +87,12 @@ _agy_instance() (
   # 首次启动自动幂等铺齐 .gemini 下的共享软链，绝不触碰 $HOME
   mkdir -p "$gdir/antigravity-cli"
   [ -e "$gdir/config" ] || [ -L "$gdir/config" ] || ln -s "$real_home/.gemini/config" "$gdir/config"
+  if [ -e "$real_home/.agents/AGENTS.md" ] && [ ! -e "$gdir/AGENTS.md" ] && [ ! -L "$gdir/AGENTS.md" ]; then
+    ln -s "$real_home/.agents/AGENTS.md" "$gdir/AGENTS.md"
+  fi
+  if [ -L "$gdir/AGENTS.md" ] && [ ! -e "$gdir/AGENTS.md" ]; then
+    printf '[agy-instance] warning: broken symlink %s\n' "$gdir/AGENTS.md" >&2
+  fi
   for gitem in annotations brain conversations conversation_summaries.db conversation_summaries.db-shm conversation_summaries.db-wal history.jsonl implicit jetski_state.pbtxt mcp presence; do
     if [ ! -e "$gdir/antigravity-cli/$gitem" ] && [ ! -L "$gdir/antigravity-cli/$gitem" ]; then
       ln -s "$real_home/.gemini/antigravity-cli/$gitem" "$gdir/antigravity-cli/$gitem"
@@ -107,7 +113,8 @@ _agy_instance() (
 |---|---|---|
 | `antigravity-cli/antigravity-oauth-token` | 独立文件 | 该账号的凭据，**不能软链** |
 | `antigravity-cli/settings.json` | 独立文件或软链 | 各账号可独立保存默认模型（`/model`）与 `trustedWorkspaces`；`agy` 保存设置时走临时文件原子 rename |
-| `config` | 软链 → `~/.gemini/config` | 共享 `mcp_config.json`、`hooks.json`、skills、projects |
+| `config` | 软链 → `~/.gemini/config` | 共享 `mcp_config.json`、`hooks.json`、skills、projects；二进制内 `fs.ConfigDir` 将 `<geminiDir>` 拼接 `"config"`（不固定指向真实 `$HOME`），因此多账号共享 `config/skills` 与 MCP 等配置依赖此软链 |
+| `AGENTS.md` / `GEMINI.md` | 软链或独立文件 | 不在 `config` 子目录内，需在各隔离 `.gemini` 根下单独补齐（推荐 `AGENTS.md` → `~/.agents/AGENTS.md`）；同目录下 `AGENTS.md` 与 `GEMINI.md` 若同时存在会累积加载 |
 | `antigravity-cli/{conversations,brain,implicit,presence,annotations,history.jsonl,jetski_state.pbtxt,mcp,conversation_summaries.db*}` | 软链 → `~/.gemini/antigravity-cli/…` | 共享会话历史、压缩数据、MCP schema 与活跃锁（`presence` 必须共享以通过 Ovis `/proc/<pid>/fd` realpath 校验） |
 
 > **旧版假 `HOME` 实例目录的存量清理**：若机器曾跑过改写 `HOME="$h"` 的旧版包装，先检查 `~/.agy-homes/<account>/.local/share/Trash/{files,info}` 是否残留影子回收站条目（按 FreeDesktop 重名规则追加 `_1`、`_2`，将 `files/<name>` 与 `info/<name>.trashinfo` 成对同卷 `rename` 合并回 `~/.local/share/Trash/`），并将旧版仍在运行的进程过渡期内的顶层目录（`.local`、`.cache` 等）合并回真实 `HOME`。
@@ -139,6 +146,43 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
 
 第三方切换工具（[agyw](https://github.com/tranquocthong/agy-switcher)、[agy-cli-manager](https://github.com/zcop/agy-cli-manager)、[agyswap](https://pypi.org/project/agyswap-cli/)）均为全局切换型——切换前须退出所有 agy 进程，不支持并行。
 
+## <a id="customization-discovery"></a>配置、Rules 与 Skills 发现
+
+> 以下边界以官方[配置发现文档](https://antigravity.google/docs/customization-discovery)、[Rules 文档](https://antigravity.google/docs/rules)为准，并结合 `1.5.8` CLI 二进制静态分析与本机实测补充；涉及 Desktop / App 专属交互（如 `manual` 触发与 UI 开关）以官方文档为准，未在 Desktop 运行时实测。
+
+### 作用域与目录遍历边界
+
+- **工作区侧**：从当前目录向上遍历至 Git 仓库根（`.git` 所在目录；若当前目录不在 Git 仓库内，则只扫描工作区当前目录本身），探测各层的 `.agents/` 与 `.gemini/`，以及工作区各级 `AGENTS.md` / `GEMINI.md`。**不向仓库外继续上溯，也不向下扫描未打开的子目录**；单层目录下的 `skills/<name>/SKILL.md` 仅向下探测一层。
+- **个人全局侧**：CLI 后端 `globalCustomizationDirs` 仅枚举三个配置根——`<appDataDir>`、`<geminiDir>`（默认 `~/.gemini`，或 `--gemini_dir` 指定目录）与 `<geminiDir>/config`（`fs.ConfigDir` 基于 `<geminiDir>` 拼接 `"config"`）。**`~/.agents/` 不在全局扫描列表中**：项目级 `<dir>/.agents/skills/` 可被原生发现，但用户级 `~/.agents/skills/` 不会被 Antigravity 自动发现。
+
+### Skills 发现、兼容性与优先级
+
+- **用户级共享 `skills` 接入**：要在 Antigravity 中复用全局 `~/.agents/skills/`，推荐软链到 `<geminiDir>/config/skills`：
+  ```bash
+  mkdir -p ~/.gemini/config
+  ln -s ../../.agents/skills ~/.gemini/config/skills
+  ```
+  `~/.gemini/config/skills` 同时被 CLI 与 App 侧个人配置根识别、优先让位给工作区项目技能，且在多账号 `--gemini_dir` 隔离下可随 `config` 软链自动共享。不建议直接放入 `<appDataDir>/skills/` 或 `<geminiDir>/skills/`，否则会反客为主压过工作区同名技能。
+- **覆盖优先级（高到低）**：
+  1. CLI 专用全局目录 `<appDataDir>/skills/` 与 `<geminiDir>/skills/`（CLI 侧高优入口，可覆盖工作区技能及清单 `exclude` 排除项）
+  2. 仓库 `.gemini/config.json` 中的 `personal_customization_dir`
+  3. 工作区规则与技能（越接近当前目录优先级越高；受清单 `exclude` 等配置过滤）
+  4. 个人全局（`<geminiDir>/config/`；受清单过滤）
+  5. 内置技能（built-in）
+- **元数据与刷新**：官方[配置发现文档](https://antigravity.google/docs/customization-discovery)将 `SKILL.md` 的 `description` 标为必填、`name` 标为可选（缺省时回退目录名）；但 `1.5.8` 的 `convertSkillPath` 存在 `RequireName` 校验分支，且跨工具仓库通常要求两者齐全。文件增改在下一轮次自动生效；若要在**当前交互式 CLI 会话内**即时刷新 `/skills` 与斜杠补全，执行 `/skills reload`。
+- **内置技能分层门控**（🔬 `1.5.8` 实测样本）：`builtin/skills/` 磁盘目录共存 **14** 个 `SKILL.md`；Language Server RPC `GetAllSkills` 返回 **13** 个（受门控隐藏的内置技能未返回）；主会话系统提示实际注入 `<skills>` 为 **5** 个（通过 `builtin.RegisterGated`、特性旗标、当前角色与 `WithModeFilter` 按模式裁剪）。
+
+### Rules 发现、触发与上下文预算
+
+- **累积加载与 realpath 去重**：来自不同作用域（全局、仓库各级）的已发现规则**累积合并**生效，不会因为高优先级规则存在而整体屏蔽低优先级规则；同一 `<geminiDir>` 下的 `AGENTS.md` 与 `GEMINI.md` 亦会累积注入。发现阶段按 `EvalSymlinks` 解析后的物理路径（realpath）去重，不同路径的两个独立常规文件即便内容完全相同也不会在加载时合并去重（引用内联展开也不等同于发现去重）。
+- **普通指令 vs `rules/*.md`**：直接放置的 `AGENTS.md` 与 `GEMINI.md` 视为普通 Markdown 并以 `always_on` 注入（YAML frontmatter 被忽略）。`.agents/rules/*.md` 与 `.gemini/rules/*.md` 则要求有效 `trigger`：
+  - `always_on`：每轮注入规则正文
+  - `model_decision`：需提供 `description`，仅以摘要供模型按需调用
+  - `glob`：按路径模式匹配触发；`1.5.8` 二进制同时兼容 `globs` 与单数 `glob` 字段
+  - `manual`：手动 `@` 触发（官方标注为 App/IDE 侧交互能力）
+- **清单注册与 `@` 引用差异**：通过 `rules.json` 可显式登记更深层子目录或目录外规则文件并保留其 `trigger`。规则正文中，`@[label](path)` 会在单文件大小校验之前内联展开目标文件内容；裸写 `@path` 仅改写引用路径提示，不在加载阶段内联文件内容。
+- **双阈值保护**（`1.5.8` 静态分析）：单文件（含 `@[label](path)` 展开后文本）存在 **24,000 字节**硬上限；全部非内置规则共用 **20,000 token** 全局聚合预算（`defaultRulesBudget`），超出后按体积从大到小将规则文件降级为仅保留路径指针（不再内联全文），仅内置插件自带规则豁免此预算裁剪。
+
 ## 上下文压缩
 
 **1M 模型实际只用到 ~256K**。上下文增长到 250K–270K 时自动压缩到 15K–30K，此后循环。阈值不是写死在客户端的字面量，而是服务端 feature flag（Unleash）按账号 / 模型下发的实验档；1.4.8 二进制内嵌的默认档 `CASCADE_USE_EXPERIMENT_CHECKPOINTER` 可见参数结构：`max_token_limit: 256000`（压缩器强制的上下文硬上限）、`token_threshold: 50000`、`max_overhead_ratio: 0.15`，另有 Claude 1M 灰度变体 `claude-1m_840k`（`max_token_limit: 840000`）——每个账号实际拿到哪档由服务端决定。CLI 侧无法通过 settings.json、环境变量或旗标修改；Python SDK 的 `CompactionConfig(token_threshold=...)` 是唯一可配位置（见 [Python SDK](#sdk)）。
@@ -147,9 +191,9 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
 
 **Desktop 版额外问题**：Claude 模型（200K 窗口）有时完全不触发压缩，直接报 `prompt is too long` 终止会话。
 
-**缓解**：把关键决策和协议约束写入 `AGENTS.md` 或项目文档——系统规则每轮完整重注入，不受压缩影响。加入"修改文件前必须先读当前内容"的规则可降低压缩后"修复"已解决问题（Ghost Revert）的风险。
+**缓解**：把关键决策和协议约束写入 [AGENTS.md / 全局规则](#customization-discovery) 或项目文档——系统规则每轮完整重注入，不受压缩影响。加入"修改文件前必须先读当前内容"的规则可降低压缩后"修复"已解决问题（Ghost Revert）的风险。
 
-详细排查过程和社区证据见 `mess` skill 的 [antigravity-cli.md](../mess/references/antigravity-cli.md)。 🔬 本机 60 条会话实测，压缩峰值全部在 250K–270K 区间。
+🔬 本机 60 条会话实测，压缩峰值全部在 250K–270K 区间（同类疑难排障案例沉淀归 `mess` skill）。
 
 ## <a id="sdk"></a>Python SDK
 
