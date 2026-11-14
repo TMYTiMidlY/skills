@@ -211,12 +211,27 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
 
 CLI 有而 SDK 没有的：订阅配额计费、TUI（`/diff`、`/context`）、Remote Control、marketplace 插件分发、服务端实验（如 claude-1m 大窗口档）。
 
-## 会话数据
+## <a id="session-storage"></a>会话数据与本地保留上限
 
 | 路径 | 内容 |
 |---|---|
-| `~/.gemini/antigravity-cli/conversations/<id>.db` | 完整对话轨迹（SQLite，`steps` + `gen_metadata` 表） |
-| `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl` | 每条 API 调用的 token 计数和内容 |
-| `~/.gemini/antigravity-cli/conversation_summaries.db` | 会话索引（标题、状态、workspace） |
+| `~/.gemini/antigravity-cli/conversations/<id>.db` | 完整对话轨迹（SQLite，`steps` + `gen_metadata` 表，仅保存在本地） |
+| `~/.gemini/antigravity-cli/conversation_summaries.db` | 会话摘要索引（标题、步数、修改时间、工作区；云端状态同步仅覆盖此类摘要元数据，不包含完整对话正文） |
+| `~/.gemini/antigravity-cli/brain/<id>/` | 会话产物、`scratch/` 及 `.system_generated/logs/transcript*.jsonl`（每步 API 调用的 token 计数与内容，目录独立于 `.db` 留存） |
+| `~/.gemini/antigravity-cli/history.jsonl` | 交互式终端提交过的用户提问原文（追加记录，不受 `.db` 淘汰影响） |
 
-查看历史会话的上下文用量：读 transcript.jsonl 最后一条有 `input_tokens` 的记录，`input_tokens + cache_read_tokens` 即为当时的上下文大小。恢复会话用 `agy --conversation=<id>` 或在 TUI 中 `/resume`。
+查看历史会话的上下文用量：读 `transcript.jsonl` 最后一条有 `input_tokens` 的记录，`input_tokens + cache_read_tokens` 即为当时的上下文大小。恢复会话用 `agy --conversation=<id>` 或在 TUI 中 `/resume`。
+
+### 本地轨迹淘汰与批处理隔离
+
+每次启动新 `agy` 实例时，客户端按文件修改时间排序清理 `conversations/` 目录，只保留最新的 500 个 `<id>.db` 文件。后台频繁调用一次性 `agy -p`（如自动润色、审阅或批处理脚本）时，每次调用都会新建会话并触发清理，数日内即可将闲置长会话挤出保留范围。高频 `agy -p` 任务应指定专用 `--gemini_dir`（仅软链复用凭据与 `config`，保持独立的 `conversations/` 目录），将短命批处理会话与主力交互历史隔离。
+
+> 🔬 `1.5.8` / `1.5.9` 二进制逆向与实测：清理逻辑位于 `trajectorystore.(*Manager).PruneAll`，500 条上限写死在二进制内，无 `settings.json` 键、环境变量或旗标可改；`UnifiedStateSyncClient` 云端同步仅覆盖 `conversation_summaries.db` 对应的标题与步数摘要，无法从云端恢复已被清理的完整对话。
+
+### 已淘汰会话的残余恢复
+
+当目标会话的 `<id>.db` 已被清理、`--conversation=<id>` 无法恢复时，仍可从三处残余抢救上下文：
+
+1. **`history.jsonl`**：永久保留所有交互式终端敲入过的用户提问原文。
+2. **`brain/<id>/` 目录**：部分会话的产物目录与 `.system_generated/logs/transcript_full.jsonl` 独立留存，可直接读取完整步骤日志。
+3. **尚未关闭的原终端进程**：只要持有该会话的旧 `agy` 终端进程仍在运行，完整对话历史仍在进程内存中；关闭窗口前先在原窗口内要求其导出总结落盘即可保住内容。
