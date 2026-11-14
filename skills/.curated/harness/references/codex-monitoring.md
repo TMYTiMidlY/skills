@@ -1,6 +1,6 @@
-# Codex 会话监控与远程推进
+# Codex 会话事件、队列与恢复接口
 
-无人值守的 Codex 会话（TUI 挂着、daemon 托管或 `exec` 拉起的长任务）从外部可以**观察** rollout 与后台状态，也可以在获准后通过 queue、resume 或应用服务 API **干预**。本篇整理 rollout 判读、queue 语义、resume 边界、[多账号恢复与 goal 生命周期](#account-resume)、限流退避和监控守则。原有 queue／exec 部分按 `rust-v0.162.1`，🔬 为 2026-10-12 同版本隔离环境实测，🧭 为未复现的现场观察；多账号恢复专题另按 `rust-v0.165.0` 核对源码，不能用旧版或单一入口的行为概括所有客户端。app-server 与 daemon 的进程模型见 [Codex 运行时笔记](codex.md#app-server-lifecycle)。
+本篇介绍 Codex CLI / TUI / `exec` 会话的 rollout 事件、queue 投递语义、resume 边界、[多账号恢复与 goal 生命周期](#account-resume)，以及限流遥测。原有 queue／exec 部分按 `rust-v0.162.1`，🔬 为 2026-10-12 同版本隔离环境实测，🧭 为未复现的现场观察；多账号恢复专题另按 `rust-v0.165.0` 核对源码，具体行为需区分版本与入口。app-server 与 daemon 的进程模型见 [Codex 运行时笔记](codex.md#app-server-lifecycle)。存量会话的旁路监控、静默判据与推进策略归 `superagent` skill。
 
 ## <a id="rollout-signals"></a>rollout 存档的判读
 
@@ -194,16 +194,3 @@ uv run scripts/codex-session-maintenance.py release \
 rollout 的 `token_count` 事件自带权威限流遥测：`rate_limits` 含 `used_percent`、`window_minutes`、`resets_at`、credits 余额与套餐类型（🔬 本机会话实测可见 `used_percent: 33.0`、`window_minutes: 10080`）。监控脚本直接从 rollout 尾部读这份数据，比盯 UI 弹窗可靠。
 
 `high demand`、`Reconnecting`、`stream disconnected`、远端 compact 失败或很快结束的空回合，都需要结合实际服务错误和账号遥测判断：可能是模型容量、网络、认证或额度问题，单凭提示词不能归因为额度耗尽。已证实额度受限时按窗口退避；恢复期间仍按[多账号恢复检查](#account-handoff-checks)处理执行账号与 goal。只有明确授权继续时才 queue 消息；queue 不是按额度重置时间触发的定时器，也不保证卸载的线程自行恢复，投递前提见[投递机制](#queue-mechanism)。
-
-## <a id="monitoring-rules"></a>无人值守会话的监控守则
-
-🧭 以下阈值与判据来自多日监控长研究会话的现场沉淀（Codex 0.15x–0.162），数字是采用值不是普适规律：
-
-- **活跃**：rollout 5 分钟内有写入 → 不打扰。
-- **停下**：超 10 分钟无写入 → 先查该会话拉起的长时工具进程（构建、证明器等）是否在跑——长调用期间 rollout 静默是正常的（见 [mtime 静默](#rollout-signals)），别误推。
-- **`task_complete` 只是回合结束**：可能是限流暂停后的自然收尾，也可能是委派死锁——父线程给子代理发完消息就收工、子代理"暂停等重验"，双方互等，这种假待命从 rollout 最难认。按 monitor 语义 `task_complete` 就算正常回合结束、不推，只推半截事件流等真正异常形态。
-- **裸"继续"失灵时改明确指令**：如"不要委派、自己提交+验证+推送"，把动作说全，效果完全不同。
-- **tmux 只是 PTY 宿主，非必需**：daemon 托管的会话在 TUI 进程死后照样跑，随时 `codex resume <id>` 或 `codex agents`（浏览共享 daemon 上的全部会话）附加；queue 排队与用户在 TUI 里的操作天然不冲突（不抢占）。
-- **给会话安排的监控命令轮换写法**（if/case/显式路径交替）：完全相同的命令反复执行，会被工具侧的"无进展"判定拦下（🧭 现场经验，未在源码定位到该判定的具体实现）。
-
-> 最大的教训：别把保守当免费。TUI 挂着 ≠ 有人在操作；有明确授权指令时"不执行才需要理由"。自设"再等等"的豁免可能白白耗掉一整晚的窗口。

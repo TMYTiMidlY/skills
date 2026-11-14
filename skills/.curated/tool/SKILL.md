@@ -1,6 +1,6 @@
 ---
 name: tool
-description: 设计、封装、接入、审查或排查供 AI agent 调用的 tool 时使用。核心是把函数、CLI、API 或 MCP operation 收敛成边界清楚、可校验、可授权、可观察的执行契约；整个 agent runtime 与会话编排归 harness skill。
+description: 设计、封装、接入、审查或排查供 AI agent 调用的 tool 时使用。将单项能力收敛成可校验、可授权、可观察的执行契约；agent runtime 与调用接口归 harness skill，多任务与下级 agent 统筹归 superagent skill。
 ---
 
 # Tool
@@ -42,7 +42,7 @@ Agent / model ──提出 tool call──▶ Harness
 - **外部系统**拥有最终状态和授权；harness 放行后，OAuth scope、文件权限和数据库约束仍可能拒绝请求。
 - **Skill** 是注入给 agent 的知识和工作方法。它可以解释何时、怎样调用 tool，但不等于安装了执行器，也不会生成外部系统权限。
 
-角色取决于观察边界。一个 coding-agent CLI 对直接用户而言是 harness；被上层 orchestrator 通过 subprocess 或 SDK 驱动时，整套 runtime 又可以作为父 harness 的 agent-as-tool。整个框架与接入形态见 `harness` skill。
+角色取决于观察边界。一个 coding-agent CLI 对直接用户而言是 harness；被上层通过 subprocess 或 SDK 驱动时，整套 runtime 又可以作为父 harness 的 agent-as-tool。单项调用的输入、权限、副作用和结果契约由本 skill 负责；单个 agent 的运行机制与接入接口见 `harness` skill；目标委派、多任务协调与交付责任见 `superagent` skill。
 
 ## 能力边界
 
@@ -102,4 +102,4 @@ Tool contract 同时说明 timeout、取消传播、进度、资源清理和并�
 
 ## 边界
 
-普通软件的安装、升级和系统运维归 `software` skill。整个 coding-agent runtime、SDK、session、hooks、tool registry 与 transport 选型归 `harness` skill。本 skill 负责单个或一组 tools 自身的接口、执行、安全和 adapter 质量。
+本 skill 负责单项工具能力的接口、执行、安全与 adapter 质量，一组 tools 也按各自的语义和副作用划分契约。单个 coding-agent runtime、SDK、session、hooks、tool registry 与 transport 归 `harness` skill；持续协作前台、多任务与下级 agent 调度归 `superagent` skill；普通软件的安装、升级和系统运维归 `software` skill。

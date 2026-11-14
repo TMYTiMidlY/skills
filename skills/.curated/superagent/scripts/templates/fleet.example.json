@@ -1,0 +1,17 @@
+{
+  "allowed_workspace_roots": ["<workspace-root>"],
+  "accounts": {
+    "default": {"codex_home": "<codex-home-primary>"}
+  },
+  "workers": {
+    "task-a": {
+      "cwd": "<workspace-root>/task-a",
+      "account": "default",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "plugin": "codex_fleet.plugins.manual",
+      "developer_instructions": "Complete the assigned goal within its authorized scope and report verification evidence.",
+      "tasks": ["Replace this text with the original user request and necessary context."]
+    }
+  }
+}
