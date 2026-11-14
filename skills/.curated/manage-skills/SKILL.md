@@ -19,7 +19,7 @@ description: 创建、安装、维护、重构、审查或合并本地 skill，�
 
 ### <a id="instruction-installation"></a>通用指令与本机补充
 
-安装或维护 `AGENTS.md` 等主指令入口也走上述探测流程：按“原生读取 `~/.agents/AGENTS.md` → 自身配置根同名 `AGENTS.md` 软链 → 自有指令文件名软链”的顺序，为每个已发现配置根只保留一处入口直接指向完整主规则，具体映射与同源旧入口清理见[主指令入口表](references/installation.md#instructions-discovery)。本机补充统一保存为 `~/.agents/AGENTS.local.md` 普通文件，位置与维护边界见[本机补充](references/installation.md#local-instructions)。
+安装或维护 `AGENTS.md` 等主指令入口也走上述探测流程：先将 `~/.agents/AGENTS.md` 软链到仓库 `AGENTS.md`，再按“原生读取 `~/.agents/AGENTS.md` → 自身配置根同名 `AGENTS.md` 软链 → 自有指令文件名软链”的顺序，为每个已发现配置根只保留一处入口统一软链到 `~/.agents/AGENTS.md`，具体映射与旧入口收敛见[主指令入口表](references/installation.md#instructions-discovery)。本机补充统一保存为 `~/.agents/AGENTS.local.md` 普通文件，位置与维护边界见[本机补充](references/installation.md#local-instructions)。
 
 ### 卸载与失效链接
 
