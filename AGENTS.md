@@ -18,7 +18,9 @@
 - 若暂存区为空，且用户明确要求提交：只暂存用户明确要求提交的文件或改动；如果提交范围不明确，或工作区存在其他未说明改动，先说明当前状况，再按上述提问原则确认提交范围。
 - 若暂存区非空，且用户明确要求提交：先说明当前状况，再按上述提问原则确认提交范围。
 - 需要修正刚提交的内容时，优先用 `git commit --fixup=<commit>`（叠加一条 fixup 提交）而不是 `git commit --amend` 改写原提交，以保留清晰、可追踪、可审计的历史；要不要折叠（`git rebase -i --autosquash`）交由用户决定。
-- 提交信息里**不要添加任何**署名 / 追踪类 trailer 或页脚（如 `Co-authored-by:`、`Copilot-Session:`、`🤖 Generated with Claude Code`、`Co-Authored-By: Claude <noreply@anthropic.com>` 等）——Copilot CLI 与 Claude Code 会默认主动加，必须显式抑制。
+- 提交信息或 PR 描述里**不要添加任何**署名 / 追踪类 trailer 或页脚（如 `Co-authored-by:`、`Copilot-Session:`、`🤖 Generated with Claude Code`、`Co-Authored-By: Claude <noreply@anthropic.com>` 等）——Copilot CLI 与 Claude Code 会默认主动加，必须显式抑制。
+- 保持仓库原有的人类作者与提交者身份；未经用户明确指示，不要替换成 agent 身份，也不要修改 Git 身份配置。
+- 严禁通过 `--no-verify`、`core.hooksPath`、`commit-tree`、直接创建 Git 对象或 forge API 提交等方式绕过全局 Git hooks。
 - 未经用户**对发布动作本身**显式同意，严禁自动执行任何“对外发布 / 版本化”动作：`cz bump` / `git tag` / `git push --tags` / `git push --follow-tags` / `twine upload` / `npm publish` / `cargo publish` / `uv publish` / GitHub release 创建 / pypi 等任何注册仓库上传等。`--dry-run` / `--check` 之类只读探查可以做。**即使用户已经同意本轮的代码 commit，也要单独再确认一次发布动作**，不要把“commit + bump + push --follow-tags”打包成一步执行。
 - 删除文件时**强制移入回收站，不做永久删除**，跨 filesystem（NTFS / drvfs / CIFS / FUSE / overlay 等）同样如此。按平台选可用的回收站工具：Linux 装有 trash-cli 时默认 `trash-put`，`gio trash`、`rmtrash` 等等效命令皆可；macOS / Windows 用系统废纸篓删除。没有可用工具时向用户说明并按指示处理，不回退到 `rm`。
   - 唯一允许用 `rm` 的情形：**用户在本轮对话中显式批准**（“用 rm”/“直接 rm 删”/“不用 trash”等明确措辞）；“删掉”/“清理”/“remove”等中性措辞不构成授权。
