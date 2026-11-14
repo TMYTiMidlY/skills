@@ -207,7 +207,7 @@ with Codex() as codex:
 
 上层 agent 或外部工具提供的材料，使用 `ExternalMessage(tool_name="parent_agent", content=task_text)` 作为整个 `thread.run(...)` 输入，使其保持工具输出的指令优先级。可信任务约束通过宿主的 developer instructions 等入口提供；外部材料本身不建立用户授权或审批。
 
-### <a id="sdk-threads-and-cwd"></a>工作目录、会话恢复与并发编排
+### <a id="sdk-threads-and-cwd"></a>工作目录、持久化与并发线程
 
 SDK 把进程连接（`Codex` / `AsyncCodex`）、会话线程（`Thread` / `AsyncThread`）与单轮执行（`TurnHandle` / `TurnResult`）分成三层，工作目录与会话状态可按粒度分别控制：
 
@@ -224,13 +224,13 @@ SDK 把进程连接（`Codex` / `AsyncCodex`）、会话线程（`Thread` / `Asy
   1. 可在新的 Python 进程中调用 `codex.thread_resume(thread_id, cwd=..., sandbox=..., approval_mode=...)` 恢复该线程并继续 `thread.run(...)`，或调用 `thread.read(include_turns=True)` 读取历史轮次（`include_turns=False` 仅返回 `info.thread.cwd`、`info.thread.path` 等元数据）；
   2. 也可在同一 `CODEX_HOME`（或软链共享同一 `sessions/` 目录的账号）下直接执行终端命令 `codex resume <thread_id>` 接续交互，反之终端产生的持久化会话也可由 SDK `thread_resume` 接管。
 
-**单进程多 Thread 并发分片**：上层编排器将任务拆分为多个子任务并行执行时，无需像 `codex exec` 那样拉起多个 CLI 子进程。单个 `Codex`（配合 `ThreadPoolExecutor`）或 `AsyncCodex`（配合 `asyncio.gather`）即可在同一条 `app-server` stdio 管道上并发调用 `thread_start(...)` 与 `thread.run(...)`，共享同一套 `AuthManager` 登录态。注意线程 ID 位于 `thread.id`（或 `TurnHandle.thread_id`），而 `thread.run(...)` 返回的 `TurnResult` 仅含本轮 `id`（turn ID）、`status`、`final_response`、`items`、`usage`、`duration_ms` 与 `error`，不含 `thread_id` 属性。
+**单进程多 Thread 并发调用**：单个 `Codex`（配合 `ThreadPoolExecutor`）或 `AsyncCodex`（配合 `asyncio.gather`）可在同一条 `app-server` stdio 管道上并发调用 `thread_start(...)` 与 `thread.run(...)`，共享同一套 `AuthManager` 登录态。线程 ID 位于 `thread.id`（或 `TurnHandle.thread_id`），而 `thread.run(...)` 返回的 `TurnResult` 仅含本轮 `id`（turn ID）、`status`、`final_response`、`items`、`usage`、`duration_ms` 与 `error`，不含 `thread_id` 属性。
 
 ```python
 import asyncio
 from openai_codex import ApprovalMode, AsyncCodex, CodexConfig, Sandbox
 
-async def run_shard(codex: AsyncCodex, name: str, workdir: str, prompt: str) -> tuple[str, str, str]:
+async def run_task(codex: AsyncCodex, name: str, workdir: str, prompt: str) -> tuple[str, str, str]:
     thread = await codex.thread_start(
         model="gpt-6.1-sol",
         cwd=workdir,
@@ -244,27 +244,16 @@ async def run_shard(codex: AsyncCodex, name: str, workdir: str, prompt: str) -> 
 async def main() -> None:
     config = CodexConfig(codex_bin="<Codex 可执行文件绝对路径>")
     async with AsyncCodex(config) as codex:
-        shards = [("shard-a", "/path/to/dir_a", "任务 A"), ("shard-b", "/path/to/dir_b", "任务 B")]
-        results = await asyncio.gather(*(run_shard(codex, *s) for s in shards))
+        tasks = [("task-a", "<工作目录 A 的绝对路径>", "任务 A"), ("task-b", "<工作目录 B 的绝对路径>", "任务 B")]
+        results = await asyncio.gather(*(run_task(codex, *task) for task in tasks))
 ```
 
 > 源码：[同步与异步 `thread_start` / `thread_resume` / `thread_fork` / `Thread.run`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L135-L286)、[异步线程与 `TurnHandle`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L389-L774)、[`TurnResult` 数据结构](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/_run.py#L21-L35)。
 > 🔬 2026-11-11 实测：单 `codex app-server` 子进程内并发运行 4 个 `gpt-6.1-sol` 只读线程完成分片盘点；对 `ephemeral=True` 线程跨进程执行 `thread_resume` 复现 `-32600: no rollout found`；对持久化 rollout 执行跨进程 `thread_resume(..., cwd=...)` 并调用 `thread.read(include_turns=False)`，确认 `info.thread.cwd` 已更新且 `info.thread.path` 指向对应 `rollout-*.jsonl`。
 
-### <a id="sdk-task-delegation"></a>目标级任务委派与原生子代理分工
+### <a id="sdk-task-delegation"></a>原生子代理的配置与事件
 
-通过 SDK 或 `app-server` 驱动 Codex 时，被调用对象已是包含上下文检索、方案规划、工具循环与原生子代理池（`multi_agent_v2`）的完整 coding-agent runtime。上层编排器与 Codex 主会话按**工作区与验收契约**分工，让 Codex 自主承担任务拆解与内部并发：
-
-| 层次 | 负责事项 |
-|---|---|
-| 上层编排器 | 准备持久工作区（如复用已有 `git worktree`）与干净的工具环境（仅对模型或代码托管域名按需配置代理，保持构建与产物缓存直连）；声明目标范围、写入边界与最终外部门禁（如整包编译、测试与静态审计），在轮次完成后执行独立验收 |
-| Codex 主线程与 `multi_agent_v2` | 排查跨文件根因与依赖顺序，自行制定修复或实现计划；在同一 `cwd` 下按需派生内部子代理并行推进独立子问题，跑通本地闭环后汇总提交 |
-
-> 子进程同时注入出站代理与直连产物缓存域名（如对象存储或 CDN 缓存桶）时，需同时设置小写 `no_proxy` 与大写 `NO_PROXY`（例如 `localhost,127.0.0.1,::1,<cache-domain>`）：Python `urllib` / `requests` 读取 `no_proxy`，而 `curl` 等原生工具读取 `NO_PROXY`，只设单侧会导致其中一类下载仍绕经本地代理超时或断连。
-
-确定由上层多开线程还是交由会话内部并发时，以**是否需要独立文件系统工作树**为判据：原生 `multi_agent_v2` 子代理共享父线程的 `cwd`、审批与沙箱设置（见 [Worktree 支持横向对照](worktree.md)），适合围绕同一工作树并行调研、审阅或协同修改无冲突模块；仅当多条分支或并行集成树需要彼此隔离的磁盘写入时，才由上层分配多个持久 `cwd` 与对应线程，并向每个线程交付各自完整的闭环目标。
-
-> 若上层替 Codex 在外部把同一闭环任务切碎成零散文件批次、逐批拉起未启用 `multi_agent_v2` 的一次性 `codex exec` 子进程并写死每步执行命令或低线程参数，既会切断跨文件依赖判断、闲置原生子代理动态调度，又会因最慢批次形成木桶效应，并反复承受工作区初始化与附属 MCP 服务冷启动开销。
+通过 SDK 或 `app-server` 调用的 Codex 包含上下文检索、方案规划、工具循环与原生子代理池（`multi_agent_v2`）。原生子代理共享父线程的 `cwd`、审批与沙箱设置，文件系统行为见 [Worktree 支持横向对照](worktree.md)。目标委派、独立工作树分配和外部验收归 `superagent` skill。
 
 通过 Python SDK 向目标线程开放原生子代理并发时，可通过 `CodexConfig(config_overrides=...)` 或 `thread_start(config=...)` 显式启用 `multi_agent_v2` 并指定会话总并发槽位：
 
@@ -300,11 +289,27 @@ with Codex(config) as codex:
 | `features.multi_agent_v2.root_agent_usage_hint_text` / `subagent_usage_hint_text` | 覆盖默认角色使用提示；省略时 `resolve_usage_hints()` 会拼接当前 `max_concurrency` 槽位数进入 developer 消息 |
 
 > 源码（`73a1148c9c775c2a4616ce5096291740a00ed68a` 与 `rust-v0.167.1`）：[`CodexConfig.config_overrides` 与 `thread_start(config=...)`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/client.py#L194-L265)、[`thread_start` 参数传递](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L137-L165)、[`resolve_multi_agent_v2_config` 优先级与 `N + 1` 折算](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/core/src/config/mod.rs#L2708-L2728)、[`resolve_usage_hints` 默认槽位提示拼接](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/core/src/session/multi_agents.rs#L101-L137)、[子线程创建后向同一 `app-server` 连接附加事件监听](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/app-server/src/lib.rs#L1185-L1205)。
-> 运行时边界：会话执行容量在 Rust 端首次初始化后绑定于当前服务实例，若编排器需在轮间动态升降 `M`，应在轮次边界重建专用 `app-server` 并用 `thread_resume(thread.id)` 恢复原线程；同时固定上述两条 `*_usage_hint_text`，可避免槽位数变动改写 developer 消息前缀而影响上下文缓存命中。Python SDK 的 `TurnHandle.stream()` 仅订阅主轮自身的 `turn_id`（见 [`api.py` 订阅实现](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L840-L855) 与 [`_message_router.py` 路由分支](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/_message_router.py#L270-L295)），需要观测子代理实时事件时应在底层连接分发前旁路监听通知。
+会话执行容量由 Rust 端 `AgentExecutionLimiter` 的 `OnceLock` 首次初始化，绑定于当前服务实例；后续配置变化未必更新已初始化的容量。Python SDK 的 `TurnHandle.stream()` 仅订阅主轮自身的 `turn_id`；子线程创建后可向同一 `app-server` 连接附加事件监听，底层连接通知与主轮迭代器的范围不同。
 
-### <a id="sdk-sandbox-overrides"></a>编排器的沙箱参数与配置继承
+> 源码：[`OnceLock` 容量初始化](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/core/src/agent/control/execution.rs#L46-L82)、[`api.py` 订阅实现](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L840-L855)、[`_message_router.py` 路由分支](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/_message_router.py#L270-L295)。轮间扩缩容、旁路监听与缓存前缀管理见 `superagent` skill。
 
-通过 SDK 或 app-server 驱动分片任务时，实际生效的沙箱策略按“配置层栈 → 线程生命周期 → 单轮执行”逐级覆盖；上层只要显式传入非空参数，就会压过下层配置：
+### <a id="sdk-subagent-lifecycle"></a>子线程关联与生命周期观测
+
+`CollabAgentToolCallThreadItem.receiverThreadIds`（Python 属性 `receiver_thread_ids`）记录协作调用的接收线程 ID，派生子代理时可据此关联新子线程。SDK 消息路由将带 `turnId` 的通知分发至对应轮次队列，仅无 `turnId` 的通知进入全局队列，`next_notification()` 覆盖的范围因此小于底层完整广播。服务端在 `thread-created` 广播之后为新线程挂载 listener；当广播滞后时仅记录 warning 并跳过补同步，已知子线程可能缺失部分实时事件。通过只读 `thread/read` 读取 `thread.status.type` 可补查当前终态，但应将“实时事件缺失”与“事后状态读回”区分记录。
+
+> 源码：[协作调用接收者字段](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L10560-L10600)、[SDK 通知路由](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/_message_router.py#L283-L333)、[线程 listener 与广播滞后分支](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/app-server/src/lib.rs#L1191-L1216)。状态补查不重建服务端未发送的流式 token；编排侧的子线程收束策略见 `superagent` skill。
+
+`hooks.json` 中的子代理生命周期配置键采用 PascalCase：`SubagentStart` 与 `SubagentStop`（由 Rust 内部字段 `subagent_start` / `subagent_stop` 序列化重命名）。`ThreadSpawn` 创建子线程触发 `SubagentStart`，子代理单轮结束触发 `SubagentStop`，线程本身的销毁另有独立生命周期；内部或合成子代理可跳过这两类 hook，且 hook 返回结果可注入附加上下文或影响停止决策。
+
+> 源码：[Hook 键名序列化](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/config/src/hook_config.rs#L31-L60)、[ThreadSpawn 启动映射](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/core/src/hook_runtime.rs#L124-L151)、[单轮停止与内部子代理分支](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/core/src/hook_runtime.rs#L375-L425)。这些 hooks 受配置来源与信任检查约束，单凭 `SubagentStop` 事件不足以证明子线程或派生的工具进程已经销毁。
+
+Python SDK `0.167.1` 的 `CodexClient.close()` 会关闭 `stdin`、终止 `app-server` 进程并短暂等待读取线程，但未主动关闭 `proc.stdout` 与 `proc.stderr` 文件对象。长周期反复创建客户端的调用方应在进程退出、读取线程结束后显式关闭这两个句柄以防文件描述符累积，并将“关闭会话”“收割工具进程树”与“释放客户端管道”分别核验。
+
+> 源码：[SDK 进程关闭实现](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/client.py#L283-L303)。该行为基于 `rust-v0.167.1` 源码核实，升级 SDK 后应重新检查。
+
+### <a id="sdk-sandbox-overrides"></a>SDK 沙箱参数与配置继承
+
+通过 SDK 或 app-server 调用时，实际生效的沙箱策略按“配置层栈 → 线程生命周期 → 单轮执行”逐级覆盖；调用方显式传入非空参数，就会压过下层配置：
 
 | 优先级（低 → 高） | 配置项 / 调用入口 | 取值写法与继承行为 |
 |---|---|---|
@@ -312,21 +317,9 @@ with Codex(config) as codex:
 | 线程生命周期 | JSON-RPC `thread/start` · `thread/resume` · `thread/fork` 的 `sandbox`<br>Python SDK `thread_start` · `thread_resume` · `thread_fork` 的 `sandbox` | Wire 字符串同上；SDK 传 `Sandbox.read_only` / `workspace_write` / `full_access`（映射为 `"danger-full-access"`）。传 `None`（省略字段）继承配置层栈，非空覆盖线程默认策略 |
 | 单轮执行 | JSON-RPC `turn/start` 的 `sandboxPolicy`<br>Python SDK `thread.run` · `thread.turn` 的 `sandbox` | Wire 为标记联合 `{"type": "readOnly" \| "workspaceWrite" \| "dangerFullAccess"}`；SDK 仍传 `Sandbox` 枚举。传 `None` 沿用当前线程策略，非空仅覆盖本轮执行 |
 
-编写或排查分片调度器时，按以下契约收口权限参数：
-
-1. **区分“省略继承”与“显式默认”**：若希望沿用各账号或仓库的 `config.toml`，分片未填 `sandbox` 时保持 `None`（JSON-RPC 请求省略该键），避免用 `spec.get("sandbox", "workspace-write")` 把缺省分片静默改写成显式降权覆盖。
-2. **对齐线程级与单轮级的协议形态**：若由调度器统一指定策略，线程创建 / 恢复与每轮 `turn` 入口应共用同一解析结果。混用原始 JSON-RPC 与 Python `AsyncThread.turn` 时，需同时对齐 wire 字符串与 `Sandbox` 枚举（`Sandbox.full_access` 的枚举值为 `"full-access"`，而 `thread/start` 的 wire 值为 `"danger-full-access"`）：
-
-   ```python
-   raw = spec.get("sandbox")  # 保持 None 则继承 config.toml；或显式统一缺省值
-   wire_sb = "danger-full-access" if raw in ("danger-full-access", "full-access") else raw
-   sdk_sb = Sandbox.full_access if wire_sb == "danger-full-access" else (Sandbox(wire_sb) if wire_sb else None)
-   ```
-
-3. **隔离授权边界并核验运行态 worker**：沙箱（`sandbox`）与审批（`approvalPolicy` / `approval_mode`）独立生效；`danger-full-access` 仅在用户已授权的工作目录与分片边界内启用。更新分片配置、调度器默认值或 `config.toml` 后，需在新建或重连后的轮次中实测原先受限的操作，确认在跑 worker 已切换到目标策略。
+`Sandbox.full_access` 的枚举值为 `"full-access"`，SDK 在线程级转换为 `"danger-full-access"`，在单轮级转换为 `{"type":"dangerFullAccess"}`。省略参数与显式传入默认值有不同继承语义；沙箱（`sandbox`）与审批（`approvalPolicy` / `approval_mode`）独立生效，调用参数本身不建立用户授权。调度器缺省值与权限收口策略见 `superagent` skill。
 
 > 源码：[`Sandbox` 枚举与线程 / 单轮 wire 映射](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/_sandbox.py#L14-L72)、[线程创建 / 恢复 / 分叉的 `sandbox` 透传](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L155-L286)、[`Thread.run` / `Thread.turn` 的 `sandbox_policy` 透传](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L581-L665)。
-> 2026-11-13 编排器排障记录：多账号全局 `config.toml` 已设 `sandbox_mode = "danger-full-access"`，但自建分片调度器对未显式配置 `sandbox` 的分片回退填入 `"workspace-write"`，并在 `thread/start`、`thread/resume` 与 `AsyncThread.turn` 同时传入，覆盖了全局配置；补齐各分片配置并统一调度器缺省值后恢复一致（基于调度器与 SDK `0.167.1` 源码静态核对，未重放旧进程运行态）。
 
 ### <a id="sdk-auth"></a>现有登录态与多账号目录
 
@@ -354,20 +347,27 @@ with Codex(config) as codex:
 
 > 🔬 2026-11-11 实测：Linux、Python SDK `0.167.1`，显式使用已安装 CLI `0.167.0`；默认目录与一个独立 `CODEX_HOME` 的 ChatGPT 登录均完成只读、临时线程的真实模型请求，未传入 API key。独立目录由 Shell 账号函数确认，其认证文件与默认目录不同；另用 SDK 配套 runtime `0.167.1` 执行本文最小示例，也返回“SDK 调用成功”。本次覆盖账号选择和请求成功，未测试令牌临期刷新及多进程长期并发。
 
-### <a id="sdk-fleet-backpressure"></a>多账号分片编排与容量退避
+### <a id="sdk-fleet-backpressure"></a>账号额度、重连事件与跨账号恢复
 
-在多工作树、多账号（独立 `CODEX_HOME`）下长期并发驱动 Codex 分片时，上层编排器围绕账号隔离、容量退避、缓存前缀稳定与门禁解耦组织控制闭环，在跑满配额的同时避免触发持续 `at capacity` 重连风暴：
+`account/rateLimits/read` 返回当前后台身份对应的额度快照，协议字段采用 camelCase；Python SDK 模型提供相应的 snake_case 属性。核心返回结构如下：
 
-| 控制面 | 协议入口与做法 | 缓存与运行态约束 |
-|---|---|---|
-| 账号隔离与水位切换 | 按账号拆分独立租约库与并发控制器；轮次边界调用 `account/rateLimits/read` 读取 `primary` / `secondary` 的 `usedPercent` 与 `credits`，并捕获 `Your workspace is out of credits` 等配额耗尽错误触发故障转移 | 单账号容量波动仅收缩本账号槽位。各 `CODEX_HOME` 使用独立 `sessions/` 目录时，切换账号需清空旧 `thread_id` 改走 `thread/start`；各 `CODEX_HOME` 按[多账号目录与共享会话](#cc-switch-multi-account)软链共享同一 `sessions/` 与 `thread-writer-locks/` 时，待原 `app-server` 退出或释放线程写锁后，可在备用账号的新客户端上直接 `thread_resume(thread_id)` 无损续跑原上下文（若旧写锁未释放会报 `-32600: thread <id> already has an active writer`） |
-| 重连去重与自适应阶梯 | 旁路监听底层通知中的 `error`（`willRetry=true` 或 `Reconnecting... k/n`），以 `(thread_id, turn_id)` 为主键将整段重试聚合成一次 `(workers, subagents)` 阶梯下调，稳定窗口后逐级恢复 | 避免同一回合多次重连把并发度瞬间压到底；已持有租约的热轮继续运行直至边界 |
-| 轮间延迟引导 | 将收缩新增子任务的调度提示按键合并暂存，追加到下一轮 `turn/start` 的用户输入末尾 | 禁止对流式重连中的回合调用 `TurnHandle.steer()`，避免打断底层退避循环或因回合状态切换产生竞态失败 |
-| 动态扩缩容与前缀稳定 | 固定 `root_agent_usage_hint_text`、`subagent_usage_hint_text` 与 `developer_instructions`；轮间变更子代理上限 `S` 时重建专用 `app-server` 并同账号 `thread_resume` | 绕过 Rust 端 `AgentExecutionLimiter` 的 `OnceLock` 单次初始化限制，同时保持 developer 消息前缀字节一致以维持高上下文缓存命中率 |
-| 分片门禁解耦与合入衔接 | 各分片独占互不相交的目标子集与本地分支，轮内仅跑分片级增量校验，全量重型门禁收口到集成工作区执行 | 控制每分片本地构建线程数以防耗尽宿主 CPU / swap 或受其他分片遗留文件阻塞；同账号 `thread_resume` 历史主线程做合入收尾前，先提交确定性合入结果并在提示词中显式解除早先轮次的跨分片禁改约束 |
+| 字段 | 内容 |
+|---|---|
+| `rateLimits` | 兼容的单额度桶 `RateLimitSnapshot` |
+| `rateLimitsByLimitId` | 可选的多额度桶映射，键为计量用的 limit ID |
+| 快照的 `primary` / `secondary` | 可选窗口，包含 `usedPercent`、`windowDurationMins`、`resetsAt` |
+| 快照的 `credits` | 可选余额快照，包含 `hasCredits`、`unlimited`、可选字符串 `balance` |
+| 快照的其他元数据 | 可含 `limitId`、`limitName`、`planType` 等字段 |
 
-> 源码：[`account/rateLimits/read` 请求与 `ErrorNotification.willRetry` 字段](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L7928-L7933)、[`ErrorNotification` 定义](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L11450-L11458)、[`TurnHandle.steer` / `AsyncTurnHandle.steer`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L810-L875)、[`AgentExecutionLimiter` 的 `OnceLock` 容量上限](https://github.com/openai/codex/blob/73a1148c9c775c2a4616ce5096291740a00ed68a/codex-rs/core/src/agent/control/execution.rs#L46-L82)。限流遥测与跨账号接管检查见[限流的判读与退避](codex-monitoring.md#rate-limit)与[多账号恢复与 goal 生命周期](codex-monitoring.md#account-resume)。
-> 🔬 2026-11-12/13 实测（Linux，Python SDK `0.167.1` + CLI `0.167.0`/`0.167.1`）：localhost 抓包验证默认槽位 `2 → 3` 会改变 developer 提示词，固定两条 `*_usage_hint_text` 后跨槽位请求前缀保持一致，同账号 `thread_resume` 长历史轮次实测缓存命中率保持在 99.5% 以上；双独立账号各拆分为 `4 workers × 2 subagents` 独立状态库并解耦分片增量门禁后，8 个工作树并行推进期间 `overloads=0`。另在两个共享 `sessions/` 软链的 `CODEX_HOME` 间实测：主用账号运行中途触发 `Your workspace is out of credits` 退出并关闭原 `app-server` 后，改用备用账号 `CODEX_HOME` 新建 `AsyncCodex` 对同一批 `thread_id` 执行 `thread_resume` 均一次成功（耗时约 40–65 秒，RPC 超时宜设为 120 秒），完整保留长对话与工作树推进上下文。
+> `0.167.1` 源码：[`account/rateLimits/read` 请求](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L7928-L7933)、[响应结构](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L11551-L11593)、[快照](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L9471-L9502)、[窗口](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L3709-L3716)、[余额](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L1140-L1147)。rollout 的 snake_case 限流遥测见[限流的判读与退避](codex-monitoring.md#rate-limit)。
+
+底层 `error` 通知含 `threadId`、`turnId`、`error` 与 `willRetry`；`willRetry=true` 表示 runtime 仍会重试，用户界面可能显示 `Reconnecting... k/n`。`TurnHandle.steer()` / `AsyncTurnHandle.steer()` 向当前回合发送引导；重连期间回合状态切换可能与调用形成竞态，调用成功也需结合随后事件判断。
+
+> 源码：[`ErrorNotification`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/generated/v2_all.py#L11450-L11458)、[`TurnHandle.steer` / `AsyncTurnHandle.steer`](https://github.com/openai/codex/blob/rust-v0.167.1/sdk/python/src/openai_codex/api.py#L810-L875)。按回合去重、容量阶梯和轮间投递的策略归 `superagent` skill。
+
+`thread_resume` 根据目标客户端实际可访问的历史恢复线程。独立 `sessions/` 中没有原 rollout 时无法仅靠 thread ID 恢复；多个账号共享 `sessions/` 与 `thread-writer-locks/` 时，待原服务释放 live writer 后，可以由另一个账号的新客户端恢复原上下文。旧写锁未释放会报 `-32600: thread <id> already has an active writer`。共享目录布局见[多账号目录与共享会话](#cc-switch-multi-account)，写锁、goal 和执行身份见[多账号恢复与 goal 生命周期](codex-monitoring.md#account-resume)。
+
+> 🔬 2026-11-12/13 历史实测（Linux，Python SDK `0.167.1`，CLI `0.167.0` / `0.167.1`）：主账号遇到 `Your workspace is out of credits`、退出并关闭原 `app-server` 后，备用账号新建 `AsyncCodex`，对共享历史中的同一批 thread 执行 `thread_resume` 均一次成功，保留长对话与工作树上下文，耗时约 40–65 秒。客户端 RPC 超时需要容纳实际恢复耗时；超时本身不能证明服务端没有完成恢复。账号切换时机、租约池与恢复超时预算归 `superagent` skill。
 
 ### <a id="codex-mcp-migration"></a>Codex MCP server 的迁移
 

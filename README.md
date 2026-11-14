@@ -9,8 +9,9 @@
 | Skill | 说明 |
 | --- | --- |
 | `manage-skills` | 创建、安装、维护、重构、审查和合并本地 skills；探测已有 harness，安装或修复 skills 与 AGENTS.md 等指令入口 |
-| `harness` | Coding agent 编排框架（harness）知识库：介绍 agent loop、工具注入、配置发现、权限、会话与进程/SDK 接口，以及 model / tool / skill 在 runtime 中的位置；含 Agent Skills 官方规范、跨 harness 加载差异与 Kimi Code `has-sub-skill` 私有扩展 |
-| `tool` | Agent tool 的能力边界与执行契约：schema、权限与副作用、错误/重试/取消、CLI / API / MCP adapter；含 Lark CLI 实例 |
+| `harness` | Coding agent 的 runtime（harness）与调用接口：单个 agent 的运行循环、配置、工具注入、权限、会话及 CLI / SDK / JSON-RPC 接入；含 Agent Skills 规范与跨 harness 加载差异 |
+| `superagent` | 持续协作前台：保留原始目标与对话带宽，按任务性质路由 Codex（重工程）与 Gemini（纯文字），统筹多任务、资源与交付，并将执行结果转述为清晰易懂的反馈 |
+| `tool` | 单项 Agent tool 的执行契约：schema、权限与副作用、结果与生命周期及 CLI / API / MCP adapter；runtime 接入归 harness，多任务统筹归 superagent |
 | `git` | Git/jj 提交与历史、隔离工作区、受限网络获取、发版 CI 与 forge/静态站 |
 | `software` | 本地软件、CLI 与自托管服务：终端和包管理工具、数据库、对象存储、Docker/PaaS、Overleaf、文档处理与 Windows/WSL/macOS/HarmonyOS 环境排障 |
 | `io` | 沿内存、文件系统、挂载、介质和网络块存储定位 I/O 与换页瓶颈 |
