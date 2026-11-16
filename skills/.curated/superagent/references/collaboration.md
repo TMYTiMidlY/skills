@@ -59,7 +59,7 @@
 | 宿主定时提示（Schedule） | 定时器到期直接向会话投递检查 Prompt，由模型自行调用工具查询外部状态 | 每次定时触发均唤醒模型 | 适合短期有界兜底；外部无变化时仍会消耗模型额度与上下文窗口 |
 | 宿主生命周期 Hook | 在既有会话事件边界自动恢复状态、校验工具权限或核对未清回执 | 随会话调用生命周期触发 | 适合固化单回合内的恢复与门禁；会话空闲期间感知外部新事件仍依赖前两类监听入口 |
 
-> 实现参考：dsh-superagent 的[评论轮询](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/sources/github.ts#L203-L248)对 HTTP `304`、早于基线的记录及自身发出的评论直接短路返回，[CI 状态比对](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/sources/github.ts#L414-L423)先建立初始快照、仅在指纹变化时生成事件，再交由[业务路由层](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/runtime.ts#L131-L161)分流；其[relay 与 notice 通道](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/sessions.ts#L96-L102)明确区分“立即唤醒模型”与“仅静默注入下一轮上下文”。OpenHands automation 的[会话路由与唤醒配置](https://github.com/OpenHands/automation/blob/af3ab78a67e2a6b20d1e4c4aefef877af3ecabac/openhands/automation/schemas.py#L155-L208)同样将事件接收、既有会话复用与是否启动模型循环解耦。
+> 实现参考：dsh-superagent 的[评论轮询](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/sources/github.ts#L203-L248)对 HTTP `304`、早于基线的记录及自身发出的评论直接短路返回，[CI 状态比对](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/sources/github.ts#L414-L423)先建立初始快照、仅在指纹变化时生成事件，再交由[业务路由层](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/runtime.ts#L131-L161)分流；其[relay 与 notice 通道](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/sessions.ts#L170-L185)明确区分“立即唤醒模型”与“仅静默注入下一轮上下文”。OpenHands automation 的[会话路由与唤醒配置](https://github.com/OpenHands/automation/blob/af3ab78a67e2a6b20d1e4c4aefef877af3ecabac/openhands/automation/schemas.py#L155-L208)同样将事件接收、既有会话复用与是否启动模型循环解耦。
 
 监听脚本只负责变化发现与可靠投递，不越俎代庖替前台解读需求或扩大既有授权。评论拉取需同时识别新帖与旧帖编辑（结合评论 ID、`updated_at` 与正文哈希，配合重叠时间窗、完整分页与幂等去重）；CI 事件须严格绑定具体 PR 的精确 `HEAD` 提交与运行标识，防止拿旧提交的滞后结果推进当前流程。状态账本上分别记录“已接收 → 已入队 → 已投递 → 已处理”，唯有动作真正落定并核验无误后才推进“已处理”游标。
 
@@ -128,14 +128,16 @@ Grok Bot（Chief of Staff 统筹专职 Bot）与 OpenAI dots（统一持久入�
 
 > 产品说明：[Introducing Grok Bot](https://x.ai/news/introducing-grok-bot)（2026-08-11）、[Grok Bot 1.0](https://x.ai/news/grok-bot-1-0)（2026-11-02）、[Introducing dots](https://openai.com/index/introducing-dots/)（2026-09-29 发布，含后续更新，2026-11-16 核阅）。文中 Grok Bot 的多代理共享云端计算环境，dots 页面同时涵盖当前个人端入口与组织级 specialist 预览，其云端托管条件需与本地 CLI 的进程生命周期、沙箱权限和通知通道分开评估。
 
-针对本地 CLI 环境的编排与门禁设计，可按需借鉴以下公开工程实现：
+长期协作的职责边界需要由 Harness 与外层控制器共同落实。下表将实际问题、公开实现与本 skill 的落地约定对应起来；状态恢复、事件监听和执行门禁的具体流程见前文相应章节。
 
-| 系统 | 可借鉴的工程机制 | 适用前提与边界 |
+| 痛点 | 公开实现参考 | Harness 与外层控制器的落地做法 |
 |---|---|---|
-| dsh-superagent | SQLite 领域状态库、按角色动态拼装系统提示、GitHub 增量轮询过滤、任务归属路由与持久化副作用队列 | 仓库定位为研究原型；其前台仍挂载 shell 工具，单靠提示词约定不足以构成严格的只读文件隔离 |
-| Claude Code / Agent SDK | 压缩后恢复上下文的生命周期入口、工具前置拒绝协议、主会话与子代理调用者区分字段 | 全局 Hook 默认可能同时作用于子代理，需按精确调用者身份放行 worker，并按目标版本实测异常降级行为 |
-| OpenHands | 会话内 `EventStream` 持久化事件流、GitHub resolver 评论触发工作流、`automation` 按外部主题复用会话 | `EventStream` 仅负责会话内事件分发；接入 GitHub 外部事件仍需独立部署 webhook 或轮询服务 |
-| Letta | 独立于滚动聊天记录的结构化状态块（Memory blocks）与请求时提示词编译 | 状态块机制本身不包含外部事件监听，业务待办与授权变更仍需由受控入口维护 |
+| 压缩或重连后丢失前台身份、遗漏未结事项 | dsh-superagent 的 SQLite 持久状态与动态角色提示；Letta 的独立状态块与提示词编译 | 将角色登记、任务归属和待处理回执保存在独立存储中，每次模型调用前注入短状态摘要；详见[角色与状态恢复](#role-and-state-recovery) |
+| 外部新评论无人感知，定时唤醒又产生空转 | dsh-superagent 的 ETag / 时间窗 / 指纹过滤及 `relay` 唤醒、`notice` 静默注入分流；OpenHands automation 的 `wake_agent` 与投递去重 | 模型外脚本比对评论 ID、`updated_at` 与正文哈希，过滤自身评论；无变化时不调用模型，出现待处理的实质变化才唤醒前台；详见[外部事件监听](#external-events) |
+| 前台直接改文件，限权又误伤后台执行者 | Claude Agent SDK 的 `session_id` / `agent_id` 调用者区分与 `PreToolUse` 拒绝协议；DSH core 的执行前作用域检查 | 按已登记前台会话和宿主子代理标识限域拒绝越界写入，让后台 worker 按授权执行；统一检查 shell / MCP 等写通道，明确列出未覆盖项；详见[前台执行门禁](#foreground-gates) |
+| 后台已完成，但总账漏更 | dsh-superagent `effects` 的持久副作用队列与成功后核销 | 后台回执先入“待同步台账”队列，刷新总账并回读一致后才销账，宿主 `Stop` Hook 作有界补漏；详见[台账闭环](#foreground-gates) |
+
+> dsh-superagent 仍是研究原型，前台挂载 shell；Letta 的状态块负责上下文重建，外部监听需另外接入；OpenHands 的 `EventStream` 负责会话内事件流，外部事件仍由 webhook 或轮询服务引入。OpenHands automation 的[投递去重](https://github.com/OpenHands/automation/blob/af3ab78a67e2a6b20d1e4c4aefef877af3ecabac/openhands/automation/event_router.py#L276-L305)依赖配置提供的投递 ID，未配置相应请求头时只记录和路由事件。
 
 > 源码与文档索引：dsh-superagent 的[项目定位说明](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/README.md#L3-L9)、[前台原始请求路由](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/prompts/dispatch.md#L31-L51)、[前台等待上限](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/sessions.ts#L63-L85)、[角色工具裁剪范围](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/sessions.ts#L263-L313)与[持久化副作用队列](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/effects.ts#L57-L145)（本 skill 吸收其节省注意力与沿既有负责人追问的思路，前台禁写边界与双模型分工按本 skill 规范执行）。Claude Code 的[压缩后 Hook 修订记录](https://github.com/anthropics/claude-code/blob/eba1240d09fd468b984a2a317c77cb48e1e51d2f/CHANGELOG.md#L286)、[官方 Hooks 文档](https://code.claude.com/docs/en/hooks)与上文 SDK 类型定义可用于核对生命周期事件及子代理标识（恢复后注入内容是否进入模型输入需按实际版本验证）。OpenHands 的 [`EventStream` 实现](https://github.com/OpenHands/OpenHands/blob/104f52bcdd4859c68d241a00d4f46d0bad658572/openhands/events/stream.py#L152-L204)与 [GitHub resolver 工作流](https://github.com/OpenHands/OpenHands/blob/104f52bcdd4859c68d241a00d4f46d0bad658572/.github/workflows/openhands-resolver.yml#L26-L61)为历史架构样本，独立 `automation` 仓库的[事件路由与唤醒模式](https://github.com/OpenHands/automation/blob/af3ab78a67e2a6b20d1e4c4aefef877af3ecabac/openhands/automation/schemas.py#L241-L280)进一步区分了新建运行、复用既有会话与仅投递不唤醒。Letta 的[状态块定义](https://github.com/letta-ai/letta/blob/0.16.8/letta/schemas/memory.py#L68-L80)与[提示词编译分支](https://github.com/letta-ai/letta/blob/0.16.8/letta/schemas/memory.py#L688-L732)提供了独立状态重建参考。
 

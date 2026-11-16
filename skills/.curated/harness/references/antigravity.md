@@ -6,7 +6,7 @@ Google Antigravity 的终端 CLI（`agy`）与桌面版（Antigravity App / IDE�
 
 **安装**：`curl -fsSL https://antigravity.google/cli/install.sh | bash`，二进制在 `~/.local/bin/agy`。
 
-**模型**：通过 `agy models` 或 `/model` 选择，包含 Gemini 4 Argon / 3.8 Flash、Claude Opus / Sonnet 5.5、GPT-OSS 120B。每模型支持 low / medium / high 推理档位。
+**模型**：通过 `agy models` 或 `/model` 选择。2026-11-16 `agy models` 实测包含 Gemini 4 Carbon / Argon / Hydrogen、Gemini 3.8 Flash、Orchestrator（Carbon / Argon）、Claude Opus / Sonnet 5.5 与 GPT-OSS 120B。Carbon、Argon、Hydrogen、Flash、Opus、Sonnet 均提供 low / medium / high 档位，Hydrogen 另有 xhigh，GPT-OSS 120B 仅列出 medium，两个 Orchestrator 条目未标注档位；具体可用列表与档位随服务端动态调整。
 
 **常用旗标**：
 
