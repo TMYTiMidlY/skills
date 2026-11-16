@@ -23,13 +23,18 @@
 ```bash
 uv run scripts/codex_dispatch.py run \
   --cwd '<workspace-root>/task-a' --prompt-file '<task-dir>/request.txt' \
+  --codex-home '<codex-home>' --model '<model>' --effort '<effort>' \
   --receipt-json '<task-dir>/receipt.json' --events-jsonl '<task-dir>/events.jsonl'
 
 uv run scripts/codex_dispatch.py run \
-  --cwd '<workspace-root>/task-a' --resume-thread '<thread-id>' --prompt '继续原目标并核对验证结果'
+  --cwd '<workspace-root>/task-a' --resume-thread '<thread-id>' \
+  --codex-home '<codex-home>' --model '<model>' --effort '<effort>' \
+  --prompt '继续原目标并核对验证结果'
 ```
 
-默认采用模型 `gpt-6.1-sol`、推理档位 `xhigh`、子代理并发数 `2`（不含主线程，传 `0` 则仅用主线程），单次 RPC 默认超时为 120 秒（模型回合本身的运行耗时不受此 RPC 超时截断）。可按需传入 `--model`、`--effort`、`--subagents`、`--codex-bin`、`--codex-home`、`--developer-instructions` 与 `--rpc-timeout`。省略 `--codex-home` 时沿用当前环境的 `CODEX_HOME`；子进程环境变量按“父进程环境 → 账号配置 → worker 配置”依次合并（配置值为 `null` 时剔除对应变量），账号切换只改 `CODEX_HOME` 而不改动系统 `HOME`，确保 Git、SSH、缓存与回收站路径保持正常。
+Codex 的可用账号、默认模型与推理档位从本机环境配置（如 `~/.agents/AGENTS.local.md`）读取后，显式传入 `--codex-home`、`--model`、`--effort`（脚本不自动读取 Markdown 配置，内建缺省值也不代表本机约定）；`fleet` 同样按本机配置填写账号列表及各 worker 的 `model`、`effort`，仅调度获准启用的账号。
+
+默认子代理并发数为 `2`（不含主线程，传 `0` 则仅用主线程），单次 RPC 默认超时为 120 秒（模型回合本身的运行耗时不受此 RPC 超时截断）。可按需传入 `--subagents`、`--codex-bin`、`--developer-instructions` 与 `--rpc-timeout`。省略 `--codex-home` 时脚本沿用当前环境的 `CODEX_HOME`；子进程环境变量按“父进程环境 → 账号配置 → worker 配置”依次合并（配置值为 `null` 时剔除对应变量），账号切换只改 `CODEX_HOME` 而不改动系统 `HOME`，确保 Git、SSH、缓存与回收站路径保持正常。
 
 未显式传入 `--sandbox` 或 `--approval-policy` 时，线程创建、恢复与单轮请求均省略相应字段，自然继承账号或项目的 `config.toml`。显式指定时，`--sandbox` 支持 `read-only`、`workspace-write`、`danger-full-access`，`--approval-policy` 支持 `never` 与 `auto-review`（分别映射 SDK 的 `deny_all` 与 `auto_review`）。
 
