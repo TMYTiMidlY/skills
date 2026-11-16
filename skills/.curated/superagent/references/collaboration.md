@@ -30,11 +30,19 @@
 
 ## <a id="host-subagents"></a>宿主子代理与模型分工
 
-按任务擅长领域分配后台执行模型：架构与技术方案推演、代码/仓库/远端核查、重代码编写、跨模块改造、编译测试与底层排障优先派给 **Codex**；全文翻译、长文归纳、文档/README/日志起草与语言润色交给后台 **Gemini** 子代理（或独立后台 Gemini 实例）处理。即便主会话自身运行在 Gemini 模型上，上述核查与文稿起草、翻译、润色也一律派发给后台执行者，前台绝不亲自下场执行排查命令或直接在主上下文撰写、翻译长文，避免阻塞当前回合及污染主会话上下文窗口。
+按任务擅长领域分配后台执行模型：架构与技术方案推演、代码/仓库/远端核查、重代码编写、跨模块改造、编译测试与底层排障交给 **Codex**；全文翻译、长文归纳，以及**一切需要交给用户审阅、展示给协作者或长期留存供人阅读的文档**（包括 PR 描述、Issue 台账与进展评论、README、`CHANGELOG`、治理规则与 skill 文档、面向用户审阅的方案说明等），统一交给后台 **Gemini** 成文与润色。
 
-当用户明确指定“由你自己完成”，或纯文字与单次任务无需跨进程启动外部 Codex worker 时，统一调用当前宿主自带的后台子代理承接核查、调研、编码、验证或文稿处理。主对话只负责对齐意图、传递完整目标与背景、登记完成通知，并在读取现成回执后向用户做精炼结果转述与拍板收口。
+- **入仓与对外人审文稿的「Sol 起草 → Gemini 润色 → 按需 Sol 终审」流程**：凡涉及代码、发版或工程规则且需要给人审阅、长期入仓留存的文稿，既不能把 Codex 生硬的机器对账腔与免责套话直接拿给人看，也不能脱离代码事实凭空润色，统一按以下三步协同：
+  1. **第一步（Sol 起草事实初稿）**：由后台 Codex（`gpt-6.1-sol`，`xhigh`）对照真实代码、提交差异、数学签名或架构约束起草初稿（或事实底稿），确保统计数字、定理前提、命令参数、文件路径与权限边界准确无误。
+  2. **第二步（Gemini 面向人读顺畅润色 + 前台把关）**：交由后台 Gemini 剥离机器腔与生硬免责套话，改写为自然、通顺、好读的中英文文稿，并由主会话前台通读把关（即便主会话自身运行在 Gemini 上，成文与润色也派往后台完成，不在主上下文直接撰写或翻译长文）。
+  3. **第三步（按复杂度选做：Sol 终审回核无误）**：按变更复杂度与容错要求决定是否加跑事实回核：
+     - **常规文稿（跑完前两步即可交付）**：日常 PR 描述、Issue 台账与进展评论、常规 README 段落更新、一般操作与排查说明。
+     - **复杂或高敏入仓人审稿（加跑第三步 Sol 终审）**：**正式发版 `CHANGELOG` / Release Notes**（含密集定理前提、量词约束与统计口径）、**仓内核心治理与契约文档**（如 `AGENTS.md`、`CONTRIBUTING.md`、`DESIGN.md` 等受保护文档）、**跨仓架构方案或复杂技术规范**——在 Gemini 润色定稿后，再交回 `gpt-6.1-sol` 对照源码与底稿快速复核一遍，确认润色没有在追求行文流畅时无意放宽数学假设、改错数字、漏掉关键限制或偏离代码事实。
+- **Gemini 调用通道选择**：
+  - **主会话已在 Gemini 宿主（如 Antigravity）中运行**：直接调用宿主自带的原生后台子代理承接文稿起草、润色以及用户指定由当前宿主完成的工作。原生子代理直接复用宿主会话环境，无外部进程冷启动开销，也可在划定写面内直接修订目标文件；严禁在 Gemini 宿主内舍近求远调用外部命令行 Gemini CLI，也严禁让下级 Codex 反向去调命令行 Gemini CLI。
+  - **主会话不在 Gemini 宿主中，或当前宿主账号配额耗尽**：仅当主会话运行在独立 Codex、Claude Code 等非 Gemini 环境，或当前 Gemini 宿主账号触发配额上限、需要切换到其他已登录账号时，才调用外部非交互 Gemini CLI 完成单次起草或润色。
 
-宿主内置子代理通常默认共享当前工作目录。并行派发多个子代理前，先划清各自允许修改的文件与公共产物归属；存在写冲突时显式准备独立 worktree。待相关子代理全部收束并核验无误后，再统一向用户交付主任务结果。
+宿主内置子代理通常默认共享当前工作目录。并行派发多个子代理前，先划清各自允许修改的文件与公共产物归属；存在写冲突时显式准备独立 worktree。待相关子代理全部收束并由前台核验无误后，再统一向用户交付主任务结果。
 
 > 宿主子代理是否支持后台异步运行、跨轮存活、自动通知或原会话续跑，以当前宿主的真实运行机制为准，底层接口细节见 `harness` skill。若当前环境仅提供同步阻塞式子代理，仍应通过子代理隔离长文与排查上下文，并据实评估等待开销、合理安排批次。
 
@@ -66,7 +74,7 @@
 
 dsh-superagent 将节省人的注意力置于首位：路由层原样转发用户请求，交由下级 worker 完成代码调研与实现；后续追问自动路由给既有负责人，关键进展与待决问题回流至发起会话，并由持久投递和等待上限保障前台及时结束回合。
 
-> 一手源码：[注意力成本与职责划分](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/docs/000-philosophy.md#L3-L15)、[前台交互与结果回流](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/prompts/orchestrator.md#L1-L16)、[原始请求转发与未决授权](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/prompts/dispatch.md#L31-L51)、[前台等待上限](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/sessions.ts#L63-L85)、[持久化消息投递](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/effects.ts#L57-L71)。该原型中限制路由附言字数、固定目录布局等做法属于其特定实现取舍；本 skill 同样严守前台不下场查代码/远端、不直接撰写或翻译长文的边界，前台仅读取已派发任务的现成回执与台账并向用户做精炼结果转述，将工程核查与实现派给 Codex、纯文字工作派给后台 Gemini 子代理。外层目录与命令包装仅提供默认环境，合并放行仍依赖独立门禁，见[执行环境与合并边界](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/docs/003-execution.md#L78-L90)。
+> 一手源码：[注意力成本与职责划分](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/docs/000-philosophy.md#L3-L15)、[前台交互与结果回流](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/prompts/orchestrator.md#L1-L16)、[原始请求转发与未决授权](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/prompts/dispatch.md#L31-L51)、[前台等待上限](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/sessions.ts#L63-L85)、[持久化消息投递](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/effects.ts#L57-L71)。该原型中限制路由附言字数、固定目录布局等做法属于其特定实现取舍；本 skill 同样严守前台不下场查代码/远端、不直接撰写或翻译长文的边界，前台仅读取已派发任务的现成回执与台账并向用户做精炼结果转述，将工程核查与实现派给 Codex、面向人阅读的文稿与纯文字工作派给后台 Gemini 子代理。外层目录与命令包装仅提供默认环境，合并放行仍依赖独立门禁，见[执行环境与合并边界](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/docs/003-execution.md#L78-L90)。
 
 Grok Bot 展示了常驻在线的多代理协作形态：由 Chief of Staff 统筹多个专职 Bot、同步上下文，并在真实工具环境中推进工作；OpenAI dot 则围绕统一持久入口组织目标级委托与多项目并行，让用户在后台运转期间随时讨论和调整方向。本 skill 吸收上述协作体验，具体后台与通知能力按当前宿主实测为准。
 
