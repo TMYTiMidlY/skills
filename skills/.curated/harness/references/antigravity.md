@@ -87,12 +87,14 @@ _agy_instance() (
   # 首次启动自动幂等铺齐 .gemini 下的共享软链，绝不触碰 $HOME
   mkdir -p "$gdir/antigravity-cli"
   [ -e "$gdir/config" ] || [ -L "$gdir/config" ] || ln -s "$real_home/.gemini/config" "$gdir/config"
-  if [ -e "$real_home/.agents/AGENTS.md" ] && [ ! -e "$gdir/AGENTS.md" ] && [ ! -L "$gdir/AGENTS.md" ]; then
-    ln -s "$real_home/.agents/AGENTS.md" "$gdir/AGENTS.md"
-  fi
-  if [ -L "$gdir/AGENTS.md" ] && [ ! -e "$gdir/AGENTS.md" ]; then
-    printf '[agy-instance] warning: broken symlink %s\n' "$gdir/AGENTS.md" >&2
-  fi
+  for rule in AGENTS.md GEMINI.md; do
+    if [ -e "$real_home/.agents/$rule" ] && [ ! -e "$gdir/$rule" ] && [ ! -L "$gdir/$rule" ]; then
+      ln -s "$real_home/.agents/$rule" "$gdir/$rule"
+    fi
+    if [ -L "$gdir/$rule" ] && [ ! -e "$gdir/$rule" ]; then
+      printf '[agy-instance] warning: broken symlink %s\n' "$gdir/$rule" >&2
+    fi
+  done
   for gitem in annotations brain conversations conversation_summaries.db conversation_summaries.db-shm conversation_summaries.db-wal history.jsonl implicit jetski_state.pbtxt mcp presence; do
     if [ ! -e "$gdir/antigravity-cli/$gitem" ] && [ ! -L "$gdir/antigravity-cli/$gitem" ]; then
       ln -s "$real_home/.gemini/antigravity-cli/$gitem" "$gdir/antigravity-cli/$gitem"
@@ -114,7 +116,7 @@ _agy_instance() (
 | `antigravity-cli/antigravity-oauth-token` | 独立文件 | 该账号的凭据，**不能软链** |
 | `antigravity-cli/settings.json` | 独立文件或软链 | 各账号可独立保存默认模型（`/model`）与 `trustedWorkspaces`；`agy` 保存设置时走临时文件原子 rename |
 | `config` | 软链 → `~/.gemini/config` | 共享 `mcp_config.json`、`hooks.json`、skills、projects；二进制内 `fs.ConfigDir` 将 `<geminiDir>` 拼接 `"config"`（不固定指向真实 `$HOME`），因此多账号共享 `config/skills` 与 MCP 等配置依赖此软链 |
-| `AGENTS.md` / `GEMINI.md` | 软链或独立文件 | 不在 `config` 子目录内，需在各隔离 `.gemini` 根下单独补齐（推荐 `AGENTS.md` → `~/.agents/AGENTS.md`）；同目录下 `AGENTS.md` 与 `GEMINI.md` 若同时存在会累积加载 |
+| `AGENTS.md` / `GEMINI.md` | 软链或独立文件 | 不在 `config` 子目录内，需在各隔离 `.gemini` 根下单独补齐（分别链接到 `~/.agents/AGENTS.md` 与 `~/.agents/GEMINI.md`；实体存在才补链，已有入口保持原样）；同目录下 `AGENTS.md` 与 `GEMINI.md` 若同时存在会累积加载 |
 | `antigravity-cli/{conversations,brain,implicit,presence,annotations,history.jsonl,jetski_state.pbtxt,mcp,conversation_summaries.db*}` | 软链 → `~/.gemini/antigravity-cli/…` | 共享会话历史、压缩数据、MCP schema 与活跃锁（`presence` 必须共享以通过 Ovis `/proc/<pid>/fd` realpath 校验） |
 
 > **旧版假 `HOME` 实例目录的存量清理**：若机器曾跑过改写 `HOME="$h"` 的旧版包装，先检查 `~/.agy-homes/<account>/.local/share/Trash/{files,info}` 是否残留影子回收站条目（按 FreeDesktop 重名规则追加 `_1`、`_2`，将 `files/<name>` 与 `info/<name>.trashinfo` 成对同卷 `rename` 合并回 `~/.local/share/Trash/`），并将旧版仍在运行的进程过渡期内的顶层目录（`.local`、`.cache` 等）合并回真实 `HOME`。
@@ -183,17 +185,112 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
 - **清单注册与 `@` 引用差异**：通过 `rules.json` 可显式登记更深层子目录或目录外规则文件并保留其 `trigger`。规则正文中，`@[label](path)` 会在单文件大小校验之前内联展开目标文件内容；裸写 `@path` 仅改写引用路径提示，不在加载阶段内联文件内容。
 - **双阈值保护**（`1.5.8` 静态分析）：单文件（含 `@[label](path)` 展开后文本）存在 **24,000 字节**硬上限；全部非内置规则共用 **20,000 token** 全局聚合预算（`defaultRulesBudget`），超出后按体积从大到小将规则文件降级为仅保留路径指针（不再内联全文），仅内置插件自带规则豁免此预算裁剪。
 
-## 上下文压缩
+## <a id="context-compaction"></a>上下文压缩
 
-**1M 模型实际只用到 ~256K**。上下文增长到 250K–270K 时自动压缩到 15K–30K，此后循环。阈值不是写死在客户端的字面量，而是服务端 feature flag（Unleash）按账号 / 模型下发的实验档；1.4.8 二进制内嵌的默认档 `CASCADE_USE_EXPERIMENT_CHECKPOINTER` 可见参数结构：`max_token_limit: 256000`（压缩器强制的上下文硬上限）、`token_threshold: 50000`、`max_overhead_ratio: 0.15`，另有 Claude 1M 灰度变体 `claude-1m_840k`（`max_token_limit: 840000`）——每个账号实际拿到哪档由服务端决定。CLI 侧无法通过 settings.json、环境变量或旗标修改；Python SDK 的 `CompactionConfig(token_threshold=...)` 是唯一可配位置（见 [Python SDK](#sdk)）。
+### 压缩阈值与历史裁剪
 
-**两种丢弃机制**：压缩（compaction）产生 CHECKPOINT 标记和散文摘要；预截断（truncation）在发送前静默裁剪早期历史，无任何标记。
+压缩阈值并非客户端写死的固定常量，而是随构建版本、模型与服务端实验档（Unleash）变化：较早的 60 条会话样本均在 250K–270K 输入 token 附近触发压缩并降至 15K–30K；2026-11-16 核查的长会话则在 step 2274 增长至 509,066 输入 token 后，才于 step 2277 生成 `CHECKPOINT`、step 2278 回落至 42,200 token。排查具体会话时以实际日志记录为准。
 
-**Desktop 版额外问题**：Claude 模型（200K 窗口）有时完全不触发压缩，直接报 `prompt is too long` 终止会话。
+> 旧构建 `1.4.8` 内嵌的 `CASCADE_USE_EXPERIMENT_CHECKPOINTER` 默认档参数为 `max_token_limit: 256000`、`token_threshold: 50000`、`max_overhead_ratio: 0.15`，同时存在 `claude-1m_840k`（`max_token_limit: 840000`）灰度变体，实际生效档位由服务端按账号与模型下发。CLI 无 `settings.json` 键、环境变量或旗标可改；仅 [Python SDK](#sdk) 提供独立的 `CompactionConfig(token_threshold=...)`。
 
-**缓解**：把关键决策和协议约束写入 [AGENTS.md / 全局规则](#customization-discovery) 或项目文档——系统规则每轮完整重注入，不受压缩影响。加入"修改文件前必须先读当前内容"的规则可降低压缩后"修复"已解决问题（Ghost Revert）的风险。
+客户端存在两种历史丢弃路径：压缩（compaction）写入 `CHECKPOINT` 步骤并生成散文摘要；预截断（truncation）在请求发送前直接裁剪早期历史且不留标记。Desktop 端另有 Claude 200K 窗口模型未触发压缩即直接报 `prompt is too long` 终止会话的历史样本，排查时需区分产品端与构建版本。
 
-🔬 本机 60 条会话实测，压缩峰值全部在 250K–270K 区间（同类疑难排障案例沉淀归 `mess` skill）。
+### 系统规则与对话内角色
+
+已发现的全局规则由独立的系统提示构建链路在每轮组装注入；用户在对话中临时指定的角色与运行期读取的技能正文则留在历史消息内参与压缩。长会话应将角色激活状态、任务归属与未处理事项保存在外部可恢复记录中，在压缩或重启后按记录重读所需技能。
+
+2026-11-16 对本地会话 SQLite 数据库的实测核对了 `CHECKPOINT` 2277 之后落盘的模型输入：
+
+| 检查对象 | 实测结果 |
+|---|---|
+| `gen_metadata.idx=935` | `last_step_index=2440`，系统提示 55,699 字节，其中 `<user_rules>` 段 17,471 字节 |
+| 当时两份全局规则源文件原始大小 | `AGENTS.md` 11,936 字节、`GEMINI.md` 5,186 字节；各自去除首尾空白后的全文均逐字包含于 `<user_rules>` |
+| 技能正文 | `superagent/SKILL.md` 当时为 8,143 字节，全文未进入系统提示；技能列表仅含名称、路径与简介 |
+| `CHECKPOINT` 与恢复步骤 | step 2277 摘要保留了已激活的协作前台身份与职责；step 2278 重新调用读取技能，step 2280 返回完整正文 |
+
+本样本中，全局规则全文在上下文压缩后仍被完整重注入，本次漏更台账或越界直接编辑不能归因于全局规则被压缩抹除；其他会话仍需核对[规则预算](#customization-discovery)与实际模型输入。相比之下，对话内动态指定的角色和已读技能正文依赖摘要承接（技能目录持续可见仅代表可发现、不代表正文仍在上下文内），后续压缩仍可能丢失激活细节，需靠显式状态记录兜底恢复。
+
+> 只读复核方法：打开 `<geminiDir>/antigravity-cli/conversations/<id>.db` 读取 `gen_metadata` 最新完整行，其 `data` 列为 protobuf（外层 field 1 为 `GeneratorMetadata`，内层 field 1 为 `system_prompt`、field 20 为 custom metadata），提取 `<user_rules>` 与源文件正文逐字比对，勿仅检索文件名。同日跨过第二次 `CHECKPOINT` 2468 后复查，最新完整记录滚动至 `idx=1019`（`last_step_index=2669`），系统提示 56,583 字节、`<user_rules>` 段仍为 17,471 字节且两份全局规则全文逐字在列；而早先的 `idx=935` / `938` 旧行已被留存清理裁剪至 1,182 字节——旧记录缺失大段文本系事后裁剪所致，不能倒推当时未注入。上述结论基于本地 SQLite 落盘的模型输入，未对照紧邻压缩前后的两次完整 HTTP 请求；排查规则失效时仍应按“文件存在 → 规则被发现 → 预算内全文注入 → 模型实际遵循”逐层核对。
+
+二进制实现上，规则组装与压缩摘要展开相互独立：`UserRulesSection.Content` 负责构建规则段，`checkpointStepToChatMessages` / `formatCheckpointStep` 负责将 `CHECKPOINT` 转为历史消息；`skillAccumulator.Accumulate` 记录技能元数据；本样本的技能正文经重新读取恢复。
+
+> 本节及下文 CLI 机制的静态符号与虚拟地址均基于 2026-11-16 核查的 Linux x86-64 PIE 二进制（SHA-256 `39816d49d5ab92229952987225c23ea3fed7580699dcb4a444e0388e0ac1ce43`，ELF Build ID `cf2bdcfab1a7d961f5deb61d239908f8`），经 Go `pclntab` 符号恢复与反汇编交叉核实：`UserRulesSection.Content` `0x8f81820`、`checkpointStepToChatMessages` `0x88c9200`、`formatCheckpointStep` `0x88c9620`、`skillAccumulator.Accumulate` `0x865d2e0`、`PruneGeneratorMetadata` `0x7996d40`。客户端升级后虚拟地址会偏移，需重新定位。
+
+## <a id="goal-and-schedule"></a>CLI 目标与定时调度
+
+### `/goal` 与停止审计
+
+`/goal` 命令展开长程目标提示词，并通过 `goalAccumulator.Accumulate` / `processGoalSteps` 维护会话的 `active_goal` 状态。每当回合准备结束时，内建 `GoalStopHook` 会审计当前目标是否完成并驱动模型继续推进，直至输出 `GOAL_COMPLETE` 或 `GOAL_CANCELLED` 标记；该命令在系统提示中的可见性受 `goal_stop` 配置门控。
+
+对于在途的原生子代理与后台任务，Hook 通过检查 `AgentState` 的 `DependentsFullyIdle` 提供等待保护——下级依赖尚未空闲时直接放行结束当前回合，避免空转催促。但“等待外部人工回复或审批”未必被登记为内部依赖，若为开放式等待挂上长期不完结的 `/goal`，容易在每次停顿时反复触发续跑审计。`/goal` 适合完成标准明确、可自主收束的任务；外部审批与状态验收仍应交给独立门禁处理。
+
+> 静态分析依据（对应前述构建）：`processGoalSteps` `0x8659da0`、`GetActiveGoalState` `0x865aa20`；oneharness `NewGoalStopHook` 闭包 `0x8e900a0` 在 `0x8e901ad` / `0x8e901b6` 检查 `found` 与 `DependentsFullyIdle`（旧 executor 闭包 `0xa01e220` 含同族保护），反汇编中未见硬编码的最大续跑轮数上限。命令用法参考官方 [Goal 文档](https://antigravity.google/docs/commands/goal)。
+
+`/compact` 为手动压缩入口。当前构建的内置命令表不含 `/loop`；若环境中存在同名技能或工作流，需与原生斜杠命令区分。
+
+### `schedule` 消息与生命周期
+
+`schedule` 工具支持一次性定时器（timer）与周期性任务（cron），`/schedule` 斜杠命令用于引导模型调用该工具。具体参数以会话实际下发的工具 schema 为准：
+
+| 参数 | 含义 |
+|---|---|
+| `DurationSeconds` / `CronExpression` | 一次性等待秒数 / 标准五字段 cron 表达式，二者互斥 |
+| `Prompt` | 触发时作为高优先级通知投递给模型的提示词 |
+| `MaxIterations` | cron 最大触发次数，缺省不限 |
+| `TimerCondition` | timer 提前取消条件：`never`、`any` 或指定发送方 ID |
+| `IsDaemon` | cron 是否在当前主任务收束后继续保留运行 |
+| `ExactTiming` | 按指定时刻精确触发；普通周期轮询默认附加随机 jitter |
+
+cron 每次触发都会经内部消息 Hub 向当前会话投递高优先级 `Prompt` 并唤醒模型推理。`IsDaemon` 仅延长后台任务在当前会话内的存活期，既不具备“外部无变化则跳过唤醒”的预过滤能力，也不构成跨 CLI 进程退出的系统级常驻服务；代码中的 `SuppressCompletionNotification` 仅抑制后台任务自身的结束通知，不影响每次 cron 触发主动投递的 `Prompt`。
+
+需要低噪声盯盘外部状态（如轮询远端评论或 CI 变化）时，应由外部普通脚本先比对游标或指纹，仅在检测到实质变化时再唤醒会话；若要求跨 CLI 退出持久运行，需交由独立守护进程或外部自动化服务托管并单独验收。
+
+> 实现与日志依据：oneharness 入口为 `ScheduleTool.Execute` `0x9026700`，其 `continueCron` `0x90286c0` 与 Cortex `handleCron` `0xa00f860` 两条发送路径向 `Client.Send` `0x80ef900` 传入优先级 `3`（`MESSAGE_PRIORITY_HIGH`），再经 `Hub.Send` `0x80f11e0` 与 `DeliverMessages` `0x8618020` 注入会话；会话日志 step 581–584 实测印证一次性 timer 启动后台任务、结束当轮并在到期后收到高优先级唤醒消息（cron 触发、重启恢复及消息竞争时序尚未动态验证）。命令用法参考官方 [Schedule 文档](https://antigravity.google/docs/commands/schedule)。
+
+## <a id="cli-hooks"></a>CLI Hooks
+
+### 配置发现与事件
+
+CLI 从工作区、全局配置根与已安装插件中发现 `hooks.json`，按命名 Hook 合并生效；`settings.json` 中的同名键并非该机制的配置入口。多账号通过软链共享 `config` 目录时，其中的全局 Hooks 也会一并共享。内置说明位于安装目录的 `agy-customizations/docs/hooks.md`，以下契约基于前述构建反汇编与内置文档核对：
+
+| 事件 | 触发时机与典型用途 |
+|---|---|
+| `SessionStart` | 新会话初始化（上下文压缩后的恢复需结合 `PreInvocation` 覆盖） |
+| `PreToolUse` | 工具执行前拦截，按工具名与参数放行或拒绝 |
+| `PostToolUse` | 工具执行完成后记录结果或触发审计 |
+| `PreInvocation` | 每次调用模型前读取本地可信状态并注入短提示 |
+| `PostInvocation` | 单次模型调用返回后处理（此时流式文本通常已向终端输出） |
+| `Stop` | 执行循环准备结束当前回合时审计未尽事项，决定放行或续跑 |
+
+> 注册链路：`sharedfragment.wrapMixinWithJSONHooks` `0xa0230a0` → `jsonhook.WrapMixinWithJSONHooks` `0x8a74ba0`；`NewCallerFromHooks` `0x8a735a0` 仅注册上表六类事件（未包含 `UserPromptSubmit`）；CLI 侧配置加载入口为 `ReadAllHooks` `0xa223020` 与 `Store.ReloadHooks` `0xa5b6180`。在线说明见官方 [Hooks 文档](https://antigravity.google/docs/hooks)；编写脚本时须按 Antigravity 自有的事件名与 JSON 协议实现，不能直接照搬其他宿主的退出码约定。
+
+### 拒绝、注入与继续协议
+
+`command` 类型 Hook 从 `stdin` 读取 camelCase JSON，向 `stdout` 输出结构化决策 JSON。在 `PreToolUse` 中拒绝越界工具调用返回：
+
+```json
+{"decision":"deny","reason":"当前登记的前台会话应将此项修改派给执行者。"}
+```
+
+在 `PreInvocation` 中向当次模型输入注入简短状态消息，使用如下嵌套结构：
+
+```json
+{"injectSteps":[{"systemMessage":{"systemMessage":"当前角色及未处理事项，取自可信会话状态。"}}]}
+```
+
+在 `Stop` 中阻止回合结束并要求补齐收尾动作，可返回 `{"decision":"continue","reason":"尚有待核回执"}`；实现时应结合输入中的 `continuationActive` 限制最大续跑次数，并为取消、报错、在途异步依赖及等待人工回复留出正常结束分支。由于 `PreInvocation` 仅在模型即将被调用时触发，会话空闲期间的外部事件感知仍需配合外部监听机制。
+
+> 协议细节与边界：`applyPreToolHooks` `0x8a6d4c0` 在 `0x8a6d98b` 比对 `"deny"` 并在 `0x8a6dad6` 构造拒绝错误；Hook 进程报错时存在记录日志后放行继续的分支，未见“退出码 `2` 即阻断”的特殊处理，因此拦截逻辑必须稳定输出合法 JSON，并在上线前实测脚本异常或超时时的默认行为。内置文档当前正式支持 `command` Hook（`prompt` Hook 受 `enable-generative-hooks` 实验门控）。此外，`processModelStream` `0x89167a0` 在流式阶段已创建并更新可供显示的响应，随后才进入 `stepPostInvocation` `0x890dfe0` 与 `stepStopHooks` `0x890e760`——`Stop` 适合追回漏做的台账或回执动作，若业务要求“对账完成前绝不向终端吐出完成宣告”，则需在外层控制消息发送或缓冲输出。
+
+### 前台与子代理的配置边界
+
+原生 `invoke_subagent` 默认继承父级的配置发现结果，全局 `hooks.json` 因而同样会在子代理调用工具时触发。若要仅限制协作前台而不误伤后台执行子代理，Hook 脚本应查询外部可信注册表精确比对当前 `conversationId`，并结合已登记角色与 `parentConversationId` 排除下级会话——切勿单独按 `rootConversationId` 过滤，因为该字段覆盖整棵会话树，会把同树的后台子代理一并拦截。
+
+> 静态赋值依据：`InvokeSubagentHandler.inheritedCascadeConfig` `0x9ff61a0` 调用 `InheritSubagentCascadeConfig` `0x879d5a0`，且 `Manager.getJSONHooks` `0x8aa9240` 默认将 `inheritUser` 置为 `true` 聚合用户级 Hooks（自定义 agent 定义可显式覆盖该继承项）。`BuildHookArgsCommon` `0x8a6a1c0` 在 `0x8a6a31d`–`0x8a6a35b` 填入 `parentConversationId`、在 `0x8a6a378`–`0x8a6a3b5` 填入 `rootConversationId`（赋值依据为静态代码，真实 payload 及 `callerContext` 填充尚未动态核实）；正式部署自定义限域脚本前，建议先打印一次真实 `stdin` payload 核对各字段与 `callerContext` 的实际取值。
+
+工具匹配器应覆盖当前构建实际下发的工具名（如 CLI 中的 `edit_file`、`write_file`），也可先用通配规则接入再在脚本内按工具名和 `realpath` 规范化路径做细粒度放行（防范相对路径或软链绕过）。注意仅拦截文件编辑工具并不能封堵 `run_command`（shell）、MCP 等其他写入通道；需要严格限制前台写面时，应将所有实际可写工具统一纳入检查。
+
+> 工具名来源：core provider `0x8e94500` 直接将工具调用上下文的 `Name` 写入 `HookToolCall.Name`，再经 `Caller.CallHook` `0x8a73140` / `MatchesToolName` `0x8a78ba0` 匹配（内置文档中按旧 step 类型推导工具名的说法仅供参考，应以实际下发名称为准）。上线门禁前建议逐项实测：普通未登记会话不受影响、前台越界写操作被准确拒绝、同树子代理正常读写、旁路通道与脚本故障行为符合预期。
 
 ## <a id="sdk"></a>Python SDK
 
