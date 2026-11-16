@@ -17,8 +17,8 @@ Google Antigravity 的终端 CLI（`agy`）与桌面版（Antigravity App / IDE�
 | `--model <name>` | 指定模型 |
 | `--mode auto` | 自动审批模式（安全命令不询问） |
 | `--output-format stream-json` | 机器可读输出 |
-| `--gemini_dir <path>` | **隐藏旗标**（被 `main.hideFlagsForExternal` 从 `--help` 隐藏）：指定 `.gemini` 目录路径（绝对路径直接生效，相对路径相对于 `$HOME`），用于多账号隔离而不污染 `$HOME` |
-| `--app_data_dir <rel>` | **隐藏旗标**：相对于 `GeminiDir` 的应用数据子目录名（默认 `"antigravity-cli"`；注意 `conversation_summaries.db` 按 `app_data_dir` 列过滤会话，多账号共享会话历史时应保持默认值 `"antigravity-cli"`，只改 `--gemini_dir`） |
+| `--gemini_dir <path>` | **隐藏旗标**：指定 `.gemini` 目录（绝对路径直接生效，相对路径相对于 `$HOME`）；多账号用法见[鉴权存储与多账号](#multi-account) |
+| `--app_data_dir <rel>` | **隐藏旗标**：指定相对于 `.gemini` 根的应用数据子目录名（默认 `"antigravity-cli"`）；隔离时的取值约束见[鉴权存储与多账号](#multi-account) |
 
 **关键斜杠命令**：`/context` 查看上下文用量、`/compact` 手动压缩、`/resume` 列出并恢复会话、`/usage` 查看额度、`/plan` 规划模式。
 
@@ -41,7 +41,7 @@ Google Antigravity 的终端 CLI（`agy`）与桌面版（Antigravity App / IDE�
 
 `allowNonWorkspaceAccess` 解除文件读写限于 workspace 根的限制；单次全量放行用 `--dangerously-skip-permissions`。Turbo / always-proceed 意味着无沙箱、无人工把关，破坏性操作直接执行；回退档位按需选 `proceed-in-sandbox` + `/permissions` 细粒度 allow 规则（如 `command(git)`）。权限规则的匹配细节（前缀匹配何时降级为全行精确匹配、write 隐含 read）见官方 [Permissions](https://antigravity.google/docs/permissions/) 文档。
 
-## 鉴权存储与多账号
+## <a id="multi-account"></a>鉴权存储与多账号
 
 ### 存储位置
 
@@ -155,28 +155,28 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
 ### 作用域与目录遍历边界
 
 - **工作区侧**：从当前目录向上遍历至 Git 仓库根（`.git` 所在目录；若当前目录不在 Git 仓库内，则只扫描工作区当前目录本身），探测各层的 `.agents/` 与 `.gemini/`，以及工作区各级 `AGENTS.md` / `GEMINI.md`。**不向仓库外继续上溯，也不向下扫描未打开的子目录**；单层目录下的 `skills/<name>/SKILL.md` 仅向下探测一层。
-- **个人全局侧**：CLI 后端 `globalCustomizationDirs` 仅枚举三个配置根——`<appDataDir>`、`<geminiDir>`（默认 `~/.gemini`，或 `--gemini_dir` 指定目录）与 `<geminiDir>/config`（`fs.ConfigDir` 基于 `<geminiDir>` 拼接 `"config"`）。**`~/.agents/` 不在全局扫描列表中**：项目级 `<dir>/.agents/skills/` 可被原生发现，但用户级 `~/.agents/skills/` 不会被 Antigravity 自动发现。
+- **个人全局侧**：默认环境下，CLI 后端 `globalCustomizationDirs` 仅枚举三个配置根——`~/.gemini/antigravity-cli`、`~/.gemini` 与 `~/.gemini/config`。**`~/.agents/` 不在全局扫描列表中**：项目级 `<dir>/.agents/skills/` 可被原生发现，但用户级 `~/.agents/skills/` 不会被 Antigravity 自动发现。
 
 ### Skills 发现、兼容性与优先级
 
-- **用户级共享 `skills` 接入**：要在 Antigravity 中复用全局 `~/.agents/skills/`，推荐软链到 `<geminiDir>/config/skills`：
+- **用户级共享 `skills` 接入**：要在 Antigravity 中复用全局 `~/.agents/skills/`，推荐软链到 `~/.gemini/config/skills`：
   ```bash
   mkdir -p ~/.gemini/config
   ln -s ../../.agents/skills ~/.gemini/config/skills
   ```
-  `~/.gemini/config/skills` 同时被 CLI 与 App 侧个人配置根识别、优先让位给工作区项目技能，且在多账号 `--gemini_dir` 隔离下可随 `config` 软链自动共享。不建议直接放入 `<appDataDir>/skills/` 或 `<geminiDir>/skills/`，否则会反客为主压过工作区同名技能。
+  `~/.gemini/config/skills` 同时被 CLI 与 App 侧个人配置根识别、优先让位给工作区项目技能。不建议直接放入 `~/.gemini/antigravity-cli/skills/` 或 `~/.gemini/skills/`，否则会反客为主压过工作区同名技能。
 - **覆盖优先级（高到低）**：
-  1. CLI 专用全局目录 `<appDataDir>/skills/` 与 `<geminiDir>/skills/`（CLI 侧高优入口，可覆盖工作区技能及清单 `exclude` 排除项）
+  1. CLI 专用全局目录 `~/.gemini/antigravity-cli/skills/` 与 `~/.gemini/skills/`（CLI 侧高优入口，可覆盖工作区技能及清单 `exclude` 排除项）
   2. 仓库 `.gemini/config.json` 中的 `personal_customization_dir`
   3. 工作区规则与技能（越接近当前目录优先级越高；受清单 `exclude` 等配置过滤）
-  4. 个人全局（`<geminiDir>/config/`；受清单过滤）
+  4. 个人全局（`~/.gemini/config/`；受清单过滤）
   5. 内置技能（built-in）
 - **元数据与刷新**：官方[配置发现文档](https://antigravity.google/docs/customization-discovery)将 `SKILL.md` 的 `description` 标为必填、`name` 标为可选（缺省时回退目录名）；但 `1.5.8` 的 `convertSkillPath` 存在 `RequireName` 校验分支，且跨工具仓库通常要求两者齐全。文件增改在下一轮次自动生效；若要在**当前交互式 CLI 会话内**即时刷新 `/skills` 与斜杠补全，执行 `/skills reload`。
 - **内置技能分层门控**（🔬 `1.5.8` 实测样本）：`builtin/skills/` 磁盘目录共存 **14** 个 `SKILL.md`；Language Server RPC `GetAllSkills` 返回 **13** 个（受门控隐藏的内置技能未返回）；主会话系统提示实际注入 `<skills>` 为 **5** 个（通过 `builtin.RegisterGated`、特性旗标、当前角色与 `WithModeFilter` 按模式裁剪）。
 
 ### Rules 发现、触发与上下文预算
 
-- **累积加载与 realpath 去重**：来自不同作用域（全局、仓库各级）的已发现规则**累积合并**生效，不会因为高优先级规则存在而整体屏蔽低优先级规则；同一 `<geminiDir>` 下的 `AGENTS.md` 与 `GEMINI.md` 亦会累积注入。发现阶段按 `EvalSymlinks` 解析后的物理路径（realpath）去重，不同路径的两个独立常规文件即便内容完全相同也不会在加载时合并去重（引用内联展开也不等同于发现去重）。
+- **累积加载与 realpath 去重**：来自不同作用域（全局、仓库各级）的已发现规则**累积合并**生效，不会因为高优先级规则存在而整体屏蔽低优先级规则；同一 `~/.gemini` 下的 `AGENTS.md` 与 `GEMINI.md` 亦会累积注入。发现阶段按 `EvalSymlinks` 解析后的物理路径（realpath）去重，不同路径的两个独立常规文件即便内容完全相同也不会在加载时合并去重（引用内联展开也不等同于发现去重）。
 - **普通指令 vs `rules/*.md`**：直接放置的 `AGENTS.md` 与 `GEMINI.md` 视为普通 Markdown 并以 `always_on` 注入（YAML frontmatter 被忽略）。`.agents/rules/*.md` 与 `.gemini/rules/*.md` 则要求有效 `trigger`：
   - `always_on`：每轮注入规则正文
   - `model_decision`：需提供 `description`，仅以摘要供模型按需调用
@@ -210,7 +210,7 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
 
 本样本中，全局规则全文在上下文压缩后仍被完整重注入，本次漏更台账或越界直接编辑不能归因于全局规则被压缩抹除；其他会话仍需核对[规则预算](#customization-discovery)与实际模型输入。相比之下，对话内动态指定的角色和已读技能正文依赖摘要承接（技能目录持续可见仅代表可发现、不代表正文仍在上下文内），后续压缩仍可能丢失激活细节，需靠显式状态记录兜底恢复。
 
-> 只读复核方法：打开 `<geminiDir>/antigravity-cli/conversations/<id>.db` 读取 `gen_metadata` 最新完整行，其 `data` 列为 protobuf（外层 field 1 为 `GeneratorMetadata`，内层 field 1 为 `system_prompt`、field 20 为 custom metadata），提取 `<user_rules>` 与源文件正文逐字比对，勿仅检索文件名。同日跨过第二次 `CHECKPOINT` 2468 后复查，最新完整记录滚动至 `idx=1019`（`last_step_index=2669`），系统提示 56,583 字节、`<user_rules>` 段仍为 17,471 字节且两份全局规则全文逐字在列；而早先的 `idx=935` / `938` 旧行已被留存清理裁剪至 1,182 字节——旧记录缺失大段文本系事后裁剪所致，不能倒推当时未注入。上述结论基于本地 SQLite 落盘的模型输入，未对照紧邻压缩前后的两次完整 HTTP 请求；排查规则失效时仍应按“文件存在 → 规则被发现 → 预算内全文注入 → 模型实际遵循”逐层核对。
+> 只读复核方法：打开 `~/.gemini/antigravity-cli/conversations/<id>.db` 读取 `gen_metadata` 最新完整行，其 `data` 列为 protobuf（外层 field 1 为 `GeneratorMetadata`，内层 field 1 为 `system_prompt`、field 20 为 custom metadata），提取 `<user_rules>` 与源文件正文逐字比对，勿仅检索文件名。同日跨过第二次 `CHECKPOINT` 2468 后复查，最新完整记录滚动至 `idx=1019`（`last_step_index=2669`），系统提示 56,583 字节、`<user_rules>` 段仍为 17,471 字节且两份全局规则全文逐字在列；而早先的 `idx=935` / `938` 旧行已被留存清理裁剪至 1,182 字节——旧记录缺失大段文本系事后裁剪所致，不能倒推当时未注入。上述结论基于本地 SQLite 落盘的模型输入，未对照紧邻压缩前后的两次完整 HTTP 请求；排查规则失效时仍应按“文件存在 → 规则被发现 → 预算内全文注入 → 模型实际遵循”逐层核对。
 
 二进制实现上，规则组装与压缩摘要展开相互独立：`UserRulesSection.Content` 负责构建规则段，`checkpointStepToChatMessages` / `formatCheckpointStep` 负责将 `CHECKPOINT` 转为历史消息；`skillAccumulator.Accumulate` 记录技能元数据；本样本的技能正文经重新读取恢复。
 
@@ -221,6 +221,10 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
 ### `/goal` 与停止审计
 
 `/goal` 命令展开长程目标提示词，并通过 `goalAccumulator.Accumulate` / `processGoalSteps` 维护会话的 `active_goal` 状态。每当回合准备结束时，内建 `GoalStopHook` 会审计当前目标是否完成并驱动模型继续推进，直至输出 `GOAL_COMPLETE` 或 `GOAL_CANCELLED` 标记；该命令在系统提示中的可见性受 `goal_stop` 配置门控。
+
+CLI 还会从输入末尾向前查找斜杠命令：除句首解析外，`/` 前须为 Unicode 空白，命令名按 Unicode 空白切分并精确匹配，因此 `提醒 /goal` 或引用正文里的 ` /goal ` 都可触发，后面仍可跟其他文字。`提醒/goal` 本身不满足这一后缀边界，但解析器会跳过它继续查找更早的有效命令，引用和代码块也没有 Markdown 豁免。只讨论名称可写 `goal`；紧包的行内代码 `` `/goal` `` 在这条明文解析路径中不会命中，代码围栏内独立成行的 `/goal` 则仍可命中。
+
+> 本构建静态依据：`handleUserInput` 在 `0xa5b8ed4` / `0xa5b8f15` 分别调用 `ParseLeading` / `ParseSuffix`；后者 `0xa5713c0` 经 `strings.LastIndex`（`0xa571400`）、`utf8.DecodeLastRuneInString`（`0xa571429`）与 `unicode.IsSpace`（`0xa571440`）检查边界，不合格或名称未匹配时继续向前查找。`splitToken` `0xa570d80` 同样以 `unicode.IsSpace` 切分，`parseSystemSlashCommand` `0xa60e540` 对名称作等长与字节精确比较；TUI 高亮另用正则 `(^|\s)(/[^\s]+)`。上述边界针对明文输入，已选中的结构化 Slash Command 条目会直接进入 `processGoalSteps`，需在输入框中另外移除。
 
 对于在途的原生子代理与后台任务，Hook 通过检查 `AgentState` 的 `DependentsFullyIdle` 提供等待保护——下级依赖尚未空闲时直接放行结束当前回合，避免空转催促。但“等待外部人工回复或审批”未必被登记为内部依赖，若为开放式等待挂上长期不完结的 `/goal`，容易在每次停顿时反复触发续跑审计。`/goal` 适合完成标准明确、可自主收束的任务；外部审批与状态验收仍应交给独立门禁处理。
 
@@ -251,7 +255,7 @@ cron 每次触发都会经内部消息 Hub 向当前会话投递高优先级 `Pr
 
 ### 配置发现与事件
 
-CLI 从工作区、全局配置根与已安装插件中发现 `hooks.json`，按命名 Hook 合并生效；`settings.json` 中的同名键并非该机制的配置入口。多账号通过软链共享 `config` 目录时，其中的全局 Hooks 也会一并共享。内置说明位于安装目录的 `agy-customizations/docs/hooks.md`，以下契约基于前述构建反汇编与内置文档核对：
+CLI 从工作区、全局配置根与已安装插件中发现 `hooks.json`，默认全局入口为 `~/.gemini/config/hooks.json`，按命名 Hook 合并生效；`settings.json` 中的同名键并非该机制的配置入口。内置说明位于安装目录的 `agy-customizations/docs/hooks.md`，以下契约基于前述构建反汇编与内置文档核对：
 
 | 事件 | 触发时机与典型用途 |
 |---|---|
@@ -321,7 +325,7 @@ CLI 有而 SDK 没有的：订阅配额计费、TUI（`/diff`、`/context`）、
 
 ### 本地轨迹淘汰与批处理隔离
 
-每次启动新 `agy` 实例时，客户端按文件修改时间排序清理 `conversations/` 目录，只保留最新的 500 个 `<id>.db` 文件。后台频繁调用一次性 `agy -p`（如自动润色、审阅或批处理脚本）时，每次调用都会新建会话并触发清理，数日内即可将闲置长会话挤出保留范围。高频 `agy -p` 任务应指定专用 `--gemini_dir`（仅软链复用凭据与 `config`，保持独立的 `conversations/` 目录），将短命批处理会话与主力交互历史隔离。
+每次启动新 `agy` 实例时，客户端按文件修改时间排序清理 `conversations/` 目录，只保留最新的 500 个 `<id>.db` 文件。后台频繁调用一次性 `agy -p`（如自动润色、审阅或批处理脚本）时，每次调用都会新建会话并触发清理，数日内即可将闲置长会话挤出保留范围。高频 `agy -p` 任务应在同一账号下指定专用 `--gemini_dir`（复用原账号凭据与 `config`，保持独立的 `conversations/` 目录），将短命批处理会话与主力交互历史隔离；此处隔离的是会话留存目录，账号保持不变。
 
 > 🔬 `1.5.8` / `1.5.9` 二进制逆向与实测：清理逻辑位于 `trajectorystore.(*Manager).PruneAll`，500 条上限写死在二进制内，无 `settings.json` 键、环境变量或旗标可改；`UnifiedStateSyncClient` 云端同步仅覆盖 `conversation_summaries.db` 对应的标题与步数摘要，无法从云端恢复已被清理的完整对话。
 
