@@ -13,7 +13,7 @@ description: 处理 Git/jj 提交与历史、隔离工作区、受限网络获�
 
 ## 隔离工作区（实验性改动 / 并行分支）
 
-给"可能出错或需要并行的改动"开隔离工作区，避免 stash / reset 频繁切换。两个判据互相独立：**有没有 submodule** 决定用哪套机制（无则 `git worktree`，有则默认共享 clone——共享 gitdir 上的 `core.worktree` 是单值、表达不了 N 个工作区，实测边界与例外见下条），**要不要编译** 决定要不要把 submodule 拉下来（docs 类任务跳过 submodule 实测省 83 倍时间、122 倍空间）。建立 / 分支流转 / 拆除 / 占盘实测见 [references/workspace.md](references/workspace.md)，其中也记了装了 `worktrunk`（`wt`）时能省掉哪些手工步骤——它是 UX 层、建 worktree 与 `git worktree add` 等价，**不改变**上面两个判据。
+隔离工作区用于实验性改动和并行分支。需要独立仓库配置时使用 clone，但 `--reference` 的对象借用仍依赖源仓库；默认加 `--dissociate`，以本地空间换取借用结束后的对象独立性。submodule 是否初始化取决于任务实际需要，初始化后也要逐个核对对象依赖。建立、分支传递、解除已有借用及清理流程见 [references/workspace.md](references/workspace.md)。原文保留的耗时和占盘数字属于先前持续借用模式，不作为新默认策略的性能保证；`worktrunk`（`wt`）只是 worktree 生命周期操作的便捷入口，不取消底层限制。
 
 `core.worktree` 劫持（含它**不**触发的那条路径与实测矩阵）、`--force` 累积失效注册、`submodule foreach --recursive` 的遍历盲区、手删 `worktrees/` 连活注册一起删等坑，以及动手前的诊断与恢复流程见 [references/submodule-hazards.md](references/submodule-hazards.md)。
 
