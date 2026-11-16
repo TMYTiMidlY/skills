@@ -1,6 +1,6 @@
 # 目标委派与持续协作
 
-本篇说明目标归属、工作区拓扑、宿主子代理分工、面向用户的转述方式与交付验收流程。直接发起和管理外部 Codex worker 见 [Codex SDK 编排](sdk-orchestration.md)，接管存量 CLI 会话见[存量 CLI 会话的旁路监控与推进](cli-monitoring.md)。
+本篇说明目标归属、工作区拓扑、长会话状态恢复、外部事件监听、前台执行门禁、宿主子代理分工、面向用户的转述方式与交付验收流程。直接发起和管理外部 Codex worker 见 [Codex SDK 编排](sdk-orchestration.md)，接管存量 CLI 会话见[存量 CLI 会话的旁路监控与推进](cli-monitoring.md)。
 
 ## <a id="goals-and-workspaces"></a>目标委派与工作区划分
 
@@ -27,6 +27,57 @@
 派发后台任务时同步核实回传链路：前台结束本轮回复后后台是否继续运行、完成后能否可靠取回结果、中途纠偏能否送达、断线重连会否触发重复派发。后台向主对话回传可用成果、具体待决问题、真实阻塞和影响交付的异常；底层流式输出与心跳日志留在后台按需查阅。
 
 > 历史持久化、后台常驻运行与完成自动唤醒是三项独立能力，需按宿主实际表现分别确认。宿主不支持自动唤醒时，向用户说明下次对话如何读取进展；需要无人值守盯盘时，显式启动获准的后台控制器。失败重试前先检查是否已产生外部副作用。
+
+## <a id="role-and-state-recovery"></a>长会话角色与状态恢复
+
+“当前会话被指定为协作前台”的口头指令以及运行期读取过的技能正文，通常保存在普通对话历史中，经历上下文压缩、进程重启或会话交接后可能被摘要稀释（技能仍出现在可发现列表中，仅代表可供按需加载，不代表正文仍在上下文中）。因此在压缩恢复、进程重连或关键任务派发前，应先对照外部持久状态核实当前角色、未结任务与待处理事件，再按需重读对应技能。
+
+优先复用环境既有的状态存储；轻量场景下也可在任务控制目录维护一份结构化状态文件，至少记录以下五类信息：
+
+| 状态维度 | 需持久记录的内容 |
+|---|---|
+| 前台身份 | 精确会话 ID、启用角色、用户明确指定该角色的依据、当前启用或已撤销状态 |
+| 任务归属 | 原始请求与已确认范围、目标负责人、工作区路径、后台执行会话 ID、父子链路与回传入口 |
+| 当前进展 | 正在推进的事项、等待对象、已拍板决定、待决问题、暂停范围与授权边界 |
+| 待处理事件 | 已接收但尚未消化的外部评论、后台工程回执、待同步入账的变更及对应证据位置 |
+| 监听与控制 | 外部事件游标、监听进程或订阅标识、最近成功拉取时间、有效投递目标、控制者标识与状态版本 |
+
+角色的启用与撤销由核实过用户指令的控制入口写入，配套的身份注册表和门禁配置也由该入口统一维护；协作前台仅通过受控接口更新任务进展。每次恢复或派发前先与既有记录对账，确认无在途重复任务后再决定续跑或新派；跨会话接力或分支派生（fork）时显式移交绑定关系，撤销前台角色时同步清理登记状态与限域门禁。运行态中应明确区分“等待用户拍板”“等待后台执行”“等待外部系统”“待同步台账”与“已交付”——处于等待用户拍板状态时，前台应正常结束当前回合，安静等待下一次输入。
+
+> 上述状态结构是本 skill 推荐的工程约定，底层压缩与生命周期接口因宿主而异（详见 `harness` skill）。同类设计可参考 dsh-superagent 的[持久领域状态](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/store.ts#L62-L91)与[动态角色上下文组装](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/sessions.ts#L232-L247)，以及 Letta 的[独立状态块与提示词编译](https://github.com/letta-ai/letta/blob/0.16.8/letta/schemas/memory.py#L688-L732)（后者按 Agent 类型选择渲染路径，落地时仍需核对实际进入模型上下文的内容）。
+
+## <a id="external-events"></a>外部协作事件监听
+
+宿主原生的后台子代理完成通知与外部协作平台事件（如 Issue 评论、PR 评审意见、行内批注、CI 状态与合并结果）属于不同信号源。接入外部协作闭环时，应按任务目标逐类列出需监听的资源端点，避免仅凭主 Issue 的更新时间判断所有关联讨论与门禁均已读完。
+
+根据运行周期、事件频率与宿主能力选择合适的接入形态：
+
+| 接入方式 | 外部程序前置处理 | 触发模型推理的时机 | 适用场景与边界 |
+|---|---|---|---|
+| 后台变化检测脚本 | 轮询已登记资源，比对游标、ETag 或内容指纹，过滤无关动态与自身回帖 | 检测到待处理的新增/编辑事件，或连续失联需上报异常时 | 活跃任务较少、允许轮询间隔延迟；随宿主拉起的脚本需另行确认跨进程重启后的存活与重拉起机制 |
+| 事件订阅与常驻接收服务 | 接收 webhook 或事件流，校验签名来源，持久化入队、去重并按归属路由 | 业务规则判定需唤醒对应会话处理时 | 适合长期高频协作；需维护公网或内网接收入口、凭据轮换、失败重试与投递恢复 |
+| 宿主定时提示（Schedule） | 定时器到期直接向会话投递检查 Prompt，由模型自行调用工具查询外部状态 | 每次定时触发均唤醒模型 | 适合短期有界兜底；外部无变化时仍会消耗模型额度与上下文窗口 |
+| 宿主生命周期 Hook | 在既有会话事件边界自动恢复状态、校验工具权限或核对未清回执 | 随会话调用生命周期触发 | 适合固化单回合内的恢复与门禁；会话空闲期间感知外部新事件仍依赖前两类监听入口 |
+
+> 实现参考：dsh-superagent 的[评论轮询](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/sources/github.ts#L203-L248)对 HTTP `304`、早于基线的记录及自身发出的评论直接短路返回，[CI 状态比对](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/sources/github.ts#L414-L423)先建立初始快照、仅在指纹变化时生成事件，再交由[业务路由层](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/runtime.ts#L131-L161)分流；其[relay 与 notice 通道](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/sessions.ts#L96-L102)明确区分“立即唤醒模型”与“仅静默注入下一轮上下文”。OpenHands automation 的[会话路由与唤醒配置](https://github.com/OpenHands/automation/blob/af3ab78a67e2a6b20d1e4c4aefef877af3ecabac/openhands/automation/schemas.py#L155-L208)同样将事件接收、既有会话复用与是否启动模型循环解耦。
+
+监听脚本只负责变化发现与可靠投递，不越俎代庖替前台解读需求或扩大既有授权。评论拉取需同时识别新帖与旧帖编辑（结合评论 ID、`updated_at` 与正文哈希，配合重叠时间窗、完整分页与幂等去重）；CI 事件须严格绑定具体 PR 的精确 `HEAD` 提交与运行标识，防止拿旧提交的滞后结果推进当前流程。状态账本上分别记录“已接收 → 已入队 → 已投递 → 已处理”，唯有动作真正落定并核验无误后才推进“已处理”游标。
+
+外部无变化时保持在轻量脚本内休眠轮询，不唤醒模型；遇到鉴权失效、限流或网络中断时保留未知状态、指数退避并限次告警。若采用“单次后台脚本检测到变化即退出、借任务完成通知唤醒前台”的轻量模式，前台处理完当批事件后须立即重新挂载下一轮监听；若需跨终端退出持续运行，则交由获准的常驻服务托管。投入使用前须实测验证空闲唤醒、断线重投及幂等防重——仅在磁盘写一份状态文件而无唤醒投递通道，尚不构成闭环。
+
+## <a id="foreground-gates"></a>前台执行门禁与台账闭环
+
+在长线多任务协作中，可将角色状态登记、外部事件队列与宿主的确定性执行门禁（Hooks / 工具管线拦截）组合起来：外部监听解决“有新情况时及时唤醒”，前置门禁解决“防止前台顺手越界改文件或跑重命令”，文字规则阐明职责分工，确定性拦截兜住执行底线。
+
+前置门禁应依据可信注册表精确核对调用方会话身份，将协作前台与后台执行 worker 严格区分：对已登记的前台会话拦截业务源码、正式交付物与仓库配置的直接写入，仅放行任务派发与受控控制面状态更新；后台 worker 则按各自获授的任务范围正常读写。门禁覆盖面需同时纳入文件编辑、shell 命令、MCP 工具及远端写入等全部实际可变通道，并对目标路径做 `realpath` 与软链解析。若借助宿主的工具裁剪机制限权，须提前核实裁剪规则是否会沿父子会话链向下继承，避免连带剥夺下级 worker 的执行能力。
+
+> 跨宿主门禁机制参考：Claude Agent SDK 的[调用上下文类型](https://github.com/anthropics/claude-agent-sdk-python/blob/v0.2.182/src/claude_agent_sdk/types.py#L309-L356)将主会话 `session_id` 与子代理 `agent_id` 分列，并通过 `hookSpecificOutput.permissionDecision` 返回[前置拒绝决策](https://github.com/anthropics/claude-agent-sdk-python/blob/v0.2.182/src/claude_agent_sdk/types.py#L513-L521)；DSH 的[工具管线前置检查](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/core/tools/src/pipeline.ts#L190-L229)在派发前物化 `deny` 决策，其[能力裁剪规则](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/core/tools/src/index.ts#L155-L225)沿父子作用域取交集生效。不同宿主的事件名、身份字段、异常默认放行/阻断行为及返回协议需分别按 `harness` skill 核实。
+
+后台任务到达里程碑时，向控制面回传包含目标标识、精确提交或文件版本、验证结果与证据路径的结构化回执。前台先将其记为“待同步台账”事项，按授权刷新总账、回读确认无误并核销对应事件后，再放行依赖该里程碑的下游派发或对外收口。共享台账指定单一写入方维护，每次落笔前先校验远端或磁盘最新版本是否与起草基线一致，防止并发旧稿覆盖新状态。
+
+每次调用模型前，可由前置 Hook 从本地状态缓存注入简短的角色提醒与未清事项摘要，将耗时的远端轮询留给独立监听器或低频到期复核，避免每步工具调用反复请求外部网络。回合结束前的停止审计（Stop Hook）仅作有界补漏，须确保等待用户决策、主动取消与真实故障均能正常收束退出；若要求严格做到“台账未同步前绝不向用户发出完工宣告”，则需在外层缓冲输出或管控对外发送动作，流式输出完成后的事后检查只能追补遗漏动作。
+
+> 若门禁仅拦截少数编辑工具而保留任意 shell 或外部写通道，只能阻断已覆盖的调用，尚未形成完整只读隔离；同时应核实 Hook 进程崩溃、超时、输出格式损坏或状态库锁死时的降级策略（例如 DSH 的[副作用前持久化策略](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/session/session-checkpoint-policy/src/index.ts#L20-L81)在状态落盘失败时直接中止后续工具执行，具体取舍视受保护对象的风险等级而定）。门禁与监听器上线前应逐一验收：普通会话不受干扰、前台越界写操作被拒且目标文件未变、后台 worker 正常推进、压缩后待办完整恢复、空闲无变化零模型调用、新评与改评均被捕获、重启不丢队列，且等待人工拍板时不会陷入无限自检循环。
 
 ## <a id="host-subagents"></a>宿主子代理与模型分工
 
@@ -73,14 +124,21 @@ Codex 的可用账号、默认模型与推理档位按本机环境配置（如 `
 
 ## <a id="source-patterns"></a>同类系统的协作范式
 
-dsh-superagent 将节省人的注意力置于首位：路由层原样转发用户请求，交由下级 worker 完成代码调研与实现；后续追问自动路由给既有负责人，关键进展与待决问题回流至发起会话，并由持久投递和等待上限保障前台及时结束回合。
+Grok Bot（Chief of Staff 统筹专职 Bot）与 OpenAI dots（统一持久入口下的多项目目标委托）展示了面向注意力节省的交互形态：用户始终面对同一个对话入口，重活在后台并行推进，只有需要拍板或交付结果时才回到主对话。由于两者的公开资料侧重产品体验，并未披露可直接复用的本地状态表结构、上下文压缩算法、精确一次投递协议或 CLI 前台限域实现，落地本地 CLI 编排时需结合开源系统的工程机制补齐底座。
 
-> 一手源码：[注意力成本与职责划分](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/docs/000-philosophy.md#L3-L15)、[前台交互与结果回流](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/prompts/orchestrator.md#L1-L16)、[原始请求转发与未决授权](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/prompts/dispatch.md#L31-L51)、[前台等待上限](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/sessions.ts#L63-L85)、[持久化消息投递](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/effects.ts#L57-L71)。该原型中限制路由附言字数、固定目录布局等做法属于其特定实现取舍；本 skill 同样严守前台不下场查代码/远端、不直接撰写或翻译长文的边界，前台仅读取已派发任务的现成回执与台账并向用户做精炼结果转述，将工程核查与实现派给 Codex、面向人阅读的文稿与纯文字工作派给后台 Gemini 子代理。外层目录与命令包装仅提供默认环境，合并放行仍依赖独立门禁，见[执行环境与合并边界](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/docs/003-execution.md#L78-L90)。
+> 产品说明：[Introducing Grok Bot](https://x.ai/news/introducing-grok-bot)（2026-08-11）、[Grok Bot 1.0](https://x.ai/news/grok-bot-1-0)（2026-11-02）、[Introducing dots](https://openai.com/index/introducing-dots/)（2026-09-29 发布，含后续更新，2026-11-16 核阅）。文中 Grok Bot 的多代理共享云端计算环境，dots 页面同时涵盖当前个人端入口与组织级 specialist 预览，其云端托管条件需与本地 CLI 的进程生命周期、沙箱权限和通知通道分开评估。
 
-Grok Bot 展示了常驻在线的多代理协作形态：由 Chief of Staff 统筹多个专职 Bot、同步上下文，并在真实工具环境中推进工作；OpenAI dot 则围绕统一持久入口组织目标级委托与多项目并行，让用户在后台运转期间随时讨论和调整方向。本 skill 吸收上述协作体验，具体后台与通知能力按当前宿主实测为准。
+针对本地 CLI 环境的编排与门禁设计，可按需借鉴以下公开工程实现：
 
-> 官方说明：[Introducing Grok Bot](https://x.ai/news/introducing-grok-bot)（2026-08-11）、[Introducing dots](https://openai.com/index/introducing-dots/)（2026-09-29）。文中 Grok Bot 的多个代理共享云端计算环境，Dots 页面同时包含当前个人端能力与远期团队设想，均不代表不同宿主具备相同的底层隔离或调度实现。
+| 系统 | 可借鉴的工程机制 | 适用前提与边界 |
+|---|---|---|
+| dsh-superagent | SQLite 领域状态库、按角色动态拼装系统提示、GitHub 增量轮询过滤、任务归属路由与持久化副作用队列 | 仓库定位为研究原型；其前台仍挂载 shell 工具，单靠提示词约定不足以构成严格的只读文件隔离 |
+| Claude Code / Agent SDK | 压缩后恢复上下文的生命周期入口、工具前置拒绝协议、主会话与子代理调用者区分字段 | 全局 Hook 默认可能同时作用于子代理，需按精确调用者身份放行 worker，并按目标版本实测异常降级行为 |
+| OpenHands | 会话内 `EventStream` 持久化事件流、GitHub resolver 评论触发工作流、`automation` 按外部主题复用会话 | `EventStream` 仅负责会话内事件分发；接入 GitHub 外部事件仍需独立部署 webhook 或轮询服务 |
+| Letta | 独立于滚动聊天记录的结构化状态块（Memory blocks）与请求时提示词编译 | 状态块机制本身不包含外部事件监听，业务待办与授权变更仍需由受控入口维护 |
+
+> 源码与文档索引：dsh-superagent 的[项目定位说明](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/README.md#L3-L9)、[前台原始请求路由](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/prompts/dispatch.md#L31-L51)、[前台等待上限](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/sessions.ts#L63-L85)、[角色工具裁剪范围](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/sessions.ts#L263-L313)与[持久化副作用队列](https://github.com/deepseek-ai/dsh-superagent-prototype/blob/6337fc823ce20251c8de8085948165c81aaa701e/src/app/effects.ts#L57-L145)（本 skill 吸收其节省注意力与沿既有负责人追问的思路，前台禁写边界与双模型分工按本 skill 规范执行）。Claude Code 的[压缩后 Hook 修订记录](https://github.com/anthropics/claude-code/blob/eba1240d09fd468b984a2a317c77cb48e1e51d2f/CHANGELOG.md#L286)、[官方 Hooks 文档](https://code.claude.com/docs/en/hooks)与上文 SDK 类型定义可用于核对生命周期事件及子代理标识（恢复后注入内容是否进入模型输入需按实际版本验证）。OpenHands 的 [`EventStream` 实现](https://github.com/OpenHands/OpenHands/blob/104f52bcdd4859c68d241a00d4f46d0bad658572/openhands/events/stream.py#L152-L204)与 [GitHub resolver 工作流](https://github.com/OpenHands/OpenHands/blob/104f52bcdd4859c68d241a00d4f46d0bad658572/.github/workflows/openhands-resolver.yml#L26-L61)为历史架构样本，独立 `automation` 仓库的[事件路由与唤醒模式](https://github.com/OpenHands/automation/blob/af3ab78a67e2a6b20d1e4c4aefef877af3ecabac/openhands/automation/schemas.py#L241-L280)进一步区分了新建运行、复用既有会话与仅投递不唤醒。Letta 的[状态块定义](https://github.com/letta-ai/letta/blob/0.16.8/letta/schemas/memory.py#L68-L80)与[提示词编译分支](https://github.com/letta-ai/letta/blob/0.16.8/letta/schemas/memory.py#L688-L732)提供了独立状态重建参考。
 
 独立派发的后台任务通常只能看到显式传入的上下文，且可能在前台对话暂停后继续运行；前台在转发补充信息或执行暂停指令时，应逐一覆盖到真正干活的下级会话。
 
-> [Getting started with your dot](https://help.openai.com/en/articles/20001530-getting-started-with-your-dot)（2026-11-14 核阅）指出独立启动的 Work / Codex 任务可在主入口暂停后继续运行；其他宿主的传播与停止语义需按各自实现核实。
+> [Getting started with your dot](https://help.openai.com/en/articles/20001530-getting-started-with-your-dot)（2026-11-16 核阅）指出独立启动的 Work、Codex 或定时任务可在主入口暂停后继续运行；其他宿主的上下文传播与停止语义需按各自实现核实。
