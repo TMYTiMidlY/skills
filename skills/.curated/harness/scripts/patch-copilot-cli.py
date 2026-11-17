@@ -22,7 +22,7 @@ harness/references/copilot-patch.md）。
      `modelsIsTieredTokenPrices`、`effortLevel`/`contextTier`）而非整段表达式形状。
   5. 能降级就不放弃：clearpoint 找不到模型对象时退化成「保留上次设置」而不是 SKIP。
 
-新版 native profile（1.0.83-1.0.110）：整组适配启动、启动覆盖层、主会话切换与模型选择器；
+新版 native profile（1.0.83-1.0.113）：整组适配启动、启动覆盖层、主会话切换与模型选择器；
 使用有权使用的档位、保留显式选择，用户配置了默认模型时优先于组织下发的默认模型并同步默认标记，
 不修改 native 二进制。该组所有入口必须同时命中；缺少入口时报 SKIP，不把 native 迁移当成 N/A。
 
@@ -393,14 +393,15 @@ def p_tiers_startup(src):
            f"内置默认 tier -> long_context ({var}={opts}.context??{st}.contextTier)", "apply"
 
 
-NATIVE_MARKER = "tmy-native-defaults-v4"
+NATIVE_MARKER = "tmy-native-defaults-v5"
 NATIVE_PREVIOUS_DIGESTS = {
     "tmy-native-defaults-v1": "9b011a4c7faabcc0856a2d5d18a7ae4225798b209bb13e397e1c7b923b00a6d1",
     "tmy-native-defaults-v2": "8d6d495e6a9d08aec0f542dc4585f769347ee1766997a4a4a85a026c41f0ed79",
     "tmy-native-defaults-v3": "ad1dc54464eb13ffe3daf18cc5ad3df27f53f767714ec4dda361aca895d58752",
+    "tmy-native-defaults-v4": "14e5e8993c8e8fde029a1e9f25297ff9a3007da6f3c5748ddc24de559b556d2d",
 }
 NATIVE_HELPER = r"""
-/*tmy-native-defaults-v4*/
+/*tmy-native-defaults-v5*/
 const __tmyNativeDefaults = (() => {
     let launch = {};
     const initializedSessions = new Set();
@@ -673,7 +674,7 @@ const __tmyNativeDefaults = (() => {
         await session.model.switchTo(input);
         return input.modelId;
     }
-    async function switchTo(h, session, input) {
+    async function switchTo(h, session, input, implicitCommandEffort = false) {
         const sid = nativeSessionId(session);
         if (!present(sid) || input.repoScope || input.modelId === "auto" ||
             !["model_command", "model_picker"].includes(input.source) ||
@@ -685,7 +686,10 @@ const __tmyNativeDefaults = (() => {
         const desired = defaults(h, row, config);
         const sameModel = input.modelId === selected.selectedModel;
         const next = {...input};
-        if (!present(next.reasoningEffort))
+        // The native /model command effect already contains its medium default.
+        // Its documented grammar has no effort argument; unlike the picker, that
+        // value is not an explicit UI choice. Settings still enter via defaults().
+        if (!present(next.reasoningEffort) || (implicitCommandEffort && input.source === "model_command"))
             next.reasoningEffort = (sameModel ? selected.reasoningEffort : undefined) ?? desired.effort;
         if (!present(next.contextTier))
             next.contextTier = (sameModel ? selected.contextTier : undefined) ?? desired.tier;
@@ -770,8 +774,18 @@ def native_hooks_complete(src, marker, legacy=False):
              if legacy else
              ("startup", "picker", "initialize", "startupOverlay", "headless", "headlessOptions"))
     headless_managed_expected = 1 if (not legacy and '"managed_settings"' in rest) else 0
+    options_expected = 2 if "/*tmy-headless-native-switch*/" in rest else 1
+    if marker == NATIVE_MARKER:
+        commands = list(re.finditer(
+            r'__tmyNativeDefaults\.switchTo\([\w$]+,[\w$]+\.session\.instance,\{', rest))
+        if len(commands) != 1:
+            return False
+        command_end = js_object_end(rest, commands[0].end() - 1)
+        if rest[command_end:command_end + 6] != ',true)':
+            return False
     return (src.count(f"/*{marker}*/") == 1 and
-            all(rest.count(f"__tmyNativeDefaults.{name}(") == 1 for name in hooks) and
+            all(rest.count(f"__tmyNativeDefaults.{name}(") ==
+                (options_expected if name == "headlessOptions" else 1) for name in hooks) and
             rest.count("__tmyNativeDefaults.headlessStartupSwitch(") == headless_managed_expected and
             rest.count("__tmyNativeDefaults.switchTo(") == 2)
 
@@ -832,7 +846,8 @@ def upgrade_native_defaults(src, marker):
     start = src.find(f"/*{marker}*/")
     end_marker = "/*tmy-native-defaults-end*/"
     end = src.find(end_marker, start)
-    if start < 0 or end < 0 or not native_hooks_complete(src, marker, legacy=True):
+    if start < 0 or end < 0 or not native_hooks_complete(
+            src, marker, legacy=marker != "tmy-native-defaults-v4"):
         return None, f"incomplete {marker} native hooks; refusing to upgrade", "skip"
     end += len(end_marker)
     if hashlib.sha256(src[start:end].encode()).hexdigest() != NATIVE_PREVIOUS_DIGESTS[marker]:
@@ -857,10 +872,21 @@ def upgrade_native_defaults(src, marker):
             extra_edits.append((call.start(), call.end(),
                                 f"__tmyNativeDefaults.picker({alias},{options},__tmySettings,{scope},"
                                 f"{session}.isRemote===!0),[{session}.isRemote,{deps}]"))
-        for s_pos, e_pos, rep in _find_overlay_and_headless_managed_edits(src, alias):
+        overlay_edits = ([] if marker == "tmy-native-defaults-v4" else
+                         _find_overlay_and_headless_managed_edits(src, alias))
+        for s_pos, e_pos, rep in overlay_edits:
             if s_pos < end:
                 raise ValueError("overlay hook overlaps helper header")
             extra_edits.append((s_pos, e_pos, rep))
+        commands = list(re.finditer(
+            r'__tmyNativeDefaults\.switchTo\(' + re.escape(alias) +
+            r',[\w$]+\.session\.instance,\{', src))
+        if len(commands) != 1:
+            raise ValueError(f"upgrade command switch count={len(commands)} (want 1)")
+        command_end = js_object_end(src, commands[0].end() - 1)
+        if src[command_end:command_end + 1] != ')':
+            raise ValueError("upgrade command switch payload changed")
+        extra_edits.append((command_end, command_end, ',true'))
         extra_edits.sort()
         if any(left[1] > right[0] for left, right in zip(extra_edits, extra_edits[1:])):
             raise ValueError("upgrade edits overlap")
@@ -869,7 +895,7 @@ def upgrade_native_defaults(src, marker):
     for s_pos, e_pos, rep in reversed(extra_edits):
         src = src[:s_pos] + rep + src[e_pos:]
     src = src[:start] + NATIVE_HELPER.strip() + src[end:]
-    return src, f"{marker} -> {NATIVE_MARKER}: 1.0.110 + startup overlay defaults", "apply"
+    return src, f"{marker} -> {NATIVE_MARKER}: native command effort provenance", "apply"
 
 
 def p_native_defaults(src):
@@ -997,8 +1023,9 @@ def p_native_defaults(src):
             if len(calls) != 1:
                 raise ValueError(f"{kind} model switch count={len(calls)} (want 1)")
             c_start, c_end, target, args = calls[0]
+            provenance = ",true" if kind == "command" else ""
             edits.append((c_start, c_end,
-                          f"__tmyNativeDefaults.switchTo({alias},{target},{args})"))
+                          f"__tmyNativeDefaults.switchTo({alias},{target},{args}{provenance})"))
 
         effort = f"{headless_result}.reasoningEffort"
         effective = re.findall(r'let ([\w$]+)=[\w$]+\?\?' + re.escape(effort) + r';if\(', src)
@@ -1008,20 +1035,62 @@ def p_native_defaults(src):
         if effective:
             effort = effective[0]
             extra = f",{effort}"
-        update = one(re.escape(effort) + r'!==void 0&&'
+        update_pattern = (re.escape(effort) + r'!==void 0&&'
                      r'(?:(!([\w$]+)&&(\([^()]+\))&&))?'
                      r'await Promise\.resolve\(([\w$]+)\.options\.update\(\{reasoningEffort:' +
-                     re.escape(effort) + r'\}\)\)',
-                     label="headless effort application")
-        not_jn, _, inner_cond, session = update.groups()
-        if not_jn:
-            cond_expr = (f"{not_jn}(({effort}!==void 0&&{inner_cond})||"
-                         f"{headless_result}.__tmyContextTier!==void 0)")
+                     re.escape(effort) + r'\}\)\)')
+        old_updates = list(re.finditer(update_pattern, src))
+        if old_updates:
+            update = one(update_pattern, label="headless effort application")
+            not_jn, _, inner_cond, session = update.groups()
+            if not_jn:
+                cond_expr = (f"{not_jn}(({effort}!==void 0&&{inner_cond})||"
+                             f"{headless_result}.__tmyContextTier!==void 0)")
+            else:
+                cond_expr = f"({effort}!==void 0||{headless_result}.__tmyContextTier!==void 0)"
+            edits.append((update.start(), update.end(),
+                          f"{cond_expr}&&await Promise.resolve({session}.options.update("
+                          f"__tmyNativeDefaults.headlessOptions({headless_result}{extra})))"))
         else:
-            cond_expr = f"({effort}!==void 0||{headless_result}.__tmyContextTier!==void 0)"
-        edits.append((update.start(), update.end(),
-                      f"{cond_expr}&&await Promise.resolve({session}.options.update("
-                      f"__tmyNativeDefaults.headlessOptions({headless_result}{extra})))"))
+            # 1.0.112 preserves agent/BYOK options.update, but built-in models now
+            # apply defaults through model.switchTo. Preserve that split and its
+            # existing .catch handler; carry the computed tier through both arms.
+            update = one(re.escape(effort) + r'!==void 0&&!([\w$]+)&&'
+                         r'(\([^()]+\))&&await\(async\(\)=>\{',
+                         label="headless native effort application")
+            flag, inner_cond = update.groups()
+            body_start = update.end() - 1
+            body_end = js_object_end(src, body_start)
+            if src[body_end:body_end + 4] != ')().':
+                raise ValueError("headless native effort async call changed")
+            body = src[body_start:body_end]
+            # 1.0.113 nests options under inference; model.switchTo stays flat.
+            opt = one(r'([\w$]+)\.options\.update\(\{(inference:\{)?reasoningEffort:' +
+                      re.escape(effort) + r'\}(?(2)\})\)', body, "headless agent effort update")
+            session = opt.group(1)
+            inference_options = opt.group(2) is not None
+            sw = one(re.escape(session) + r'\.model\.switchTo\(\{', body,
+                     "headless native effort switch")
+            obj_start = sw.end() - 1
+            obj_end = js_object_end(body, obj_start)
+            args = body[obj_start:obj_end]
+            if body[obj_end:obj_end + 1] != ')' or 'source:"startup"' not in args:
+                raise ValueError("headless native effort switch payload changed")
+            field = one(r'(?<=,)reasoningEffort:' + re.escape(effort) + r'(?=,)',
+                        args, "headless native effort field")
+            guard = (f"!{flag}&&(({effort}!==void 0&&{inner_cond})||"
+                     f"{headless_result}.__tmyContextTier!==void 0)"
+                     "/*tmy-headless-native-switch*/&&await(async()=>{")
+            edits.append((update.start(), update.end(), guard))
+            options_expr = f"__tmyNativeDefaults.headlessOptions({headless_result}{extra})"
+            if inference_options:
+                options_expr = f"{{inference:{options_expr}}}"
+            edits.append((body_start + opt.start(), body_start + opt.end(),
+                          f"{session}.options.update({options_expr})"))
+            field_start = body_start + obj_start + field.start()
+            field_end = body_start + obj_start + field.end()
+            edits.append((field_start, field_end,
+                          f"...__tmyNativeDefaults.headlessOptions({headless_result}{extra})"))
         edits.sort()
         if any(left[1] > right[0] for left, right in zip(edits, edits[1:])):
             raise ValueError("native defaults edits overlap")

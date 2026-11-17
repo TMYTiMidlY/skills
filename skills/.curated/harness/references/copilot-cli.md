@@ -43,7 +43,7 @@ $ which copilot
     └── app.js          (主逻辑，esbuild bundle)
 ```
 
-直接 `view` / 字符串切片 `node_modules/@github/copilot/app.js` 即可读到一份源码，没有解包步骤。**但这份是 npm 包自带的「种子」版本、往往是旧版**（实测 AgWorkstation 这里 `package.json` 写 `1.0.41`，而 `copilot --version` 却报 `1.0.69-2`）——**它不是运行时真正跑的那份，更不是打补丁该改的那份**（改了没用）。运行时/打补丁到底改哪份，见下面「运行时到底跑哪份 app.js」。
+直接查看或切片 `node_modules/@github/copilot/app.js` 即可读到 npm 包自带的种子源码，无需解包。但种子包往往落后于 loader 自更新下载的版本（历史实测：种子 `package.json` 为 `1.0.41`，新进程 `copilot --version` 为 `1.0.69-2`），既非实际运行的 bundle，也不是打补丁的目标；运行时真正加载的文件见下文[运行时主 bundle 与补丁目标](#runtime-bundle)。
 
 ### 二进制发行版（SEA）：读自解包的 cache
 
@@ -52,6 +52,7 @@ $ which copilot
 ```
 ~/.cache/copilot/pkg/<platform>/<version>/      # 如 linux-x64/1.0.64-1
     ├── index.js / app.js / sea-loader.js
+    ├── cli-main.js          (1.0.105+ 的 CLI 主逻辑；app.js 缩为薄启动壳)
     ├── copilot-sdk/*.d.ts   (没混淆的 TS 声明，读类型面最省事)
     └── *.wasm / 各 native 模块
 ```
@@ -59,16 +60,15 @@ $ which copilot
 目录里有 `.extraction-complete` 标记说明解包完成。定位当前版本目录：
 
 ```bash
-D=~/.cache/copilot/pkg/linux-x64/$(copilot --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-[0-9]+')
-ls "$D"             # app.js index.js copilot-sdk/ ...
-wc -l "$D/app.js"   # 1.0.64-1 是 6403 行
+D=~/.cache/copilot/pkg/linux-x64/$(copilot --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' | head -n 1)
+ls "$D"             # app.js、cli-main.js（1.0.105+）、index.js、copilot-sdk/ ...
 ```
 
 > macOS 走 `~/Library/Caches/copilot/pkg/...`；也可被 `COPILOT_CACHE_HOME` / `XDG_CACHE_HOME` / `COPILOT_HOME` 改写。
 
-### 运行时到底跑哪份 app.js（打补丁改这份）
+### <a id="runtime-bundle"></a>运行时主 bundle 与补丁目标
 
-**不管 npm 还是 SEA 安装，运行时最终跑的都是 `~/.cache/copilot/pkg/<platform>/<version>/app.js`，`<version>` = 盘上最高版本。所有 bundle 补丁（见 [copilot-patch.md](copilot-patch.md)）都改这一份。** 上面 npm 的 `node_modules/.../app.js` 只是 npm 发的种子、SEA 的 ELF 只是内嵌资源载体——真正执行的都是 loader 自更新后解包/下载进 pkg cache 的那份。两台实测佐证（同一 session 里做的）：
+**无论通过 npm 还是 SEA 安装，运行时都从当前平台的 pkg cache 加载版本目录，bundle 补丁只改其中承载 CLI 主逻辑的入口文件。** Linux 默认目录为 `~/.cache/copilot/pkg/<platform>/<version>/`，其他平台与环境覆盖按上文定位。1.0.105 起 `app.js` 退化为 `import("./cli-main.js")` 的薄启动壳，主逻辑在同目录的 `cli-main.js`；1.0.91 及更早版本仍在 `app.js`。loader 默认选择缓存中的最高版本，传入 `--prefer-version <version>` 时则加载指定版本；[copilot-patch.md](copilot-patch.md) 的脚本即按版本目录优先定位 `cli-main.js`、不存在时回退 `app.js`。npm 的 `node_modules/.../app.js` 只是初始种子包，SEA 的 ELF 只是内嵌资源载体，早期版本的两组对照实测可印证这一点：
 
 - **SEA 装**（本机）：`file ~/.local/bin/copilot` 是 ELF 二进制、**没有** `node_modules/@github/copilot`；跑 pkg cache 最高版。
 - **npm 装**（AgWorkstation）：launcher symlink→`npm-loader.js`，`node_modules` 里 app.js 是 `1.0.41`（**未打补丁**），但 `copilot --version`=`1.0.69-2`、且 `/model` 长上下文修复**只有在 pkg cache 的 `app.js` 打补丁后才生效** → 证明跑的不是 node_modules 那份。（`index.js` loader 里能看到 `pkg` / `prefer-version` 版本选择逻辑。）
@@ -79,7 +79,7 @@ wc -l "$D/app.js"   # 1.0.64-1 是 6403 行
 
 ### 按字面量抠源码片段
 
-`app.js` 是 esbuild bundle，**单行极长**（一行几 MB），grep 看不出上下文。实用做法是用 node 做字符串切片，以稳定字面量为锚点、把空白压成一行看：
+CLI 主 bundle（1.0.105+ 为 `cli-main.js`，旧版为 `app.js`）经 minified 压缩后**单行极长**（一行可达数 MB），直接 grep 看不出上下文。实用做法是用 node 按稳定字面量切片，并把空白压成单行查看：
 
 ```bash
 node -e '
@@ -762,9 +762,9 @@ ssh -T git@github.com                       # → "Hi <wrong-account>!" 一目�
 - **"能 clone 就以为身份对了"是错觉**：如果你的 SSH 默认账号被对方加为 collaborator，clone 完全 OK，但 push 到 `<别人>/...` 还是会因为没写权限被拒。GitHub 对**完全没访问权限**的私有仓回 `Repository not found`（不告诉你仓存在不存在），对**只读 collaborator** 回真实数据，对**没写权限的 push** 回 `Permission denied`。三种回复对应三种状态，看响应内容能反推自己的身份关系。
 
 ---
-## app.js 运行时补丁（bundle patch）
+## <a id="runtime-patch"></a>CLI bundle 运行时补丁
 
-「重试太少 / 默认档位（effort ＋ context tier）回落」这几处 **stock 无配置可改、只能改 minified bundle** 的行为，连同**一键补丁脚本** `scripts/patch-copilot-cli.py`（幂等、自动备份、`node --check` 失败回滚、逐 patch 独立），已独立成篇 → **[copilot-patch.md](copilot-patch.md)**。先跑脚本 `dry-run`，全绿就不用手改；某个 patch 失效会单独报出，再按该文对应节手动逆向。
+固定默认模型、固定 effort 与 context tier 可直接通过设置项配置；而“按模型动态选最高可用 effort、切模型默认启用长上下文、用户默认模型优先于组织下发默认模型”涉及启动覆盖层、选择器、裸 `/model` 命令及非交互 `inference` 参数等多个运行时入口，完整机制与一键脚本 `scripts/patch-copilot-cli.py` 独立归入 **[copilot-patch.md](copilot-patch.md)**。脚本按版本目录自动定位 `cli-main.js` 或 `app.js`，默认只做预览，写盘前经 Node 语法校验、备份并原子替换：新版 native 调用边界（已适配至 1.0.113）按整组校验，任一入口失配即整组 `SKIP`；旧版 JavaScript 补丁仍逐项独立处理。历史版本的重试扩容亦一并保留在该文档。
 
 ---
 

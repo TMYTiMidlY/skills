@@ -1,10 +1,10 @@
 # Copilot CLI 运行时补丁（bundle patch）
 
-Copilot CLI 闭源、只发 minified bundle（为什么闭源、怎么读源码见 [copilot-cli.md「安装方式与看源码」](copilot-cli.md#安装方式与看源码)）。本文记录默认档位与重试行为的运行时补丁。固定默认模型、固定 effort 和 context tier 可以用配置；“每个模型自动选择最高可用 effort、切模型默认使用长上下文、用户显式默认模型不被组织默认模型覆盖”还涉及启动覆盖层、选择器与会话切换逻辑，需要按版本适配。
+Copilot CLI 闭源、只发 minified bundle（源码定位见[运行时主 bundle 与补丁目标](copilot-cli.md#runtime-bundle)）。本文记录默认档位与重试行为的运行时补丁。固定默认模型、固定 effort 和 context tier 可以用配置；“每个模型自动选择最高可用 effort、切模型默认使用长上下文、用户显式默认模型不被组织默认模型覆盖”还涉及启动覆盖层、选择器与会话切换逻辑，需要按版本适配。
 
-1.0.83 起默认档位计算迁入 native，脚本通过 [CLI 调用边界](#native-defaults) 适配，已覆盖到 1.0.110；旧版的 JavaScript 锚点与重试补丁保留在[旧版适配](#legacy-js)。
+1.0.83 起默认档位计算迁入 native，脚本通过 [CLI 调用边界](#native-defaults) 适配，已覆盖到 1.0.113；旧版的 JavaScript 锚点与重试补丁保留在[旧版适配](#legacy-js)。
 
-**打补丁只改运行时真正跑的那份 CLI bundle**——pkg cache 最高版本目录（`~/.cache/copilot/pkg/<platform>/<version>/`）下的主入口文件：1.0.105 起 `app.js` 缩为薄启动壳并 `import("./cli-main.js")`，主逻辑在 `cli-main.js`；1.0.91 及更早在 `app.js`。不要去改 npm 的 `node_modules` 种子或 SEA 的 ELF（机制见 [copilot-cli.md「运行时到底跑哪份 app.js」](copilot-cli.md#运行时到底跑哪份-appjs打补丁改这份)）。
+**打补丁只改运行时真正跑的那份 CLI bundle**——pkg cache 版本目录（`~/.cache/copilot/pkg/<platform>/<version>/`）下的主入口文件：1.0.105 起 `app.js` 缩为薄启动壳并 `import("./cli-main.js")`，主逻辑在 `cli-main.js`；1.0.91 及更早在 `app.js`。默认定位最高缓存版本，传了 `--prefer-version` 时则以指定版本为准；不要去改 npm 的 `node_modules` 种子包或 SEA 的 ELF 二进制（加载机制见 [copilot-cli.md](copilot-cli.md#runtime-bundle)）。
 
 > ⚠️ **补丁是逆向产物、会随版本腐坏。** 本文的做法是「先跑脚本，跑成功就不用读细节；跑失败再对着当前 bundle 手动逆向那一个 patch」。所以下文既给脚本，也给每个 patch 的**改动意图 + 稳定字面量锚点**，供脚本失效时重建。锚点一律用跨版本不变的字面量（env 名 / 错误文案 / 配置键 / native 函数名），混淆符号名用正则反向引用捕获、**绝不硬编**。
 
@@ -22,14 +22,14 @@ uv run scripts/patch-copilot-cli.py --revert --latest-only
 
 ### <a id="native-defaults"></a>Native 默认档位适配
 
-检测到 `CliModelPickerHandle` 时，脚本选择 `native-model-defaults` 组，不再尝试旧版的 effort/context 正则，也不夹带已经下沉 native 的重试补丁。所有必需入口必须一起命中；任一入口失配就整组 `SKIP`，不写入部分改动。已打补丁时同时核对 helper 内容与调用点；已知 v1、v2、v3 可按内容摘要校验后原子升级到 v4，其他不一致版本需先恢复备份再重打。
+检测到 `CliModelPickerHandle` 时，脚本选择 `native-model-defaults` 组，不再尝试旧版的 effort/context 正则，也不夹带已经下沉 native 的重试补丁。所有必需入口必须一起命中；任一入口失配就整组 `SKIP`，不写入部分改动。幂等检查会同时核对 helper 内容与全部调用点，涵盖裸 `/model` 命令的来源标记及新版非交互双分支的参数挂钩；遇到已知的 v1–v4 helper 时先按内容摘要校验，再原子升级到 `tmy-native-defaults-v5`，未知或已被手改的版本则拒绝覆盖，需先恢复备份再重打。
 
 | 路径 | 适配位置 | 行为 |
 |---|---|---|
 | 启动与覆盖层 | `modelCliStartupConfiguration`、`CliSessionEnvironmentHandle.initialize`、`model.applyStartupOverlay` | 避免把 native 自动填出的 medium 当成显式命令行选择；用户 `settings.json`（或 `COPILOT_MODEL`）已配置默认模型且未传 `--model`/仓库级 `model` 时，优先保留用户配置的可用模型而不被组织下发的默认模型顶掉；初始化及覆盖层切换后计算最高可用 effort 和长上下文，透传 streamer mode |
 | `/model` 选择器 | `CliModelPickerHandle` 的 CLI 局部适配对象 | 同步处理预选值、effort 默认标记、初始光标和默认模型标记；兼容 `contextTiers` 与 `contextTierSegments` 两种行字段，窗口显示仍由 native setter 计算 |
-| 会话内切换 | 选择器与直接输入命令各自的 `model.switchTo` 调用点 | 只补未给定的档位；保留同一模型当前已选的档位与显式参数 |
-| 非交互主会话 | `modelCliHeadlessConfiguration`、`managed_settings` 启动切换及其 options 更新点 | 用户配置了可用默认模型时优先于组织下发的默认模型；默认 effort 按当前模型能力计算，支持时补长上下文；保留命令行与自定义 agent 的显式 effort 优先级 |
+| 会话内切换 | 选择器与直接输入命令各自的 `model.switchTo` 调用点 | 区分选择器的显式选档与裸 `/model` 命令由 native 预填的默认 effort；切换到其他模型时优先采用用户有效配置，未配置则按模型能力补最高档与长上下文，重选当前模型时保留现有档位 |
+| 非交互主会话 | `modelCliHeadlessConfiguration`、`managed_settings` 启动切换及 effort 应用分支 | 用户配置了可用默认模型时优先于组织下发的默认模型；保留命令行与自定义 agent 的显式 effort，缺省时按模型能力补最高 effort 与长上下文，并分别适配内置模型的 `model.switchTo` 与 agent／自定义提供方的 `options.update` |
 
 默认模型仍写在用户 `settings.json` 的 `model` 字段，脚本不把某个模型 ID 写死进 bundle。选择器有可用的用户默认模型时，用它显示默认标记；若该模型对当前账号不可用或不在组织允许列表内，保留 native 的可用性判断与回退。配置示例：
 
@@ -58,6 +58,20 @@ uv run scripts/patch-copilot-cli.py --revert --latest-only
 
 > 远程会话必须在选择器构造时就排除，并把远程状态纳入 memo 依赖；仅在切换函数中放行原参数不够，因为选择器可能已把默认参数改成最高 effort / 长上下文。
 
+#### <a id="native-boundaries"></a>命令来源与非交互参数形态
+
+直接输入 `/model <id>` 切换模型时，native 的 `session.commands.invoke` 可以返回已预填 `reasoningEffort: "medium"` 的 `set-model` 结果。在已核验的 `/model` 命令语法中，effort 不是可传入的参数，因此这一预填值不能当成用户显式指定；若直接按“已有字段则保留”处理，裸命令切模型就可能掉回 Medium。为此，适配层仅在命令切换调用点传入 `implicitCommandEffort=true`，使 `source: "model_command"` 重新按有效配置与模型能力计算默认 effort；选择器切换点不传该标记，继续保留手动选档，重选同一模型时也继续沿用当前 effort。验收时须同时走选择器与裸 `/model` 命令核对实际会话状态，不能只看选择器列表标签。
+
+> 1.0.112 已鉴权实测：仅修复非交互锚点时，选择器虽显示最高档，直接输入 `/model gpt-6.1-sol` 仍落到 Medium；升级到 `tmy-native-defaults-v5` 后同一命令落到 Max。1.0.110 的 JavaScript 命令调用点形态相同，但未对更早版本的 native 返回值做同账号动态比对，尚不能据此断定该预填行为始于哪一版。
+
+1.0.112 将非交互模式的 effort 应用拆成异步双分支：内置模型先由 `model.getCurrent()` 读取当前模型与提供方，再调用 `model.switchTo({..., reasoningEffort, source: "startup"})`；自定义 agent 的显式 effort 与部分自定义提供方仍走 `options.update({reasoningEffort})`。适配层保留这一分流、agent effort 优先级、已完成 agent 切换时的跳过守卫及原有异常捕获，同时把按模型能力算出的 `contextTier` 一并带入两条分支，并在无需改写 effort 时仍允许单独补齐长上下文。
+
+1.0.113 进一步将 agent／提供方分支的参数改为嵌套结构 `options.update({inference: {reasoningEffort}})`，而内置模型的 `model.switchTo` 仍保持扁平字段。脚本在不改动 `tmy-native-defaults-v5` helper 语义的前提下按调用点形态包入 `inference`，并兼容此前各版的旧形态；适配这类改动时必须分别核对两条分支实际发出的参数结构，不能只放宽匹配正则却继续写回旧载荷。
+
+> 边界依据：1.0.112（构建标识 `24d885ba`）与 1.0.113（`150b9c66`）发行包中的 `cli-main.js`；1.0.113 随包类型声明 `SessionUpdateInferenceOptions` 同时包含 `reasoningEffort` 与 `contextTier`。旧脚本在 1.0.112 报 `headless effort application count=0 (want 1)`，仅覆盖到 1.0.112 的脚本在 1.0.113 报 `headless agent effort update count=0 (want 1)`，两类失配均会触发整组 `SKIP` 而不写入残缺改动。
+
+> 验证范围：1.0.91、1.0.105、1.0.109、1.0.110、1.0.112 五版干净副本均通过补丁写入、整包 Node 语法校验与幂等重跑；旧版升级实测覆盖 v3、v4 直升 v5，v1、v2 仅保留摘要校验分支而未做动态复测。1.0.112 另完成 34 项真实 native 会话、受控模型目录与边界桩检查、9 项提取的非交互分支用例，以及 2 项在发送提示词前退出的已鉴权非交互探针。1.0.113 先在隔离副本通过写入、语法、幂等及 9 项提取分支用例，再经自动补丁服务落地；该服务为 oneshot，执行完毕显示 `inactive (dead)` 属正常终态，应以 `Result=success` 与 `ExecMainStatus=0` 判成功。验收须沿用日常 Copilot 鉴权环境，避免混用套餐权限不同的 `gh` 登录态；独立 PTY 实测已打补丁的 1.0.113 发行包时，默认模型 `Gemini 4 Carbon` 带 `(default)` 标记并落到 High 与 936K，直接输入 `/model gpt-6.1-sol` 落到 Max 与 922K，窗口数值均取自当时的模型目录而非补丁常量。恢复事件回放、远程与 `isLocalAttach` 以及 BYOK 旁路部分依赖边界桩验证，不等同于真实远端或自定义提供方的全链路实测。
+
 ### <a id="legacy-js"></a>旧版 JavaScript 适配
 
 未检测到 native 选择器的旧版继续使用下表；各 patch 独立，锚点失配只跳过对应项。下文旧版“清空 settings”与四处 context 锚点的记录不能直接套用到 1.0.83。
@@ -81,7 +95,7 @@ uv run scripts/patch-copilot-cli.py --revert --latest-only
 
 这个 `N/A` / `SKIP` 之分是**抗腐坏的关键**：没有它，一个被上游移除的 patch 会让 systemd 服务永远 `failed`，真正的腐坏就淹没在噪声里了（1.0.74→1.0.78 就是这么被拖到 3 个 patch 一起坏才被发现的）。
 
-**需要重新启动 Copilot 进程才生效**：运行中的进程已经把 `app.js` 载入内存，仅 `/new` 不会重载补丁。恢复旧会话会保留其显式档位，要观察启动默认值应另开全新会话。`copilot update` 拉的新版本目录是干净的，需要再次运行脚本；新版本入口失配时先适配，不能强行写入。
+**需要重新启动 Copilot 进程才生效**：运行中的进程已经把主 bundle 载入内存，仅 `/new` 不会重载补丁。恢复旧会话会保留其显式档位，要观察启动默认值应另开全新会话。`copilot update` 拉的新版本目录是干净的，需要再次运行脚本；新版本入口失配时先适配，不能强行写入。
 
 > 要固定加载刚打补丁的缓存版本，可用 `copilot --prefer-version <version>`。不要把 `COPILOT_AUTO_UPDATE=false` 当成同义选项：1.0.83 loader 在没有 `--prefer-version` 时可能改用安装器内嵌的种子版本，而不再选择最新缓存。
 
