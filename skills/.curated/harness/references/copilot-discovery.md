@@ -1,6 +1,10 @@
 # Copilot CLI 配置发现：指令、Hooks、MCP、Skills
 
-Copilot CLI 怎么发现项目级 / 用户级上下文：walk-up（向上查找）行为、Custom Instructions（指令文件）、Hooks 配置、MCP 配置、Skills 目录。排查"某个项目级指令 / hook / MCP server / skill 为什么没加载"时看这里。证据锚点用 `app.js` 里稳定的字面量；混淆符号名与字节偏移随版本变化，升级后需重新核对。
+Copilot CLI 怎么发现项目级 / 用户级上下文：walk-up（向上查找）行为、Custom Instructions（指令文件）、Hooks 配置、MCP 配置、Skills 目录。排查"某个项目级指令 / hook / MCP server / skill 为什么没加载"时看这里；指令文件可先用[原生自检命令](#instruction-diagnostics)核对实际发现结果。
+
+> 📖 下文 `bBt`、`cKr`、`Efi` 等 `app.js` 摘录以 [`@github/copilot@1.0.41`](https://registry.npmjs.org/@github/copilot/-/copilot-1.0.41.tgz) 为基线；[`1.0.66` 的平台包](https://registry.npmjs.org/@github/copilot-linux-x64/-/copilot-linux-x64-1.0.66.tgz)仍以 `app.js` 承载主逻辑，但混淆函数名已有变化。这些摘录用于说明旧版实现，后续版本的变更与实测结果在对应段落标注。
+>
+> 📖 本机缓存的 `1.0.105 / 1.0.110 / 1.0.112` 已拆为薄启动壳 `app.js`、主 bundle `cli-main.js` 和原生核心。`1.0.110 / 1.0.112` 的 `cli-main.js` 中，`CUSTOM_INSTRUCTION_LOCATIONS` 提示位置表列出当前约定，`instruction list` 则调用原生 `instructionsDiscover(...)` 枚举。升级后先确认实际版本目录与入口，再按稳定字面量定位；旧版函数名、偏移和注入顺序仅作为行为参考。打包与定位方法见[运行时补丁](copilot-patch.md)。
 
 ## Walk-Up（向上查找）机制总览
 
@@ -42,6 +46,8 @@ async function bBt(t, e, r, n) {
 
 逐一回答"如果我在 `<gitRoot>/packages/billing/` 工作，`<gitRoot>/` 下的文件能不能被找到"：
 
+> 📖 表内函数名沿用 `1.0.41` 的实现；`.claude/rules/` 一行按 🔬 `1.0.110 / 1.0.112` 实测补充。新版的发现结果以[指令自检](#instruction-diagnostics)为准。
+
 | 文件 | 会 walk-up 到 git root 吗？ | 机制 |
 |------|---------------------------|------|
 | **AGENTS.md** | ✅ 会 | `oKr(gitRoot)` 直接查 git root；`vfi` 扫中间层；`oKr(cwd)` 查 cwd。三层都找到则**全部注入** |
@@ -49,6 +55,7 @@ async function bBt(t, e, r, n) {
 | **GEMINI.md** | ✅ 会 | 同 AGENTS.md（`sKr` 替代 `oKr`） |
 | **.github/copilot-instructions.md** | ✅ 会 | `aKr(gitRoot)` 直接查 git root；`vfi` 扫中间层；`aKr(cwd)` 查 cwd |
 | **.github/instructions/\*.instructions.md** | ✅ 会 | `Rfi` 在 git root 和 cwd 下分别 glob 扫描 |
+| **.claude/rules/\*\*/\*.md** | ✅ git root 与 cwd 均可发现 | 在这两处的 `.claude/rules/` 下递归扫描 Markdown 文件，见[项目级 Claude 规则](#claude-rules) |
 | **嵌套子目录 AGENTS.md** | ✅ 向**下**扫 | `xfi` 扫子目录（不是向上），生成表格提示让 agent 按需 `view` |
 | **.mcp.json** | ✅ 会 | `bBt` 从 cwd 向上逐层扫到 git root，沿途合并（last-wins） |
 | **.github/mcp.json** | ✅ 会 | 同 `.mcp.json`，共用 `bBt` |
@@ -118,9 +125,11 @@ direnv 本身改不了 copilot 找配置的路径（copilot 是独立进程读�
 
 Custom Instructions 是 Copilot CLI 往 system prompt 里注入的用户/项目自定义指令。**它们不走 `bBt`**，而是用自己的一组专用函数分别处理 git root、cwd、中间层三个位置。
 
+> 📖 下文专用函数分工与 `app.js` 代码摘录基于 `1.0.41`；新版入口演进见文首说明，新增规则路径与自检结果在各小节单独标注版本。
+
 ### 指令文件清单与搜索路径
 
-指令文件的 convention 定义（`cKr` 数组）：
+旧版单文件指令的 convention 定义（`1.0.41` 的 `cKr` 数组，glob 规则另行发现）：
 
 ```js
 // app.js — cKr
@@ -133,7 +142,7 @@ cKr = [
 ];
 ```
 
-即 Copilot CLI 能识别以下指令文件（在每个搜索位置）：
+当前项目级指令清单如下；单文件约定与递归 glob 分别发现：
 
 | 文件 | 搜索子路径 | 类型标签 |
 |------|-----------|---------|
@@ -141,10 +150,14 @@ cKr = [
 | `AGENTS.md` | `.`（当前目录根） | `agents` / `model` |
 | `CLAUDE.md` | `.` 和 `.claude/` | `claude` / `model` |
 | `GEMINI.md` | `.`（当前目录根） | `gemini` / `model` |
+| `**/*.instructions.md` | `.github/instructions/` | `vscode` |
+| `**/*.md` | `.claude/rules/` | `vscode` |
 
-这份单文件清单（源码 `cKr` 数组）与 CLI 启动时打印的 "Copilot respects instructions from these locations" 同源；后者还并列了 `.github/instructions/**/*.instructions.md` glob、用户级 `$HOME/.copilot/copilot-instructions.md` / `$HOME/.copilot/instructions/**/*.instructions.md` 和 env `COPILOT_CUSTOM_INSTRUCTIONS_DIRS`（各自见下文小节）。项目级指令文件的写法参考官方文档[add-repository-instructions](https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions)。
+> 🔬 `1.0.110 / 1.0.112`：在隔离 git 仓库中实测 `instruction list --json`，上述项目根入口均可发现；从子目录启动时，当前工作目录下的 `AGENTS.md / GEMINI.md / .claude/rules/**/*.md` 也会一并发现。📖 新版 `cli-main.js` 的 `CUSTOM_INSTRUCTION_LOCATIONS` 表同样列出 `CLAUDE.md`、`GEMINI.md`、`AGENTS.md`、`.claude/rules/**/*.md`、`.github/instructions/**/*.instructions.md`、`.github/copilot-instructions.md`，以及用户级路径和 `COPILOT_CUSTOM_INSTRUCTIONS_DIRS`。
 
-**多种文件全部合并注入，不互斥**：Copilot CLI 主动兼容其他 AI 编码工具的指令文件格式。如果仓库里同时存在 AGENTS.md、CLAUDE.md、GEMINI.md、copilot-instructions.md，**四种全部读取**，各自包裹在 `<custom_instruction>` 标签里按顺序拼接注入 system prompt。不做选择、不做冲突检测，只在 realPath 或 content 完全相同时去重（`rKr`）。
+项目级指令文件的写法参考官方文档[add-repository-instructions](https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions)。
+
+**多种文件可并存**：Copilot CLI 兼容其他 AI 编码工具的指令文件格式。仓库里的 AGENTS.md、CLAUDE.md、GEMINI.md、.github/copilot-instructions.md 可同时被发现。📖 `1.0.41` 的 `Efi` 将各份内容包裹在 `<custom_instruction>` 标签里按顺序拼接注入 system prompt，`rKr` 按相同 realPath 或 content 去重；新版的软链发现与去重实测见[全局补充规则软链](#global-supplement)。
 
 **大小写不敏感**（macOS/Linux 文件名匹配走 `Yq` 函数，先尝试精确匹配，失败后用 `readdir` + `toLowerCase()` 做 case-insensitive fallback）：
 
@@ -160,6 +173,29 @@ function Yq(t, e) {
   } catch {}
 }
 ```
+
+### <a id="instruction-diagnostics"></a>指令自检
+
+在要排查的工作目录中，使用同一套环境变量与配置目录运行：
+
+```bash
+copilot instruction list --help
+copilot instruction list
+copilot instruction list --json
+```
+
+非交互命令直接枚举**当前进程会发现的指令源**。JSON 每条包含 `id`、`label`、`location`、`type`、`sourcePath`、`defaultDisabled`，有适用范围等元数据时还会附带相应字段。可据此核对路径、用户级 / 项目级来源及默认启用状态。
+
+> 🔬 `1.0.110 / 1.0.112` 的 `instruction list --json` 已实测；`1.0.110` 的 `--help` 明确说明只列当前进程会加载的来源，排除宿主投射的指令（host-projected instructions）。`defaultDisabled: false` 表示默认启用；当前交互会话中的手动开关状态需在该会话内核对。
+
+交互式会话中使用：
+
+```text
+/instructions    # 查看指令文件及启用状态，可切换开关
+/env             # 查看已加载环境详情，含指令、MCP、Skills 等
+```
+
+> 🔬 `1.0.112` 的 `copilot help commands` 列出上述交互入口；本机 `1.0.91` 的 `instruction list --json` 已能发现 `.claude/rules/**/*.md`，早于 `1.0.105+` 的主 bundle 拆分。📖 `1.0.41 / 1.0.66` 的 `app.js` 则未见该路径或 `instruction list` 调度入口，核对版本边界时需将这两项能力的引入与 `1.0.105+` 的打包拆分区分开。
 
 ### git root 级指令：直接查找
 
@@ -345,14 +381,26 @@ function bKr(t) {
 }
 ```
 
-### 用户级指令
+### <a id="claude-rules"></a>项目级 `.claude/rules`
 
-两个固定路径，不做 walk-up（参考官方文档[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) 的 `copilot-instructions.md`、`instructions/` 条目；`~/.copilot` 是默认 configDir，可被 `COPILOT_HOME` 整体改写）：
+`.claude/rules/**/*.md` 与 `.github/instructions/**/*.instructions.md` 并列作为项目级规则入口，在 git root 和 cwd 下分别递归扫描。例如 `.claude/rules/review/conventions.md` 无需改名为 `*.instructions.md`；无 YAML frontmatter 的普通 Markdown 规则也会被发现并默认启用。枚举结果将其归入 `type: "vscode"`（Copilot 对规则目录类指令的统一分类标签）。
 
-| 路径 | 函数 | 注入 id | location |
-|------|------|---------|----------|
-| `~/.copilot/copilot-instructions.md` | `Nfi(n)` | `home-copilot` | `user` |
-| `~/.copilot/instructions/**/*.instructions.md` | `kfi(n)` | `user-copilot-instructions` | `user` |
+> 🔬 `1.0.110 / 1.0.112`：项目根与工作目录各放一份多层嵌套规则，`instruction list --json` 分别列为 `location: "repository"` 与 `"working-directory"`，均为 `defaultDisabled: false`。📖 旧版 `1.0.41` 的 `cKr / Rfi` 摘录不包含这条入口，新版由原生发现接口返回。
+
+### <a id="user-instructions"></a>用户级指令
+
+默认用户级指令文件的自动扫描只读取以下入口，不做 walk-up（参考官方文档[config-dir-reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) 的 `copilot-instructions.md`、`instructions/` 条目；`~/.copilot` 是默认 configDir，可被 `COPILOT_HOME` 或 `--config-dir` 改写）：
+
+| 路径 | `1.0.110 / 1.0.112` 枚举 id | type | location |
+|------|--------------------------|------|----------|
+| `~/.copilot/copilot-instructions.md` | `home-copilot` | `home` | `user` |
+| `~/.copilot/instructions/**/*.instructions.md` | 每个文件独立的 `vscode-instructions/...` | `vscode` | `user` |
+
+`AGENTS.md`、`CLAUDE.md`、`GEMINI.md` 是项目 / 工作目录级约定。默认用户级扫描**不把 `~/.agents/AGENTS.md`、`~/.agents/GEMINI.md`、`~/.copilot/AGENTS.md` 或 `~/.copilot/GEMINI.md` 作为全局指令入口**；跨工具共享文件需要挂到上表中的受支持路径。用户级 `~/.agents/skills/` 的支持属于 Skills 发现，不能据此推断同目录下的全局指令也会被扫描。
+
+> 🔬 `1.0.110 / 1.0.112`：保持真实 `$HOME`，在独立测试仓库中配合隔离 `COPILOT_HOME` 运行枚举，仅配置根下的 `copilot-instructions.md` 与 `instructions/` 文件被发现，配置根下的 `AGENTS.md / GEMINI.md` 以及本机已有的 `~/.agents/AGENTS.md / GEMINI.md` 均不会作为用户级来源加载。只有将这些目录直接作为 cwd 启动，或通过额外搜索目录显式传入时，才会按项目级或额外目录规则命中。
+
+旧版实现如下，`1.0.41` 的 `kfi` 会把用户级 `instructions/` 聚合成 `user-copilot-instructions`；新版自检按文件分别列出：
 
 ```js
 // app.js — Nfi
@@ -374,6 +422,25 @@ async function kfi(t) {
 }
 ```
 
+#### <a id="global-supplement"></a>全局补充规则软链
+
+已有主全局指令 `~/.copilot/copilot-instructions.md`，还需共享第二份补充规则时，可把现有 Markdown 文件软链到 `~/.copilot/instructions/<name>.instructions.md`。目标文件可以没有 YAML frontmatter；发现入口使用链接名的 `.instructions.md` 后缀，目标本身可使用普通 `.md` 文件名。
+
+例如，已有 `~/.agents/shared-supplement.md` 且目标链接名尚未占用时：
+
+```bash
+mkdir -p "$HOME/.copilot/instructions"
+ln -s ../../.agents/shared-supplement.md \
+  "$HOME/.copilot/instructions/shared-supplement.instructions.md"
+copilot instruction list --json
+```
+
+相对路径以**链接所在目录**为基准；上例的链接目标也可写成绝对路径 `"$HOME/.agents/shared-supplement.md"`。已有同名入口时先核对其去向与内容，再决定如何调整。
+
+枚举输出中，该补充规则应显示为 `location: "user"`、`type: "vscode"`、`defaultDisabled: false`；`sourcePath` 可能显示解析后的真实目标路径，`id / label` 也可能使用目标文件名。多个链接解析到同一个物理文件时按 `realpath` 去重，只保留一份。
+
+> 🔬 `1.0.110 / 1.0.112`（保持真实 `$HOME`、以隔离 `COPILOT_HOME` 实测）：单独挂载绝对软链或相对软链时均可发现无 frontmatter 的目标文件，同时挂载指向同一物理文件的两条软链时只列一条；若另放一份内容相同但物理路径独立的普通文件，则会单独列出（按真实路径而非内容去重）。
+
 ### Env 覆盖 `COPILOT_CUSTOM_INSTRUCTIONS_DIRS`
 
 ```js
@@ -384,7 +451,9 @@ let s = process.env.COPILOT_CUSTOM_INSTRUCTIONS_DIRS
 
 逗号分隔的绝对路径列表，作为额外的搜索根，传给 `xfi`（嵌套 AGENTS.md）和 `Rfi`（.github/instructions glob）。
 
-### 指令注入顺序与合并策略
+### 旧版指令注入顺序与合并策略
+
+> 📖 以下顺序与去重代码按 `1.0.41` 的 `Efi / rKr` 记录；新版原生核心的发现结果用[指令自检](#instruction-diagnostics)核对，枚举顺序也不等同于完整 prompt 的拼装顺序。
 
 主函数 `Efi` 将所有指令源 push 到 `oe` 数组中，**顺序决定在 prompt 中的出现位置**：
 
