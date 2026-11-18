@@ -814,7 +814,7 @@ class CLITests(TemporaryWorkspace, unittest.TestCase):
         recorded = requests(record)
         opened = next(row["params"] for row in recorded if row["method"] == "thread/start")
         turned = next(row["params"] for row in recorded if row["method"] == "turn/start")
-        self.assertEqual(opened["model"], "gpt-6.1-sol")
+        self.assertEqual(opened["model"], "gpt-6.2-sol")
         self.assertEqual(turned["effort"], "xhigh")
         self.assertEqual(opened["config"]["features.multi_agent_v2.max_concurrent_threads_per_session"], 3)
         self.assertNotIn("sandbox", opened)

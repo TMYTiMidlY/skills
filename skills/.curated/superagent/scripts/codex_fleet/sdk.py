@@ -20,7 +20,7 @@ from pydantic import RootModel
 from .events import Phase, SubagentTap, unpack
 from .guard import terminate_process
 
-DEFAULT_MODEL = "gpt-6.1-sol"
+DEFAULT_MODEL = "gpt-6.2-sol"
 DEFAULT_EFFORT = "xhigh"
 ROOT_HINT = (
     "You are the primary agent. Complete the assigned task, verify repository gates, "

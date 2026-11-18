@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["openai-codex>=0.167.1"]
+# dependencies = ["openai-codex>=0.170.0"]
 # ///
 """Dispatch a Codex goal, read account limits, or manage an external fleet."""
 from __future__ import annotations

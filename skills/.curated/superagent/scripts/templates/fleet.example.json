@@ -7,7 +7,7 @@
     "task-a": {
       "cwd": "<workspace-root>/task-a",
       "account": "default",
-      "model": "gpt-6.1-sol",
+      "model": "gpt-6.2-sol",
       "effort": "xhigh",
       "plugin": "codex_fleet.plugins.manual",
       "developer_instructions": "Complete the assigned goal within its authorized scope and report verification evidence.",
