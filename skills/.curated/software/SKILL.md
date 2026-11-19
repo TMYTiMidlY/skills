@@ -117,7 +117,7 @@ OpenList（AList 的活跃 fork）的 **REST API 编程接入**（两种 token�
 
 ## 科大云盘（USTC pan，Seafile）
 
-科大云盘（`pan.ustc.edu.cn`，服务端为 Seafile）的 headless / CLI 接入：几条访问通道的认证模型与可用性（网页 SSO、同步客户端、WebDAV、匿名分享链接）、**seaf-cli 同步客户端为何在该部署上走不通**（`/api2/auth-token/` 被 SSO 301 改道成 405 的解包证据链、GUI 走 Shibboleth 浏览器 SSO 而 Python CLI 未实现）、WebDAV 配 rclone（`vendor=other`、多账号多 remote、obscure 的可逆混淆语义、跨账号 copy 流经本机 vs 同账号服务端 COPY、大批量传输参数）、匿名分享 API（`/api/v1/share/get_share_detail` 直取 seafhttp 一次性直链与刷新策略）、以及 macOS 无 UTF-8 标志位 zip 的 cp437→UTF-8 还原解压，见 `references/ustc-pan.md`。
+需要在无图形界面环境访问科大云盘（Seafile）时，见 [科大云盘](references/ustc-pan.md)。该页比较网页 SSO、同步客户端、WebDAV 和分享链接的认证方式，说明该部署的 `seaf-cli` 登录限制，并提供 rclone 配置、临时分享直链获取和旧 ZIP 文件名恢复示例。
 
 ## MinerU PDF→Markdown 转换
 
