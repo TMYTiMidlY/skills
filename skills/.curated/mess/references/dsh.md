@@ -182,3 +182,13 @@ zstdcat ~/.dsh/sessions/<workspace>--/<child-id>/session.v3.jsonl.zstd \
 
 - **pnpm 版本切换 ENOENT**：全局 pnpm 启动器尝试切换到 `.pnpm-store/v11/links/@/pnpm/<版本>/.../bin` 下不存在的 CLI，所有 pnpm 命令直接失败。需要跑仓库脚本时先修 pnpm store 或在配置里关掉版本管理，别误判成仓库坏了。
 - **npm 缓存所有权**：`~/.npm/_cacache` 里有 root 属主文件时 npm 报 EACCES；`npm_config_cache=/tmp/<目录>` 重定向即可绕过。
+
+## <a id="kimi-403-quota-auth"></a>Kimi 五小时额度与 DSH 的认证提示
+
+早先版本的 DSH Web 界面曾将一次 `kimi-coding` 生成请求显示为“密钥无效”。同一账号的用量请求返回 200，生成请求返回 403。会话日志里的服务端错误明确提到五小时额度已用完，DSH 的外层错误代码为 `AUTH`。
+
+遇到类似提示时，对照厂商返回的错误与 DSH 的分类：
+
+1. 在 `~/.dsh/sessions/<workspace>/<id>/session.v3.jsonl.zstd` 中查看本次 `turn/end` 的错误事件，仅摘录状态码、错误类型和脱敏后的消息。本例为 HTTP 403、`permission_error`、`You've reached your 5-hour usage limit...`。
+2. 在本机通过受控客户端从凭据存储读取同一已授权账号，查询该案例使用的 `GET https://api.kimi.com/coding/v1/usages`。只输出 HTTP 状态及排查所需的额度字段，避免在参数或日志中暴露凭据。200 表明该凭据可以访问用量接口，生成权限仍以生成接口的响应为准。
+3. 若服务端明确报告额度耗尽而 DSH 标为 `AUTH`，检查当前版本的分类逻辑。该案例的早先实现先处理 401/403，已有配额匹配也未涵盖 Kimi 的文案语序。若需调整分类，可优先识别该 provider 的明确额度信号，并分别验证额度 403、无效凭据与账号无权限的响应。

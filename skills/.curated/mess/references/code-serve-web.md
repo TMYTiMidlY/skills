@@ -258,6 +258,8 @@ OpenAI 在 26.917 系列给 `openai.chatgpt` 加了硬依赖 `extensionDependenc
 
 - **补丁（已验证）**：编辑已安装扩展的 `extensions/openai.chatgpt-<ver>-linux-x64/package.json` 删除 `extensionDependencies` 字段，Reload Window 即恢复；语音功能本就不可用，无实际损失。扩展下次更新会覆盖补丁，可对该扩展关闭自动更新或更新后重打。
 - **改 manifest 不会热生效**：运行中的 server-main.js 把扩展扫描结果缓存在内存里，改 package.json、重写 extensions.json、bump 注册表时间戳都触发不了重扫（"added from another source" 事件只对真实增删触发）。必须让旧 server 进程退场；serve-web 每用户会积累几十个按版本常驻的 server-main.js（全部 PPID=1），要按 `用户 + commit + 启动时间早于补丁时间` 过滤后 TERM。动手前：① 沿 `$PPID` 链确认自己的 agent/终端不在击杀清单里（本机 DSH 的 `dsh web` 进程极易误判进清单）；② 绝不能碰 systemd 主单元——`KillMode=control-group` 下主进程退出即清空整个 cgroup（含全部终端与 agent）。杀 server-main.js 的代价是其下窗口的终端会话终止，需用户知情同意；TERM 即可全部优雅退出。
+- **更新后的检查**。可用定时任务运行 `<补丁脚本>`，仅扫描受管理的用户，并通过 drop-in 在 `<实例服务>` 启动前检查该实例。仅在 manifest 仍声明该硬依赖、已安装的音频扩展仍缺少 `browser` 入口时，备份 manifest 并移除该依赖。日志按 `<巡检服务>` 查询，回退时先暂停巡检和启动前检查，再从同一扩展版本的 `<备份文件>` 恢复。
+- **运行中实例的重启**。`ss` 的 established 连接只反映采样时的端口状态。重启前核对 `<实例服务>` 的 cgroup、后台终端和 agent 进程，确认影响的用户和会话，并取得重启授权。无法确认时将补丁留待下次已安排的启动。
 - 备选：降级到 26.908.40401（open-vsx 有；serve-web 装 VSIX 的绕法见 [pdfjs-tohex.md#vsix-bypass](pdfjs-tohex.md#vsix-bypass)）；或改用桌面端 VS Code + Remote。上游修复（codex-audio 提供 browser 入口或解除硬依赖）前，重装/更新 Marketplace 版本无用。
 
 ### 教训
