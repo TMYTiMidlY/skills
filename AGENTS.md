@@ -55,6 +55,7 @@
 ## 工具与 Skills
 
 - 优先使用已有工具和已安装 skills，再考虑手动展开实现。当用户提到使用某个或某些 skills 来完成任务时，仔细阅读 skills 中与任务相关部分，严格按 skill 执行。
+- 当用户提到“去 / 到 / 上某台机器”或涉及远程主机操作时，优先用 Portal MCP 的 `hosts` 工具（`action="list"`）查询主机列表。Portal MCP 不可用时核对 `~/.ssh/config`，按已配置的主机别名通过 SSH 连接。
 - 创建和修改 skills 时，优先写流程和思想，少写具体代码，skill 的描述是给 AI 看的，AI 自己会写代码。在元数据description中，不需要完整描述 skill 的内容，只需要描述何时应调用本 skill 并介绍其核心思路即可。
 - 在理解 subagents 能力和限制的情况下，合适时调用 subagents 解决问题。
 
