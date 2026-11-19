@@ -869,6 +869,100 @@ caddy list-modules --versions | grep -i security
 
 升级 `caddy-security` **大版本**前务必看文末「排障与诊断 · 跨版本 cookie 名陷阱」：默认 cookie 名变过，**升级会让所有现存会话失效（全员重登）**，且共用同一 portal 的各机要一起升、否则签发/读取的 cookie 名对不上会登录死循环。
 
+## <a id="local-identity-store"></a>`caddy-security` 本地账号与 OAuth 登录
+
+已有 GitHub OAuth 的 portal 可以加入本地账号表单。插件将用户记录存放在 JSON 文件中，两种登录方式共用 portal 的会话与站点授权策略。
+
+### 身份来源与站点策略
+
+在 `security` 中定义本地身份库，用 `enable identity store` 与已有的 `enable identity provider` 一同启用。登录页应同时提供本地表单和 GitHub 按钮。受保护的站点使用 `authorize with`，通过 `allow roles` 放行获得相应角色的用户。
+
+> [上游身份库示例](https://github.com/greenpau/caddy-security/blob/v1.1.61/assets/config/home.Caddyfile#L59-L90)与[多身份来源 portal 示例](https://github.com/greenpau/caddy-security/blob/v1.1.61/assets/config/home.Caddyfile#L176-L239)。
+
+两个 portal 使用同名 cookie 时，作用域重叠可导致请求携带错误的 cookie。名称、域和路径均相同的 cookie 会互相覆盖。给现有登录页增加入口时，直接在同一 portal 启用两种身份来源。
+
+```caddyfile
+# security {} 内
+local identity store localdb {
+    realm local
+    path "<users-db>"
+
+    user <local-user> {
+        name "<display-name>"
+        email user@example.com
+        password {env.LOCAL_AUTH_PASSWORD}
+        roles authp/user authp/app-access
+    }
+}
+
+authentication portal <portal> {
+    # 保留现有 portal 的其他配置
+    enable identity provider <github-provider>
+    enable identity store localdb
+}
+
+authorization policy <app-policy> {
+    set auth url https://auth.example.com/login
+    set forbidden url https://auth.example.com/forbidden
+    crypto key verify {env.JWT_SHARED_KEY}
+    allow roles authp/app-access authp/admin
+}
+```
+
+原先使用 `basic_auth` 的站点可改用 `authorize with`。使用[上游会话代持](#session-holding)时保留对应的请求和响应头配置，并验证 WebSocket 升级请求携带的 portal cookie 能通过授权。
+
+```caddyfile
+https://app.example.com {
+    authorize with <app-policy>
+    reverse_proxy <upstream> {
+        header_up Cookie "<上游会话>"
+        header_down -Set-Cookie
+    }
+}
+```
+
+### 密码策略与账号初始化
+
+插件在 provision 阶段检查初始密码。在一次部署验证中，六字符密码被拒。按所用插件版本和生效的密码策略选择满足要求的强密码，预检通过后再应用配置。
+
+```text
+failed adding user "<local-user>": user password policy compliance check failed:
+password length is 6 characters
+```
+
+此模板省略 `overwrite`。初始化时插件把初始密码的 bcrypt 哈希写入用户库，已有账户的日常改密通过 portal 用户管理完成。初始密码由受保护的服务环境提供。将 adapted JSON、Admin API 快照及验证日志视为可能含凭据的材料，排查时仅摘录脱敏结果。
+
+### 测试身份库与配置验证
+
+`caddy validate` 会运行 provision，本地身份库可能因此创建或写入。准备独立的测试 Caddyfile 和测试状态目录，把所有身份库路径指向测试副本或新建测试库。确认导入的配置也只使用测试状态，并准备测试凭据。
+
+在独立的 systemd 测试单元中运行 `caddy validate --config "<测试 Caddyfile>" --adapter caddyfile`，用和正式服务等效的 `User=`、`Group=`、访问权限与工作目录。验证退出码为 0，并检查测试库属主、权限和服务用户的写权限。曾有以 root 校验创建的库无法由正式服务用户写入。正式库的权限处理应单独核实并按授权执行。
+
+### systemd 环境与配置生效
+
+在使用运行期 `{env.*}` 的部署中，reload 请求由现有 Caddy 进程处理，其 provision 阶段仍读取该进程启动时的环境。曾在新增密码变量后对旧进程 reload，Admin API 拒绝加载并继续使用旧配置，日志包含：
+
+```text
+provision security: users[0].password: failed to perform replacement
+```
+
+通过服务管理器核对实际 unit 与 drop-in 的来源和顺序。在测试单元中用等效的 `Environment=`、`EnvironmentFile=` 等声明注入测试值，由 systemd 按自身语法解析。用 `systemctl show` 的 `FragmentPath`、`DropInPaths` 等属性定位定义，回执只记录来源、变量是否齐备和验证结果。避免使用 shell 解析单个 drop-in 或输出实际环境值。[systemd 执行环境](https://www.freedesktop.org/software/systemd/man/252/systemd.exec.html#Environment=)
+
+修改 unit 或 drop-in 后先执行 `systemctl daemon-reload`，使管理器重新读取定义。预检通过并获准切换后，按[服务凭据与环境变量](#service-environment)重启需要读取新环境的 Caddy 实例，并回读服务状态、日志及实际登录结果。
+
+### 角色生效时机
+
+角色在登录时写入 JWT。修改账户角色后，用登出重登获取新令牌。改密后用新凭据验证登录。应用新的 `allow roles` 策略后，下次请求会按新策略检查令牌里的角色。见 [权限策略与令牌角色](#security-token-claims)。
+
+### 验证矩阵
+
+| 检查 | 操作 | 期望 |
+|---|---|---|
+| 站点重定向 | 未登录时访问受保护站点 | 302 跳转到 portal 登录页 |
+| 登录页身份来源 | 打开 portal 登录页，逐一测试入口 | 本地账号与 GitHub OAuth 均可登录 |
+| 登录后身份 | 查看 portal 的身份页 | 本地账号具有 `authp/app-access` |
+| 其他站点隔离 | 用本地账号访问仅允许其他角色的站点 | 403 |
+
 ## `caddy-security`：GitHub OAuth 认证
 
 ### 安装
