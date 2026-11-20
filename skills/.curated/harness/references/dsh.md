@@ -1,6 +1,6 @@
 # DeepSeek Harness（dsh）运行时
 
-本文从使用者和集成者视角说明 DeepSeek Harness 的产品定位、运行模式、Cordis 插件框架、Agent 执行、内置扩展、程序化入口和权限边界。安装 DSH runtime、配置服务、维护共享实例、升级与回滚统一见 [安装、服务部署与维护](dsh-deploy.md)。本文保留 Profile 内现成 Plugin 的安装／卸载、配置发现和生效机制；插件怎样组成运行环境、叠加配置、协作和清理，以及怎样开发和分发，见 [Plugin 开发](dsh-dev.md)。现成扩展与社区项目见 [Plugin 调研记录](dsh-research.md)。
+本文从使用者和集成者视角说明 DeepSeek Harness 的产品定位、运行模式、Cordis 插件框架、Agent 执行、内置扩展、程序化入口和权限边界。安装 DSH runtime、配置服务、维护共享实例、升级与回滚统一见 [安装、服务部署与维护](dsh-deploy.md)。本文保留 Profile 内现成 Plugin 的安装／卸载、配置发现和生效机制；插件怎样组成运行环境、叠加配置、协作和清理，以及怎样开发和分发，见 [Plugin 开发](dsh-dev.md)。现成扩展与社区项目见 [Plugin 调研记录](dsh-research.md)。Superagent 研究原型的宿主关系、进程与数据隔离、GitHub／飞书身份及专用实例接入，见 [Superagent](dsh-superagent.md)。
 
 ## <a id="product-position"></a>产品定位
 
@@ -53,6 +53,136 @@ DSH Web 的直接远程访问、`--trusted-host`、`--public-url`、浏览器认
 <a id="browser-session-auth"></a><a id="browser-session-lifecycle"></a><a id="cookie-max-age-patch"></a><a id="launch-token-journal"></a><a id="remote-access-methods"></a><a id="ssh-tunnel"></a><a id="tcp-relay"></a><a id="caddy-public-entry"></a><a id="client-isloopback"></a><a id="loopback-privilege-history"></a>
 
 旧章节锚点保留用于已有引用；具体操作请读取上述 README 对应同名章节。
+
+### <a id="mobile-remote-access"></a>移动端远程访问
+
+`dsh-mobile` 是 Android / iOS 原生 App；`dsh-plugin-mobile-gateway` 才是安装到 DSH 的 Host Plugin。手机通过 `/ws/mobile` WebSocket 操作宿主的工作区、会话和工具，与前文的浏览器 Web 登录是两条独立接入链路。
+
+> 来源：[移动客户端与 Gateway 的关系](https://github.com/Clarklevis1995/dsh-mobile/blob/a7e9180b9bfc8c5f24e363def46bd0aa5c0420a1/README.md#L20-L50)、[Gateway 的宿主依赖与默认配置](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/blob/c7f022e591ebc16408786171ba7bc1744274eeee/cordis.patch.yml#L1-L35)。
+
+#### <a id="mobile-topology"></a>接入拓扑与安全边界
+
+每个 DSH 实例各自加载 Gateway，App 分别配对并选择主机。公网入口可以集中到同一台 Caddy，但须用不同域名路由到各实例，不能把不同 DSH 放进同一个负载均衡池。这里的 Gateway 是进程内插件，不是独立的多后端聚合服务。
+
+| 场景 | 手机到 DSH 的路径 | Gateway 的 `lanHost` |
+|---|---|---|
+| 同一受信任局域网 | App → `ws://<DSH私网IP>:<移动端口>/ws/mobile` | DSH 的指定私网网卡地址 |
+| DSH 在内网，VPS 提供公网入口 | App → `wss://<移动域名>/ws/mobile` → VPS Caddy → EasyTier 等加密组网 → DSH | DSH 的组网 IP |
+| DSH 与 Caddy 同机 | App → `wss://<移动域名>/ws/mobile` → Caddy → loopback | `127.0.0.1` |
+
+先确认入口机到 DSH 的实际路由、源地址和防火墙。跨机时只允许入口机通过私网访问移动端口；同机时直接走 loopback。绑定指定网卡比 `0.0.0.0` 的暴露范围小；手机未加入组网时，二维码应给公网 WSS 地址，而不是只在服务器之间可达的组网 IP。
+
+保持 `requireAuth: true`、`adminLoopbackOnly: true`，移动域名只转发 `/ws/mobile`，不开放 WebUI 或 `/mgw` 管理接口。`ws://` 不加密，限于受信任本地网络或受保护的组网链路；公网使用有效证书的 `wss://`。Caddy 终止 TLS，能接触凭据和会话内容，须作为可信组件；这不是手机到 DSH 的应用层端到端加密。
+
+> Gateway 0.9.0 的独立 LAN listener 只接受指定 WebSocket 路径，普通 HTTP 请求返回 404，并强制设备鉴权。它还检查 TCP 对端是否属于私网 / loopback；支持 `10/8`，但并非任意 VPN 地址段都被接受，不能只凭“已组网”判断。来源：[listener](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/blob/c7f022e591ebc16408786171ba7bc1744274eeee/lib/index.mjs#L3050-L3087)、[地址范围](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/blob/c7f022e591ebc16408786171ba7bc1744274eeee/lib/index.mjs#L1952-L1963)、[强制设备鉴权](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/blob/c7f022e591ebc16408786171ba7bc1744274eeee/lib/index.mjs#L2808-L2841)。
+
+#### <a id="mobile-install"></a>版本与安装
+
+先核对服务实际使用的 DSH executable、Node、运行用户、`DSH_HOME` 与 Profile，再按 App / Gateway / DSH 的兼容组合安装。修改 Profile、开放入口及重启均需获得相应授权；安装命令以 DSH 所属普通用户执行，保持与服务一致的 Home 和运行环境，不用 root 代装到另一份 Profile。
+
+> 🔬 2026-10-03—04 实测：Linux 上 DSH `0.2.0-rc.2` + Gateway `0.9.0` + Caddy `2.11.2`，分别验证了 EasyTier 跨机转发和同机 loopback 转发。Gateway 的 [DSH 适配器](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/blob/c7f022e591ebc16408786171ba7bc1744274eeee/lib/dsh-host-adapter.mjs#L16-L35)声明目标 DSH `0.2.0-rc.2`、Session format `4`。这是验证过的组合，不是对后续版本兼容性的承诺。
+
+以下命令复现该 Gateway 版本；Profile 名称按实际服务替换：
+
+```bash
+dsh plugin --profile web add dsh-plugin-mobile-gateway@0.9.0
+```
+
+若选择 `@latest`，先查当次 npm dist-tag 与兼容要求，安装后核对实际版本；已有兼容 DSH 无需为了接入手机再次升级。确需升级本体时，按[升级与回滚](<dsh-deploy.md>)处理运行时和模型依赖，不把升级命令混进网络配置。
+
+已有 Caddy / 组网入口时，直接使用下文配置即可；无需再运行 Gateway 的 `init` / `setup` 去部署另一套 Nginx、Certbot 或 Cloudflare Tunnel。手机 App 另行安装，不能用 `dsh plugin add dsh-mobile` 代替。
+
+#### <a id="mobile-config"></a>Gateway 配置与身份
+
+读取实际 Profile 的 `cordis.patch.yml`，按已有 Loader id `mobile-gateway` 覆盖；Bundle 已经插入该 id，不再重复 `insert`。已有覆盖项就就地修改，保留其他配置。`config` 是整项替换，须合并保留原来仍需要的非默认选项，具体规则见[Loader entry 与 patch](<dsh-dev.md#loader-entry-patch>)。
+
+下面以 Web 端口 `3081`、移动端口 `3181`、Caddy 与 DSH 同机为例。**移动端口 = Web 端口 + 100 是部署约定，不是插件自动计算规则**；实际写入前检查端口未占用且未超出范围。替换尖括号占位符后，将此项合入目标 Profile：
+
+```yaml
+- id: mobile-gateway
+  config:
+    gatewayMode: persistent
+    gatewayName: '<实例显示名称>'
+    requireAuth: true
+    adminLoopbackOnly: true
+    lanEnabled: true
+    lanHost: 127.0.0.1
+    lanPort: 3181
+    publicUrl: 'wss://<移动域名>/ws/mobile'
+    endpoints:
+      - 'wss://<移动域名>/ws/mobile'
+```
+
+- **跨机转发**：把 `lanHost` 改为 DSH 的组网 IP，Caddy upstream 改为同一 IP 与移动端口；组网接口须在监听建立前就绪。
+- **默认端口冲突**：该版 Bundle 默认移动端口是 `3081`，假定 Web 在 `3080`；Web 已占用 `3081` 时会出现 `EADDRINUSE`。按实际部署显式区分两者。
+- **配对地址**：`publicUrl` 决定面板自动选择的公网地址，`endpoints` 是同一网关的候选地址列表，只有后者时面板仍可能选中私网 WS。若另启用了 Cloudflare Tunnel，其地址还可能优先；生成二维码前核对最终显示值。
+- **常驻模式**：已经保存的面板模式优先于 `gatewayMode`。若配置为 `persistent` 但实际仍关闭，在“移动设备管理 → 网关运行模式”中选择“常驻开启”；不要删除身份文件来重置模式。
+- **身份隔离**：`gatewayName` 只是显示名；`gatewayId` 和设备注册表才承担配对身份。同一实例升级时保留它们，不在独立实例之间复制。0.9.0 默认设备文件位于运行用户 Home 下的 `.dsh/mobile-gateway-devices.json`，状态文件默认为其路径加 `.gateway.json`；同用户运行多实例时须分别指定 `deviceFile`、`gatewayStateFile`，仅设置不同 `DSH_HOME` 不足以隔离这两个默认路径。
+
+> 来源：[Bundle 默认值](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/blob/c7f022e591ebc16408786171ba7bc1744274eeee/cordis.patch.yml#L5-L35)、[面板选址优先级](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/blob/c7f022e591ebc16408786171ba7bc1744274eeee/lib/client.js#L83-L95)、[身份路径、模式优先级与候选地址](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/blob/c7f022e591ebc16408786171ba7bc1744274eeee/lib/index.mjs#L2180-L2252)。
+
+配置写入运行中的 Profile 可能触发热重载；安装 / 升级插件后仍应在获准窗口重启**原服务**并刷新原 WebUI，核对加载结果，不另起一份占用相同 Home 和端口的 DSH。预期管理状态为 `gatewayMode=persistent`、`requireAuth=true`、`lan.listening=true`、`lan.error=null`，并检查 `gatewayName`、`publicUrl`、监听地址和端口。
+
+#### <a id="mobile-caddy"></a>Caddy 公网入口
+
+先把独立移动域名的 DNS 指向公网入口，确认 HTTPS 与所用 ACME 验证通道可达；Caddy 到 Gateway 的路径先单独测试。将下面站点合入现有配置，保留其他站点与认证设置。模板沿用已有证书签发策略；CA、ZeroSSL、on-demand 白名单和服务环境的通用配置由 `network` skill 的 Caddy 能力处理，固定域名无需特意开启 on-demand。
+
+```caddyfile
+<移动域名> {
+    handle /ws/mobile {
+        reverse_proxy 127.0.0.1:3181 {
+            stream_timeout 24h
+        }
+    }
+    handle {
+        respond 404
+    }
+}
+```
+
+跨机时只替换 upstream 为 `<DSH组网IP>:<移动端口>`。使用 `handle` 保留完整 `/ws/mobile` 路径，不用会剥离路径的 `handle_path`。Caddy 原生支持 WebSocket upgrade，无需手工添加 Upgrade/Connection 头。`stream_timeout 24h` 是连接最大寿命，届时活跃连接也会断开，应验证 App 能重连；它不是已卡住 reload 的修复命令。
+
+> 来源：[Caddy handle 与 handle_path](https://github.com/caddyserver/website/blob/15ac087cfd9c21a53b2ddfa10359fdc63d5ec9b6/src/docs/markdown/caddyfile/directives/handle.md#L5-L37)、[WebSocket 与 stream_timeout](https://github.com/caddyserver/website/blob/15ac087cfd9c21a53b2ddfa10359fdc63d5ec9b6/src/docs/markdown/caddyfile/directives/reverse_proxy.md#L413-L436)。
+
+移动站点依靠 Gateway 的设备鉴权，不套用浏览器 OAuth 登录重定向，也不注入 DSH 浏览器 Cookie；否则 App 的 WebSocket 握手可能收到登录页或 302。原有 Web 站点继续保留自己的门禁，两套入口分别验收。
+
+应用前使用与 Caddy 服务一致的必要环境完成 `validate`，通过后进行有界 reload，再独立检查真实路由、TLS 和 WebSocket。reload 退出或挂起都不能单独证明新配置是否生效：实测曾出现新路由已服务、但旧 WebSocket 清理卡住配置锁的情况。此时先保留诊断信息，按 `network` skill 排查；若要 restart 恢复，须说明它会中断该 Caddy 上所有站点的现有连接并取得授权，不能默认自动重启。
+
+#### <a id="mobile-pairing"></a>配对与使用
+
+1. 从已有受保护 Web 入口或 SSH 本地转发进入 DSH WebUI，在侧栏打开“移动设备管理”，确认对应实例显示名与“常驻开启”。管理接口不可用时，优先用 loopback / SSH 转发排查，不为此公开 `/mgw`。
+2. 在“配对连接方式”中，公网访问选“自动选择 · 优先外网”，核对地址恰为 `wss://<移动域名>/ws/mobile`；必要时选“手动输入地址”。同一可互访局域网才选“局域网直连”。
+3. 填设备名称，点击“生成配对二维码”，在 App 扫码或输入面板给出的 Base64URL 配对字符串。默认配对码五分钟过期且只能使用一次；地址错误、已消费或过期时重新生成。
+4. 连接后确认工作区与会话属于预期主机，再配对其他实例。关闭并重开 App，确认用长期设备凭据重连；设备丢失或测试结束后在面板撤销相应设备。
+
+二维码与配对字符串包含临时秘密，Base64URL 只是编码；不放入日志、Issue、聊天记录或公开截图。也不通过关闭设备鉴权、把 token 放进 URL 或忽略 TLS 证书校验来解决连接错误。
+
+> 来源：[配对界面](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/blob/c7f022e591ebc16408786171ba7bc1744274eeee/lib/client.js#L650-L680)、[配对载荷与撤销](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/blob/c7f022e591ebc16408786171ba7bc1744274eeee/lib/index.mjs#L2750-L2792)、[单次消费与设备凭据](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/blob/c7f022e591ebc16408786171ba7bc1744274eeee/lib/devices.js#L111-L162)。
+
+#### <a id="mobile-validation"></a>分层验收
+
+| 检查层 | 操作与预期 | 异常时定位 |
+|---|---|---|
+| DSH / Gateway | 原服务正常，管理状态与指定端口一致，无持续重启 | Profile、运行身份、兼容版本、`EADDRINUSE` 或网卡未就绪 |
+| Caddy → Gateway | 从入口机向 upstream 发无凭据 WS upgrade，启用的网关返回 401 | 拒绝连接查监听；超时查组网 / 防火墙；403 查 TCP 源地址是否在允许范围 |
+| 公网 TLS / 路由 | 证书校验成功；公网无凭据 WS upgrade 返回 401；`/`、`/mgw/status` 返回 404 | 302 / 登录页查误用 Web 门禁；502 查 upstream；普通 HTTP GET 404 不代表 WS 故障 |
+| 配对 / 重连 | 新配对与长期凭据重连均返回 101，收到已认证状态 | 配对请求 400 查客户端版本 / 必需字段；401 查过期、重复使用或撤销；503 查运行模式。重连只校验 bearer token 与撤销状态，设备 ID 不匹配不会导致 401 |
+| 实际功能 | 列出工作区与会话，完成一轮模型回复；需要时验证一次获准工具调用和下一轮历史回放 | 101 只证明传输建立，模型、工具和 Session 兼容仍需独立验证 |
+| 撤销 / 回归 | 撤销临时测试设备后，同一凭据再连返回 401；原 Web 入口仍要求原认证 | 仅清理本次测试对象，不撤销真实用户设备 |
+
+无凭据公网握手可以用下列探针；这是 HTTP/1.1 upgrade 请求，不是打开首页：
+
+```bash
+curl --http1.1 --max-time 10 -i \
+  -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' \
+  -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+  'https://<移动域名>/ws/mobile'
+```
+
+iOS 的 `NSURLErrorDomain -1011` 在 WebSocket 连接场景只说明握手响应不符合预期，不能单凭它判定“密码错误”。沿上述链路取得真实 HTTP 状态和 Gateway 日志，再检查手机实际选择的地址与配对码。带凭据的验收使用 App 或不输出秘密的测试程序，不把真实凭据拼进 shell 命令。
+
+> 🔬 上述日期的部署验收覆盖公网配对、凭据重连、查询、撤销后拒绝连接，以及 Web 入口认证回归；其中同机转发还完成了真实模型、工具调用和下一轮历史回放。状态码分支见 [Gateway 握手校验](https://github.com/Clarklevis1995/dsh-plugin-mobile-gateway/blob/c7f022e591ebc16408786171ba7bc1744274eeee/lib/index.mjs#L2808-L2844)。
 
 ## <a id="runtime-composition"></a>Cordis 插件框架
 

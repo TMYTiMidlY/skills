@@ -95,7 +95,7 @@ exec /path/to/codex "$@"
 
 > `openai.chatgpt` `26.1021.22027` 的 `package.json` 声明了 `chatgpt.cliExecutable` 设置项，`out/extension.js` 在该项非空时直接调用指定路径拉起子进程。
 
-扩展每次新建 `app-server` 子进程时才会重新构造环境。调整代理配置或 `clashctl` 变更托管端口后，促使扩展重建实际的 `app-server` 进程，再核对新进程的启动环境与连通性即可；这与常驻 DSH Host 在进程启动期建立全局 HTTP 代理策略、改端口后必须重启 Host 服务才能重新安装 dispatcher 的生命周期不同，对比见 [DSH 出站 HTTP 代理](dsh-deploy.md)。
+扩展每次新建 `app-server` 子进程时才会重新构造环境。调整代理配置或 `clashctl` 变更托管端口后，促使扩展重建实际的 `app-server` 进程，再核对新进程的启动环境与连通性即可；这与常驻 DSH Host 在进程启动期建立全局 HTTP 代理策略、改端口后必须重启 Host 服务才能重新安装 dispatcher 的生命周期不同，对比见 [DSH 出站 HTTP 代理](dsh-deploy.md#dsh-outbound-http-proxy)。
 
 ### <a id="app-server-ownership"></a>进程的管理归属
 

@@ -892,3 +892,356 @@ TUI 时间轴等界面有从 grok-pager 借来的交互，那是 UI，不是 Gro
 - 两份社区 README 对 profile patch 热重载的描述互相矛盾（brave 称"保存即生效"、searxng 称"Web profiles 按设计禁用 HMR、需重启"），与官方 CLI reference 的"运行进程监视 Profile patch"表述也不一致。🔬 2026-10-08 已实测裁决：**无需重启，保存即生效**——web Profile（DSH `0.2.0-rc.2`，Profile 未声明 `patchReload`、走默认 `live`）的 `profiles/web/cordis.patch.yml` 写入 `llm-pi-ai` → `openai-codex` → `modelOverrides` 的 `contextWindow` 后，不重启的运行实例直接按新预算工作，运行中的会话也无需重开。brave 与官方 CLI reference 的口径成立，searxng 的"Web profiles 按设计禁用 HMR、需重启"不成立；机制见运行时篇 [Patch 热更新的生效机制](dsh.md#mcp-patch-hot-reload)。
 - free-search 的 v0.4.x 迭代很快（README 内嵌的版本截图文字与 HEAD 提交版本号已不同步），引用其细节时以仓库 HEAD 为准。
 - 官方包家族与 provider 行为以 0.1.2-rc.1 为快照；DSH 处于 developer preview，settings 注册面等接口在 0.1.2 系列内已经变动（free-search 为此做双兼容），引用本节细节时先确认当前版本。
+
+## <a id="2026-09-15-quota-display-plugins"></a>2026-09-15 · MiniMax 与 Z.ai 的剩余额度显示插件
+
+本轮专题是"在 DSH 界面显示 MiniMax、Z.ai（智谱 GLM）等订阅套餐剩余额度"的社区插件。[2026-08-26 的订阅登录调研](#2026-08-26-subscription-auth-surfaces)里，额度展示只作为 `dsh-plugin-subscriptions` 的附属功能出现，且其覆盖的 Codex / Claude / Grok / Copilot 不含 MiniMax 与 Z.ai；本轮把额度显示单独作为选题，按 stars 与提交节奏记录关注度与维护信号，并核对每家实际请求的官方端点。额度归属的判定原理见 [`read_image` 的请求与额度归属](#2026-08-28-read-image-quota)；消耗 Z.ai Coding Plan 点数的搜索插件见 [`web_search` 调研](#web-search-community-providers)。
+
+**调研时间：** 2026-09-15（Asia/Shanghai）
+
+**调研目标：**
+
+- 盘点在 DSH 界面显示 MiniMax Token Plan、Z.ai / 智谱 Coding Plan 剩余额度的社区插件。
+- 记录各仓库 stars、创建时间、最近提交、近期提交数与 npm 发布状态，作为关注度与维护信号。
+- 核对取数端点、凭据解析位置与界面接入 slot。
+- 标记同名仓库与相近 npm 包名，避免安装时混淆。
+
+> **证据边界：** stars 与仓库创建时间为 2026-09-15 的 GitHub API 快照；npm 版本同日查询 registry.npmjs.org；提交日期与提交数取自本轮浅克隆（`--depth=60`）固定 HEAD 的 git log，浅克隆下总提交数为下界。下列 12 个仓库读取了 README 并核对了端点常量、slot 注册与凭据解析等关键源码，未做逐行全量审计；未把候选装进运行中的 Profile，未用真实 MiniMax / Z.ai 凭据发请求，各插件的显示能力均为源码与 README 自述。候选发现使用 Z.AI 网页搜索、GitHub 仓库搜索与插件商店快照；商店收录与热度只作发现信号。
+
+### <a id="quota-discovery-entries"></a>候选的发现入口
+
+本轮从四个入口汇出候选集合，再回到固定 commit 核对：
+
+- GitHub 仓库搜索与 [`dsh-plugin` topic](https://github.com/topics/dsh-plugin)（各插件商店从该 topic 自动聚合）。
+- 插件商店类目与详情：[dshmk.com 的 minimax 标签](https://dshmk.com/topics/minimax)、[DSH 插件商店的 ds-balance-card 详情页](https://dsh.deepseek404.com/detail.php?id=jasonsun29%25252Fds-balance-card)（均 2026-09-15 查阅）。
+- DSH 官方仓库 discussions：[ds-balance-card 发布帖 #448](https://github.com/deepseek-ai/deepseek-harness/discussions/448)、[实时 Token 花费与账户余额显示讨论 #1878](https://github.com/deepseek-ai/deepseek-harness/discussions/1878)。
+- Z.AI 搜索命中的导航站与教程，如[鱼皮 AI 导航收录的 dsh-spend](https://ai.codefather.cn/dsh-plugin/2093235979832823823)。
+
+未点名的同构条目只作发现信号；安装判断以固定 commit 的源码与真实发布包为准。
+
+### <a id="quota-repo-snapshot"></a>仓库快照与维护信号
+
+下表 12 个仓库都完成了克隆与关键源码核对。"09-01 以来提交"按固定 HEAD 的 git log 统计，与 stars 一样只表示关注度与提交节奏，不代表质量或安全审计。
+
+| 仓库 | Stars | 创建 | 最近提交 | 09-01 以来提交 | npm 包 |
+|---|---:|---|---|---:|---|
+| [`Han-1413141/dsh-cost-meter`](https://github.com/Han-1413141/dsh-cost-meter/tree/50cfcacded9e25cd4a3a21f8d247dce4bf76b353) | 301 | 2026-08-13 | 2026-09-15 | 78 | `dsh-cost-meter@1.7.25` |
+| [`Ychris12138/dsh-usage-stats`](https://github.com/Ychris12138/dsh-usage-stats/tree/9bbb6d5cbc23f74327b979dd6650b7194cec8f3b) | 154 | 2026-08-14 | 2026-09-12 | 7 | `@ychris12138/dsh-usage-stats@0.3.3` |
+| [`Aisland-SJL/dsh-usage`](https://github.com/Aisland-SJL/dsh-usage/tree/008fe9dcd3165e851857b60166113b428068cdec) | 94 | 2026-08-16 | 2026-08-31 | 0 | `dsh-usage@0.2.5` |
+| [`wenzetan/dsh-quota-panel`](https://github.com/wenzetan/dsh-quota-panel/tree/d7efeee726aca6a5379e9fe756d33233860d88ca) | 10 | 2026-08-14 | 2026-09-11 | 4 | `dsh-quota-panel@0.9.1` |
+| [`welsione/dsh-mmx-bridge`](https://github.com/welsione/dsh-mmx-bridge/tree/64499d43ad5ad7d30db3c9dd1602dccbb320b37e) | 10 | 2026-08-14 | 2026-09-11 | 2 | `dsh-mmx-bridge@1.0.9` |
+| [`Thedeergod666/dsh-musage`](https://github.com/Thedeergod666/dsh-musage/tree/9a05ddfc9bbc4c80c541511cc6604a11b22b4f24) | 6 | 2026-08-17 | 2026-08-31 | 0 | 未发布 npm |
+| [`jasonsun29/ds-balance-card`](https://github.com/jasonsun29/ds-balance-card/tree/acc2d63371fd1314259839c093c318e42006ffbc) | 2 | 2026-08-13 | 2026-08-14 | 0 | 未发布 npm |
+| [`Floating-Dreaming/dsh-minimax-usage`](https://github.com/Floating-Dreaming/dsh-minimax-usage/tree/9a6e2987eb825a8915fa9561e3348e6fe832a3da) | 2 | 2026-08-15 | 2026-08-16 | 0 | 未发布 npm（`trusted-plugin/` 声明 bundle） |
+| [`wannanbigpig/dsh-usage-stats`](https://github.com/wannanbigpig/dsh-usage-stats/tree/eda4a27734878d5839854c2834b50e61005388dd) | 1 | 2026-08-19 | 2026-09-12 | 18 | `@wannanbigpig/dsh-usage-stats@0.5.1` |
+| [`ovensi/dsh-plugin-minimax-usage`](https://github.com/ovensi/dsh-plugin-minimax-usage/tree/16af76b37a2c17293b0e0cff996ab75962296380) | 1 | 2026-08-15 | 2026-08-15 | 0 | 未发布 npm |
+| [`jasper-zsh/dsh-plugin-provider-quota`](https://github.com/jasper-zsh/dsh-plugin-provider-quota/tree/757affff17bae5dabd4a434e51d2bf0ef0345c4a) | 0 | 2026-08-13 | 2026-08-18 | 0 | 未发布 npm |
+| [`grishworld-007/dsh-quota-panel`](https://github.com/grishworld-007/dsh-quota-panel/tree/46658e924a087fd1d50f8acd82fdcd968fe57002) | 0 | 2026-08-28 | 2026-08-29 | 0 | 未发布 npm（package 名为 `quota-panel`） |
+
+> **同名仓库与相近包名：** `dsh-quota-panel` 有三个同名仓库——wenzetan（npm `dsh-quota-panel`）、`brittanistrehlowll-oss`（3 星）、`grishworld-007`（package 名又不同，叫 `quota-panel`）；`dsh-usage-stats` 有两个同名仓库——Ychris12138 与 wannanbigpig，npm 分别发在 `@ychris12138` 与 `@wannanbigpig` 两个 scope；`dsh-minimax-usage` 另有 `pan17` 的同名浮窗实现，`dsh-mmx-bridge` 另有 `barryzhang-cn` 的 mmx-cli 包装版。安装与引用时必须带 owner，不能只写仓库短名。
+
+本轮未克隆、只确认到 README 或搜索快照的同题小仓库：`pan17/dsh-minimax-usage`（浮窗气泡）、`andyfan1094/dsh-minimax-usage-pro`（其 README 记录了 trusted bundle plugin 在当时宿主上拿不到 `host.call`、改走 webServer 路由的适配过程）、`jooey/dsh-usage-minimax-cn`（`/usage-minimax-cn` 命令）、`barryzhang-cn/dsh-mmx-bridge`（`mmx_quota` 工具）、`brittanistrehlowll-oss/dsh-quota-panel`、`nonewind/dsh-spend`（8 星，token 用量与费用悬浮窗，README 自述可识别计费计划）。这些条目未复核源码，仅作发现记录。
+
+### <a id="quota-minimax-zai-coverage"></a>MiniMax 与 Z.ai 的覆盖与界面接入
+
+各插件对两家目标平台的覆盖和接入位置如下。UI 位置一列的 slot / 面板名称来自各仓库源码或 README 自述；"服务端解析凭据"指 API Key 不进浏览器。
+
+| 插件 | MiniMax | Z.ai / 智谱 | 界面接入 | 凭据 |
+|---|---|---|---|---|
+| `dsh-cost-meter` | 5h + 周窗口 | 5h / 周 / 工具额度 + 套餐档位 | 侧边栏卡片、设置页、输入框上方额度横条 | 各家独立凭据，服务端解析 |
+| `Ychris12138/dsh-usage-stats` | 5h + 周窗口 | 5h / 周窗口 | 设置页面板与侧栏，一次只呈现当前供应商 | 服务端解析，浏览器不收 key |
+| `wannanbigpig/dsh-usage-stats` | 5h + 周比例窗口 | 5h / 周剩余比例与重置时间 | 宿主原生右侧 Sidebar，无会话时主面板 / Modal 回退 | 复用模型设置中的 Key |
+| `wenzetan/dsh-quota-panel` | global / CN 双站 | `zhipu` / `zai` / `zai-coding-cn` 三路由 | 右下角胶囊 + 卡片 + 设置面板；v0.5 起内置 provider 目录自动发现，零配置 | 凭据解析后自动上卡 |
+| `jasonsun29/ds-balance-card` | 5h + 周窗口剩余 % | 5h / 周 / 工具额度剩余 % + 档位 | `shell.overlay` 常驻卡片，可拖拽折叠 | credentials 服务解析后经环境变量传给查询进程 |
+| `Thedeergod666/dsh-musage` | 5h + 周双窗口 | `zai-coding-cn` 套餐 | `conversation.input.right`，跟随当前模型自动切换 | 复用 DSH 已配 API Key |
+| `Aisland-SJL/dsh-usage` | 不支持 | 仅账户余额（`/api/paas/v4/balance`） | 常驻 dock + 详情面板 | 服务端解析 |
+| `Floating-Dreaming/dsh-minimax-usage` | 5h + 周窗口 + 视频赠送次数 | 不支持 | 设置页「用量」section；无 Key 时整段隐藏 | trusted plugin 持有 key，60s 缓存 + 10s 限流 |
+| `ovensi/dsh-plugin-minimax-usage` | 5h + 周进度条 | 不支持 | `sidebar.footer.action` | 服务端 60s 缓存 |
+| `jasper-zsh/dsh-plugin-provider-quota` | 不支持 | `zai` 与 `zai-coding-cn` 双站窗口 | `sidebar.footer.action` 读数行 + `shell.overlay` 详情浮层 | apiKeyEnv 引用，原始凭据不进浏览器 |
+| `grishworld-007/dsh-quota-panel` | general 通道区间与周剩余（过滤 video） | `zai-coding-cn` 5h / 周 | 右上角悬浮面板；动态 Cordis 插件形态，另提供会话内试用 | 从 `llm-pi-ai` 设置动态读取 |
+| `welsione/dsh-mmx-bridge` | `mmx_bridge` 工具的 `quota` 子能力 | 不支持 | 模型可调用的工具，无常驻 UI | MiniMax 凭据 |
+
+> 来源：[cost-meter 的 Coding Plan 功能行](https://github.com/Han-1413141/dsh-cost-meter/blob/50cfcacded9e25cd4a3a21f8d247dce4bf76b353/README.md#L30-L40)；[Ychris 的订阅端点常量](https://github.com/Ychris12138/dsh-usage-stats/blob/9bbb6d5cbc23f74327b979dd6650b7194cec8f3b/lib/subscriptions.js#L24-L40)；[wannan 的 Provider 支持表](https://github.com/wannanbigpig/dsh-usage-stats/blob/eda4a27734878d5839854c2834b50e61005388dd/README.md#L39-L40)；[wenzetan 的 provider 目录](https://github.com/wenzetan/dsh-quota-panel/blob/d7efeee726aca6a5379e9fe756d33233860d88ca/lib/index.js#L845-L851)；[ds-balance-card 的平台矩阵](https://github.com/jasonsun29/ds-balance-card/blob/acc2d63371fd1314259839c093c318e42006ffbc/README.md#L28-L29)；[musage 的凭据到端点映射](https://github.com/Thedeergod666/dsh-musage/blob/9a05ddfc9bbc4c80c541511cc6604a11b22b4f24/dsh/index.js#L51-L83)、[自动跟随当前模型](https://github.com/Thedeergod666/dsh-musage/blob/9a05ddfc9bbc4c80c541511cc6604a11b22b4f24/README.md#L32)；[dsh-usage 的 zai 余额路由](https://github.com/Aisland-SJL/dsh-usage/blob/008fe9dcd3165e851857b60166113b428068cdec/lib/index.js#L62)；[Floating-Dreaming 的端点与缓存](https://github.com/Floating-Dreaming/dsh-minimax-usage/blob/9a6e2987eb825a8915fa9561e3348e6fe832a3da/README.md#L14)；[ovensi 的 sidebar 与缓存](https://github.com/ovensi/dsh-plugin-minimax-usage/blob/16af76b37a2c17293b0e0cff996ab75962296380/README.md#L1-L25)；[jasper-zsh 的 Provider 表](https://github.com/jasper-zsh/dsh-plugin-provider-quota/blob/757affff17bae5dabd4a434e51d2bf0ef0345c4a/README.md#L3)、[Z.AI 双站端点](https://github.com/jasper-zsh/dsh-plugin-provider-quota/blob/757affff17bae5dabd4a434e51d2bf0ef0345c4a/README.md#L20-L21)；[grish 的四家覆盖](https://github.com/grishworld-007/dsh-quota-panel/blob/46658e924a087fd1d50f8acd82fdcd968fe57002/README.md#L9-L14)；[mmx-bridge 的 quota 子能力](https://github.com/welsione/dsh-mmx-bridge/blob/64499d43ad5ad7d30db3c9dd1602dccbb320b37e/README.md#L86)。
+
+覆盖面上的分野：多平台聚合插件把 MiniMax 与 Z.ai 作为若干家 Coding Plan 中的两家；`wenzetan/dsh-quota-panel` 与 `jasper-zsh/dsh-plugin-provider-quota` 额外区分了 Z.ai 国际站（`api.z.ai`）与大陆站（`open.bigmodel.cn`）的独立凭据和路由 id。单平台插件只做 MiniMax 一家；`dsh-mmx-bridge` 反过来把额度查询做成模型可调用的工具子能力，不是常驻显示。
+
+### <a id="quota-endpoints"></a>取数端点与上游接口演变
+
+尽管实现各自独立，本轮候选在两家平台的取数端点上已经收敛：
+
+- **Z.ai / 智谱**：`GET /api/monitor/usage/quota/limit`，国际站 `api.z.ai`、大陆站 `open.bigmodel.cn`；`dsh-cost-meter` 在 monitor 端点不可达时回退旧的 `/api/coding/paas/v3|v4/dashboard/billing/coding_plan/usage`。响应里 `data.limits[]` 的 `TOKENS_LIMIT` 条目即订阅 token 窗口（5 小时 session 与 7 天 weekly，`percentage` 为已用百分比，`nextResetTime` 为重置时间）；`TIME_LIMIT` 是月度工具调用次数额度。两家域名共用路径与响应形态，但 Key 不互通，401 时换域重试；大陆站 biz/monitor 网关只认裸 API Key（无 `Bearer` 前缀）。
+- **MiniMax**：Token Plan `GET /v1/token_plan/remains`（国内 `www.minimaxi.com`、国际 `www.minimax.io`），`model_remains[]` 按 `model_name` 取 `general`（或 `MiniMax-M*`）一行的 5 小时 / 周剩余百分比；旧 Coding Plan 计数制端点为 `/v1/api/openplatform/coding_plan/remains`。`dsh-cost-meter` 的解析函数兼容四种响应形态：现行 `model_remains`、issue #20 的平铺结构、旧窗口数组与旧计数制。
+
+> 来源：[cost-meter 的端点白名单与换域重试注释（issue #42 记录 2026-08 的 monitor 端点迁移）](https://github.com/Han-1413141/dsh-cost-meter/blob/50cfcacded9e25cd4a3a21f8d247dce4bf76b353/lib/coding-plans.js#L965-L995)、[MiniMax 四形态解析](https://github.com/Han-1413141/dsh-cost-meter/blob/50cfcacded9e25cd4a3a21f8d247dce4bf76b353/lib/coding-plans.js#L310-L330)；[Ychris 的 ZAI / MiniMax 路径常量](https://github.com/Ychris12138/dsh-usage-stats/blob/9bbb6d5cbc23f74327b979dd6650b7194cec8f3b/lib/subscriptions.js#L24-L40)；[musage 的 Key→端点映射](https://github.com/Thedeergod666/dsh-musage/blob/9a05ddfc9bbc4c80c541511cc6604a11b22b4f24/dsh/index.js#L51-L83)；[wenzetan 的 minimax / zai 目录项](https://github.com/wenzetan/dsh-quota-panel/blob/d7efeee726aca6a5379e9fe756d33233860d88ca/lib/index.js#L845-L851)；[jasper-zsh 对 TOKENS_LIMIT / TIME_LIMIT 与裸 Key 的记录](https://github.com/jasper-zsh/dsh-plugin-provider-quota/blob/757affff17bae5dabd4a434e51d2bf0ef0345c4a/README.md#L20-L21)；[Floating-Dreaming 的 REMAINS_URL 常量](https://github.com/Floating-Dreaming/dsh-minimax-usage/blob/9a6e2987eb825a8915fa9561e3348e6fe832a3da/trusted-plugin/index.js#L13)。
+
+端点收敛的直接原因可见于源码注释：这两家的查询接口在 2026-08 内都发生过变动——Z.ai 把额度查询迁到 monitor 端点（cost-meter issue #42），MiniMax 的 Token Plan 响应换过结构（issue #20）。这类插件的主要维护成本来自上游接口演变，而不是 DSH 的插件接口；`dsh-cost-meter` 把每次变更的 issue 编号写进端点注释，`andyfan1094/dsh-minimax-usage-pro` 的 README 则记录了宿主侧 trusted bundle plugin 权限变化的适配。评估维护信号时，提交是否在追这类变更比提交总数更说明问题。
+
+### <a id="quota-adjacent-scope"></a>相邻但不属于本轮范围的项目
+
+- [`MeteorNOX/DeepSeek-Balance-Whale-Widget`](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget)（2408 星，2026-09-15 快照）是本轮发现里 stars 最高的余额类插件，但只盯 DeepSeek 账户余额，不覆盖 MiniMax / Z.ai；stars 高不等于覆盖目标平台。
+- [`dsh-plugin-subscriptions`](#2026-08-26-plugin-details) 带额度展示，但四家 Provider 为 Codex / Claude / Grok / Copilot。
+- [`dsh-web-search-zai`](#web-search-community-providers) 消耗 Z.ai Coding Plan 的 MCP 点数（自述一次搜索一点），属于"花额度"而非"显示额度"。
+- 同需求存在于其他宿主：`JochenYang/minimax-status`（VSCode 状态栏 / OpenClaw / Claude Code statusline）、`Safphere/glm-usage-vscode`（VSCode）、智谱官方 [`zai-coding-plugins`](https://github.com/zai-org/zai-coding-plugins) 的 `glm-plan-usage`（Claude Code 用量查询插件）。它们的取数端点与本轮 DSH 插件收敛的端点一致，但接入方式绑定各自宿主，不能照搬安装。
+
+### <a id="quota-stars-maintenance"></a>stars 与维护节奏的对照
+
+把两个维度放在一起看，本轮样本呈三类分布：
+
+- **stars 与维护同时领先：** `dsh-cost-meter`（301 星，09-01 以来 78 次提交，最近提交即调研当日）是唯一同时进入 stars 前列且持续追上游接口变更的仓库；它的定位是"费用 + 额度"复合面板，MiniMax 与 Z.ai 是九家 Coding Plan 中的两家。
+- **stars 中等、维护分化：** 两个 `dsh-usage-stats`（154 / 1 星）与 `dsh-usage`（94 星）同为用量面板；wannanbigpig 版 09-01 以来 18 次提交、Ychris 版 7 次，`dsh-usage` 停在 08-31。stars 排名与提交节奏在这里已经不同序。
+- **单平台小插件集中在 8 月中旬：** MiniMax 专用与 provider-quota 类仓库的 stars 都不超过 10，多数最后一次提交落在 08-14 至 08-31；其中 `wenzetan/dsh-quota-panel`（4 次）与 `dsh-mmx-bridge`（2 次）9 月仍有提交，其余归零。
+
+单平台插件代码量小、阅读成本低，但同样依赖上游接口稳定；聚合插件覆盖面宽，停更一个月就可能对某家平台显示失效。同名仓库问题在本类目尤其密集（见[仓库快照](#quota-repo-snapshot)的同名提醒），比对 stars 或安装时都应先确认 owner。
+
+### <a id="quota-validation-boundary"></a>验证范围
+
+- 未把任何候选装进运行中的 Profile，未用真实 MiniMax / Z.ai 凭据发起请求；上表"能显示"均为源码与 README 自述，含端点返回结构的字段名。
+- 未核对 npm 发布包与仓库字节的一致性；`jasonsun29/ds-balance-card`、`Thedeergod666/dsh-musage`、`ovensi/dsh-plugin-minimax-usage`、`jasper-zsh/dsh-plugin-provider-quota`、`grishworld-007/dsh-quota-panel` 未发布 npm，安装只能走 Git 源或本地目录，Git 安装的构建自包含性未验证。
+- 未评估各插件自注册 HTTP 路由的请求栅栏（Host / Origin fence）与写入范围；安装前应按[传输与下载的安全边界](#file-transfer-security-boundaries)的口径单独审计。
+- stars、npm 版本与提交节奏均为 2026-09-15 快照，会随时间变化；上游查询接口（MiniMax / Z.ai 的额度端点与响应形态）也可能再次调整，引用本节端点时先回仓库确认。
+
+## <a id="2026-09-16-desktop-remote-clients"></a>2026-09-16 · 桌面客户端与远程 dsh 连接
+
+本轮专题是"DSH 的桌面客户端有哪些、哪些支持把 dsh 进程放在另一台机器上、本机桌面只作为客户端使用"。官方仓库 master 已新增 `apps/desktop`，但进程模型仍是"桌面自带本地后端、不开 Web 端口"；社区生态中真正意义上的"客户端连远程 dsh"分散在插件 Host + 中继、手机附加端与 SSH 类插件三个方向，且多个仓库在 [2026-08-17 快照](#packaging-and-community)之后更名或转向。官方 Web 的访问控制模型与三条远程接入路径是本轮的判定基线，见 [DSH Web 的访问控制](dsh.md#web-trusted-host)与[远程接入 DSH Web 的方式](dsh.md#remote-access-methods)。
+
+**调研时间：** 2026-09-16（Asia/Shanghai）
+
+**调研目标：**
+
+- 核对官方 `apps/desktop` 的传输与进程模型，确认是否存在"连接远程 dsh URL"模式。
+- 盘点社区桌面与多端客户端，按"后端归属"与"远程方向"分类。
+- 区分远程连接的四种拓扑，并判定"附加到 systemd 托管的既有 `dsh web`、不重启进程"这一严格条件下的可行路径。
+- 更正本轮之前资料中的仓库名与能力描述。
+
+> **证据边界：** stars、创建与推送时间为 2026-09-16 的 GitHub API 快照；官方仓库固定 master `0d1f5000`（2026-09-15），社区仓库各固定 HEAD SHA。所有能力描述来自固定版本的 README 与仓库元数据；未安装任何客户端，未对任何组合做真实远程连接验收。`plutoczm/deepseek-harness-vscode` 只做 README 与文件树扫描，未逐行审计源码。候选发现使用 Z.AI 网页搜索、GitHub 仓库搜索、DSH 插件商店快照与官方 discussions（[#76](https://github.com/deepseek-ai/deepseek-harness/discussions/76)、[#995](https://github.com/deepseek-ai/deepseek-harness/discussions/995)、[#2177](https://github.com/deepseek-ai/deepseek-harness/discussions/2177)、[#5530](https://github.com/deepseek-ai/deepseek-harness/discussions/5530)、[#6410](https://github.com/deepseek-ai/deepseek-harness/discussions/6410)）。
+
+### <a id="desktop-remote-official"></a>官方桌面的进程模型
+
+master 的 `apps/` 下新增了 `apps/desktop`（Electron 壳）与 `apps/desktop-host`（私有 Desktop Host 包，无独立 README）。官方桌面的开篇定义就排除了远程模式：它**不打开任何监听端口**，由捆绑的上游 Node.js 子进程启动 dsh，Fetch 请求与流式响应走带版本的分帧字节管道，生命周期走 Node IPC，客户端资产由 `dsh-app://` 自定义协议提供。Transport 决策行把理由写明：监听式 Web 服务会引入端口归属、认证、CORS 与暴露面问题。平台覆盖 Windows x64 与 macOS（arm64/x64），Linux 不是发布目标；桌面独占 `$DSH_HOME/profiles/desktop`，与 CLI 不共享可执行包与插件激活。
+
+因此官方桌面没有"填写远程 dsh URL"的入口，也不提供 `webServer`——连依赖 HTTP 路由的 Web "Open In..." 动作都被禁用。官方口径下的远程使用仍是把浏览器接到远端 Web：SSH 本地隧道、受控 TCP relay 或反向代理，配合启动 token 兑换会话 cookie；`dsh web` 默认只监听 `127.0.0.1:3080`，CLI 把 `--host 0.0.0.0` 作为安全错误拒绝。给第三方远程客户端留的官方承载面是 v0.1.2 起的 Typert Remote Gateway（rc.2 为 legacy ApiProxy），下文 `ds-harness-remote` 的会话流量即经由它传输。
+
+> 来源：[官方桌面不开端口的定义](https://github.com/deepseek-ai/deepseek-harness/blob/0d1f50007f9bca3f52b06e1c3074fa14d5fb0720/apps/desktop/README.md#L5)、[Transport 决策行](https://github.com/deepseek-ai/deepseek-harness/blob/0d1f50007f9bca3f52b06e1c3074fa14d5fb0720/apps/desktop/README.md#L16)、[Linux 非发布目标](https://github.com/deepseek-ai/deepseek-harness/blob/0d1f50007f9bca3f52b06e1c3074fa14d5fb0720/apps/desktop/README.md#L91)、[无 webServer 导致 Open In... 禁用](https://github.com/deepseek-ai/deepseek-harness/blob/0d1f50007f9bca3f52b06e1c3074fa14d5fb0720/apps/desktop/README.md#L199)、[`--host 0.0.0.0` 拒绝与信任校验](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.2-alpha.5/packages/bundle/web-app/src/startup.ts#L74-L75)、[官方远程接入三条路径](dsh.md#remote-access-methods)。
+
+### <a id="desktop-remote-client-snapshot"></a>桌面与多端客户端总览
+
+"支持远程"先要分清方向：桌面壳把本地 dsh 暴露给别人（反向），还是桌面壳作为客户端连接别处正在运行的 dsh（正向）。下表按此分类；Stars 为 2026-09-16 快照。
+
+| 客户端 | Stars | 平台 | DSH 后端归属 | 连接另一台机器上的 dsh |
+|---|---:|---|---|---|
+| 官方 `apps/desktop` | — | Win / macOS | 捆绑 Node 子进程 + `dsh-app://` 私有协议 | 无远程模式 |
+| [`anywhere-labs/dsh-desktop`](https://github.com/anywhere-labs/dsh-desktop/tree/5510cb1203838f2d55f9bbd52cdcfaae1cad5eac) | 26926 | Win / macOS | 本地 Host，桌面壳本身是 DSH 插件 | 无客户端模式；可选局域网暴露（**无鉴权**）；≥2.0.9 内置手机远程（方向相反） |
+| [`liguobao/dsh-desktop`](https://github.com/liguobao/dsh-desktop/tree/f4f85cb7d67a773b6cc74ac3774b50db76ba40fd) | 38 | Win / macOS / Linux | 本地捆绑 Harness（加固 Electron 窗口） | **有**：内置 `ds-harness-remote` 客户端，可连另一台装了插件 Host 的机器 |
+| [`tscodeplus/dsh-desktop`](https://github.com/tscodeplus/dsh-desktop/tree/843a8d097cdc25bdd02cf63afee9acdb4476ec2e) | 1 | Win / macOS | Tauri 2 + Node sidecar 拉起本地 `127.0.0.1:3080` | 无，README 明示 local-only、不做远程访问 |
+| [`Dinis0214/dsh-desktop-lite`](https://github.com/Dinis0214/dsh-desktop-lite/tree/3220892aacd71102f8a5fe0b25aef6d8f99077da) | 0 | macOS / Linux / Win | 原生壳自管理本地 3080（常驻/随窗双模式） | 无远程 URL 配置（配置项仅 port/dshPath/nodePath） |
+| [`fufankeji/deepseek-harness-studio`](https://github.com/fufankeji/deepseek-harness-studio)（`plutoczm` 仓库当前形态） | 641 / 0 | macOS / Win | 桌面主进程启动本地 `dsh web` | 无；"手机远程与消息通道"在路线图中未实现 |
+| [`sunkeycn/dsh-desktop`](https://github.com/sunkeycn/dsh-desktop/tree/17fee13b5618b9ed8c467be15f79a446e162db22) | 1 | macOS | 本地 Host + 捆绑 `frpc 0.71.0` | 反向：FRP 隧道把本机 3080 转发到自建 `frps` 供手机访问 |
+| 浏览器（任意） | — | 任意 | 任意远端 | 官方远程路径：SSH 隧道 / relay / 反代 + token 兑换 |
+
+> 来源：[官方桌面定义](https://github.com/deepseek-ai/deepseek-harness/blob/0d1f50007f9bca3f52b06e1c3074fa14d5fb0720/apps/desktop/README.md#L5)；[anywhere-labs 默认仅回环监听](https://github.com/anywhere-labs/dsh-desktop/blob/5510cb1203838f2d55f9bbd52cdcfaae1cad5eac/README.md#L116)、[局域网开放无鉴权的危险提示](https://github.com/anywhere-labs/dsh-desktop/blob/5510cb1203838f2d55f9bbd52cdcfaae1cad5eac/README.md#L118)、[手机远程 2.0.9 起内置](https://github.com/anywhere-labs/dsh-desktop/blob/5510cb1203838f2d55f9bbd52cdcfaae1cad5eac/README.md#L97)；[liguobao 本地运行定义](https://github.com/liguobao/dsh-desktop/blob/f4f85cb7d67a773b6cc74ac3774b50db76ba40fd/README.md#L5)、[远程会话访问特性](https://github.com/liguobao/dsh-desktop/blob/f4f85cb7d67a773b6cc74ac3774b50db76ba40fd/README.md#L14)、[Linux AppImage](https://github.com/liguobao/dsh-desktop/blob/f4f85cb7d67a773b6cc74ac3774b50db76ba40fd/README.md#L32)；[tscodeplus local-only 设计](https://github.com/tscodeplus/dsh-desktop/blob/843a8d097cdc25bdd02cf63afee9acdb4476ec2e/README.md#L26)、[不做远程访问](https://github.com/tscodeplus/dsh-desktop/blob/843a8d097cdc25bdd02cf63afee9acdb4476ec2e/README.md#L57)；[lite 的配置项仅 port 等](https://github.com/Dinis0214/dsh-desktop-lite/blob/3220892aacd71102f8a5fe0b25aef6d8f99077da/README.md#L162)、[随窗模式启停后端](https://github.com/Dinis0214/dsh-desktop-lite/blob/3220892aacd71102f8a5fe0b25aef6d8f99077da/README.md#L36)；[Studio 由桌面主进程启动本地 dsh web](https://github.com/plutoczm/deepseek-harness-vscode/blob/a8ea02c4390ccea851da6e30b3236a7b5aa0d877/README.md#L60-L66)；[sunkeycn 捆绑 frpc 供手机访问](https://github.com/sunkeycn/dsh-desktop/blob/17fee13b5618b9ed8c467be15f79a446e162db22/README.md#L34)、[只允许转发本机 3080](https://github.com/sunkeycn/dsh-desktop/blob/17fee13b5618b9ed8c467be15f79a446e162db22/README.md#L97)、[自动加入 --trusted-host](https://github.com/sunkeycn/dsh-desktop/blob/17fee13b5618b9ed8c467be15f79a446e162db22/README.md#L100)。
+
+没有任何桌面壳提供"填一个 URL 连到裸 `dsh web`"的通用入口：官方桌面走私有协议，tscodeplus 明示拒绝，lite 只管理本地进程，anywhere-labs 与 Studio 只暴露自己拉起的本地服务。桌面形态下唯一的正向远程连接来自 liguobao DSH Desktop 内置的 Remote 组件，它连的是装了 Remote 插件的 Host，而非裸 Web 端口。
+
+### <a id="desktop-remote-multi-device"></a>多端远程客户端与插件 Host
+
+正向远程连接目前最完整的方案是 [`liguobao/ds-harness-remote`](https://github.com/liguobao/ds-harness-remote/tree/d3a9dc92883cf25e78bd3e9cb303e99fc1d57add)（195 星，更名自 `deepseek-harness-remote`）。分工是"远端 dsh 装 Host 插件，任意设备做客户端"：
+
+- **Host 侧**：`dsh plugin --profile web add ds-harness-remote@0.4.13` 后重启 Harness；纯终端的 [dsh-TUI](#2026-08-26-tui) profile 也可作 Host（`/remote login` 二维码授权）。Host 只建立出站连接，不监听公网端口。
+- **Client 侧**：DSH Desktop（默认集成）、Remote Web（`dsh.r2049.cn/app`）或 Android App。客户端选择在线 Host → Workspace，复用 Harness 原生界面，工作区、工具与权限流程都留在 Host 上。
+- **传输**：`Noise_IK_25519_ChaChaPoly_SHA256` 双向端到端加密，按 `LAN -> P2P -> TURN -> Relay` 协商，WebRTC 失败时降级加密 WebSocket Relay；连接需同账号 membership 与设备 identity key 双重校验。会话流量经由官方 rc.2 ApiProxy 或 v0.1.2+ Typert Remote Gateway 承载（兼容 `dsh-v0.1.1-rc.2`、`v0.1.2-alpha.1`–`rc.1`、`v0.1.5-rc.1`）。
+- **边界**：公开服务使用托管中继，尚无受支持的自建中继；服务端可见网络元数据但不能读会话明文。
+
+> 来源：[Host 无需开放公网监听端口](https://github.com/liguobao/ds-harness-remote/blob/d3a9dc92883cf25e78bd3e9cb303e99fc1d57add/README.zh.md#L47)、[web profile 安装命令](https://github.com/liguobao/ds-harness-remote/blob/d3a9dc92883cf25e78bd3e9cb303e99fc1d57add/README.zh.md#L61)、[DSH Desktop 默认集成](https://github.com/liguobao/ds-harness-remote/blob/d3a9dc92883cf25e78bd3e9cb303e99fc1d57add/README.zh.md#L54)、[dsh-TUI 作 Host](https://github.com/liguobao/ds-harness-remote/blob/d3a9dc92883cf25e78bd3e9cb303e99fc1d57add/README.zh.md#L68-L70)、[Noise 协议与双重校验](https://github.com/liguobao/ds-harness-remote/blob/d3a9dc92883cf25e78bd3e9cb303e99fc1d57add/README.zh.md#L171)、[路径协商与降级](https://github.com/liguobao/ds-harness-remote/blob/d3a9dc92883cf25e78bd3e9cb303e99fc1d57add/README.zh.md#L179)、[官方 ApiProxy / Typert Remote Gateway 承载](https://github.com/liguobao/ds-harness-remote/blob/d3a9dc92883cf25e78bd3e9cb303e99fc1d57add/README.zh.md#L198-L203)、[无自建中继](https://github.com/liguobao/ds-harness-remote/blob/d3a9dc92883cf25e78bd3e9cb303e99fc1d57add/README.zh.md#L105)。
+
+手机侧的附加型客户端是 [`Hyna-hla/dsh-remote`](https://github.com/Hyna-hla/dsh-remote/tree/3ae5f26e5df9b5f43fc35ff7d892c23c0bef119d)（12 星，Android App）。它连接的是**电脑上正在运行的 DSH 服务**，不自己拉起后端：局域网模式直接填电脑地址，公网模式自备内网穿透（cpolar / cloudflared / ZeroTier 等）。协议逆向自 `dsh-client-connection`：上行 `POST /api/<method>`，事件流 WebSocket `ws://host/api/events.mux`（SSE 回退）。PC 端配套 `dsh-remote-access` 插件做配对码互信与通道 token；公网域名必须写入 `client-connection.trustedHosts` 白名单（**重启 DSH 生效**），否则核心 Host 围栏 403。
+
+> 来源：[连接正在运行的 DSH 服务](https://github.com/Hyna-hla/dsh-remote/blob/3ae5f26e5df9b5f43fc35ff7d892c23c0bef119d/README.md#L8)、[局域网/公网两种模式](https://github.com/Hyna-hla/dsh-remote/blob/3ae5f26e5df9b5f43fc35ff7d892c23c0bef119d/README.md#L45)、[trustedHosts 白名单重启生效](https://github.com/Hyna-hla/dsh-remote/blob/3ae5f26e5df9b5f43fc35ff7d892c23c0bef119d/README.md#L61)、[事件流协议](https://github.com/Hyna-hla/dsh-remote/blob/3ae5f26e5df9b5f43fc35ff7d892c23c0bef119d/README.md#L71)。
+
+相邻但未复核源码的移动入口：`anywhere-labs/Agents-Anywhere`（901 星，跨设备 Agent 工作台，DSH Desktop ≥2.0.9 内置的手机远程即基于它）、`dsh-remote-mobile`（扫码接入的设置面板插件）、`tongwoojun/dsh-ntfy-remote`（ntfy 通知式手机交互，官方 discussion #6410）。
+
+### <a id="desktop-remote-ssh-plugins"></a>SSH 远程工作区插件：后端仍在本地
+
+`dsh-plugin` topic 下的 "remote" 命名多数属于另一类拓扑：Harness 进程留在本地，Agent 的文件与命令工具经 SSH 落到远端机器。[`flymysql/dsh-remote`](https://github.com/flymysql/dsh-remote/tree/34082745105be446252556d0d5e04bdf27fa0fc0)（81 星）的定位即"**you connect out**"——多机 SSH 注册表 + 远程工作区选择器，远端目录镜像为本地 workspace 对象，20 个 `rw_*` 模型工具经 SFTP/SSH 操作远端。它有一个实验性的官方 Desktop 兼容分支：路由经 `ctx.connection.fetch` 走 Desktop 的 `dsh-app:` carrier，这从侧面证明官方桌面虽无 `webServer`，仍向插件暴露了带鉴权的 Fetch 通道。同类的还有 `hehehe1234567894/dsh-ssh-remote`（纯远程模式工具集）与 `weisiren000/dsh-remote-ssh-ops`（远程运维，含 JumpServer）。
+
+[`Yan-Zero/dsh-remote-ssh`](https://github.com/Yan-Zero/dsh-remote-ssh/tree/21d727cbe24fbae283196e5101adb3de2bdd9157)（9 星，最后提交 2026-08-16）提供两种模式：**透明远程工作区**（本地 AI runtime + 工具经 VS Code Agent Host Protocol 路由到 SSH 主机，无第二套 `remote_*` 工具）；**Full Backend 模式**经 SSH 上传版本匹配的 `dsh-host` bundle 安装到远端 `~/.dsh-host`，重连时发现已注册 PID 与随机 loopback 端口，经 OpenSSH 动态 SOCKS 通道接回——本地 Web/TUI 只作协议客户端，"Open Backend in Web" 再加本地同源代理供浏览器访问。注意它连接的是**自己部署的 dsh-host backend**，不是远端已有的 systemd `dsh web`。该插件的兼容面停在 DSH `0.1.0-rc.6`（当前官方已到 `0.1.5-rc.2`），且 bundle 选 `danger-full-access` + 审批 `never`，安全姿态需按其 README 的隔离建议评估。
+
+> 来源：[flymysql 的 connect-out 定位](https://github.com/flymysql/dsh-remote/blob/34082745105be446252556d0d5e04bdf27fa0fc0/README.md#L15)、[官方 Desktop 兼容实验分支](https://github.com/flymysql/dsh-remote/blob/34082745105be446252556d0d5e04bdf27fa0fc0/README.md#L61-L69)；[Yan-Zero 两种模式定义](https://github.com/Yan-Zero/dsh-remote-ssh/blob/21d727cbe24fbae283196e5101adb3de2bdd9157/README.md#L7)、[Full Backend 上传 dsh-host](https://github.com/Yan-Zero/dsh-remote-ssh/blob/21d727cbe24fbae283196e5101adb3de2bdd9157/README.md#L109)、[Open Backend in Web](https://github.com/Yan-Zero/dsh-remote-ssh/blob/21d727cbe24fbae283196e5101adb3de2bdd9157/README.md#L116)、[danger-full-access + never](https://github.com/Yan-Zero/dsh-remote-ssh/blob/21d727cbe24fbae283196e5101adb3de2bdd9157/README.md#L159)、[兼容面 0.1.0-rc.6](https://github.com/Yan-Zero/dsh-remote-ssh/blob/21d727cbe24fbae283196e5101adb3de2bdd9157/README.md#L165)。
+
+### <a id="desktop-remote-topologies"></a>远程连接的四种拓扑与"附加既有进程"判定
+
+把上面的项目放回拓扑维度，"桌面连远程 dsh"实际是四种不同的事：
+
+| 拓扑 | 代表 | 远端需要什么 | 对既有进程的影响 |
+|---|---|---|---|
+| 附加既有 `dsh web`（attach） | 浏览器 + SSH 隧道；`Hyna-hla/dsh-remote` 手机 App | 已运行的服务 + 可达的 authority | SSH 隧道下零改动；公网/局域网域名需进 `trustedHosts`（重启生效） |
+| 插件 Host + 中继 | `ds-harness-remote`（Desktop/Web/Android 客户端） | 装插件的一次性重启，此后 Host 常驻出站 | 之后客户端随时接入，无需公网端口 |
+| 本地 Agent + 远程工具执行 | `flymysql/dsh-remote` 等 SSH 工作区插件 | 仅 SSH 账户 | 与远端 dsh 进程无关（远端可以根本没有 dsh） |
+| 远端专属 backend | `Yan-Zero/dsh-remote-ssh` Full Backend | 插件上传并维护的 `~/.dsh-host` | 连接对象不是既有 systemd `dsh web` |
+
+对"远端 `dsh web` 由 systemd 托管、客户端不能重启它"这一严格条件的判定：**免重启且免改动的路径只有浏览器经 SSH 本地隧道**（loopback authority 直接过信任校验，token 兑换一次即得会话 cookie）；手机附加端走公网域名时 `trustedHosts` 写入需重启一次才生效，不满足零重启；`ds-harness-remote` 需要装插件的一次性重启，此后才是不碰进程的随时接入；SSH 工具类与 Full Backend 类则与既有进程无关。桌面壳形态下没有满足该条件的方案——唯一具备正向远程能力的 liguobao DSH Desktop 也只连 Remote 插件 Host。
+
+### <a id="desktop-remote-corrections"></a>对本轮之前资料的勘误
+
+- **仓库名变更**：`liguobao/deepseek-harness-remote` → `liguobao/ds-harness-remote`；`tscodeplus/deepseek-harness-desktop` → `tscodeplus/dsh-desktop`；`anywhere-labs/deepseek-harness-desktop` → `anywhere-labs/dsh-desktop`。旧链接经 301 跳转仍可解析，[2026-08-17 快照](#packaging-and-community)中 anywhere-labs 的固定 commit 引用不受影响，但新引用应使用新名。
+- **`plutoczm` 项目的能力描述**：此前资料称其为"读取 `~/.ssh/config`、SSH 到远程 Linux 启动官方 dsh 并建立本地端口转发的 Remote Desktop"。本轮快照（HEAD `a8ea02c4`）的 README 描述的是 Studio 桌面端——Electron 承载、桌面主进程启动并管理**本地** `dsh web`、手机远程列为规划项；文件树扫描（8756 个文件）中的 ssh/remote 命中全部来自其 fork 的官方仓库内部结构（Typert remote、`packages/api/remotes` 等），未发现 SSH 远程桌面特性。旧说法在本快照中无依据。
+- **`Yan-Zero/dsh-remote-ssh` 的维护状态**：最后提交停在 2026-08-16，兼容面为 DSH `0.1.0-rc.6`；引用其 Full Backend 能力时应注明版本距离。
+- **官方桌面**：此前"默认启动内置本地 dsh、经 Electron IPC 通信、不开放 Web 端口、无文档化远程模式"的概括与 master `0d1f5000` 一致；本轮补充的证据是它连插件 HTTP 路由（`webServer`）都不提供。
+
+### <a id="desktop-remote-validation-boundary"></a>验证范围
+
+- 未安装任何桌面客户端或插件，未在两台机器间完成真实远程连接、审批或文件预览验收；上表能力均为固定版本 README 与仓库元数据自述。
+- `Hyna-hla/dsh-remote` 局域网模式是否也需要 `trustedHosts` 信任条目，README 未说明，未实测；其协议为逆向实现，对 DSH 后续版本的兼容性无承诺。
+- `ds-harness-remote` 的托管中继信任模型（服务端可见元数据、设备 identity、重放保护）依其自述文档，未独立审计；自建中继尚不可用。
+- `plutoczm` 仓库未做逐行源码审计，勘误结论基于 README 与文件树扫描。
+- stars 与推送时间为 2026-09-16 快照；官方 `apps/desktop` 与 `apps/desktop-host` 处于快速演进期，引用前先回仓库确认现状。
+
+## <a id="2026-09-18-ppt-master-plugins"></a>2026-09-18 · PPT 生成插件与 PPT Master 封装
+
+本轮专题是"是否已有把 PPT Master 封装成 DSH 插件的项目，以及 DSH 的 PPT 生成插件类目概况"。上游 PPT Master 是独立的跨 harness Agent Skill，DSH 插件生态中已有两个互不相关的封装；类目整体沿原生 PPTX 编译、HTML 放映、DSL + 本地可视化编辑器、工作流辅驾四条路线分化。结论记录在本章末尾。
+
+**调研时间：** 2026-09-18（Asia/Shanghai）
+
+**调研目标：**
+
+- 确认是否存在把 PPT Master（`hugohe3/ppt-master`）封装成 DSH 插件的仓库，并核对封装方式、安装路径与运行时依赖。
+- 以 GitHub `dsh-ppt in:name` 检索为线索盘点 PPT 插件类目，按路线归类并记录维护信号。
+- 标记各封装的离线部署边界与 npm 发布状态。
+
+> **证据边界：** stars、创建与更新时间为 2026-09-18 的 GitHub API 快照。四个核心仓库固定到本轮 HEAD：`pn1024/dsh-ppt-master` `3c95646`、`per1x/dsh-plugin-ppt-master` `abab5fa`、`STARDUSTLC666/dsh-ppt` `ffb3036`、`z953218350/dsh-np-ppt` `2594d90`；能力描述均来自固定 commit 的 README，未克隆仓库、未逐行审计源码，未把任何候选装进运行中的 Profile 做验收。候选发现使用 Z.AI 网页搜索与 GitHub 仓库搜索（`dsh-ppt in:name`，命中 21 项）；OpenAI Codex 搜索两次请求失败，本轮未采用其结果。DSH 插件商店（dsh.deepseek404.com）的类目页与详情页本轮直连均失败（网络错误），商店收录仅以搜索快照作发现信号。
+
+### <a id="ppt-master-upstream"></a>上游 PPT Master 本体
+
+[`hugohe3/ppt-master`](https://github.com/hugohe3/ppt-master)（55,002 星、4,359 fork，Python，创建于 2025-12-10，快照时最近更新 2026-09-17）定位为把文档或主题转成原生 PowerPoint——原生形状、转场动画、按需的数据图表、从演讲备注生成旁白、支持自有 `.pptx` 模板。它本身是跨 harness 的 Agent Skill：腾讯新闻 2026-08-21 的上手教程显示，不装任何插件、把 PPT Master 作为 Skill 放进 DSH 即可运行，DSH 会遵照 skill 要求打开浏览器标签页确认设计方案。插件封装的增量因此不在生成能力本身，而在安装、Python 依赖与离线部署管理。
+
+> 来源：[上游仓库元数据](https://github.com/hugohe3/ppt-master)（2026-09-18 快照）；[腾讯新闻的 DSH + PPT Master Skill 上手记录](https://view.inews.qq.com/a/20260821A03P3M00)（2026-08-21，媒体教程信号）；[V2code 的 PPT Master 教程](https://www.v2code.ai/post/ppt-master-tutorial-native-editable-pptx-guide)（第三方教程信号）。
+
+### <a id="ppt-master-wrappers"></a>PPT Master 的两个 DSH 封装
+
+两个仓库创建时间相隔五天、无 fork 关系，各自独立封装同一上游：
+
+| 封装 | 固定 commit | Stars | 创建 | 安装 | 封装方式 |
+|---|---|---:|---|---|---|
+| [`pn1024/dsh-ppt-master`](https://github.com/pn1024/dsh-ppt-master/tree/3c956467cd053fec36816cb7d2ca973729a5d4d1) | `3c95646`（2026-09-01） | 1 | 2026-08-31 | `dsh plugin --profile web add link:<path>` 本地 link；装后另需 `pip install -r requirements.txt` | 把上游 skill 树收进 `skills/ppt-master/`（SKILL.md + references + scripts + templates + workflows），`index.js` 注册 dsh 原生 skill provider；README 未见 npm 发布 |
+| [`per1x/dsh-plugin-ppt-master`](https://github.com/per1x/dsh-plugin-ppt-master/tree/abab5fa6adb83a3cbc7da4825b99847145cc9cf3) | `abab5fa`（2026-08-26） | 0 | 2026-08-26 | Releases 下载约 51 MB tgz，离线 `npm install <tgz>` + `npx ppt-master-setup`；零运行时依赖，安装不触达 registry | 逐字节 vendor 上游 skill 树挂到 `ctx.skills`，行为与上游一致；更新即用 `scripts/sync-upstream.mjs --ref v5.1.0` 重新 vendor |
+
+`per1x` 版自述为离线 / 内网部署设计，README 完成度明显高于 stars 反馈：setup 脚本装 Python 依赖并脚手架 `~/.ppt-master/.env`（可重跑，卸载带 `--purge-env` 选项）；skill provider 以 `includeDefaultRoots: false` 只服务自己的根、按自定义 rank 注册，项目 `.agents/skills/` 中的同名 skill 仍优先；上游带 fail-closed 的 `attribution_guard.py`，任何 skill CLI 检测到 vendor 树漂移即 exit 78。其离线能力矩阵：生成 / 美化 / 建模板 / 填充 / 增强原生 PPTX，PDF / DOCX / PPTX / Markdown / XLSX / EPUB / notebook 源转换，公式编译为可编辑 Office Math，确认 UI 与 `127.0.0.1` 实时预览编辑器全部离线可用；`edge-tts` 旁白需微软端点，旁白视频仅 Windows（驱动 PowerPoint 2016+），AI 插图需内网图像服务，题目研究与网图搜索离线不可用，`visual-review` 与模板图片参考需视觉模型，image-to-PPTX 不支持（上游限定 Codex）。README 同时注明 DeepSeek 主模型为纯文本，配视觉模型（举例通过 ModLens）可恢复视觉门控阶段——ModLens 的模型包装能力见 [2026-08-17 生态调研](#packaging-and-community)。
+
+`pn1024` 版是更薄的直转发：`package.json` / `cordis.patch.yml` / `index.js` 加整棵 skill 树，Python 3.10+、Python 包与可选 `.env` 图像后端由用户手工安装。两者的能力差异来自上游版本与依赖管理方式，而非封装思路。
+
+> 来源：[pn1024 的 Overview、安装与前置依赖](https://github.com/pn1024/dsh-ppt-master/blob/3c956467cd053fec36816cb7d2ca973729a5d4d1/README.md)；[per1x 的 vendor 外壳定义、离线安装、插件配置与离线能力矩阵](https://github.com/per1x/dsh-plugin-ppt-master/blob/abab5fa6adb83a3cbc7da4825b99847145cc9cf3/README.md)。
+
+### <a id="ppt-plugins-category"></a>类目概况与其余路线
+
+`dsh-ppt in:name` 在 2026-09-18 快照命中 21 个仓库，创建时间全部落在 2026-08-14 至 09-17，stars 最高 7。除 ppt-master 封装外，两条已核对 README 的代表路线：
+
+| 插件 | 路线 | 要点 |
+|---|---|---|
+| [`STARDUSTLC666/dsh-ppt`](https://github.com/STARDUSTLC666/dsh-ppt/tree/ffb30361e1cb14b6acee58045fa5ebbc208fec21)（`ffb3036`，2026-09-12，7 星，npm `dsh-ppt`） | 工具 + 技能，纯 Node | `ppt_create` / `ppt_themes` 把一句话或 Markdown 变成 HTML + PPTX + JSON 三件套；5 主题、7 页型、转场与要点动效、演讲者备注；零运行时依赖（OOXML 与 zip 全手写，仅用 `node:fs` / `node:path` / `node:zlib`）；裸 `SKILL.md` 可跨 harness；已在 `dsh@0.1.5-rc.1` 与 18 个组件、Modlens 同载验证。已知限制：PPTX 为空白版式 + 文本框，不生成智能母版占位符 |
+| [`z953218350/dsh-np-ppt`](https://github.com/z953218350/dsh-np-ppt/tree/2594d90999ec13de1e3d45b98a77ea940bf78c97)（`2594d90`，2026-08-14，2 星） | DSL + 本地编辑器 + Python 编译 | PPTD YAML DSL（每页一个 `.page` 文件）；`127.0.0.1:55173` 所见即所得编辑器（File System Access API 授权本地目录）；Python-PPTX 离线编译内核（嵌套 HTML 富文本解析、字体锁定、DrawingML 渐变）；注册「PPT 演示文稿专家」Agent preset；link 安装，未见 npm 发布 |
+
+其余条目只作发现信号（描述来自仓库元数据，未复核源码）：`EZ118/dsh-ppt-composer`（对话生成幻灯片）、`chiang21fcb/dsh-ppt-guider`（六步工作流、SVG 中间态 + PPT-safe 约束的 dsh-preset）、`unStone/dsh-plugin-web-ppt`（读取 / 导出 `.pptx` 的纯 JS 工具）、`LeoChen98/dsh-worktable-notebook-to-ppt`（Jupyter Notebook → PPTX 工作流）、`yunfeizhu/dsh-pptx-editor` 与 `njutcm2004-cloud/dsh-pptx-preview`（编辑 / 预览）、`tjxj/dsh-wanghong-handwritten-ppt`（手写风 HTML 幻灯 + PNG 导出）、`SuperstructureJH/dsh-workbuddy-ppt`（附创作技能与 PPTD 确定性校验）、`kitterfast/dsh-ppt-maker`（composer 菜单入口）、`boe1900/dsh-ppt`、`yejiming/dsh-ppt`、`zbsph/dsh-ppt-studio`、`Huauauaa/dsh-ppt-studio`、`kkutysllb/dsh-super-ppts`、`uckkk/dsh-ppt-pages` 等。
+
+四条路线与官方能力无交叠：DSH 官方没有 PPT 生成面，产物交付仍走通用文件交付（见[官方文件链路](#file-transfer-official-chain)）；生成类插件自带的本地编辑器 / 预览服务（`dsh-np-ppt` 的 55173、ppt-master 的确认 UI）是插件自注册的本地 HTTP 服务，不经过官方 Web 栅栏。
+
+> 来源：[dsh-ppt 的工具面、零依赖实现与已知限制](https://github.com/STARDUSTLC666/dsh-ppt/blob/ffb30361e1cb14b6acee58045fa5ebbc208fec21/README.md)；[dsh-np-ppt 的 PPTD 架构、55173 编辑器与编译内核](https://github.com/z953218350/dsh-np-ppt/blob/2594d90999ec13de1e3d45b98a77ea940bf78c97/README.md)；[dsh-ppt 的第三方评测](https://blog.yeyupiaoling.cn/article/1789371938931)（发现信号）。
+
+### <a id="ppt-plugins-validation"></a>验证范围
+
+- 四个核心仓库未克隆、未逐行审计；`per1x` 的离线能力矩阵、51 MB tgz、wheelhouse 流程与 fail-closed 守卫均为 README 自述。
+- 未安装任何候选进运行中的 Profile；未做真实的 PPTX 生成、编辑器联动或导出验收。
+- 插件商店类目页与详情页直连失败，商店收录仅以 Z.AI 搜索快照为证；商店条目由 GitHub 公开项目自动聚合，不含人工审核。
+- 上游 ppt-master 迭代快（`per1x` 的再 vendor 流程已引用 v5.1.0 tag），stars 与更新时间为当日快照；引用本节细节前先回仓库确认。
+- OpenAI Codex 搜索两次失败未采用；核心候选由 Z.AI 搜索与 GitHub 仓库搜索两路独立命中，不依赖单一发现入口。
+
+### <a id="ppt-plugins-conclusion"></a>结论
+
+1. **有人做，且有两个互不相关的封装。** PPT Master（55k 星上游）已有 `pn1024/dsh-ppt-master`（薄转发，本地 link 安装）与 `per1x/dsh-plugin-ppt-master`（离线内网导向的逐字节 vendor 外壳）两个 DSH 插件；后者工程化程度明显更高——离线安装、setup / uninstall 脚本、上游同步脚本、漂移守卫俱全——但两者 stars 均接近零（1 / 0），属个人项目早期状态，采用前需自行验收。
+2. **不装插件也能用。** PPT Master 本体是跨 harness 的 Agent Skill，直接放进 DSH 即可运行（含浏览器确认 UI）；封装的增量价值在 Python 依赖与离线部署管理，不在生成能力本身。
+3. **类目已分化出四条路线**（原生 PPTX 编译 / HTML 放映 / DSL + 本地编辑器 / 工作流辅驾），全部为社区项目，stars 普遍个位数，官方无对应能力。
+4. 对"真母版 / 版式 / 占位符"的原生可编辑要求，Python-PPTX 路线（两个 ppt-master 封装、`dsh-np-ppt`）覆盖；纯 Node 的 `dsh-ppt` 明言空白版式 + 文本框、不生成智能母版占位符。本轮检索由一次自制「SVG 实时预览 + python-pptx 真占位符导出」工作流触发，对照结果显示该组合落在生态现有的空档上。
+
+## <a id="2026-09-20-sidebar-files-git-diff"></a>2026-09-20 · 右侧文件资源管理器与 git diff
+
+本轮专题是"官方右侧文件资源管理器（文件树 + 预览）能不能看 git diff，社区插件是否补齐"。官方答案分两半：文件树与文档预览本身不感知 git；`0.1.6-alpha.2` 另在会话尾部提供每轮 changed-files 卡与右侧栏 `changes-review` 对比 tab，但那是本轮窗口的工作树快照 diff，不是任意 git diff。社区插件已经把"资源管理器内看 diff"的空档填满，且分成接管官方右侧栏、中央标签、自绘抽屉、替换工具 diff 卡、审查回注五种接入位置。
+
+**调研时间：** 2026-09-20（Asia/Shanghai）
+
+**调研目标：**
+
+- 核对官方右侧栏与文件资源管理器在 `0.1.6-alpha.2` 的能力边界，确认文件树与预览是否感知 git。
+- 核对官方已有的两处 diff 展示——会话内工具调用 diff 卡与每轮 changed-files 卡——的实现方式、语义边界与引入版本。
+- 检索在 Web 界面提供 git diff / git 状态查看的社区插件，固定 commit 核对挂载位置与 git 执行方式。
+
+> **证据边界：** 官方源码固定在 `ddefc45fbc`（`0.1.6-alpha.2`，2026-09-17 发布），功能引入时间按 git tag 判定：文件树 tab 随 `0.1.5-alpha.1`（2026-09-08，引入 commit `b24ebc8c`）发布，changed-files 卡与 review tab 随 `0.1.6-alpha.2`（引入 commit `f937f4e23b`，2026-09-11）发布。六个插件仓库已浅克隆并核对源码（commit 见下文各表）；stars 与推送时间为当日 GitHub API 快照。候选发现走 GitHub topic 搜索（`topic:dsh-plugin git`）、官方 Discussions 检索（issues 已关闭，`has_issues: false`）、`awesome-dsh-plugin` 目录（`5706797`，2026-09-19）与 OpenAI / Z.AI 网页搜索四路；未把任何候选装进运行中的 Profile 做验收。官方仓库 discussions #7138 的归属缺陷为报告者实测，本轮未本地复现。
+
+### <a id="sidebar-files-official-explorer"></a>官方文件资源管理器：只列表、不感知 git
+
+右侧栏（`dsh-client-ui-sidebar-right`）是每个会话一份的停靠面，官方实现按 `ctx.sidebarRightTabs` 注册表组织 tab 类型；`docs/subsystems/sidebar-right.md` 列出的出厂类型只有 `guide`、`text`（文档预览）、`files`（文件树）、`browser`、`subagentchat`，没有 git 相关类型。文件树 tab（`dsh-client-ui-sidebar-files`，kind `files`，band `builtin`）以会话工作目录为根，每层展开时经 `remote.workspaceFiles.list` 懒加载，点击文件用 `dsh-resource://file/session/...` 地址在预览器打开；其 README 的 Known Limitations 第一条即"Listing only. No search, artifact filter, drag-and-drop, rename, context menu, current-file highlight, or filesystem watching"。文档预览（`dsh-client-ui-sidebar-documentpreview`，kind `text`，pattern `dsh-resource://file/**`）渲染 Markdown、代码、图片、PDF、Office、HTML 与纯文本回退，没有 diff 模式。服务层 `dsh-api-workspace-files` 只暴露 `stat` / `read` / `readBytes` / `readAll` / `readRelated` / `list` / `changes`（观测流），README 明言"The service exposes no mutation operation"——整条链路没有 git 子进程、没有状态徽标、没有版本概念。
+
+> 来源：[出厂类型清单与 kinds](https://github.com/deepseek-ai/deepseek-harness/blob/ddefc45fbc7f8e46dd73185e68295696d1297887/docs/subsystems/sidebar-right.md#L134-L141)；[文件树 tab 的注册与懒加载](https://github.com/deepseek-ai/deepseek-harness/blob/ddefc45fbc7f8e46dd73185e68295696d1297887/packages/client/ui-sidebar-files/README.md#L27)；[Listing only 限制](https://github.com/deepseek-ai/deepseek-harness/blob/ddefc45fbc7f8e46dd73185e68295696d1297887/packages/client/ui-sidebar-files/README.md#L57-L61)；[workspace-files 服务无 mutation](https://github.com/deepseek-ai/deepseek-harness/blob/ddefc45fbc7f8e46dd73185e68295696d1297887/packages/api/workspace-files/README.md#L12)；[预览器渲染格式](https://github.com/deepseek-ai/deepseek-harness/blob/ddefc45fbc7f8e46dd73185e68295696d1297887/packages/client/ui-sidebar-documentpreview/README.md#L2)。
+
+### <a id="sidebar-files-official-diffs"></a>官方已有的两处 diff 展示
+
+会话转录里第一处是工具调用的 `DiffBlock`：`edit` / `write` 类工具卡按 render intent 展示 before/after，数据来自工具参数，与 git 无关。第二处是 `0.1.6-alpha.2` 的每轮 changed-files 卡：Host 侧 `dsh-workspace-changes` 在 `turn/start` 与 turn 结束各做一次工作树快照（`git add --all --ignore-errors` 进临时 index、`write-tree`，对象写入会话私有临时目录并以仓库对象库为只读 alternate，不动仓库 index / objects / refs），turn 内 `diff-tree -r -M --numstat` 得到文件与行数，文件工具改过的路径另做整文件捕获以覆盖 git 不覆盖的场景；`workspace/changes` 事件入会话日志，摘要与对比留在 Host 内存。Web 侧 `ui-deliverables` 在收尾消息后渲染卡片，点击行经 `ctx.sidebarRight.openResource('dsh-resource://changes-review/session/<id>/<seq>/<turn>')` 打开右侧栏 review tab——支持 unified 与 side-by-side 双视图、换行开关、行号与增删配色、打开整个文件或调本地应用。
+
+这条官方链路的语义边界决定它不能当作"git diff 浏览器"：对比的是该轮起止两次快照，不是当前文件内容；不能选 HEAD、暂存区、任意提交或分支对比；没有暂存 / 提交 / 还原操作；摘要与对比随 Session 与 Host 进程消亡，重启后旧轮次无卡；归属按时间窗——同一工作区的并发写入者（另一会话、IDE 构建）会落进本会话的卡（discussions #7138 报告并给出复现，维护方向是"标注本会话触碰过的路径"或 shadow repository）。
+
+> 来源：[workspace-changes 的快照机制与覆盖规则](https://github.com/deepseek-ai/deepseek-harness/blob/ddefc45fbc7f8e46dd73185e68295696d1297887/packages/deliverables/workspace-changes/README.md#L12)；[临时 index / write-tree / diff-tree 实现细节](https://github.com/deepseek-ai/deepseek-harness/blob/ddefc45fbc7f8e46dd73185e68295696d1297887/packages/deliverables/workspace-changes/README.md#L58)；[review tab 的双视图与交互](https://github.com/deepseek-ai/deepseek-harness/blob/ddefc45fbc7f8e46dd73185e68295696d1297887/packages/client/ui-deliverables/README.md#L43)；[归属缺陷报告 #7138](https://github.com/deepseek-ai/deepseek-harness/discussions/7138)。
+
+### <a id="sidebar-files-official-seams"></a>右侧栏的扩展点
+
+插件补 git 能力不需要改核心：`ctx.sidebarRightTabs.register({ id, kind, patterns?, priority?, canOpen?, title?, guide? })` 注册 tab 类型，`extension` band 高于 `builtin`，同一 kind 的 extension 在力时接管、卸载后 builtin 恢复；`ctx.documentPreviews.register` 给预览器加渲染器；`sidebar.right.tab.guide`（链）换 guide 体、`sidebar.right.tab.menu.item`（列表）给 tab 菜单加动作。`dsh-resource://` 资源协议经 `ResourceProtocolMap` 扩展——官方 `changes-review` 地址本身就是走这条路注册的内置示范。插件也可以完全绕开右侧栏：`conversation.view` 插槽（"对话 / 轨迹"旁的中央标签）与 `ctx.webServer` 前缀路由 + iframe 是另外两条实测在用的路。
+
+> 来源：[tab 类型注册与优先级 band](https://github.com/deepseek-ai/deepseek-harness/blob/ddefc45fbc7f8e46dd73185e68295696d1297887/docs/subsystems/sidebar-right.md#L34-L50)；[扩展点两段注册与 guide/menu seat](https://github.com/deepseek-ai/deepseek-harness/blob/ddefc45fbc7f8e46dd73185e68295696d1297887/packages/client/ui-sidebar-right/README.md)；[changes-review 地址注册为内置示范](https://github.com/deepseek-ai/deepseek-harness/blob/ddefc45fbc7f8e46dd73185e68295696d1297887/packages/client/ui-deliverables/README.md#L57)。
+
+### <a id="sidebar-files-plugin-matrix"></a>社区插件矩阵：五种接入位置
+
+2026-09-20 的快照里，"在 DSH 界面看 git diff / git 状态"的插件按接入位置分五类。stars 只表示关注度，不替代源码审查：
+
+| 接入位置 | 项目 | 固定 commit | Stars | git diff 能力（README + 源码核实） |
+|---|---|---|---:|---|
+| 接管 / 注册官方右侧栏 tab | [`omdsh-dev/DSH-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar/tree/1fcf43ccbedd6e66370b7fb81df2b4dd0ef2604e) | `1fcf43c`（2026-09-11） | 3677 | 工作台套件：接管内置「文件」页，另设「文件变动」tab——Git 视角（真 diff / 历史 / 暂存·提交·还原 / worktree·子仓库选择）+ 本轮文件视角双视角；统一 diff 渲染（字符级行内高亮 + 语法着色 + 上下文折叠），可展开为独立 diff tab |
+| 同上 | [`2002XiaoYu/dsh-session-diff`](https://github.com/2002XiaoYu/dsh-session-diff/tree/f5b20d0001bb9955c4eebe0f2037507769e55197) | `f5b20d0`（2026-09-18） | 1 | `extension` band 接管 `dsh-resource://file/**` 文件查看器：本会话改过的文件原位渲染 git 风格 diff（增删底色、双行号、+/− 计数、「仅看改动 / 整个文件」切换），另注册改动文件清单 tab；未改动文件保持官方查看器 |
+| 中央标签（`conversation.view`，"轨迹"旁） | [`1841220388zzzcccxxx-star/dsh-git-graph`](https://github.com/1841220388zzzcccxxx-star/dsh-git-graph/tree/54790c6a4cf8644b08f460d98fcda800d5224df7) | `54790c6`（2026-09-05） | 14 | 「Git 图谱」标签：GitHub 风格提交历史图、分支过滤、单文件 diff、两次提交对比；VSCode 风格未提交改动面板（staged / changes / untracked 三组、numstat、逐文件 diff 展开），支持暂存 / 取消暂存 / 还原 / 提交 / push / pull、AI 提交信息 |
+| 同上 | [`sqfcyily/dsh-workspace-files`](https://github.com/sqfcyily/dsh-workspace-files/tree/9416837cea5c3451f18c9fdc7577e28dd5e32855) | `9416837`（2026-09-03） | 6 | 「文件」标签：目录树 + 预览，git 仓库时文件名带状态角标、打开后可切「内容 / 改动」看 diff；无 git 时自动降级为纯浏览 |
+| 自绘抽屉（不依赖官方右侧栏） | [`No-PRM/dsh-explorer`](https://github.com/No-PRM/dsh-explorer/tree/f0835e20914d1db9cd9f3a558b5977d678c84e47) | `f0835e2`（2026-08-16） | 7 | 蓝色圆钮开自绘文件树抽屉：M/A/U/D/R 徽标、脏目录点、gitignore 变暗；改动文件预览默认进 git diff 视图（HEAD vs 工作树，side-by-side） |
+| 同上 | [`Wongzexu/dsh-git-status`](https://github.com/Wongzexu/dsh-git-status) | —（2026-08-26 推送） | 3 | 右缘 git 状态抽屉：提交 DAG 车道、未提交与 stash 行、行内 diff、右键分支 / tag 操作、一键 fetch 全部远程（目录描述，未克隆核实） |
+| 替换会话内工具 diff 卡 | [`lehhair/dsh-diff-viewer`](https://github.com/lehhair/dsh-diff-viewer) | —（2026-09-06 推送） | 27 | PiUI 风格 diff 查看器替换 `write` / `edit` 工具卡自带的 DiffBlock（目录描述，未克隆核实） |
+| 审查-回注工作流 | [`9087/dsh-diff-approval`](https://github.com/9087/dsh-diff-approval) | —（2026-09-18 推送） | 6 | 侧栏待审列表收集每次 `edit` / `write` / `str_replace_editor` 改动，整文件 diff 上按文件 / 块 / 拖选行 Keep 或 Revert，操作原子可撤销（discussions #6069） |
+| 同上 | [`BrambleXu/dsh-revdiff`](https://github.com/BrambleXu/dsh-revdiff/tree/90e7f41040ede308314395b06c51c218e18e4d47) | `90e7f41`（2026-08-14） | 2 | 解析 git unified diff 成文件 / hunk / 行位，审查界面上批注并排队回注当前 Agent 会话（Reddit "Codex-style diff review" 同项目） |
+
+模型侧 git 工具（给模型调、不画 UI diff）是相邻类目：`gxinxing/dsh-tool-git`（`git_ops` 五模式，#3826）、`lxj808624/dsh-tool-git`（八个 `git_status` / `git_diff` 类工具，#411）、`Shyboy0499/dsh-git-tools`、`omdsh-dev/dsh-tool-diff`（结构化比较）、`sakthiveltofficial/dsh-git-plugins`。
+
+### <a id="sidebar-files-plugin-details"></a>重点插件的源码核实
+
+`DSH-better-sidebar` 是该类目热度与完成度最高的项目。v0.19.0 起适配官方侧边栏 API（要求 DSH `0.1.5-rc.1+`，v0.19.1 自述已在 `0.1.5-rc.2` 真机验证）：右列就是 DSH 原生右侧栏，每个 tab 类型经 `ctx.sidebarRightTabs` / `ctx.sidebarRight` 注册，文件打开统一走 `openResource('dsh-resource://file/…')`，不再自绘面板；同时接管内置「文件」页与文件树。git 能力在 Host 侧 `src/git.ts` 成套实现（本轮核实：`status` / `diff(staged)` / `stage` / `unstage` / `commit` / `branches` / `checkout` / `log` / `show(rev:path)` / `commitDiff` / `discard` / `worktrees`，解析 porcelain -z、worktree list、log），客户端 `src/client/diff/rows.ts` 解析 `git diff --no-color` 并把 hunks 转成渲染段。README 另述敏感内容脱敏（凭据形态遮罩）与 `.md` / `.html` / `.pdf` 操作的特殊预览。
+
+`1841220388zzzcccxxx-star/dsh-git-graph` 走中央标签 + iframe 路线：Host 侧 `ctx.webServer.register({ kind: 'prefix', path: '/git-graph' })` 提供 `/git-graph/api` JSON 接口，git 全部经 `execFile`（无 shell、固定参数表）；客户端在 `conversation.view` 插槽注册「Git 图谱」标签，内容是指向 `/git-graph/index.html` 的 iframe。diff 数据来自 `git diff --cached --numstat` / `git diff --numstat` 与逐文件 `git diff --no-color`（带截断上限）。
+
+`No-PRM/dsh-explorer` 出现于官方文件树发布之前（2026-08-16，官方 `0.1.5-alpha.1` 为 09-08）：Host 侧 `/filetree/gitdiff?path=` 路由先 `rev-parse --show-toplevel` 定仓，再 `git show HEAD:<rel>` 取基线、直读工作树文件取现状，两侧各限 512 KiB、含 NUL 判二进制置空；客户端 `GitDiff` 组件用 `@codemirror/merge` 渲染 side-by-side，`canDiff` 时预览默认落在 diff 视图。安装是 monorepo 双包（`dsh-explorer` Host + `dsh-client-ui-explorer` 客户端），各走一条 `dsh plugin add github:` 命令。
+
+`2002XiaoYu/dsh-session-diff` 是"接管官方查看器"的最小实现样本：`ctx.sidebarRightTabs` 注册两个类型——file tab（`extension` band，pattern `dsh-resource://file/**`，只对本会话改动过的文件生效）与改动清单 tab；内容读取复用官方 `remote.workspaceFiles`，diff 在客户端计算。`sqfcyily/dsh-workspace-files` 则完全不动右侧栏，在 `conversation.view` 加「文件」标签（与「对话 / 轨迹」并列），Host 经 `execFile`（带超时与僵尸进程防护）跑 git，甚至内置按 diff 生成提交信息的提示词调用。
+
+> 来源：[better-sidebar 的原生侧边栏适配声明与文件变动双视角](https://github.com/omdsh-dev/DSH-better-sidebar/blob/1fcf43ccbedd6e66370b7fb81df2b4dd0ef2604e/README.md)、[git.ts 全套操作](https://github.com/omdsh-dev/DSH-better-sidebar/blob/1fcf43ccbedd6e66370b7fb81df2b4dd0ef2604e/src/git.ts#L300-L450)、[统一 diff 解析](https://github.com/omdsh-dev/DSH-better-sidebar/blob/1fcf43ccbedd6e66370b7fb81df2b4dd0ef2604e/src/client/diff/rows.ts#L310-L330)；[dsh-git-graph 的 `/git-graph` 前缀路由](https://github.com/1841220388zzzcccxxx-star/dsh-git-graph/blob/54790c6a4cf8644b08f460d98fcda800d5224df7/index.js#L354-L370)、[execFile 无 shell 约定](https://github.com/1841220388zzzcccxxx-star/dsh-git-graph/blob/54790c6a4cf8644b08f460d98fcda800d5224df7/index.js#L26)、[conversation.view 标签注册](https://github.com/1841220388zzzcccxxx-star/dsh-git-graph/blob/54790c6a4cf8644b08f460d98fcda800d5224df7/client.js#L44-L53)；[dsh-explorer 的 `/filetree/gitdiff` 路由](https://github.com/No-PRM/dsh-explorer/blob/f0835e20914d1db9cd9f3a558b5977d678c84e47/dsh-plugins/dsh-explorer/lib/index.js#L404-L443)、[@codemirror/merge 的 GitDiff 组件](https://github.com/No-PRM/dsh-explorer/blob/f0835e20914d1db9cd9f3a558b5977d678c84e47/dsh-plugins/dsh-client-ui-explorer/src/client/preview.tsx#L105-L148)；[dsh-session-diff 的两个 tab 类型注册](https://github.com/2002XiaoYu/dsh-session-diff/blob/f5b20d0001bb9955c4eebe0f2037507769e55197/lib/client.js#L1645-L1699)；[dsh-workspace-files 的 conversation.view 注册与 execFile](https://github.com/sqfcyily/dsh-workspace-files/blob/9416837cea5c3451f18c9fdc7577e28dd5e32855/lib/client.js#L1517-L1527)。
+
+### <a id="sidebar-files-adjacent"></a>相邻但不属于本轮范围
+
+- **改仓库本体的 fork**：`vaxilicaihouxian/deepseek-harness` 的 `feat/git-gui` 分支（commit `f2294b5`）给 Web profile 加 SourceTree 风格 Git GUI（历史 / 分支面板、暂存列、提交合并分支、可拖拽 Diff 窗格），是 fork 而非插件，官方更新需自行合并（discussions #5783）。
+- **worktree / 快照 / 回滚**：`wloops/dsh-git-worktree`（worktree 会话目标 + 人工确认交付）、`HeathHe/dsh-worktree-panel`（worktree 管理面板）、`PerryLink/dsh-checkpoint-rewind`（Claude Code 式 `/rewind`，git 快照 + turn 边界分叉）、`dsh-file-undo`（#5738）。核心是隔离与回滚，不是 diff 浏览。
+- **官方方向的社区诉求**：discussions #5073（composer 旁 git 工作区状态，点名 Claude Desktop 对齐）、#5092（workspace 行 git 徽标）说明"官方原生 git 面板"仍是被请求状态；官方 issues 关闭，诉求都走 Discussions。
+- **桌面 / IDE 集成**：`See-Sol-Lab/DeepSeekGUI`（桌面端集成 Git）、`NEXTINDIE/DeepSeek-Harness-for-VS-Code`（VS Code 扩展，turn 级 git 回滚）把 diff 查看放回本地 IDE 侧。
+
+### <a id="sidebar-files-validation"></a>验证范围
+
+- 官方结论固定在 `ddefc45fbc`（`0.1.6-alpha.2`）；`0.1.7` 及之后的变更未跟进，changed-files 卡的归属缺陷（#7138）是否修复未复核。
+- 六个已克隆仓库只读了 README 与关键源码路径，未运行其测试；其余条目（`Wongzexu/dsh-git-status`、`lehhair/dsh-diff-viewer`、`9087/dsh-diff-approval` 等）仅有目录 / Discussions / 商店页描述，未克隆核实。
+- 未把任何插件装进运行中的 Profile；各项目锚定的 DSH 版本不一——`DSH-better-sidebar` v0.19.1 自述在 `0.1.5-rc.2` 验证、`dsh-explorer` 停留在官方右侧栏出现之前（其自绘抽屉与官方右侧栏的并存关系未验证）、`dsh-git-graph` 依赖 `window.__ModuleLoader__` 与 `conversation.view` 插槽的持续存在。
+- 社区插件均在 Host 主进程跑 git 子进程或注册 HTTP 路由，权限边界与凭据风险按运行时篇[信任边界](dsh.md#trust-boundaries)评估；stars 与推送时间为 2026-09-20 快照。
+- 发现入口的覆盖度：GitHub topic 搜索、官方 Discussions、awesome 目录与两路网页搜索（OpenAI 命中 dshbase / dshfind / dsh.pub 等目录站；Z.AI 命中知乎 / B 站评测）互有独立命中，但长尾小项目仍可能漏检。
+
+### <a id="sidebar-files-conclusion"></a>结论
+
+1. **官方文件资源管理器本身不看 git diff。** 文件树"listing only"、预览器无 diff 模式、`workspace-files` 服务连 git 都不执行——这不是缺功能，而是该包的既定边界。
+2. **官方在另外两个位置给了 diff。** 会话内工具卡的 `DiffBlock` 展示编辑工具的 before/after；`0.1.6-alpha.2` 的每轮 changed-files 卡点击后可在右侧栏打开 `changes-review` tab（unified / side-by-side）。后者是本轮起止工作树快照的 diff：不能选 HEAD / 暂存区 / 任意提交，没有暂存提交操作，内容是快照而非当前文件，且并发写入者会落进卡片（#7138）。把它理解为"官方的 git diff 视图"时要带上这四个限定。
+3. **插件生态已覆盖这个空档，且多数走官方扩展点。** 要"资源管理器里直接看 diff"：首选 `DSH-better-sidebar`（3677★，v0.19+ 走原生 `ctx.sidebarRightTabs`，接管内置文件页，真 git diff / 历史 / 暂存提交还原），轻量替代 `dsh-session-diff`（extension band 只接管本会话改动过的文件的查看器）。要看提交历史与分支：`dsh-git-graph`（中央标签，功能最全）或 `sqfcyily/dsh-workspace-files`。要审批 / 回注工作流：`dsh-diff-approval`（按文件 / 块 / 行 Keep 或 Revert）或 `dsh-revdiff`（批注回注 Agent）。要的只是工具卡 diff 更好看：`lehhair/dsh-diff-viewer`。
+4. **选型注意**：这些插件都在 Host 主进程执行 git 或注册本地 HTTP 路由，等于把 git 读写面暴露给 Web UI 会话；安装前按信任边界审查源码，固定 commit 安装，不要与官方 changed-files 卡的语义混用（两者对"改动"的口径不同：官方按 turn 时间窗，插件按 git 实际状态）。
