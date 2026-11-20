@@ -355,6 +355,39 @@ class RuntimeTests(TemporaryWorkspace, unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         asyncio.get_running_loop().set_debug(False)
 
+    async def test_account_model_and_effort_defaults_preserve_explicit_overrides(self) -> None:
+        for overrides, expected_model, expected_effort in [
+            ({}, "glm-5.3", "max"),
+            ({"model": None, "effort": None}, "glm-5.3", "max"),
+            ({"model": "other-model"}, "other-model", "max"),
+            ({"effort": "high"}, "glm-5.3", "high"),
+            ({"model": "other-model", "effort": "high"}, "other-model", "high"),
+        ]:
+            with self.subTest(overrides=overrides):
+                spec, account = self.runtime_spec(MOCK_QUIET_CHILD="1")
+                runtime = Runtime({**spec, **overrides}, account, 2)
+                original_rpc = runtime.rpc
+
+                async def rpc(method, params):
+                    result = await original_rpc(method, params)
+                    if method == "config/read":
+                        result["config"].update(model="glm-5.3", model_reasoning_effort="max")
+                    return result
+
+                runtime.rpc = rpc
+                try:
+                    await runtime.start()
+                    await runtime.open_thread(None, None)
+                    result, _ = await self.collect_turn(runtime)
+                    self.assertEqual(result["status"], "completed")
+                finally:
+                    await runtime.close()
+                recorded = requests(self.path / "rpc.jsonl")
+                opened = [row["params"] for row in recorded if row["method"] == "thread/start"][-1]
+                turned = [row["params"] for row in recorded if row["method"] == "turn/start"][-1]
+                self.assertEqual(opened["model"], expected_model)
+                self.assertEqual(turned["effort"], expected_effort)
+
     async def collect_turn(self, runtime: Runtime) -> tuple[dict, list[dict]]:
         handle = await runtime.begin("original request")
         seen: list[dict] = []
@@ -797,6 +830,15 @@ class RuntimeTests(TemporaryWorkspace, unittest.IsolatedAsyncioTestCase):
 
 
 class CLITests(TemporaryWorkspace, unittest.TestCase):
+    def test_run_accepts_max_reasoning(self) -> None:
+        record = self.path / "max-requests.jsonl"
+        result = self.cli(["run", "--cwd", str(self.path), "--prompt", "task",
+                           "--codex-bin", str(self.mock_binary()), "--model", "glm-5.3", "--effort", "max"],
+                          MOCK_RECORD=str(record), MOCK_QUIET_CHILD="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        turned = next(row["params"] for row in requests(record) if row["method"] == "turn/start")
+        self.assertEqual(turned["effort"], "max")
+
     def test_run_summary_receipt_events_defaults_and_resume(self) -> None:
         binary = self.mock_binary()
         receipt, events, record = (self.path / filename for filename in ("receipt.json", "events.jsonl", "requests.jsonl"))

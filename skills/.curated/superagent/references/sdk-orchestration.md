@@ -32,7 +32,7 @@ uv run scripts/codex_dispatch.py run \
   --prompt '继续原目标并核对验证结果'
 ```
 
-Codex 的可用账号、默认模型与推理档位从本机环境配置（如 `~/.agents/AGENTS.local.md`）读取后，显式传入 `--codex-home`、`--model`、`--effort`（脚本不自动读取 Markdown 配置，内建缺省值也不代表本机约定）；`fleet` 同样按本机配置填写账号列表及各 worker 的 `model`、`effort`，仅调度获准启用的账号。
+从本机约定（如 `~/.agents/AGENTS.local.md`）确认获准使用的账号，再通过 `--codex-home` 选择入口。省略 `--model` 或 `--effort` 时，`run` 分别读取所选 Codex 生效配置中的 `model` 或 `model_reasoning_effort`。显式参数优先，`--effort` 接受 `max` 和 `ultra`，实际可用档位由模型和 provider 决定。按本机约定填写 `fleet` 的账号列表和各 worker 的 `model`、`effort`。
 
 默认子代理并发数为 `2`（不含主线程，传 `0` 则仅用主线程），单次 RPC 默认超时为 120 秒（模型回合本身的运行耗时不受此 RPC 超时截断）。可按需传入 `--subagents`、`--codex-bin`、`--developer-instructions` 与 `--rpc-timeout`。省略 `--codex-home` 时脚本沿用当前环境的 `CODEX_HOME`；子进程环境变量按“父进程环境 → 账号配置 → worker 配置”依次合并（配置值为 `null` 时剔除对应变量），账号切换只改 `CODEX_HOME` 而不改动系统 `HOME`，确保 Git、SSH、缓存与回收站路径保持正常。
 

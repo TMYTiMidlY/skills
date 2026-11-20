@@ -164,6 +164,10 @@ class Runtime:
             if not version or version_tuple(version) < version_tuple(minimum):
                 raise RuntimeError(f"Codex CLI {version!r} is below required {minimum}")
             config = (await self.rpc("config/read", {"includeLayers": False}))["config"]
+            if self.spec.get("model") is None:
+                self.spec["model"] = config.get("model") or DEFAULT_MODEL
+            if self.spec.get("effort") is None:
+                self.spec["effort"] = config.get("model_reasoning_effort") or DEFAULT_EFFORT
             v2 = config.get("features", {}).get("multi_agent_v2", {})
             if not isinstance(v2, dict) or v2.get("enabled") is not True:
                 raise RuntimeError("runtime did not enable multi_agent_v2")

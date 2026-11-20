@@ -20,7 +20,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 
 from codex_fleet.policy import DEFAULT, PolicyFile, atomic_json, validate
-from codex_fleet.sdk import DEFAULT_EFFORT, DEFAULT_MODEL, Runtime
+from codex_fleet.sdk import Runtime
 from codex_fleet.state import FileLock, State
 from codex_fleet.worker import Worker, valid_name
 
@@ -81,9 +81,9 @@ def parser() -> argparse.ArgumentParser:
     prompt.add_argument("--prompt-file", type=Path)
     run.add_argument("--codex-home", type=Path)
     run.add_argument("--codex-bin")
-    run.add_argument("--model", default=DEFAULT_MODEL)
-    run.add_argument("--effort", default=DEFAULT_EFFORT,
-                     choices=("none", "minimal", "low", "medium", "high", "xhigh"))
+    run.add_argument("--model", help="model override; defaults to the selected Codex configuration")
+    run.add_argument("--effort", choices=("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
+                     help="reasoning override; defaults to the selected Codex configuration")
     run.add_argument("--sandbox", choices=("read-only", "workspace-write", "danger-full-access", "full-access"))
     run.add_argument("--approval-policy", choices=("never", "auto-review", "deny_all", "auto_review"))
     run.add_argument("--subagents", type=int, default=2, help="child count, excluding the root (default: 2)")
