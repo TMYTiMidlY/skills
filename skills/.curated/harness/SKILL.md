@@ -1,6 +1,6 @@
 ---
 name: harness
-description: 需要理解、比较或排查 Copilot、Claude Code、Codex、DeepSeek Harness、Hermes、pi 等 coding agent 的 runtime（harness）与调用接口时使用。介绍单个 agent 的运行循环、配置、工具注入、权限和会话机制，以及 CLI / SDK / JSON-RPC 接入方式。
+description: 需要理解、比较或排查 Copilot、Claude Code、Codex、Cursor Agent CLI、DeepSeek Harness、Hermes、pi 等 coding agent 的 runtime（harness）与调用接口时使用。介绍单个 agent 的运行循环、配置、工具注入、权限和会话机制，以及 CLI / SDK / JSON-RPC 接入方式。
 ---
 
 # Harness
@@ -66,6 +66,7 @@ MCP 2025-06-18 的 host/client/server 架构同样把 context aggregation、安�
 ## 范围
 
 - Copilot CLI 本体行为、SDK 入口、MCP 配置注入、会话 / 导出、逆向笔记。
+- Cursor Agent CLI 的分发、鉴权与 Git 署名开关、无头参数、原生 worktree 和周期额度接口。
 - 对照 Claude Code、Codex、DeepSeek Harness 的 runtime 模型，做 harness 取舍。
 - 解释 coding agent 自身的 daemon、进程生命周期与程序调用接口。
 - 在 CLI 子进程、SDK client、extension host、JSON-RPC、HTTP/webhook 几种集成形态间选型。
@@ -84,6 +85,7 @@ MCP 2025-06-18 的 host/client/server 架构同样把 context aggregation、安�
 - [各客户端对 MCP 的支持](references/mcp.md)：讲 MCP 的协议模型（Anthropic 公告与官方 spec 口径、三类能力与控制方），再逐能力对照 Copilot CLI / Claude Code / Codex / Gemini CLI / Cursor（DSH 为第六对照点，细节指向 dsh.md）：Tools 的命名与前缀规则（六家都取本地配置的 server 标识）、Resources / Prompts 的消费入口（@ 引用 vs 工具桥接 vs 无）、工具结果内容块的各客户端处理、配置发现与枚举修改；区分闭源实测、官方文档与开源源码证据。
 - [Agent Skills 官方规范、目录与加载差异](references/agent-skills.md)：可移植 skill bundle 的 6 个官方 frontmatter 字段，`SKILL.md` 与 `scripts/` / `references/` / `assets/` 的分野，官方生态的平铺分组方式，以及各 harness 私有扩展；`has-sub-skill` 是 Kimi Code 私有层级机制，跨工具移植时保持平铺最兼容。
 - [Worktree 支持横向对照](references/worktree.md)：Copilot CLI / Codex / Claude Code 三家谁有原生 git worktree 工具、谁只是"感知"、谁完全没有——`--worktree`/`EnterWorktree`/`isolation: worktree`/`/batch`（Claude Code 官方文档逐字核实）、Codex 的 worktree 探测与 `multi_agents` 共享 cwd（读源码 file:line 核实）、obra/superpowers `using-git-worktrees` skill 的跨宿主兜底三段式，以及第三方 worktree CLI 与 agent 编排器的分类依据（谁拥有 agent 生命周期）与选型（`worktrunk` / `claude-squad` / `workmux`，含 worktrunk `wt merge` 无 `-m`、未配 LLM 时静默兜底等源码级核实）。
+- [Cursor Agent CLI（`cursor-agent`：分发 / 鉴权 / 无头参数 / 额度）](references/cursor.md)：`~/.local/bin/cursor-agent` 指向 `~/.local/share/cursor-agent/versions/<ver>/` 的 bash 启动器，由同目录 Node 执行 `index.js`（命令面记录于 `2026.11.17-f532c45` 🔬）。OAuth 在 `~/.config/cursor/auth.json`（`0600`），偏好在 `~/.cursor/cli-config.json`；`--api-key` / `CURSOR_API_KEY` 可覆盖，默认端点 `https://api2.cursor.sh`，流式后端 `agentn.global.api5.cursor.sh`。`attribution.attributeCommitsToAgent` 与 `attributePRsToAgent` 保持 `false`，抑制 commit / PR 自动 trailer。交互式包装在调用前注入 `http_proxy` / `https_proxy`，调试输出遮住 `--api-key`；非交互子进程不读 `~/.bashrc`，要自行导出代理。`-p` / `--print` 默认含写文件与 shell，只读才用 `--mode plan` 或 `--mode ask`；`--output-format json|stream-json`、`--trust`、`--yolo`（`-f` / `--force`）、`create-chat` + `--resume`、`--workspace` / `--add-dir`，以及 `-w` / `--worktree`（`~/.cursor/worktrees/<repo>/<name>`，对照 [worktree.md](references/worktree.md)）。模型用扁平 id（如 `grok-4.7-xhigh` 与 `-fast`）或 `--model '<family>[context=...,effort=...,fast=false]'`。周期额度走 `GetCurrentPeriodUsage`：`autoPercentUsed` 为 Cursor Models（成员见 `autoBucketModels`），`apiPercentUsed` 为 Other Models。
 - [安装与分发形态](references/install.md)：Codex / Claude Code / Copilot CLI 的"壳包 + 平台二进制子包"打包普查——各家壳包 `bin`/体积、平台子包命名与个数（Codex 6 个无 musl vs 另两家 8 个含 musl）、真身工具链（Codex=Rust / Claude=Bun `--compile` / Copilot=Node SEA，含下载二进制实测判据）、libc 分叉判据与"静态 musl 单二进制通吃"反例、curl/brew/winget/npm 四路安装方案（照官方 README 核对）、npm "软弃用"（README 标 deprecated 但 registry 无标记、照装照用）与"编成单文件⇒才敢弃 npm"的因果、source-map 泄露旁证、agent 侧采用度快照（周下载量名次周周变）。通用打包模式本身见 `software` skill 的"npm 当跨平台二进制安装器：壳包 + 平台子包"章节。
 - [DeepSeek Harness（dsh）运行时](references/dsh.md)：产品定位与运行模式、Web 访问控制与会话凭据、Cordis 插件框架概览与 Profile 内现成 Plugin 的安装卸载、Agent preset（含创造模式）、Agent loop、[AGENTS.md 指令发现与加载](references/dsh.md#instruction-discovery)（全局／项目入口与子目录按需加载）、Session persistence、会话统计条（轮／步、计时、输入输出、缓存命中与子代理／fork 口径）、模型 / Skills / MCP / Subagent、ACP / SDK，以及 Host Plugin、工具沙箱、[子进程环境筛选与代理补充](references/dsh.md#child-process-environment)、MCP 进程和遥测的信任边界。直接远程访问 Web 的参数、认证、反代与客户端兼容统一读 [dsh-public-web README](https://github.com/TMYTiMidlY/dsh-public-web)。
 - [DeepSeek Harness（dsh）安装、服务部署与维护](references/dsh-deploy.md)：首次安装、固定项目与全局／源码／打包／容器方案，系统与用户服务、启动环境、[启动环境与运行时核查](references/dsh-deploy.md#startup-environment)、[出站 HTTP 代理](references/dsh-deploy.md#dsh-outbound-http-proxy)（`.env` 静态配置与 `clashctl` 启动注入）、数据和多实例；按真实入口、平台与权限升级，每次绑定当次最新 pi-ai，验收全部实例并保留可恢复的旧组合。

@@ -80,9 +80,18 @@
 |---|---|
 | `Todo` | 已登记入板但尚未正式启动的待办项（含准备中的在途草稿 PR）；新入板条目默认归入此列 |
 | `In Progress` | 已在原单据或阶段讨论单评论区明确交办并由执行侧实际承接推进，或处于待审修订中的活跃事项；推进期间若遇前置阻塞或方案待拍板，保留 `In Progress` 并在原单据评论区说明原因或附加决策标签（如 `needs:decision`） |
-| `Done` | 原 Issue 关闭或 PR 合并后，由面板内置正向自动化规则单向归入完结（见 [Using the built-in automations](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-built-in-automations)）；具体属成果合入、撤销还是未合并关闭结合原单据最终状态判定 |
+| `Delay` | 人或其他协作者把该条目手工挂起、延后执行。实时监听发现条目**进入** `Delay` 时，编排侧立刻停止这一条上的后台自动改写。若隔离的本地 worktree 里已经有尚未合入的实质性进度，先在独立分支提交并推成远端 `Draft` PR，评论里写清停点与下一步，面板状态标为 `Delay`，然后停止自动编辑。草稿只进协作开发仓，不推到对外发布仓；未推送的提交不能只留在本机磁盘上。条目从 `Delay` **回到** `In Progress` 时，先看状态变更的操作者（`actor`）和伴随评论：协作者自己接着做，编排侧继续让出；评论明确把执行交还编排侧，才恢复自动推进 |
+| `Done` | 原 Issue 关闭或 PR 合并后，由 [内置 Workflows](#built-in-workflows) 单向归入完结。成果合入、撤销还是未合并关闭，结合原单据最终状态判定 |
 
-采用评论驱动流转时，委托人在具体 Issue / PR 或薄讨论单评论区交代任务后，执行侧自动将对应面板条目置为 `In Progress` 并维护关联批次字段；单据进入 `Done` 仅代表当前生命周期结束，代码合并、对外发布与批次切换仍须独立核验明确授权，并保持关闭“置为 `Done` 反向自动关闭原 Issue”的内置自动化规则，防止误关阶段讨论单。
+采用评论驱动流转时，委托人在具体 Issue / PR 或薄讨论单评论区交代任务后，执行侧自动将对应面板条目置为 `In Progress` 并维护关联批次字段。单据进入 `Done` 只表示当前生命周期结束；代码合并、对外发布与批次切换仍须各自核验授权。
+
+#### <a id="built-in-workflows"></a>内置 Workflows
+
+GitHub Projects v2 的内置规则在项目页右上角 **Workflows** 菜单里开关。[Using the built-in automations](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-built-in-automations) 写明：项目初始化后，条目关闭时把 Status 设为 Done，PR 合并时也把 Status 设为 Done。面板上这两条的名字是 `Item closed` 与 `Pull request merged`。另一条反向规则会在 Status 变为 `Done` 时关闭 Issue；它保持关闭，避免阶段讨论单被顺手关掉。
+
+`Auto-add to project` 也在同一个 **Workflows** 菜单里配置：选定一个仓库和过滤器后，此后新建或更新、且命中过滤器的条目才会入板，启用前已经存在的条目不会被补进来。[Adding items automatically](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/adding-items-automatically) 按计划限制条数，GitHub Free 最多 1 条 auto-add workflow，一条对应一个仓库过滤器。多仓面板把这一条放在主开发仓，其余仓库由 watcher 按周期扫各仓的 issues 列表，把遗漏的开放单据补入面板。
+
+工作流的规则正文和启用开关不在公开 GraphQL 的可写面上。`ProjectV2.workflows` 可以读取；mutation 里与 workflow 相关的只有 [`deleteProjectV2Workflow`](https://docs.github.com/en/graphql/reference/mutations#deleteprojectv2workflow)（2026-11-21 对 `__type(name:"Mutation")` 的 introspection：没有 create / update / enable workflow）。Roadmap 视图用哪个日期字段做时间轴，同样在网页的视图设置里绑定。`updateProjectV2View` 能改 `name`、`layout`、`filter`，其 `configuration` 只有 `visibleFieldIds`，写不了这条日期绑定。
 
 > 显式列级闸门的适用边界：仅当团队面对无人值守大待办池、确需独立增设 `Ready` 等列级派工闸门时，外层控制器才按状态变更事件触发派工，且触发前须核验时间线事件的实际操作者（`actor`）、自动化标记（`wasAutomated`）、目标面板标识及当前任务正文的范围摘要（正文实质改写或撤回待办列时旧授权失效）——平台面板的字段写权限不等同于业务批准权限，且在带过滤条件的视图中新建条目会自动继承当前过滤字段值（见 [Filtering projects](https://docs.github.com/en/issues/planning-and-tracking-with-projects/customizing-views-in-your-project/filtering-projects)），初始化存量状态或过滤视图继承值不得直接触发执行。
 

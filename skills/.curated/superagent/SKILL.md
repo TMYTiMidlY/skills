@@ -47,7 +47,7 @@ description: 仅当用户明确指定当前会话作为 superagent 协作前台�
 
 ## <a id="shared-issue-panel"></a>协作面板与外部协作者
 
-在 GitHub、Gitea 等平台与外部协作者配合时，区分掌握当前对话上下文的**委托人**与仅通过线上载体了解情况的**外部协作者**。平台支持多视图项目面板（如 GitHub Projects v2）时，优先以**协作面板**复用平台原生的精简状态（`Todo / In Progress / Done`）与少量核心视图，直接通过原单据评论区交办派工并由执行侧自动同步面板状态；面板 `README` 仅放长期稳定的面板说明与协作要求（可在受控规则仓库保留 Git 镜像双向对账防覆盖），`Status Updates` 追加注明截止时点的阶段快照，真实 Issue / PR 侧栏与薄讨论单承接双向交流（无面板平台回退采用主控 Issue 主楼面板）。委托人拍板的决定脱敏同步上墙，协作者常规问题经后台核实后在原单据直接以同事口吻闭环。对外文稿一律按零会话上下文起草、分清主次，严格执行**「后台子代理只落盘草稿 → 前台把关通过 → 再调外部命令发布并回读销账」**。详见[协作面板与外部协作者](references/collaboration.md#shared-issue-panel)。
+在 GitHub、Gitea 等平台与外部协作者配合时，区分掌握当前对话上下文的**委托人**与仅通过线上载体了解情况的**外部协作者**。平台支持多视图项目面板（如 GitHub Projects v2）时，优先以**协作面板**复用四态生命周期（`Todo / In Progress / Delay / Done`）与少量核心视图，直接通过原单据评论区交办派工并由执行侧自动同步面板状态。`Delay` 是人或其他协作者的手工挂起：实时监听发现条目进入 `Delay` 后，编排侧立刻停止该条目的后台自动改写；隔离 worktree 里已有未合入的实质性进度时，提交并推成远端 `Draft` PR（不进对外发布仓，也不把未推送提交只留在本机），附简短交接评论后停手。回到 `In Progress` 时先看操作者与评论，区分协作者自己继续做，还是明确交还编排侧。GitHub 内置 `Item closed` 与 `Pull request merged` 把关闭的 Issue 和已合并 PR 送入 `Done`，反向「`Done` 时关闭 Issue」保持关闭。面板 `README` 仅放长期稳定的面板说明与协作要求（可在受控规则仓库保留 Git 镜像双向对账防覆盖），`Status Updates` 追加注明截止时点的阶段快照，真实 Issue / PR 侧栏与薄讨论单承接双向交流（无面板平台回退采用主控 Issue 主楼面板）。委托人拍板的决定脱敏同步上墙，协作者常规问题经后台核实后在原单据直接以同事口吻闭环。对外文稿一律按零会话上下文起草、分清主次，严格执行**「后台子代理只落盘草稿 → 前台把关通过 → 再调外部命令发布并回读销账」**。详见[协作面板与外部协作者](references/collaboration.md#shared-issue-panel)与[状态流转与派工同步](references/collaboration.md#status-and-ready-gate)。
 
 ## <a id="delivery"></a>交付验收
 
