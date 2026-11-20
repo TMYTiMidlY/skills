@@ -6,11 +6,11 @@ MiniMax 官方终端编码 agent（包名 `@minimax-ai/code`，内部代号 `mav
 
 ## <a id="cli-capabilities"></a>安装形态与 CLI 能力
 
-独立安装器部署在 `~/.minimax-code/`，通过 `~/.local/bin/` 暴露三个命令入口：
+独立安装器默认部署在 `~/.minimax-code/`。不同安装代际的 launcher 和工具包位置按版本核对。
 
 | 入口 | 指向 | 作用 |
 |---|---|---|
-| `mcode` | `~/.minimax-code/bin/mcode` → `releases/<ver>/bin/mcode` | 主 TUI 与非交互 CLI（设置 `MINIMAX_STANDALONE_INSTALL=1` 并以自带 Node 启动 `cli.js`） |
+| `mcode` | `~/.minimax-code/bin/mcode` 经 `current` 选择版本化 release，启动包内 `cli.js` | 主 TUI 与非交互 CLI。`0.7.7` 本机安装使用安装器选定的 Node |
 | `mcode-tools` | `embedded/mcode-tools/cli.mjs` | 模型侧受管工具子进程（通过父进程注入的 Unix socket 租用 OAuth token） |
 | `mavis-trash` | `embedded/trash/cli.mjs` | 内置安全删除工具 |
 
@@ -30,6 +30,12 @@ MiniMax 官方终端编码 agent（包名 `@minimax-ai/code`，内部代号 `mav
 | `mcode provider list / use / add` | 查看或切换模型鉴权源（`token-plan` 或 `api-key`）及自定义 provider |
 
 **关键斜杠命令**：`/login` 登录、`/logout` 登出、`/status` 查看账号与套餐额度、`/provider` 切换模型源、`/session` 切换会话、`/compact` 压缩上下文、`/plan` 规划模式。
+
+### <a id="exec-streaming"></a>非交互输入与会话恢复
+
+以 `mcode exec --cwd <path> --output-format stream-json` 启动单次调用。Swarm 适配用 stdin 传正文，另可在 argv 指定 prompt。`0.7.7` 的 `exec --help` 核对了输入格式 `text`、`json`，输出格式 `text`、`json`、`stream-json`，以及作用于已有 active Session 的 `--session <id>`。恢复时核对原生 ID、工作区与服务身份，`--continue` 按 cwd 选择最近的 active Session。`mcode provider list --json` 读取本机配置目录。跨进程恢复和实验性同轮追加分别见[运行时所有权](#shared-runtime-ownership)和[运行中追加](#live-steer)。
+
+> `0.7.7` 的核验包括 help、只读 provider 目录和安装器 SQLite 检查。Inspector 实验仍以对应章节的版本为准。
 
 ## <a id="auth-storage"></a>鉴权存储与多进程行为
 
@@ -149,9 +155,23 @@ TUI 的 `/status` 与状态栏展示的用户名、套餐等级及 5 小时 / �
 | `<dataDir>/v2/sessions/YYYY/MM/DD/<HHMMSS>-session_<id>/` | 单条会话目录，含 `session.json`、`messages.jsonl`、`events.jsonl`、`wire.jsonl`、`artifacts/` |
 | `<dataDir>/v2/mcode/recent-workspaces.json` | 最近打开的工作区列表 |
 
+### <a id="shared-runtime-ownership"></a>共享状态库与运行时所有权
+
+两个 `MINIMAX_DATA_DIR` 如果共用 `v2/sqlite` 与 `v2/sessions`，还要核对它们的 `v2/runtime-owner-leases` 是否解析到同一目录。mcode 0.6.12 的恢复逻辑通过 instance ID 对应的 `.owner` 标记判断在途会话是否仍有活写者。现场出现过两个账号共用 SQLite、各自使用独立标记目录的布局，新进程因看不到另一个目录的标记，将在途回合判成旧运行时遗留并取消。单凭退出 130 或 `safety-review-aborted` 无法区分此故障、外部取消与其他终态。
+
+核对旧进程、SQLite 的错误原因与 owner 标记的真实路径。经授权处理时，待受影响目录无活跃使用者后统一共享状态及 owner 命名空间，继续隔离凭据和认证锁。验证另一账号新进程启动后原 turn 继续推进，保留修复前布局供回退。
+
+> 同版案例还发现仅改 `features.delegation` 可能仍暴露创建子会话的 `task`。当账号并发约束包含原生子会话时，限制实际工具目录，并从模型请求工具列表与子任务记录核验。其他版本先核查自己的门禁与状态布局。
+
 ### <a id="skills-discovery"></a>Skills 自动发现路径
 
 `mcode` 启动时合并两类 Skills 目录（见 `chunk-X3PES5WL.js`）：
 
 1. **数据目录内**：`<dataDir>/skills` 与 `<dataDir>/.builtin-skills`。
 2. **真实主目录与工作区向上查找（不受 `MINIMAX_DATA_DIR` 影响）**：按优先级扫描工作区 `.minimax/skills`、`.claude/skills`、`.agents/skills` 以及个人级 `~/.claude/skills`、`~/.codex/skills`、`~/.agents/skills`。
+
+## <a id="live-steer"></a>运行中追加与调试通道
+
+Swarm 曾在 mcode 0.6.13 与 Node 24.18.0 的自有 print 进程上验证实验性 Inspector 桥，0.6.12 保留为兼容候选。该桥依赖运行中的实际包版本、内部事件边界、当前会话与回合，可以带来短暂调试暂停。预检时把调试通道及影响作为单独能力，冻结在 run 配置中，并在获准后才启用。
+
+操作仅限由 runner 持有并核实身份的进程。串行持有本地调试端点，核对没有无关监听者及目标 PID、session、turn 一致；版本或当前回合变化时停止操作。投递结束后核对进程已恢复、调试状态和端点已关闭。受理回执与清理结果分别记录；用关联消息、原生事件和后续结果确认消费。旧 run 使用冻结的驱动与能力声明，升级后以新运行重验。

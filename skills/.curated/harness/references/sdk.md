@@ -1,11 +1,10 @@
-# Coding-agent SDK：Copilot / Claude / Codex 横向对照
+# Coding Agent 程序化接入
 
 要用代码驱动 coding agent，先分清接入的是**模型 API**，还是已经包含规划、工具调用、文件编辑、
 shell、权限与会话循环的 **agent runtime**（agent 运行时）。这不是语言覆盖问题：类型选错后，
 即使 SDK 支持再多语言，也仍要自己补齐缺失的 harness。
 
-本文把容易混在一起的三件事拆开：接入层级、运行时所有权、传输协议；再对照 Copilot、
-Claude、Codex 的官方 agent SDK。横向对照基线为 **2026-07-14**；Codex 的 SDK 运行入口与 MCP server 迁移补核于 **2026-11-11**。上游源码链接锁到 tag 或 commit，滚动版本在写入产品文档前仍应重新核对。
+接入前先确定由谁持有运行时、要用哪种传输，以及需要哪些会话能力。Copilot、Claude Code、Codex 用于对照官方 Agent SDK，OpenCode、Pi 和 Paseo 展示其他接入形态。实际模型由运行时的 provider、配置默认值或本次显式请求决定。横向对照基线为 **2026-07-14**，Codex SDK 运行入口与 MCP server 迁移补核于 **2026-11-11**。非交互适配和外部执行器的版本证据见各节。
 
 ## <a id="integration-layers"></a>接入层级
 
@@ -211,6 +210,10 @@ session.disconnect()
 
 > 来源：[`SDK_PROTOCOL_VERSION`](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/sdkProtocolVersion.ts#L5-L18)、[v1.0.6 npm manifest](https://registry.npmjs.org/@github/copilot-sdk/1.0.6)、[runtime bundling](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/README.md#L39-L40) 与 [`mode: "empty"`](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/nodejs/src/types.ts#L205-L233).
 
+### <a id="copilot-model-catalog"></a>模型目录与 CLI 入口
+
+程序化查询模型目录用 SDK 的 `client.models.list()`，保留返回的模型 ID、可用性及采样时间。CLI 的 `--model` 接受模型名或 `auto`。`1.0.114 --help` 核对了 `-p/--prompt`、`--output-format json` 和 `--resume`。CLI 的 resume 还可接受 ID 前缀或会话名，自动恢复时传入完整原生 ID 并回读绑定。
+
 ### <a id="copilot-files"></a>源码、类型声明与缓存位置
 
 | 位置 | 内容 | 稳定性 |
@@ -222,10 +225,97 @@ session.disconnect()
 
 > 来源：Python SDK 的跨平台 cache 规则见 [`_cli_download.py`](https://github.com/github/copilot-sdk/blob/7e2900416b1ac835785fa26e0eb5f634ff24adf9/python/copilot/_cli_download.py#L1-L9).
 
+## <a id="headless-cli"></a>非交互 CLI 接入
+
+每次调用保留独立 invocation，关联原生 session/turn、进程、完整日志和退出结果。双向输入与持久控制按[接入层级](#integration-layers)选择 SDK 或原生协议。
+
+### <a id="capability-checks"></a>能力声明与启动预检
+
+按产品、接口模式与版本声明启动、观察、精确恢复、同回合追加、后续排队与取消。分别记录能力声明、参数构造或假 CLI 回归、实际二进制预检、端到端实机验收。启动前核对可执行文件、版本、配置、必需能力和实验开关。所选入口缺能力时，由调用者明确选择替代接口。
+
+| 入口 | 原生输入、身份与恢复 |
+| --- | --- |
+| Codex | [`exec --json` 与精确恢复](codex.md#exec-resume)，或 [app-server 原生控制](codex.md#native-session-control)。 |
+| MiniMax Code | [`mcode exec` 与会话](mcode.md#exec-streaming)，[实验性同轮追加](mcode.md#live-steer)。 |
+| Claude Code | `-p` 支持 stdin，`--output-format stream-json --verbose` 的 `system/init` 提供 `session_id`，用 `--resume <id>` 精确指定。单轮 print 与 `--input-format stream-json` 的双向入口分别验收。 |
+| Kimi Code | [`--prompt`、`--session` 与输出信号](kimi.md#headless-cli)。 |
+| MiMo | Swarm 的 `run` 样例以受控 cwd 和 argv 启动，用 `--session` 组装恢复请求。已有构造和读取测试，原生身份与恢复须另作部署验证。 |
+| Antigravity | [`--print`、`--conversation` 与流式 JSON](antigravity.md#headless-cli)。 |
+| Pi | [JSON print、原生终态与恢复](pi.md#json-print)。 |
+| OpenCode | `2.3.2` 的 `opencode run --format json --session <id>` 支持 JSON 输出。help 明示目标缺失时可能新建会话，严格恢复须先核实目标。 |
+
+目录查询与实际模型调用分别验证。优先使用原生 ID 或 alias，例如 [Codex 分页目录](codex.md#server-binding)、[Kimi 配置目录](kimi.md#headless-cli)、Claude 双向控制初始化的 `models`、[Copilot SDK 目录](#copilot-model-catalog)或 Pi `--list-models`。记录来源是服务端、本机配置还是缓存，同时保存采样时间、默认标记和缺失字段。备用入口分别核对模型、effort、上下文、权限和输出控制，参数缺映射时报告失败。外层规则经原生 system/developer 通道传入，入口缺少所需通道时明确失败。
+
+> Swarm 样例对各入口有参数构造和读取测试。2026-11-19 实机以 `--help`、认证状态和目录读取核对各产品的可见入口，Claude Code `2.1.327` 核对了 print、resume 与双向事件参数，未新建模型回合。产品章节各自记录历史完整回合的版本。
+
+### <a id="run-evidence"></a>输入、终态与恢复证据
+
+私有运行记录保存实际 argv、cwd、二进制身份、配置版本、输入摘要及字节数、配置模型/effort、原生可核实模型和会话 ID。用受控 stdin 或 argv 传入。argv 即便绕过 shell，仍可能被进程查看工具读到并受系统长度限制。输入快照及 stdout/stderr 完整日志只保存在运行者可读的目录，对外仅给必要元数据。模型自述作为正文保存，身份依据来自结构化原生字段。
+
+逐个解析完整协议帧，保留退出码、watchdog、取消回执和最后一轮的终态。收到新回合起始就清除旧终态，预览缺终态时查完整日志。原生自动重试后按最后一轮判定。具体事件见 [Codex JSON 终态](codex.md#exec-json-terminal)与 [Pi JSON print](pi.md#json-print)。
+
+恢复使用精确原生 ID，并核对 cwd、服务身份与账号目录、实际权限、模型和输出约束。先查可能存活的子进程与外部状态，新 invocation 关联原调用和回读身份。若目标缺失时入口可能静默创建会话，先只读验证目标存在与严格恢复语义，再放行有副作用的 prompt。早取消或输出截断可能缺原生 ID，保留身份未知状态，见 [Kimi 的退出提示](kimi.md#headless-cli)。
+
+### <a id="profiles-and-quota"></a>账号目录与只读额度
+
+登记实际存在的规范化 profile 根目录，通过受控环境选择原生方案，例如 `CODEX_HOME`、`MINIMAX_DATA_DIR`、`KIMI_CODE_HOME`、`MIMOCODE_HOME`、`CLAUDE_CONFIG_DIR`。同时核对外部 key、Keychain、环境覆盖、代理与原生服务身份。目录绑定和认证绑定分别验证。私有 manifest 维护完整映射，对外只显示脱敏 profile、隔离范围及检查结果。复用已有凭据生命周期。共享可变会话存储时额外核对[运行时所有权](mcode.md#shared-runtime-ownership)。
+
+额度限定为所选账号在受信第一方 API 上的只读查询。认证输入来自限长常规文件，HTTP 设超时、响应上限和重定向边界。快照留采样时刻、缓存状态、窗口和重置时间，区分不支持、认证失效、超时、过期、异常响应和缺窗口。模型支持、真实调用、使用量与账号并发各自取证。额度重置券由用户另行授权。
+
+### <a id="quota-fallback"></a>限流与备用入口
+
+从完整事件流中的原生错误、重试事件或明确传输错误识别 429。模型和工具输出引用的错误文字、截断预览只作为正文。需要接管 CLI 内部重试时，对本次调用按[进程归属](#workspace-ownership)有界停止，再核对限流、超时、取消和账号状态。
+
+按已核验的服务及账号键更新共享退避期限，同时区分单次调用 429 与账号停止准入。查询失败保留未知，并绕过失败缓存重查。短窗重置后实际复查，长窗耗尽按政策停派，两窗仍有剩余时有界退避。健康账号可继续运行，等待能被停止请求唤醒。
+
+备用池使用已授权的有序候选，每项明确账号、适配器、模型与权限，跳过证实不可用者并保存选择理由。工作区内串行派发。先明确是用兼容接口接续原生会话，还是从持久工作区状态新开会话。缺可信会话 ID 或绑定改变时停下核对。轮换时同步预算、检查点和在途状态，授权的轮换规则只用于后续派发。任务调度和跨账号容量分配归 `superagent` skill。
+
+## <a id="external-runner"></a>外部执行器
+
+监督进程管理一次运行，worker 管理一个工作区的循环，原生会话管理对话和回合。任务认领、阶段和验收由业务流程定义。
+
+### <a id="run-manifest"></a>预检与运行快照
+
+固定工作区、入口、子流程、账号、模型、权限、必需能力、预算、停止方式和写入范围。规范化路径并检查缺失、重复、嵌套和共享 Git common-dir，按每种传输做[能力预检](#capability-checks)。认领、写入和发布以该次授权为准。
+
+可执行子流程用异步函数表达循环与并行时，先解析静态子流程路径、检查循环依赖并审阅可执行块，所执行的代码持有解释器的 OS 权限。将入口、依赖图、源码和辅助脚本、驱动、参数、权限、解释器及摘要冻结到业务工作区外的新建私有运行目录。长期后台所需文件和依赖须在监督进程退出后仍可用，新源文件通过新运行或明确迁移生效。
+
+### <a id="workspace-ownership"></a>工作区、进程与账号并发
+
+每个工作区仅一个活跃写者。用共享锁域按固定顺序获取工作区与 Git common-dir 锁，持锁重读记录，后台跨客户端持续执行时保留持久占用。旧快照和第三方客户端可能在锁域之外，交接时另查实际写者。最后一个使用者释放共享 Git 锁。检查 Git 锁、未完成的 rebase/merge、分支和未推送内容。
+
+以明确的 argv、cwd 与独立进程组启动受控 CLI，记录 PID、组和进程启动标识，区分僵尸、PID 复用和无法读取 `/proc`。取消只向确认为本次调用的组发 TERM，等待后按需 KILL，并检查 CLI 遗留的工具与后代进程。共享 daemon 使用其原生精确中断接口。
+
+独立工作区可异步推进，对出错工作区单独保留结果。按账号计算原生子会话及顶层调用的并发。需要限制创建子会话时，在有效工具清单和子任务事件中验收范围。Codex 的实际线程写锁与接管见[会话恢复](codex.md#account-writer)。
+
+### <a id="worker-loop"></a>任务循环、预算与验收
+
+循环按现场检查、任务认领、执行或续接、结果读取、工作区交回推进。新任务从获准基线进入，已有任务先保全工作树并沿用原分支、任务身份、反馈和检查点。认领须由业务端原子处理，回执不明先对账。业务读取失败时退避，只重试读取，确认现状后再派发。
+
+按稳定任务身份加锁累计轮次、墙钟时间、运行总预算和连续基础设施失败，单次调用另设 watchdog。明确派发、失败、取消、限流与预检如何计数。换账号、工作区和 run 时沿用预算，导入历史按派发 ID 去重。预算耗尽在允许的边界保存完成度、受测版本、检查点和余项。
+
+分别验证回合终态、原生 goal、进程退出、PR Ready、独立审查、检查及合并。审查绑定仓库、PR 与确切 head，同一 head 仍可能出现新反馈。冲突评审保留原文、身份、条件和具体主张，交独立复核或按政策阻塞。结构化结果校验身份、重复键与结论。通过原生终态事件恢复格式失败的评审时，验明完整日志、执行身份、事件顺序及明确失败原因，并保留原回执。
+
+### <a id="run-recovery"></a>停止、接管与故障恢复
+
+原子持久化 run、worker、进程、会话与控制请求，追加事件记录状态变化。写入前记录请求 ID 和未决状态，回执核验后再更新；结果不明时由获准操作者据持久状态对账。区分已受理、已消费、已完成、已停止和未知。优雅停止先停止新派发，在已验证支持的入口按授权追加当前轮收口指令；立即停止按实际归属取消并收齐回执。两种方式都保留实际工作树和日志。 [Codex 原生写入恢复](codex.md#mutation-recovery)
+
+接管前比对权威计划和冻结 manifest、工作区、身份、权限、真实进程及停止请求。单独更换监视器时核对 runner 与子进程身份持续存在。真正接管时先确认旧 runner 退出且工作区可交回，然后精确恢复已验证的原生会话，新增指令时另建 invocation。遇到锁或进程不明、配置漂移或权限变化，保留现场。
+
+外部 API、网络和解析故障先在原 job 环境对同一请求做小范围只读探针，分别核对超时、TLS、认证、状态码、UTF-8 和 JSON。保留私有、有界的原始字节、长度和哈希。恢复后单独试一个受影响 worker，验证读取及现场，再按原并发限制逐一恢复。若修复涉及新快照，核对实际 run 目录。健康 worker 继续工作。
+
+### <a id="worker-patrol"></a>运行巡检与回执
+
+巡检核对计划、实际 run、原生会话、完整事件、工具进程、工作区分支与 head，以及 PR 的真实 head 和检查状态。流式 `item.updated` 等有效事件计入最近活动。进程存活、模型活动与业务进度各自取证。匹配 PR 时区分读取失败、无匹配、多候选与采证间发生变化。
+
+定时投递用请求 ID 关联触发、入口受理或排队、实际消费、报告送达与应答。已有请求 pending 或结果不明时先查原请求。运行收口后逐一停止并核对关联调度。旁路监控、经授权收口及向用户汇报归 `superagent` skill。
+
 ## <a id="server-integration"></a>多用户服务化
 
 SDK 已经解决“如何驱动一个 agent runtime”，但 Web 服务还要解决多用户、多标签页、长生命周期、
 可恢复与隔离。下面是服务层模式，不是三家 SDK 共享的 API。
+
+批量驱动多个独立工作区见[外部执行器](#external-runner)。重连 Codex 的持久会话见[服务端与线程绑定](codex.md#server-binding)。
 
 ### <a id="session-ownership"></a>会话与连接所有权
 

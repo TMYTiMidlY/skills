@@ -12,15 +12,19 @@ Google Antigravity 的终端 CLI（`agy`）与桌面版（Antigravity App / IDE�
 
 | 旗标 | 作用 |
 |---|---|
-| `--print` / `-p` | 单次非交互执行 |
-| `--conversation <id>` | 恢复指定会话 |
+| `--print` / `-p`、`--conversation <id>` | [非交互执行与恢复](#headless-cli) |
 | `--model <name>` | 指定模型 |
 | `--mode auto` | 自动审批模式（安全命令不询问） |
-| `--output-format stream-json` | 机器可读输出 |
 | `--gemini_dir <path>` | **隐藏旗标**：指定 `.gemini` 目录（绝对路径直接生效，相对路径相对于 `$HOME`）；多账号用法见[鉴权存储与多账号](#multi-account) |
 | `--app_data_dir <rel>` | **隐藏旗标**：指定相对于 `.gemini` 根的应用数据子目录名（默认 `"antigravity-cli"`）；隔离时的取值约束见[鉴权存储与多账号](#multi-account) |
 
 **关键斜杠命令**：`/context` 查看上下文用量、`/compact` 手动压缩、`/resume` 列出并恢复会话、`/usage` 查看额度、`/plan` 规划模式。
+
+### <a id="headless-cli"></a>非交互调用与会话恢复
+
+单次调用用 `agy --output-format stream-json --print '<prompt>'`。续接在 `--print` 前传 `--conversation <id>`，按 native `conversation_id`、cwd 与账号绑定回读。Swarm 的单发样例以受控 cwd 和 argv 启动，具体部署须验收原生 ID 和严格恢复。双向输入用 `--input-format stream-json` 和 `--output-format stream-json`，stdin 每行一个 NDJSON 消息。流式结果按官方事件状态判定，保留原生结果和退出码。
+
+> `1.5.12` 实机核对了上述 help 旗标，读通 `agy models`。单轮和双向运行事件见 [Antigravity 非交互文档](https://antigravity.google/docs/cli/headless/)。
 
 ## <a id="full-access"></a>权限体系与 full access 配置
 

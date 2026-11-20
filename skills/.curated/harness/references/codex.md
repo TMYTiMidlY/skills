@@ -454,7 +454,7 @@ RPC 状态使用 v2 的 camelCase 拼写。只改预算并省略状态时，已�
 
 #### <a id="mutation-recovery"></a>未决请求与工作区交回
 
-运行记录、工作区与 Git common-dir 锁、持久占用及未决操作对账见[外部执行器](sdk.md)。原生控制、print runner 与接管工具共用该锁域，同时保证每个 Codex 线程只有一个活跃写者。写 RPC 前保存请求 ID，收到回执后验证方法要求的 ID、状态和实际设置。回执失效或丢失时，按原记录重新观察线程、回合、goal、队列和本地日志，待有权操作者处理未决请求后再投递。尤其注意 create、start、steer、queue 可能已经生效。
+运行记录、工作区与 Git common-dir 锁、持久占用及未决操作对账见[外部执行器](sdk.md#run-recovery)。原生控制、print runner 与接管工具共用该锁域，同时保证每个 Codex 线程只有一个活跃写者。写 RPC 前保存请求 ID，收到回执后验证方法要求的 ID、状态和实际设置。回执失效或丢失时，按原记录重新观察线程、回合、goal、队列和本地日志，待有权操作者处理未决请求后再投递。尤其注意 create、start、steer、queue 可能已经生效。
 
 暂停、清除、中断各有独立回执，旧请求仍须对账。交回前读回 `idle` 或 `notLoaded`，验证队列为空、goal 非 Active、无未决请求和输入／审批，并核对后台工具与外部写者。确认后释放的是外部持久占用。Codex 自身写锁及跨账号接管按[接管检查](#account-handoff-checks)处理。
 

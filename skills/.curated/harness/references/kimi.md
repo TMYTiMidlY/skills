@@ -26,6 +26,14 @@ Kimi 自己的 README 也把上游关系限定为 **TUI 建在 `pi-tui` 上**；
 🔬 对完整公开历史（根提交 [`842e699`](https://github.com/MoonshotAI/kimi-code/commit/842e699a643d8a60647bd824d28255c56ad61a42) 至 `4b04492`）扫描 manifests、lockfile 与源码，Pi 相关的 agent 包均未出现；公开首版也只有 `@earendil-works/pi-tui`。这项检查能确定公开代码的依赖与路由边界，不能证明或排除公开仓库之前的思想、设计或代码来源。
 > `@mariozechner/clipboard` 仍是 CLI 的可选原生剪贴板依赖，见 [`apps/kimi-code/package.json#L80-L95`](https://github.com/MoonshotAI/kimi-code/blob/4b044926e3ca4bc98916128a9fb4ce2b2906cc4f/apps/kimi-code/package.json#L80-L95)；它不属于 Pi 的 agent runtime。
 
+## <a id="headless-cli"></a>非交互调用与会话恢复
+
+`kimi --prompt <prompt> --output-format stream-json` 接收单个 argv 提示词。恢复用 `--session <id>`，省略 ID 会进入交互式选择，`--continue` 按 cwd 选最近会话。自动化先核对原始 ID 与工作区。`kimi provider list --json` 输出本机 providers 与 models，选择 `--model` 时用其中的 alias。连接权限和端点实际模型须另行核对。对外只提供过滤后的模型元数据。
+
+stdout 的 assistant／tool 消息和 stderr 的提示分开收集。Swarm 在 `2.3.2` 观察到退出附近的 `meta/session.resume_hint` 可以提供会话 ID，早取消时可能缺 ID。缺 ID 时先检查原生会话记录，再决定是否续接。
+
+> `2.6.3` 本机核验了 prompt、stream-json 与 session 旗标，并读通配置目录。退出提示和早取消行为依据 `2.3.2` 样本。 [官方命令参考](https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command.html)
+
 ## <a id="home"></a>数据目录 `~/.kimi-code` 与 config.toml
 
 根目录默认 `~/.kimi-code`，`KIMI_CODE_HOME` 可整体重定向（config、sessions、logs、OAuth 凭证全落新路径）📄。

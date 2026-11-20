@@ -501,7 +501,7 @@ Cursor CLI 文档把配置优先级概括为“project → global → nested”�
 
 随后用 `agent mcp list-tools github` 验证。PAT 和托管 HTTP 版本见 [`github/github-mcp-server` 的 Cursor 安装指南](https://github.com/github/github-mcp-server/blob/main/docs/installation-guides/install-cursor.md)。
 
-> 依据：[Cursor MCP 配置文档](https://cursor.com/docs/mcp)与[Cursor CLI MCP 文档](https://cursor.com/docs/cli/mcp)（2026-08-26 核）；实测 Cursor CLI `2026.08.11-e8db854` 的 `agent mcp --help`。Cursor 闭源，父目录重名合并的未公开部分保持未定。
+> 依据：[Cursor MCP 配置文档](https://cursor.com/docs/mcp)与[Cursor CLI MCP 文档](https://cursor.com/docs/cli/mcp)（2026-11-19 核）。`2026.08.11-e8db854` 的 `agent mcp --help` 已有实测，`2026.11.17-f532c45` 复核了 `list`、`list-tools`、`enable`、`disable` 等子命令和缺少 `add`／`remove` 的边界。父目录重名合并的未公开行为仍未核实。
 
 ## <a id="synthesis"></a>横向综合
 

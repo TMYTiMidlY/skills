@@ -29,7 +29,7 @@
 ## 定位与设计取向
 
 pi 是 Mario Zechner（`badlogic`，libGDX 作者）2025-08 发布、现由 **Earendil** 维护、Armin Ronacher（`mitsuhiko`）共同维护的**终端编码 agent CLI**。
-核心极小（LLM ↔ 4 个工具 ↔ 会话树），一切工作流靠 TS 扩展与 skill 补齐。官网 <https://pi.dev>，文档 <https://pi.dev/docs/latest>，RFC/路线图 <https://rfc.earendil.com/keyword/pi/>。
+核心极小（LLM ↔ 4 个工具 ↔ 会话树），一切工作流靠 TS 扩展与 skill 补齐。官网 <https://pi.dev>，文档 <https://pi.dev/docs/latest>，RFC/路线图 <https://rfc.earendil.com/keyword/pi>。
 
 > 身份/安装/模型目录：`earendil-works/pi` README 与 `packages/coding-agent/package.json`、`pi.dev/docs/latest/{providers,usage}`；本地 clone HEAD `8479bd84743e8889f728acb21a62794102db0529`；`packages/coding-agent/README.md`（四内置工具、OpenClaw SDK、footer、`PI_CACHE_RETENTION`）；root `README.md:11,47-49`（治理、RFC）。
 
@@ -235,6 +235,12 @@ export interface SessionEntryBase { type: string; id: string; parentId: string |
 > ⚠️ **print/JSON/RPC 不弹信任提示**。若项目未存过信任决定，项目级 `.pi/*` 资源会被**静默忽略**。自动化里用 `--approve`/`-a`、`--no-approve`/`-na` 或 `settings.json.defaultProjectTrust` 显式表态。
 
 > `packages/coding-agent/src/config.ts`:487-560；`src/core/{settings-manager.ts:131-197,package-manager.ts:172-188}`；`docs/settings.md:12-18,204-210`。
+
+### <a id="json-print"></a>JSON print 的终态与恢复
+
+单发适配可用 `pi --print --mode json` 从 stdin 传入 prompt。保留原生 session 与 assistant 事件，等待最终 `agent_settled` 并关联末条 assistant 的 `stopReason`。自动重试、压缩和排队工作可能跨越 `agent_end`。曾观察到模型失败而进程退出 0。要求完整输出的任务以 `stop` 为成功候选，`error` 或 `length` 为失败，`aborted` 为取消，其他状态或缺证据保留未知。
+
+Swarm 的适配案例只允许新建会话。启用严格恢复前，先验证目标会话文件存在，再核对实际加载的原生身份。 [Pi JSON 输出说明](https://docs.pi.dev/latest/json)
 
 ### <a id="rpc"></a>RPC 协议（🟩）
 
@@ -803,7 +809,7 @@ DIY：`ssh` + `tmux attach`（手机 SSH 客户端如 Termius）；`--mode rpc` 
 | [jmfederico/pi-web](https://github.com/jmfederico/pi-web) | 网页 UI（持久会话）；无 `ask_user` 桥（见 [扩展交互协议](#webui-askuser)） | ⬜ |
 | [badlogic/sitegeist](https://github.com/badlogic/sitegeist) | 浏览器 AI 助手（被删 `pi-web-ui` 的真正归宿） | ⬜ |
 | `pi-subagents` / `@tintinweb/pi-subagents` / `@quintinshaw/pi-dynamic-workflows` / `pi-mcp-adapter` / `@hypabolic/pi-hypa` / `pi-web-access` / `context-mode` / `pi-lens` / `@gotgenes/pi-permission-system` … | 见 [生态热门插件](#popular-plugins) | ⬜ |
-| npm `pi-package` keyword · 画廊 <https://pi.dev/packages> · RFC <https://rfc.earendil.com/keyword/pi/> | 发布/发现/路线图 | — |
+| npm `pi-package` keyword · 画廊 <https://pi.dev/packages> · RFC <https://rfc.earendil.com/keyword/pi> | 发布/发现/路线图 | — |
 
 ---
 
