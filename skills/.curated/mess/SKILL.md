@@ -11,11 +11,11 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 
 遇到用户报告的问题与已有案例相似时，先回顾对应 reference，避免重复走弯路。
 
-## 案例索引
+## <a id="case-index"></a>案例索引
 
 每条给出「症状 → 根因」一句话与直达该案例的链接；关键词只列判别力最强的几个，命中后进对应 reference 看全貌。
 
-### `code serve-web`
+### <a id="code-serve-web"></a>`code serve-web`
 
 见 [code-serve-web.md](references/code-serve-web.md)。
 
@@ -28,7 +28,7 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 - **Codex 扩展报 `command 'chatgpt.openSidebar' not found`，重装无效** → openai.chatgpt 26.917 起硬依赖 `openai.codex-audio`（`extensionKind: ["ui"]`、无 browser 入口），纯 Web 窗口没有 UI 扩展宿主，依赖边连成的整组被静默排除出扩展列表；删掉已装扩展 package.json 里的 `extensionDependencies` 即恢复 → [直达](references/code-serve-web.md#chatgpt-opensidebar-dep)
   - 关键词：`chatgpt.openSidebar`、`command not found`、`openai.codex-audio`、`extensionDependencies`、`extensionKind ui`、`serve-web 扩展不激活`、`无 _doActivateExtension`、`全新浏览器无图标`
 
-### Windows 宿主机
+### <a id="windows-host"></a>Windows 宿主机
 
 见 [windows.md](references/windows.md)。
 
@@ -41,7 +41,7 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 - **受管客户端在 RDP 中白屏，ToDesk 黑屏且 KimiCU 截图失败** → 客户端分别通过 `SetVisible(false)` 隐藏网页视图、通过 `SetWindowDisplayAffinity` 排除捕获 → [案例](references/windows.md#managed-client-display)
   - 关键词：`RDP 白屏`、`ToDesk 黑屏`、`KimiCU`、`WGC`、`PrintWindow`、`WDA_EXCLUDEFROMCAPTURE`、`SetVisible`
 
-### WSL2
+### <a id="wsl"></a>WSL2
 
 见 [wsl.md](references/wsl.md)。
 
@@ -54,7 +54,7 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 - **「组网正常却入口全断」：WSL 服务握手即断、502 与守护进程成批死亡** → 宿主卷余量饿死动态 VHDX，guest ext4 收 EIO 成批团灭守护进程；干净重启靠 journal 回放自愈。含无密码跨用户修复通道与 vmIdleTimeout 陷阱 → [直达](references/wsl.md#vhdx-host-starvation)
   - 关键词：`kex_exchange_identification`、`Connection closed by remote host`、`portproxy 后端假活`、`wslrelay`、`getpwnam(root) failed 5`、`WSL_E_USER_NOT_FOUND`、`EIO 不是 ENOSPC`、`VHDX 断供`、`fstrim`、`vmIdleTimeout`、`跨用户 WSL CreateProcessAsUser`、`S4U Access denied`
 
-### Linux（服务器 / 容器 / 工具链）
+### <a id="linux"></a>Linux（服务器 / 容器 / 工具链）
 
 见 [linux.md](references/linux.md)。
 
@@ -67,7 +67,7 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 - **鉴权静态站子目录全 403，根目录文件正常，登录疑似失效** → 部署脚本 `mkdir` 继承 shell umask 0077 造出 0700 目录，Caddy `file_server` 对 EACCES 返回 403；forward_auth 让匿名探测永远 401，把真凶完全挡住 → [直达](references/linux.md#caddy-forwardauth-403-umask)
   - 关键词：`file_server 403`、`EACCES`、`forward_auth 掩蔽`、`umask 0077`、`子目录 0700`、`namei -l`、`Failed to fetch dynamically imported module`、`错误信息带状态码再排查`
 
-### NAS / Synology
+### <a id="nas"></a>NAS / Synology
 
 见 [nas.md](references/nas.md)。
 
@@ -78,35 +78,37 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 - **NAS 换 IP 后 iSCSI LUN 连不上** → portal 改了仍超时，因为持久化目标条目单独记着旧地址、不随 portal 更新；ARP 不可达被误判成设备关机 → [直达](references/nas.md#iscsi-ip-change)
   - 关键词：`已经通过 iSCSI 会话登录目标`、`HRESULT 0xefff003f`、`iscsicli ListPersistentTargets`、`ClearPersistentTargets`、`Test-NetConnection 假阳性`、`ARP Unreachable 误判关机`、`不要 Initialize-Disk`
 
-### 浏览器端 PDF 预览
+### <a id="browser-pdf-preview"></a>浏览器端 PDF 预览
 
 见 [pdfjs-tohex.md](references/pdfjs-tohex.md)。
 
 - **旧浏览器打开 PDF 全白，报 `hashOriginal.toHex is not a function`（压缩构建里是 `n.toHex is not a function`）** → pdf.js 从 `5.4.624` 起删掉了 `Uint8Array.prototype.toHex` 的手写 fallback，standard build 无条件依赖这个很新的 TC39 API；官方唯一正解是改用 legacy build，不是降级也不是自己写 polyfill → [直达](references/pdfjs-tohex.md#symptom)
   - 关键词：`hashOriginal.toHex is not a function`、`n.toHex is not a function`、`Uint8Array.toHex`、`pdfjs-dist`、`legacy build`、`legacy/build/pdf.worker.min.mjs`、`PDF 预览全白`
 
-### MinerU 转录（VLM）
+### <a id="mineru-vlm"></a>MinerU 转录（VLM）
 
 见 [mineru-vlm.md](references/mineru-vlm.md)。
 
-- **MinerU 转出的 full.md 里 grep 数字/常见单词命中率异常，逐字引用与原文对不上** → VLM 的静默误识四类（均已与 PDF 文本层对照坐实）：ff 连字系统性丢一个 f（全库 `eficient`×1650/`diferent`×1751）、LaTeX 数学环境内数字被空格拆散（`$1 0 2 4 0$`，精确 grep 全失效）、弯引号误认成上标 66/99（PDF 层字节是 U+201C/201D）、游离字符混入行内公式；pdftotext 错得张扬、VLM 错得沉默，两层互补，逐字引用回对 PDF → [直达](references/mineru-vlm.md#症状fullmd-检索命中率异常逐字引用对不上)
+- **MinerU 转出的 full.md 里 grep 数字/常见单词命中率异常，逐字引用与原文对不上** → VLM 的静默误识四类（均已与 PDF 文本层对照坐实）：ff 连字系统性丢一个 f（全库 `eficient`×1650/`diferent`×1751）、LaTeX 数学环境内数字被空格拆散（`$1 0 2 4 0$`，精确 grep 全失效）、弯引号误认成上标 66/99（PDF 层字节是 U+201C/201D）、游离字符混入行内公式；pdftotext 错得张扬、VLM 错得沉默，两层互补，逐字引用回对 PDF
   - 关键词：`full.md grep 不中`、`eficient`、`diferent`、`suficient`、`1 0 2 4 0`、`MinerU 错字`、`引号 66 99`、`ff 连字丢 f`、`VLM 静默错误`、`pdftotext 对照`
 
-### Copilot CLI
+### <a id="copilot-cli"></a>Copilot CLI
 
 见 [copilot-cli.md](references/copilot-cli.md)。
 
 - **会话切换模型后，每轮都报 `400 Missing namespace for function_call`** → Copilot CLI 把 Anthropic 产生的 MCP 调用投影进通用历史时保留了 `mcpServerName` 的事件记录，却没有生成 OpenAI Responses 回放所需的 `functionCallNamespaces` 映射；随后请求在模型响应和 MCP 执行前即被 CAPI 拒绝 → [直达](references/copilot-cli.md#mcp-namespace-roundtrip)
   - 关键词：`Missing namespace for function_call`、`Round-trip the model's function_call item`、`functionCallNamespaces`、`mcpServerName`、`toolu_`、`sessionProjectionRewriteChatHistoryForModelJson`、`切换模型后 400`
 
-### Codex CLI
+### <a id="codex-cli"></a>Codex CLI
 
-见 [codex-usage-accounting.md](references/codex-usage-accounting.md)。
+见 [codex-usage-accounting.md](references/codex-usage-accounting.md)、[codex-github-connector.md](references/codex-github-connector.md)。
 
 - **Terra 一夜的周额度增量高于历史 Sol，怀疑子代理或 500K 计费规则** → 实录显示请求更密、父侧协调负担增加；累计代理数、活动并发、token、账号额度与 API 等价费用需分别核算，子代理附加倍率及订阅扣减机制仍未证实 → [案例](references/codex-usage-accounting.md#overnight-quota-attribution)
   - 关键词：`token_usage_record`、`thread_token_usage`、`response_id 去重`、`Provider Hub quota-history`、`239 累计与 3 并发`、`272K API 与 500K 默认窗口`、`Sol 订阅长上下文豁免`
+- **Git commit 作者与本地 `gh` 登录账号均为 `<user-b>`，但创建、合并 PR 和开 Issue 显示为 `<user-a>`** → 两人共用一个 ChatGPT 账号登录 Codex，内置 GitHub 工具使用该账号绑定的 `<user-a>` 云端连接。可断开该连接，或以 `apps = false` 关闭本地 Codex 的云端应用并改用 `gh` → [案例](references/codex-github-connector.md#shared-chatgpt-github-connector)
+  - 关键词：`merged_by`、`commit 作者与 PR 创建者不一致`、`gh auth status 正常`、`codex_apps`、`account_id`、`apps = false`
 
-### DeepSeek Harness（dsh Web GUI）
+### <a id="deepseek-harness"></a>DeepSeek Harness（dsh Web GUI）
 
 见 [dsh.md](references/dsh.md)。
 
@@ -118,7 +120,7 @@ description: 遇到疑难杂症、相似报错或想回顾既有排障经验时�
 - **单条消息并发派发大批量 subagent 后约三成报 failed，其中部分产物已完整落盘（伪失败）** → 上游订阅 key 的账户级 429 吞吐墙（"已达到 Token Plan 速率限制 (2062)"）：失败率随并发数进平台期；重试链 ~15s 短于限流 ~1 分钟恢复窗口，子代理终止在收尾步时产物已送达 → [直达](references/dsh.md#subagent-burst-429)
   - 关键词：`failed before it finished`、`伪失败`、`rate_limit_error`、`已达到 Token Plan 速率限制`、`2062`、`zstdcat 子会话日志`、`失败率平台期`、`落盘对账`
 
-### Lean 4 / Lake 工具链与 CI
+### <a id="lean-lake"></a>Lean 4 / Lake 工具链与 CI
 
 见 [lean.md](references/lean.md)。
 
