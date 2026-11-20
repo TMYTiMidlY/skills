@@ -159,6 +159,7 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
 ### 作用域与目录遍历边界
 
 - **工作区侧**：从当前目录向上遍历至 Git 仓库根（`.git` 所在目录；若当前目录不在 Git 仓库内，则只扫描工作区当前目录本身），探测各层的 `.agents/` 与 `.gemini/`，以及工作区各级 `AGENTS.md` / `GEMINI.md`。**不向仓库外继续上溯，也不向下扫描未打开的子目录**；单层目录下的 `skills/<name>/SKILL.md` 仅向下探测一层。
+- **非 Git 多仓父目录**：当前目录若不是 Git 仓库，Antigravity 只扫描当前目录本身，不会向下进入子仓库读取其 `AGENTS.md` 或 `.agents/skills/`。子仓库的规则与技能只有在会话或委派 worker 以该 Git 仓库或 worktree 根为 `cwd` 启动时才会生效。
 - **个人全局侧**：默认环境下，CLI 后端 `globalCustomizationDirs` 仅枚举三个配置根——`~/.gemini/antigravity-cli`、`~/.gemini` 与 `~/.gemini/config`。**`~/.agents/` 不在全局扫描列表中**：项目级 `<dir>/.agents/skills/` 可被原生发现，但用户级 `~/.agents/skills/` 不会被 Antigravity 自动发现。
 
 ### Skills 发现、兼容性与优先级
@@ -188,6 +189,7 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
   - `manual`：手动 `@` 触发（官方标注为 App/IDE 侧交互能力）
 - **清单注册与 `@` 引用差异**：通过 `rules.json` 可显式登记更深层子目录或目录外规则文件并保留其 `trigger`。规则正文中，`@[label](path)` 会在单文件大小校验之前内联展开目标文件内容；裸写 `@path` 仅改写引用路径提示，不在加载阶段内联文件内容。
 - **双阈值保护**（`1.5.8` 静态分析）：单文件（含 `@[label](path)` 展开后文本）存在 **24,000 字节**硬上限；全部非内置规则共用 **20,000 token** 全局聚合预算（`defaultRulesBudget`），超出后按体积从大到小将规则文件降级为仅保留路径指针（不再内联全文），仅内置插件自带规则豁免此预算裁剪。
+- **超限文件与预算**：仓库 `AGENTS.md` 超过 **24,000 字节**的单文件上限，或合并规则超过 **20,000 token** 的 `<user_rules>` 预算时，Antigravity 会把超大的规则文件降级为裸路径指针，不再内联正文。因此，文件中通过 prose 串联的后续指令（例如读取 `./AGENTS.local.md` 或跨仓写入边界）不会自动进入 Context；需要通过工具读取，或将细节拆到按需引用的 reference / `model_decision` 规则中并保持内联内容低于上限。
 
 ## <a id="context-compaction"></a>上下文压缩
 
