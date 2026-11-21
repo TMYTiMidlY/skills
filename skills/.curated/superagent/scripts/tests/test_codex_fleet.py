@@ -146,6 +146,16 @@ class PolicyAndStateTests(TemporaryWorkspace, unittest.TestCase):
         self.assertEqual(state.phase, Phase.IDLE)
         self.assertFalse(state.tools)
 
+    def test_late_child_item_cannot_reactivate_completed_turn(self) -> None:
+        state = TurnState("child", "turn")
+        state.observe({"method": "turn/started", "params": {"threadId": "child", "turn": {"id": "turn"}}})
+        self.assertEqual(state.phase, Phase.MODEL_STREAMING)
+        state.observe({"method": "turn/completed", "params": {"threadId": "child", "turn": {"id": "turn"}}})
+        state.observe({"method": "item/completed", "params": {
+            "threadId": "child", "turnId": "turn", "item": {"id": "late", "type": "agentMessage"}}})
+        self.assertTrue(state.completed)
+        self.assertEqual(state.phase, Phase.IDLE)
+
     def test_deferred_guidance_coalesces_at_boundary(self) -> None:
         guidance = DeferredGuidance()
         guidance.defer("capacity", "obsolete")
@@ -592,13 +602,101 @@ class RuntimeTests(TemporaryWorkspace, unittest.IsolatedAsyncioTestCase):
 
     async def test_active_unobserved_child_cannot_be_reported_settled(self) -> None:
         config = self.make_fleet({"MOCK_QUIET_CHILD": "1", "MOCK_CHILD_STATUS": "active"})
-        config["workers"]["one"]["child_drain_timeout"] = 0.15
+        config["workers"]["one"].update(child_drain_timeout=0.15, child_active_timeout=0.4)
         atomic_json(self.path / "fleet.json", config)
         with self.assertRaisesRegex(RuntimeError, "child|subagent|quiesce"):
             await Worker(self.path, "one").run(max_turns=1)
         saved = State(self.path / "state.db").worker("one")
         self.assertTrue(saved["uncertain"])
         self.assertEqual(saved.get("turn_index", 0), 0)
+
+    async def test_active_child_outlives_short_drain_grace(self) -> None:
+        spec, account = self.runtime_spec(MOCK_CHILD_DELAY="0.5")
+        spec.update(child_drain_timeout=0.2, child_active_timeout=2)
+        runtime = Runtime(spec, account, 1)
+        try:
+            await runtime.start()
+            await runtime.open_thread(None, None)
+            result = await asyncio.wait_for(runtime.run_turn("task"), 5)
+            self.assertEqual(result["final_message"], "mock result")
+            self.assertTrue(runtime.tap.states["child-1", "child-turn-1"].completed)
+        finally:
+            await runtime.close()
+
+    async def test_auto_woken_root_turn_supplies_latest_answer_and_items(self) -> None:
+        spec, account = self.runtime_spec(
+            MOCK_CHILD_DELAY="0.35", MOCK_ROOT_WAKE_DELAY="0.06", MOCK_ROOT_WAKE_WORK="0.4",
+        )
+        spec.update(child_drain_timeout=0.25, child_active_timeout=2)
+        runtime = Runtime(spec, account, 1)
+        try:
+            await runtime.start()
+            await runtime.open_thread(None, None)
+            result = await asyncio.wait_for(runtime.run_turn("task"), 5)
+            self.assertEqual(result["id"], runtime.handle.id + "-wake")
+            self.assertEqual(result["final_message"], "updated result")
+            self.assertEqual([item["text"] for item in result["items"] if item["type"] == "agentMessage"],
+                             ["mock result", "updated result"])
+        finally:
+            await runtime.close()
+
+    async def test_active_child_known_only_through_thread_read_can_settle(self) -> None:
+        spec, account = self.runtime_spec(MOCK_QUIET_CHILD="1", MOCK_CHILD_DELAY="0.45")
+        spec.update(child_drain_timeout=0.2, child_active_timeout=2)
+        runtime = Runtime(spec, account, 1)
+        try:
+            await runtime.start()
+            await runtime.open_thread(None, None)
+            result = await asyncio.wait_for(runtime.run_turn("task"), 5)
+            self.assertEqual(result["final_message"], "mock result")
+            self.assertEqual(runtime.reconciled_children, {"child-1"})
+        finally:
+            await runtime.close()
+
+    async def test_child_progress_extends_active_timeout_up_to_hard_cap(self) -> None:
+        for delay in ("0.6", "3"):
+            with self.subTest(delay=delay):
+                spec, account = self.runtime_spec(MOCK_CHILD_DELAY=delay, MOCK_CHILD_PROGRESS_INTERVAL="0.08")
+                spec.update(child_drain_timeout=0.15, child_active_timeout=0.35, max_child_drain_timeout=0.9)
+                runtime = Runtime(spec, account, 1)
+                try:
+                    await runtime.start()
+                    await runtime.open_thread(None, None)
+                    if delay == "3":
+                        with self.assertRaisesRegex(RuntimeError, "subagents failed to quiesce"):
+                            await asyncio.wait_for(runtime.run_turn("task"), 2)
+                    else:
+                        result = await asyncio.wait_for(runtime.run_turn("task"), 2)
+                        self.assertEqual(result["final_message"], "mock result")
+                finally:
+                    await runtime.close()
+
+    async def test_hung_observed_child_hits_active_timeout(self) -> None:
+        spec, account = self.runtime_spec(MOCK_CHILD_DELAY="3")
+        spec.update(child_drain_timeout=0.1, child_active_timeout=0.5)
+        runtime = Runtime(spec, account, 1)
+        root_completed = None
+
+        def observe(event):
+            nonlocal root_completed
+            if event["method"] == "turn/completed" and event["params"]["threadId"] == runtime.thread.id:
+                root_completed = time.monotonic()
+
+        try:
+            await runtime.start()
+            await runtime.open_thread(None, None)
+            with self.assertRaisesRegex(RuntimeError, "subagents failed to quiesce; execution remains uncertain"):
+                await asyncio.wait_for(runtime.run_turn("task", on_event=observe), 2)
+            self.assertIsNotNone(root_completed)
+            self.assertGreaterEqual(time.monotonic() - root_completed, spec["child_active_timeout"])
+        finally:
+            await runtime.close()
+
+    async def test_child_active_timeout_requires_positive_finite_number(self) -> None:
+        spec, account = self.runtime_spec()
+        for value in (0, -1, float("inf"), float("nan"), True, "1"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "child_active_timeout"):
+                Runtime({**spec, "child_active_timeout": value}, account, 1)
 
     async def test_worker_reuses_account_thread_and_hot_capacity_only_at_boundary(self) -> None:
         self.make_fleet()

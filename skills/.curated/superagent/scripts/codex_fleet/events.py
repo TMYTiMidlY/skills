@@ -44,13 +44,15 @@ class TurnState:
     max_attempts: int = 0
     overloaded: bool = False
     tools: set[str] = field(default_factory=set)
+    completed: bool = False
 
     def observe(self, event: dict) -> bool:
         method, params = event["method"], event["params"]
         turn = params.get("turnId") or (params.get("turn") or {}).get("id")
-        if params.get("threadId") != self.thread_id or turn != self.turn_id:
+        if self.completed or params.get("threadId") != self.thread_id or turn != self.turn_id:
             return False
         if method == "turn/completed":
+            self.completed = True
             self.phase = Phase.IDLE
             self.tools.clear()
             return False
@@ -158,9 +160,10 @@ class SubagentTap:
         turn = params.get("turnId") or (params.get("turn") or {}).get("id")
         if tid and turn:
             state = self.states.setdefault((tid, turn), TurnState(tid, turn))
-            self.settled_children.discard(tid)
             event["overload"] = state.observe(event)
             event["phase"] = state.phase.value
+            if state.phase != Phase.IDLE:
+                self.settled_children.discard(tid)
         return event
 
     def __aiter__(self):
@@ -174,7 +177,8 @@ class SubagentTap:
                 if state.thread_id in self.children and state.phase != Phase.IDLE]
 
     def unresolved_children(self) -> set[str]:
-        observed = {state.thread_id for state in self.states.values()}
+        observed = {state.thread_id for state in self.states.values()
+                    if state.completed or state.phase != Phase.IDLE}
         return self.children - observed - self.settled_children
 
     def pending(self) -> bool:

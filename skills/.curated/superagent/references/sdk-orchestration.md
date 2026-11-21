@@ -41,6 +41,7 @@ uv run scripts/codex_dispatch.py run \
 > SDK 的 `auto_review` 同时下发 `approvalPolicy=on-request` 与 `approvalsReviewer=auto_review`，行为不同于等待人工交互确认的原始 `on-request`；高权限沙箱与免审模式仅在用户明确授权的目录与任务范围内启用。启动时除校验 CLI 版本不低于 `0.167.0` 外，还会调用 `config/read` 核实 `multi_agent_v2`、并发槽位与固定角色提示确已生效。
 
 命令在标准输出打印结构化 JSON 摘要（含 `thread_id`、`turn_id`、`status`、`final_message`、`elapsed_s`、前后额度快照与 `reconciled_children`），传入 `--receipt-json` 时同步原子落盘。运行期间脚本并发消费主流与旁路通知，主轮完成后等待全部已知子线程收束，对漏收实时结束事件的子线程通过只读 `thread/read` 补查状态；额度接口偶发异常时仅记录到额度字段，不中断主任务。回合正常完成退出 `0`，执行失败退出 `1`，参数或控制面校验错误退出 `2`。
+收束期间也会消费主线程自动唤醒的后续回合，并返回最新答复。无活跃线程时使用 `child_drain_timeout`（默认 120 秒），活跃时使用随事件进展刷新的 `child_active_timeout`（默认 3600 秒），受 `max_child_drain_timeout` 上限约束（默认等于活跃超时）。Fleet 可在 worker 配置中覆盖这些值。
 
 > 返回 `completed` 仅代表本次模型回合及已知子线程收束，最终目标是否达成仍须结合产物与门禁核实。`--events-jsonl` 以追加方式记录事件流（可能包含提示词与工具输出，请保存在受控路径）。`run` 本身是单次同步命令，前台需要异步派发并保持对话响应时，应结合宿主可用的后台运行与完成通知机制调用。
 

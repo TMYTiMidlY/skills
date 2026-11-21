@@ -9,12 +9,16 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
+OUTPUT_LOCK = threading.Lock()
+
 
 def send(value: dict) -> None:
-    print(json.dumps(value), flush=True)
+    with OUTPUT_LOCK:
+        print(json.dumps(value), flush=True)
 
 
 def notify(method: str, **params) -> None:
@@ -26,6 +30,29 @@ def turn(turn_id: str, status: str = "inProgress") -> dict:
     if status != "inProgress":
         items.append({"id": "answer", "type": "agentMessage", "text": "mock result"})
     return {"id": turn_id, "status": status, "items": items, "error": None}
+
+
+def finish_child(root: str, current: str, child: str, child_turn: str, delay: float,
+                 child_status: dict[str, str], quiet: bool) -> None:
+    interval = float(os.environ.get("MOCK_CHILD_PROGRESS_INTERVAL", "0"))
+    deadline = time.monotonic() + delay
+    while interval and deadline - time.monotonic() > interval:
+        time.sleep(interval)
+        notify("item/agentMessage/delta", threadId=child, turnId=child_turn,
+               itemId="child-message", delta="more work")
+    time.sleep(max(0, deadline - time.monotonic()))
+    if not quiet:
+        notify("turn/completed", threadId=child, turn=turn(child_turn, "completed"))
+    child_status[child] = "idle"
+    wake_delay = os.environ.get("MOCK_ROOT_WAKE_DELAY")
+    if wake_delay is not None:
+        time.sleep(float(wake_delay))
+        follow_up = current + "-wake"
+        notify("turn/started", threadId=root, turn=turn(follow_up))
+        time.sleep(float(os.environ.get("MOCK_ROOT_WAKE_WORK", "0")))
+        answer = {"id": "answer", "type": "agentMessage", "text": "updated result", "phase": "final_answer"}
+        notify("item/completed", threadId=root, turnId=follow_up, item=answer)
+        notify("turn/completed", threadId=root, turn={**turn(follow_up, "completed"), "items": []})
 
 
 def configuration(arguments: list[str]) -> dict:
@@ -67,6 +94,7 @@ def main() -> int:
     root = f"root-{os.getpid()}"
     counter = 0
     limit_reads = 0
+    child_status: dict[str, str] = {}
     for line in sys.stdin:
         request = json.loads(line)
         record(request)
@@ -100,7 +128,9 @@ def main() -> int:
             root = params.get("threadId", root)
             result = {"thread": {"id": root}}
         elif method == "thread/read":
-            result = {"thread": {"id": params["threadId"], "status": {"type": os.environ.get("MOCK_CHILD_STATUS", "idle")}}}
+            tid = params["threadId"]
+            result = {"thread": {"id": tid, "status": {
+                "type": os.environ.get("MOCK_CHILD_STATUS", child_status.get(tid, "idle"))}}}
         elif method == "turn/start":
             if os.environ.get("MOCK_EXIT"):
                 return 4
@@ -125,12 +155,13 @@ def main() -> int:
             notify("item/agentMessage/delta", threadId=root, turnId=current, itemId="answer", delta="mock result")
             quiet = bool(os.environ.get("MOCK_QUIET_CHILD"))
             child_delay = float(os.environ.get("MOCK_CHILD_DELAY", "0"))
+            child_status[child] = "active" if child_delay else "idle"
             if not quiet and not child_delay:
                 notify("turn/completed", threadId=child, turn=turn(child_turn, "completed"))
             notify("turn/completed", threadId=root, turn=turn(current, os.environ.get("MOCK_STATUS", "completed")))
-            if not quiet and child_delay:
-                time.sleep(child_delay)
-                notify("turn/completed", threadId=child, turn=turn(child_turn, "completed"))
+            if child_delay:
+                threading.Thread(target=finish_child, daemon=True, args=(
+                    root, current, child, child_turn, child_delay, child_status, quiet)).start()
             continue
         elif method == "turn/steer":
             send({"id": request["id"], "error": {"code": -32000, "message": "ActiveTurnNotSteerable"}})
