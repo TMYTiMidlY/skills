@@ -1,11 +1,11 @@
 ---
 name: software
-description: 本地软件、CLI 工具与自托管服务的配置和排障知识库。用于 SSH/systemd、终端与包管理工具、语言工具链、PostgreSQL、S3 对象存储、Docker/PaaS、Overleaf/OpenList、科大云盘（Seafile WebDAV/分享链接）、文档处理与发布、论文图编辑器 Tavotto，以及 Windows/WSL/macOS/HarmonyOS 日常软件问题。
+description: 本地软件、CLI 工具与自托管服务的配置和排障知识库。用于 SSH/systemd、终端与包管理工具、语言工具链、PostgreSQL、S3 对象存储、Docker/PaaS、OpenList、科大云盘（Seafile WebDAV/分享链接）、文档格式转换与发布、论文图编辑器 Tavotto，以及 Windows/WSL/macOS/HarmonyOS 日常软件问题。
 ---
 
 # Software
 
-Git 与 jj 的日常操作、隔离工作区、受限网络获取、发版 / 发布 CI、自建 forge 与 git-pages 已迁往 `git` skill。
+Git 与 jj 的日常操作、隔离工作区、受限网络获取、发版 / 发布 CI、自建 forge 与 git-pages 已迁往 `git` skill。USTC Overleaf 客户端与内部接口操作已迁往 `olcli-ustc` skill；学术论文多版本协同、OpenAlex 文献数据获取与 MinerU PDF 转 Markdown 已迁往 `paper-writing` skill。
 
 ## PostgreSQL 读写性能
 
@@ -97,10 +97,6 @@ MAS（`irm https://get.activated.win | iex`；HWID / Ohook / TSforge / Online KM
 
 格式转换覆盖 LaTeX→Word（pandoc 引用处理）、PPTX→PDF（Office/LibreOffice 导出及字体、版式、动态字段与视觉验收）、Markdown→PDF（Calibre、CSS Paged Media、Typst）、PDF→图片（Poppler/MuPDF 与 CJK 兼容性），以及飞书/Lark→Markdown（feishu2md 的权限、配置和表格后处理）。完整流程见 [references/format-conversion.md](references/format-conversion.md)。
 
-## USTC Overleaf / olcli
-
-USTC 自建 Overleaf 的 `olcli-ustc` 安装与一次性 token 无头鉴权、nvm-safe npm prefix、与上游 `@aloth/olcli` 的差异及上游连接 Overleaf 官方站的边界，以及内部 HTTP 项目创建、普通 OT 编辑、评论、Track Changes、Accept/Reject 和 `figures/` 上传实测见 [references/overleaf.md](references/overleaf.md)。同步根必须是编译根（否则产生影子副本）、服务端 latexmk 缓存卡死导致引用变 `?`、`download` 静默失败、把 `OverleafClient` 当库用直取 build 产物，以及本地与 Overleaf 的 TeX Live 版本错配（cleveref first aid），同见该文。
-
 ## 本地中文 ASR
 
 FunASR、Fun-ASR-Nano、Paraformer + VAD + Punc + CAM++、SenseVoiceSmall、Whisper turbo 在 CPU 机器上处理中文长录音的实测经验、切块策略、speaker/timestamp 取舍见 [references/asr.md](references/asr.md)。
@@ -118,14 +114,6 @@ OpenList（AList 的活跃 fork）的 **REST API 编程接入**（两种 token�
 ## 科大云盘（USTC pan，Seafile）
 
 需要在无图形界面环境访问科大云盘（Seafile）时，见 [科大云盘](references/ustc-pan.md)。该页比较网页 SSO、同步客户端、WebDAV 和分享链接的认证方式，说明该部署的 `seaf-cli` 登录限制，并提供 rclone 配置、临时分享直链获取和旧 ZIP 文件名恢复示例。
-
-## MinerU PDF→Markdown 转换
-
-MinerU（mineru.net）提供 VLM/pipeline 云端模型将 PDF、Office、图片和网页转为 Markdown/JSON，支持公式和表格识别。普通自动化默认用官方 Python SDK，需要 callback/`no_cache`/完整 HTTP 控制时用 REST API；官方 MCP 是 SDK 上的 Markdown 导向适配层，适合 MCP 客户端但不是全功能替代。当前精准解析按 200MB/200 页设计，旧的 URL 600 页规则只保留为历史说明。未经用户明确允许，不要在本机安装或部署 MinerU 模型；SDK/MCP 轻量云客户端不属于本地模型部署。安装、能力对比、分卷与结果合并见 [references/mineru.md](references/mineru.md)。
-
-## OpenAlex 数据访问与全文下载
-
-OpenAlex 官方 CLI 的 uv 全局安装、API key / 匿名预算与计费、DOI / filter 元数据下载、Content API 和 OA / 许可证边界，以及网站、OQL/OQO、Snapshot、Sync、R2 全文档案、Unpaywall、Agents 与社区 SDK 的分工见 [references/openalex.md](references/openalex.md)。其中记录了 `openalex-official 0.3.3` 把 Content API 的 `200 application/pdf` 误判为失败且仍计费的交叉实测、源码根因、上游 issue 状态和当前绕行方式。
 
 ## Docker（安装 + 多用户共用）
 

@@ -93,7 +93,7 @@ description: 撰写或修订中文学术论文、docx 短汇报和演示文稿�
 │   ├── chart-<主题B>-v2.png
 │   ├── scene-<主题C>.png         ← 实景 / 概念插画
 │   └── ...
-├── mineru/                      ← MinerU 解析产物，与 images/ 平级（解析细节见 software skill 的 mineru.md）
+├── mineru/                      ← MinerU 解析产物，与 images/ 平级（解析规范见 paper-writing skill）
 │   └── <文献名>/                 ← 每篇 PDF 一个子目录：把 MinerU 结果 zip 原样解压到这里
 │       ├── <原始>.pdf            ← 原始 PDF 一并留存
 │       ├── full.md              ← 解析出的正文 Markdown
@@ -119,7 +119,7 @@ description: 撰写或修订中文学术论文、docx 短汇报和演示文稿�
 - MinerU 把 PDF 转 md 的**结果 zip 统一原样解压到 `<project>/mineru/<文献名>/`**，与 `images/` 平级；原始 PDF 一并留在该子目录便于回查。
 - zip 内含 `full.md`（正文）、对应关系 JSON（md 块 ↔ 页码/坐标）、`images/`（该文献抽出的图）等，是**只读的一手转录底稿** —— 引用核查/二次核验时回查用，不要直接当论文正文改。
 - `mineru/<文献名>/images/` 是文献自带抽出图，**与项目级 `images/`（最终配图单一源）是两码事**，不要混。
-- 解析参数、token、大文件拆分、加密 PDF 等操作细节见 `software` skill 的 `references/mineru.md`。
+- 解析参数、token、大文件分卷合并、加密 PDF 等云端操作规范见 `paper-writing` skill。
 
 ### 信息源与决策记录（项目根，持久化）
 

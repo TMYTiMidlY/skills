@@ -13,7 +13,7 @@
 | `superagent` | 用户明确指定的持续协作前台：保留原始目标与对话带宽，按任务性质路由 Codex（工程推演与实现）与 Gemini（文稿成文与润色），统筹多任务、资源与交付，并将执行结果转述为清晰易懂的反馈 |
 | `tool` | 单项 Agent tool 的执行契约：schema、权限与副作用、结果与生命周期及 CLI / API / MCP adapter；runtime 接入归 harness，多任务统筹归 superagent |
 | `git` | Git/jj 提交与历史、隔离工作区、受限网络获取、发版 CI 与 forge/静态站 |
-| `software` | 本地软件、CLI 与自托管服务：终端和包管理工具、数据库、对象存储、Docker/PaaS、Overleaf、科大云盘（Seafile）、文档处理与 Windows/WSL/macOS/HarmonyOS 环境排障 |
+| `software` | 本地软件、CLI 与自托管服务：终端和包管理工具、数据库、对象存储、Docker/PaaS、科大云盘（Seafile）、文档处理与 Windows/WSL/macOS/HarmonyOS 环境排障 |
 | `io` | 沿内存、文件系统、挂载、介质和网络块存储定位 I/O 与换页瓶颈 |
 | `network` | OpenWrt 设备、外部 Wi-Fi 接入本地网络、WireGuard / EasyTier 组网、远程接入及 WSL/远端网络管道 |
 | `vps-maintenance` | VPS 初始化、安全加固、网络质量检查、反向代理与基础服务部署 |
