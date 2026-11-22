@@ -14,7 +14,7 @@ description: 创建、安装、维护、重构、审查或合并本地 skill，�
 1. 沿用用户已说明的 skills、用户级或项目级范围，以及实际仓库位置；只询问影响执行的关键缺口。
 2. 每次重新[探测已有 harness 与配置根](references/installation.md#environment-discovery)。未发现工具配置目录时跳过其兼容入口；用户明确要求初始化该工具时再创建。
 3. 核对现有链接、独立安装和主指令内容，按[差异处理规则](references/installation.md#installation-plan)决定新增、保持、修复或确认冲突；保留用户已有内容。
-4. 将选定 skill 链入相应共享目录。分别核对工具对共享 skills 和共享主指令的支持，只为已发现且在授权范围内的工具补齐需要的兼容入口。
+4. 将选定 skill（含公开主仓及用户有权限访问的[多技能源](references/installation.md#multiple-skill-sources)）链入相应共享目录。分别核对工具对共享 skills 和共享主指令的支持，只为已发现且在授权范围内的工具补齐需要的兼容入口。
 5. 按[验收与报告](references/installation.md#validation)核对实际落点与可读性，并分别报告入口配置和真实加载结果。再次运行时只处理新发现的缺项与变化。
 
 ### <a id="instruction-installation"></a>通用指令与本机补充
@@ -30,7 +30,7 @@ description: 创建、安装、维护、重构、审查或合并本地 skill，�
 写、改、审查、重构任何 skill 都按 [references/conventions.md](references/conventions.md) 的要求来——那是唯一出处，含完整理由与正反例。**别在这里或别的 skill 里重抄规则，要提就写条目名链过去。** 速览（点进 conventions 看细节）：
 
 - **内容**：清楚地表达内容｜不说废话｜命令 / 配置简洁准确｜操作前提与边界明确｜图形界面流程具体｜事实、推断与建议分开｜自然穿插踩坑 / 排障｜个人配置不入正文
-- **引用**：补充来源、限制和例外用 `>` 紧跟正文｜来源与置信度就近｜引用做成可点击 Markdown 链接｜同 skill 使用相对路径和显式 `<a id>` 锚点｜跨 skill 只写 skill 名 + 能力边界｜上游链接锁定版本
+- **引用**：补充来源、限制和例外用 `>` 紧跟正文｜来源与置信度就近｜引用做成可点击 Markdown 链接｜同 skill 使用相对路径和显式 `<a id>` 锚点｜跨 skill 只写 skill 名 + 能力边界｜公开仓不引用不可见私有 skill（[可见性边界](references/conventions.md#skill-visibility)）｜上游链接锁定版本
 - **标题**：命名"这节是什么"、不预告结论 / 计数 / 排名｜不编号、不用 §N 交叉引用｜并列小节靠客观属性区分｜改带 `<a id>` 的标题只改文字
 - **结构**：渐进式披露三层按需加载、分工清楚｜单文件长度不是拆分理由｜脚本用 `uv` + PEP 723 内联依赖｜不绑定特定 AI 工具名｜frontmatter `name` 与目录名一致｜README 与 skill 状态同步
 

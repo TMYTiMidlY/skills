@@ -386,7 +386,7 @@ EnvironmentFile=<absolute-dsh-home>/profiles/<profile>/<env-file>
 
 > 来源：[代理变量允许的环境层](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/boot/app-boot/src/index.ts#L162-L222)、[继承环境与文件合并顺序](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/boot/app-boot/src/index.ts#L227-L258)。
 
-**`clashctl` 启动脚本同源注入**：系统由 `clashctl` 托管 Mihomo 时，由 systemd `ExecStart` 调用启动包装脚本（保留原 Node 初始化与启动参数）。每次启动先以 `systemctl is-active --quiet mihomo.service` 确认系统服务在线，再在同一 Bash 进程内执行可信 `clashctl --shell-on` 输出的 `export` 语句，最后 `exec` 原 DSH 入口。从静态配置迁移时，先盘点共用同一 `$DSH_HOME` 的全部实例，再清理 `$DSH_HOME/.env` 中改由 `clashctl` 接管的静态代理项，以免旧值继续补入缺省键。
+**`clashctl` 启动脚本同源注入**：以本机自定义的 Mihomo 代理环境导出包装脚本 `clashctl` 为例，由 systemd `ExecStart` 调用启动包装脚本（保留原 Node 初始化与启动参数）。每次启动先以 `systemctl is-active --quiet mihomo.service` 确认系统服务在线，再在同一 Bash 进程内执行可信 `clashctl --shell-on` 输出的 `export` 语句，最后 `exec` 原 DSH 入口。从静态配置迁移时，先盘点共用同一 `$DSH_HOME` 的全部实例，再清理 `$DSH_HOME/.env` 中改由启动包装器接管的静态代理项，以免旧值继续补入缺省键。
 
 ```bash
 #!/usr/bin/env bash
@@ -399,7 +399,7 @@ eval "$proxy_exports" || exit 1
 exec /path/to/dsh "$@"
 ```
 
-将脚本中的路径替换为运行身份可访问的实际入口。该写法适用于要求代理在线的实例：先用 `proxy_exports` 接住输出以检查退出码，Mihomo 未处于 `active` 或导出失败时直接中止本次启动，成功后才由 Bash 执行导出语句。已核对的系统级包装器在服务 `active` 时直接输出成对大小写的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 和 `NO_PROXY`，该分支无需提权；服务停机时则会尝试 `start`，普通用户可能进入交互式 `sudo`。前置检查可跳过已停机的服务，检查通过后服务退出的短暂竞态仍需留意；导出来源的属主校验、旁路规则、监听核查及彻底避开提权分支的做法，见 `proxy-client` skill 的 `clashctl` 静默环境注入主题。
+将脚本中的路径替换为运行身份可访问的实际入口。该写法适用于要求代理在线的实例：先用 `proxy_exports` 接住输出以检查退出码，Mihomo 未处于 `active` 或导出失败时直接中止本次启动，成功后才由 Bash 执行导出语句。所调用的代理导出包装器须核对属主可信、配置好内网与回环旁路 `NO_PROXY` 并做好本地监听检查：服务 `active` 时直接输出成对大小写的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 和 `NO_PROXY`，该分支无需提权；服务未运行时应直接返回非零退出码而非进入交互式 `sudo` 提权（若复用在停机分支会尝试 `start` 的包装器，前置检查可跳过已停机服务，但仍须留意检查通过后服务退出的短暂竞态并彻底避开提权分支）。
 
 DSH `0.2.1-rc.2` 在 Profile 启动期一次性解析代理策略，并为 Node `fetch` 安装全局 Undici dispatcher，按目标地址为需要走代理的请求创建 `ProxyAgent`。`@deepseek-ai/dsh-http-proxy` 优先采用协议专属的 `http_proxy` 与 `https_proxy`，缺省时才以 `all_proxy` / `ALL_PROXY` 兜底，同名变量均以小写优先。即便 HTTP 与 HTTPS 已有可用的 `http://` 代理，该库仍会检查 `ALL_PROXY`，遇到 `socks5h://`（如上述包装器导出的 SOCKS 地址）会报诊断并跳过该值；仅消费 `ALL_PROXY` 的子程序则仍可能采用原 SOCKS 地址。先核对该 SOCKS 地址与监听是否适合子程序；若实例及其子程序应统一走同一 HTTP 代理并消除 `socks5h://` 诊断，可在 `eval` 之后、`exec` 之前追加 `export all_proxy="$http_proxy" ALL_PROXY="$http_proxy"`，同时保留导出的 `no_proxy` / `NO_PROXY`。子程序支持的协议及显式 `env` 覆盖规则见[子进程环境](dsh.md#child-process-environment)。
 

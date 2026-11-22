@@ -78,7 +78,7 @@ Linux 上可用 `/proc/<pid>/environ` 白名单核对后台的启动环境；配
 
 > 版本依据为 `openai.chatgpt` `26.1021.22027` Linux 安装包的 `out/extension.js`（由 `getConfiguration("http")`、子进程环境合并与 `spawn` 构成传递路径）。扩展升级或切换远端宿主后，按实际安装版本复核。
 
-**`chatgpt.cliExecutable` 薄包装脚本**：希望仅向扩展拉起的 Codex 注入代理、不影响 VS Code 其他流量，并在每次新建 `app-server` 时动态读取 `clashctl` 最新托管端口，可将 `chatgpt.cliExecutable` 设为包装脚本在运行宿主上的绝对路径。`http.proxy` 可继续按 VS Code 自身需求配置；即便 `http.proxy` 非空，包装脚本也在扩展构造完子进程环境后运行，`clashctl --shell-on` 导出的大小写代理变量会覆盖当前 Codex 进程继承的对应值。以下脚本适用于 Linux 上经 `clashctl` 托管系统级 Mihomo、且要求 `app-server` 启动时代理在线的环境：
+**`chatgpt.cliExecutable` 薄包装脚本**：希望仅向扩展拉起的 Codex 注入代理、不影响 VS Code 其他流量，并在每次新建 `app-server` 时动态读取代理包装器最新托管端口，可将 `chatgpt.cliExecutable` 设为包装脚本在运行宿主上的绝对路径。`http.proxy` 可继续按 VS Code 自身需求配置；即便 `http.proxy` 非空，包装脚本也在扩展构造完子进程环境后运行，导出的大小写代理变量会覆盖当前 Codex 进程继承的对应值。以下示例以本机自定义的 Mihomo 代理环境导出包装脚本 `clashctl` 为例（要求 `app-server` 启动时代理在线）：
 
 ```bash
 #!/usr/bin/env bash
@@ -91,7 +91,7 @@ eval "$proxy_exports" || exit 1
 exec /path/to/codex "$@"
 ```
 
-为脚本赋予可执行权限，将 `/path/to/codex` 替换为与扩展版本匹配的 Codex 二进制绝对路径（通常可指向该扩展目录随附的二进制）；`exec` 原样透传扩展传入的 `app-server` 及其他参数，并保持协议通信所需的标准输入输出纯净。Mihomo 未处于 `active` 或导出失败时，脚本会中止本次启动；`--shell-on` 在服务停机时可能尝试提权启动服务，前置检查后的短暂竞态与导出来源的信任条件见 `proxy-client` skill 的 `clashctl` 静默环境注入主题。扩展将 `chatgpt.cliExecutable` 标为开发设置，替换入口后应验证 IDE 功能，扩展升级后及时复核二进制路径与版本兼容性。
+为脚本赋予可执行权限，将 `/path/to/codex` 替换为与扩展版本匹配的 Codex 二进制绝对路径（通常可指向该扩展目录随附的二进制）；`exec` 原样透传扩展传入的 `app-server` 及其他参数，并保持协议通信所需的标准输入输出纯净。Mihomo 未处于 `active` 或导出失败时，脚本会中止本次启动。所调用的代理导出包装器须核对属主可信、配齐内网与回环旁路 `NO_PROXY` 并做本地监听检查，且在代理服务未运行时应直接返回非零退出码而非触发交互式 `sudo` 提权（若历史包装器在停机分支可能尝试提权启动服务，须确保不落入该分支，并留意前置检查后服务退出的短暂竞态）。扩展将 `chatgpt.cliExecutable` 标为开发设置，替换入口后应验证 IDE 功能，扩展升级后及时复核二进制路径与版本兼容性。
 
 > `openai.chatgpt` `26.1021.22027` 的 `package.json` 声明了 `chatgpt.cliExecutable` 设置项，`out/extension.js` 在该项非空时直接调用指定路径拉起子进程。
 

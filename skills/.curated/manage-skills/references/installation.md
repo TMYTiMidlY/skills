@@ -1,6 +1,6 @@
 # Skills 与通用指令的安装维护
 
-安装、维护或卸载本仓 skills，以及配置 `AGENTS.md` 等主指令入口时读取本文件。`<repo>` 表示实际 skills 仓库根目录，`<target>` 表示本次目标家目录或项目根目录；结合用户已说明的范围确定，未明确的关键范围再询问。
+安装、维护或卸载本仓及其他已授权技能源的 skills，以及配置 `AGENTS.md` 等主指令入口时读取本文件。`<repo>` 表示实际 skills 仓库根目录，`<target>` 表示本次目标家目录或项目根目录；结合用户已说明的范围确定，未明确的关键范围再询问。
 
 ## <a id="environment-discovery"></a>环境探测
 
@@ -38,6 +38,12 @@
 | 原创 | `<repo>/skills/.curated/<name>` |
 | 嫁接且已审核 | `<repo>/skills/<name>` |
 | 实验性、未审核 | `<repo>/skills/.experimental/<name>` |
+
+### <a id="multiple-skill-sources"></a>多技能源汇聚与私有仓库记录边界
+
+除公开主仓外，用户还可从有权限访问的其他独立仓库（包括托管在自建 Gitea、Forgejo、GitLab 等需登录认证的 Git 服务上的仓库）分别克隆技能源，核对源目录结构与 `name` 无冲突后，统一将各完整 skill 目录软链接汇入同一共享发现目录（如 `~/.agents/skills/<name>`）。跨仓库遇到同名或同能力 skill 时，按[安装范围与差异处理](#installation-plan)说明差异并由用户决定保留哪一份。
+
+本机实际挂载了哪些私有技能仓库、克隆路径与认证入口属本机私有环境信息，统一记录在[本机补充](#local-instructions)（`~/.agents/AGENTS.local.md`）中，不写入公开仓库的 `README.md` 或 `grafted-skills.json`。
 
 先将选定 skill 安装到 `<target>/.agents/skills/<name>`。确认目标缺失后，示例命令为：
 

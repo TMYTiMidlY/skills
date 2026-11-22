@@ -19,7 +19,7 @@ PPT 任务的**完整工程流**（SVG 模板 / python-pptx / 设计规范 / 配
 
 PPT 工程一般有独立的工程目录（含 SVG 源、notes、`design_spec.md` 等，结构由 `ppt-master` 定义）。本 skill 与 PPT 工程的衔接点是**共用一套资产基准**：
 
-- PPT 项目的引用编号、文献条目、配图资产**与 docx/论文共用同一份数据基准** —— 即 `SKILL.md`《项目资产管理》约定的项目级 `images/` 单一源 + 源文献目录 + 统一引用表。
-- 与 `ppt-master` 配合时，**不要为 PPT 单独复制一份图**；PPT 工程与 docx/论文一起从同一个 `<project>/images/` 取图，源文献放同一个项目源目录。`ppt-master` 的工程目录约定（`<project>/images/`、`sources/`、`image_manifest.json` 等）与本 skill 的资产管理模式对齐，详见 `SKILL.md`《项目资产管理》的「与 ppt-master 配合」。
+- PPT 项目的引用编号、文献条目、配图资产**与 docx/论文共用同一份数据基准** —— 即 `SKILL.md`《项目资产管理》约定的项目级 `images/` 单一源、项目一手文献主档 `reference/` 与项目根 `reference.md` 统一引用表。
+- 与 `ppt-master` 配合时，**不要为 PPT 单独复制一份图**；PPT 工程与 docx/论文一起从同一个 `<project>/images/` 取图。项目级一手文献主档统一存放在 `<project>/reference/`；调用 `ppt-master` 向其工具输入目录 `sources/` 导入素材时，使用 `import-sources --copy` 从 `reference/` 拷入，保持主档留存在 `reference/`，详见 `SKILL.md`《项目资产管理》的「与 ppt-master 配合」。
 
 具体 PPT 操作流程（建项目、八确认、SVG 生成、导出等）一律走 `ppt-master` skill。

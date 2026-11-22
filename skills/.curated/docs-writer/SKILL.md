@@ -93,14 +93,12 @@ description: 撰写或修订中文学术论文、docx 短汇报和演示文稿�
 │   ├── chart-<主题B>-v2.png
 │   ├── scene-<主题C>.png         ← 实景 / 概念插画
 │   └── ...
-├── mineru/                      ← MinerU 解析产物，与 images/ 平级（解析规范见 paper-writing skill）
-│   └── <文献名>/                 ← 每篇 PDF 一个子目录：把 MinerU 结果 zip 原样解压到这里
-│       ├── <原始>.pdf            ← 原始 PDF 一并留存
+├── reference/                   ← 项目一手文献库（与 images/ 平级）：一手原文与可选同名只读转录目录
+│   ├── *.pdf / *.html           ← 一手原文（政策文件、统计公报、论文原版 PDF 等）
+│   └── <文献名>/                 ← 可选：单篇文献的结构化转录子目录（只读核验底稿）
 │       ├── full.md              ← 解析出的正文 Markdown
-│       ├── *_content_list.json  ← md 块 ↔ 页码/坐标 的对应关系 JSON
-│       └── images/              ← 该文献抽出的图（MinerU 自带，独立于项目级 images/）
-├── sources/                     ← 一手原文：政策原文 / 未过 MinerU 的 pdf/html（含 PPT 时与 ppt-master 的 sources/ 同一目录）
-│   └── *.pdf / *.html
+│       ├── *_content_list.json  ← md 块 ↔ 页码/坐标 的对应关系 JSON（可选）
+│       └── images/              ← 该文献自身抽出的图（独立于项目级 images/）
 ├── ppt/                         ← PPT 工程目录（SVG 工程源 + notes + spec_lock 等，由 ppt-master 维护）
 │   ├── svg_output/              ← 手写 SVG 源
 │   ├── notes/                   ← 各页讲稿
@@ -112,18 +110,17 @@ description: 撰写或修订中文学术论文、docx 短汇报和演示文稿�
     └── <pptx 汇报>.pptx          ← 内嵌图来自 images/
 ```
 
-> **PPT 工程目录建议 always 放在内容仓库内、与 `images/` `sources/` 同级**（不要默认放在 `ppt-master` skill 的工作空间 `~/ppt-projects/`）—— 这样 PPT 才能跟 docx/论文/网页等多 deliverable 一起 git 管理 + 复用同一份 `images/` `sources/` 基准。`ppt-master` 工作空间适合一次性 demo，**不适合纳入长期仓库**。详见《与 ppt-master 配合（含 PPT 的项目）》。
+> **PPT 工程目录建议 always 放在内容仓库内、与 `images/` `reference/` 同级**（不要默认放在 `ppt-master` skill 的工作空间 `~/ppt-projects/`）—— 这样 PPT 才能跟 docx/论文/网页等多 deliverable 一起 git 管理 + 复用同一份 `images/` 与 `reference/` 基准。`ppt-master` 工作空间适合一次性 demo，**不适合纳入长期仓库**。详见《与 ppt-master 配合（含 PPT 的项目）》。
 
-### MinerU 解析产物：mineru/（与 images/ 平级）
+### 项目文献库与只读转录底稿：reference/（与 images/ 平级）
 
-- MinerU 把 PDF 转 md 的**结果 zip 统一原样解压到 `<project>/mineru/<文献名>/`**，与 `images/` 平级；原始 PDF 一并留在该子目录便于回查。
-- zip 内含 `full.md`（正文）、对应关系 JSON（md 块 ↔ 页码/坐标）、`images/`（该文献抽出的图）等，是**只读的一手转录底稿** —— 引用核查/二次核验时回查用，不要直接当论文正文改。
-- `mineru/<文献名>/images/` 是文献自带抽出图，**与项目级 `images/`（最终配图单一源）是两码事**，不要混。
-- 解析参数、token、大文件分卷合并、加密 PDF 等云端操作规范见 `paper-writing` skill。
+- 项目所用的一手原文（政策文件、HTML 快照、论文原版 PDF）统一存放在 `<project>/reference/` 下；若某篇文献已配有结构化解析产物，并列保存在同级的 `<project>/reference/<文献名>/` 子目录中，便于与原始文件对照回查。
+- `reference/<文献名>/` 下的 `full.md`（正文转录）与块坐标 JSON 是**只读的一手转录底稿**，仅在引用核查与二次核验时检索回查，不要直接当论文正文改；关键数字与引文表述仍须回核原始 PDF / 一手网页。
+- `reference/<文献名>/images/` 是文献自带抽出图，**与项目级 `images/`（最终配图单一源）是两码事**，不要混用。
 
 ### 信息源与决策记录（项目根，持久化）
 
-项目根放两份**项目级真相底稿**，文件名一律小写、从 `sources/` 拉到根目录便于直接打开（`sources/` 只留一手原文：政策原文、未过 MinerU 的 pdf/html；MinerU 解析过的在 `mineru/`）：
+项目根放两份**项目级真相底稿**，文件名一律小写，直接放在项目根目录便于打开（`reference/` 专门存放一手原文与只读转录底稿）：
 
 - **`source-of-truth.md`** —— 项目「最高信息源 + 口述决策」总账（仿站点项目的 `SOURCES.md`）。把"为什么这么写、依据谁、谁拍的板"落到文件、不靠对话记忆，换个 AI 或隔几周回来都能对齐。至少记四样：
   - **主源 / 历史源声明**：哪份文件、哪个版本是当前权威源；哪些是被取代的旧源（与新源冲突时**以新源为准**）。
@@ -136,7 +133,7 @@ description: 撰写或修订中文学术论文、docx 短汇报和演示文稿�
     ```markdown
     | key | 文献（GB/T 7714） | 数据点支撑 | docx [N] | pptx [N] | thesis [N] | 一手原文 | 核验状态 |
     | --- | --- | --- | --- | --- | --- | --- | --- |
-    | liu2022 | 刘延峰, 等. 微生物替代蛋白生物制造... | D08 微生物蛋白合成效率 | [13] | [13] | — | sources/Liu2022-...pdf | ✅ |
+    | liu2022 | 刘延峰, 等. 微生物替代蛋白生物制造... | D08 微生物蛋白合成效率 | [13] | [13] | — | reference/Liu2022-...pdf | ✅ |
     | han2025 | 韩飞. 大国战略竞争下美国国防生物制造... | D17 国防需求牵引 | [18] | [23] | — | — | ⚠️ 本地未独立核实 |
     ```
   - 各 deliverable **不要**互相对齐编号（强制对齐反而牺牲分章交稿便利性）—— **都向 key 映射**就行，引用核查 / 删插文献时改 reference.md 一处，按反向表回各 deliverable 同步局部 [N]。
@@ -144,10 +141,10 @@ description: 撰写或修订中文学术论文、docx 短汇报和演示文稿�
 
 ### 与 ppt-master 配合（含 PPT 的项目）
 
-当项目**同时有 PPT 和 docx/论文**时，PPT 工程由 `ppt-master` skill 负责，但**两侧必须共用同一套资产**，以 `ppt-master` 的工程目录为准对齐：
+当项目**同时有 PPT 和 docx/论文**时，PPT 工程由 `ppt-master` skill 负责，两侧共用同一套项目级配图与文献主档：
 
-- `ppt-master` 把图放在 `<project>/images/`（含 `image_manifest.json`、`image_prompts.json`），源文献经 `import-sources --move` 收进 `<project>/sources/`。
-- 含 PPT 的项目：本 skill 说的"项目级 `images/` 单一源"**直接复用 `ppt-master` 的 `<project>/images/`**；源文献统一进 `<project>/sources/`（与本 skill 的 `sources/` 是同一个目录）。**不要为 PPT 或 docx 各自再建一个图目录。**
+- `ppt-master` 把图放在 `<project>/images/`（含 `image_manifest.json`、`image_prompts.json`）；含 PPT 的项目直接复用同一个 `<project>/images/` 作为项目级最终配图单一源，**不要为 PPT 或 docx 各自再建一个图目录**。
+- 项目级一手文献主档统一存放在 `<project>/reference/`；而 `ppt-master` 工具内部固定从 PPT 工程的 `sources/` 目录读取导入素材。调用 `ppt-master` 导入项目文献时，使用 `import-sources --copy` 从 `reference/` 拷入其工具输入目录 `sources/`，保持一手原件主档留存在 `reference/`。
 - docx/论文内嵌图、PPT 的 SVG 引用都指向同一个 `<project>/images/`；任一方更新图后，另一方用刷新脚本同步。
 - 这样 PPT、docx、论文的引用编号、文献条目、配图资产都落在同一份数据基准上，多 deliverable 自然一致。
 
@@ -212,7 +209,7 @@ AI 生成 / 辅助的图需按 [AI 标注](references/figures.md#annotation) 简
 
 ### 核查流程
 
-**① 读原始文献**：在项目内的文献原文目录（如 `mineru/`、`sources/` 等）下搜索相关 `.txt`/`.md`/`.pdf`/`.html`，核对论文表述与原文是否一致。
+**① 读原始文献**：在项目内的文献库 `reference/` 下搜索相关 `.pdf`/`.html` 或只读转录 `.md`/`.txt`，核对论文表述与原文是否一致。
 
 **② 补引用**：对明显引用了某说法或官方文件却未标注的地方，从尾注列表或仓库搜索匹配文献，补充脚注，注明具体页码（专著类）。
 

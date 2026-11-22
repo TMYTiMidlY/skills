@@ -5,7 +5,7 @@ description: 本地软件、CLI 工具与自托管服务的配置和排障知识
 
 # Software
 
-Git 与 jj 的日常操作、隔离工作区、受限网络获取、发版 / 发布 CI、自建 forge 与 git-pages 已迁往 `git` skill。USTC Overleaf 客户端与内部接口操作已迁往 `olcli-ustc` skill；学术论文多版本协同、OpenAlex 文献数据获取与 MinerU PDF 转 Markdown 已迁往 `paper-writing` skill。
+Git 与 jj 的日常操作、隔离工作区、受限网络获取、发版 / 发布 CI、自建 forge 与 git-pages 已迁往 `git` skill。
 
 ## PostgreSQL 读写性能
 
