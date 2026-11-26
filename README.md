@@ -194,7 +194,7 @@ pre-commit run lychee --all-files
 
 | Harness | 安装时的接入方式 |
 | --- | --- |
-| DSH | 直接读取 `~/.agents/AGENTS.md`；DSH 专用文件仅保留独有要求 |
+| DSH | 直接读取 `~/.agents/AGENTS.md`；`~/.dsh/AGENTS.md` 用于软链注入 `~/.agents/AGENTS.local.md`（或保存 DSH 专用要求） |
 | Codex、Amp、pi | Skills 可用共享目录，主指令在各实际配置根下将同名 `AGENTS.md` 软链接到 `~/.agents/AGENTS.md`；Codex 独立账号入口分别检查 |
 | Antigravity | 项目级 skills 可用共享目录，用户级 skills 链接到 `config/skills`；主指令在各 `.gemini` 或独立 `--gemini_dir` 下将同名 `AGENTS.md` 软链接到 `~/.agents/AGENTS.md` |
 | Copilot CLI、Gemini CLI | Skills 可用共享目录，主指令将各自专属文件名软链接到 `~/.agents/AGENTS.md` |
@@ -205,13 +205,11 @@ manage-skills 只为已发现且在本次范围内的工具补齐所需入口。
 
 ### <a id="local-instructions"></a>本地规则
 
-本机相关内容统一保存为普通文件 `~/.agents/AGENTS.local.md`。仓库根目录保留通用的 `AGENTS.md` 与兼容链接 `CLAUDE.md`；本地补充的实体放在用户家目录。
+本机相关内容统一保存为普通文件 `~/.agents/AGENTS.local.md`，仓库根目录保留通用的 `AGENTS.md` 与兼容链接 `CLAUDE.md`。`~/.agents/` 建议初始化为本地 Git 仓库，追踪本机实体文件以及 `AGENTS.md`、`skills/*` 等软链接本身（核对 `.gitignore`，不误屏蔽这些条目）。
 
-工具通过上述各自入口加载同一份主规则，主规则再要求模型读取固定的 `~/.agents/AGENTS.local.md`。因此兼容链接用于主指令入口，本地补充只保留这一份普通文件。
+对支持第二全局入口的宿主（DSH、Antigravity、Claude Code、Copilot CLI、pi），通过各自原生机制软链注入 `~/.agents/AGENTS.local.md`，避免依赖模型记忆手动读取；仅支持单一全局主入口的宿主（如 Codex）保留主入口软链，由 [AGENTS.md](AGENTS.md) 中的条件兜底按需读取。
 
-本地补充的更新范围、篇幅与组织要求见 [AGENTS.md](AGENTS.md)：保留本机配置与可复用经验，按清楚的主题精炼记录，并优先索引已有文档。
-
-manage-skills 会检查补充文件的位置和可读性，并区分入口已配置、主文件已注入和补充已实际读取，执行细节见[本机补充](skills/.curated/manage-skills/references/installation.md#local-instructions)。
+本地补充的更新范围、篇幅（留意 Antigravity 24,000 字节单文件上限等宿主约束）与组织要求见 [AGENTS.md](AGENTS.md)。各宿主的注入入口、Git 追踪检查与验收方法统一维护在[本机补充](skills/.curated/manage-skills/references/installation.md#local-instructions)。
 
 ## 许可
 

@@ -19,7 +19,9 @@ description: 创建、安装、维护、重构、审查或合并本地 skill，�
 
 ### <a id="instruction-installation"></a>通用指令与本机补充
 
-安装或维护 `AGENTS.md` 等主指令入口也走上述探测流程：先将 `~/.agents/AGENTS.md` 软链到仓库 `AGENTS.md`，再按“原生读取 `~/.agents/AGENTS.md` → 自身配置根同名 `AGENTS.md` 软链 → 自有指令文件名软链”的顺序，为每个已发现配置根只保留一处入口统一软链到 `~/.agents/AGENTS.md`，具体映射与旧入口收敛见[主指令入口表](references/installation.md#instructions-discovery)。本机补充统一保存为 `~/.agents/AGENTS.local.md` 普通文件，位置与维护边界见[本机补充](references/installation.md#local-instructions)。
+安装或维护 `AGENTS.md` 等主指令入口也走上述探测流程：先将 `~/.agents/AGENTS.md` 软链到仓库 `AGENTS.md`，再按“原生读取 `~/.agents/AGENTS.md` → 自身配置根同名 `AGENTS.md` 软链 → 自有指令文件名软链”的顺序，为每个已发现配置根只保留一处主入口统一软链到 `~/.agents/AGENTS.md`，具体映射与旧入口收敛见[主指令入口表](references/installation.md#instructions-discovery)。
+
+本机补充统一保存为 `~/.agents/AGENTS.local.md` 普通文件，并将 `~/.agents/` 初始化为本地 Git 仓库追踪本机文件与已安装的软链（同时检查 `.gitignore`，避免误忽略 `AGENTS.md`、`AGENTS.local.md` 或 `skills/`）。对支持第二全局入口的宿主（如 DSH、Antigravity、Claude Code、Copilot CLI、pi），通过其原生机制将 `~/.agents/AGENTS.local.md` 自动注入；对仅支持单全局主入口的宿主（如 Codex），保持单一主入口并由主指令的条件兜底按需读取，详见[本机补充](references/installation.md#local-instructions)。
 
 ### 卸载与失效链接
 

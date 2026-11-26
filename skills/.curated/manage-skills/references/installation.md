@@ -119,7 +119,7 @@ Skills 与主指令分别发现。下表的配置根必须先经过[环境探测
 
 用户级安装通用指令统一经 `~/.agents/AGENTS.md` 中转收敛：仅共享主文件 `~/.agents/AGENTS.md` 软链到 `<repo>/AGENTS.md`，其余各已发现配置根按读取能力只保留**唯一一处**兼容入口并统一软链到 `~/.agents/AGENTS.md`，使仓库路径调整时只需维护一处，同时确保每个工具直接读到完整规则且只加载一份：
 
-1. **原生读取 `~/.agents/AGENTS.md` 的工具**（如 DSH）：直接使用共享主文件，自身配置根下不另建同源链接；`~/.dsh/AGENTS.md` 仅留给确需隔离的 DSH 专用要求。
+1. **原生读取 `~/.agents/AGENTS.md` 的工具**（如 DSH）：直接使用共享主文件，不在自身配置根再建指向主 `AGENTS.md` 的同源链接；`$DSH_HOME/AGENTS.md`（默认 `~/.dsh/AGENTS.md`）留作本机补充注入入口（见[本机补充](#local-instructions)）或 DSH 专用要求。
 2. **读取自身配置根下 `AGENTS.md` 的工具**（如 Codex 及各独立 `CODEX_HOME`、Antigravity 的 `~/.gemini` 及各独立 `--gemini_dir`、Amp、pi）：保持文件名不变，将该配置根下的 `AGENTS.md` 软链接到 `~/.agents/AGENTS.md`。
 3. **仅读取自有指令文件名的工具**（如 Claude Code 的 `CLAUDE.md`、Copilot CLI 的 `copilot-instructions.md`、Gemini CLI 的 `GEMINI.md`）：将该专属文件名软链接到 `~/.agents/AGENTS.md`。
 
@@ -145,7 +145,46 @@ ln -s ../.agents/AGENTS.md "$HOME/.copilot/copilot-instructions.md"
 
 ## <a id="local-instructions"></a>本机补充
 
-本机相关内容统一保存在 `~/.agents/AGENTS.local.md` 普通文件中，由本仓主指令要求模型继续读取。安装时检查其位置与可读性，保留已有内容；确有本机内容需要保存时再创建，维护要求遵循主指令。该文件独立于各工具配置根，仓库根目录与各工具入口均无需另建补充副本或链接。
+本机相关内容统一保存在 `~/.agents/AGENTS.local.md` 普通文件中；安装与维护时检查其位置、可读性与单文件体积，保留已有内容，确有本机内容需要保存时再创建。维护边界、精简原则与未注入时的条件兜底读取约定见主指令 `AGENTS.md`。
+
+### <a id="agents-home-git"></a>`~/.agents/` 本地 Git 追踪
+
+将 `~/.agents/` 初始化为本机 Git 仓库，用于追踪本机配置变更（不要求推送远端；如需异地备份只使用私有仓库，不把含本机信息的目录推往公开仓库）：
+
+- **追踪范围**：纳入 `AGENTS.local.md`、拆分出的本机补充文档等实体文件，同时追踪 `AGENTS.md`、`skills/*` 等软链接本身。Git 以文件模式 `120000` 仅保存软链接目标路径，不会将目标仓库或外部文件内容纳入 `~/.agents/` 仓库。
+- **核对 `.gitignore`**：每次安装或维护时检查 `~/.agents/.gitignore`，避免用宽泛白名单（如 `/*`）把 `AGENTS.md`、`AGENTS.local.md`、`skills/` 等需要追踪的实体或软链接挡在仓库之外。需要 `.gitignore` 时，仅使用轻量黑名单排除包管理器锁文件（如 `.skill-lock.json`）、缓存或临时文件。
+
+### <a id="local-native-injection"></a>各 Harness 原生自动注入
+
+单纯依靠主指令正文提醒模型读取 `AGENTS.local.md` 存在漏读风险。对已探测到配置根、且原生支持第二全局入口的宿主，在 `~/.agents/AGENTS.local.md` 存在且目标位置未占用时建立原生注入软链；已有独立文件或不同去向的链接先说明差异并确认后再处理：
+
+| Harness | 原生注入入口 | 说明与边界 |
+| --- | --- | --- |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-alpha.2/packages/context/agent-instructions/README.zh.md#L30-L76) | `$DSH_HOME/AGENTS.md`（默认 `~/.dsh/AGENTS.md`）软链至 `~/.agents/AGENTS.local.md` | 与原生读取的 `~/.agents/AGENTS.md` 同轮加载；`$DSH_HOME/AGENTS.md` 排在共享主文件之前，`dsh-v0.2.2-alpha.2` 起用户全局链独享 65,536 字节预算 |
+| [Antigravity](https://antigravity.google/docs/rules) | `~/.gemini/config/AGENTS.md` 软链至 `~/.agents/AGENTS.local.md` | 无需 YAML frontmatter，与 `~/.gemini/AGENTS.md` 累积加载，并随 `config` 软链自动共享给所有 `--gemini_dir` 多账号；须保持 `AGENTS.local.md` 小于 24,000 字节单文件上限，并留意 20,000 token 全局规则聚合预算 |
+| [Claude Code 本地 CLI](https://code.claude.com/docs/en/memory#user-level-rules) | `<配置根>/rules/agents-local.md`（默认 `~/.claude/rules/agents-local.md`）软链至 `~/.agents/AGENTS.local.md` | 官方支持用户级 `rules/` 软链、无需审批弹窗，无 frontmatter 即无条件加载 |
+| [GitHub Copilot CLI](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) | `<配置根>/instructions/agents-local.instructions.md`（默认 `~/.copilot/instructions/agents-local.instructions.md`）软链至 `~/.agents/AGENTS.local.md` | 链接名使用 `.instructions.md` 后缀，目标保持普通 `.md` 且无需 frontmatter；具体发现与去重行为归 `harness` skill |
+| [pi](https://github.com/earendil-works/pi/blob/e86102f18/packages/coding-agent/src/core/resource-loader.ts#L1037-L1049) | `<配置根>/APPEND_SYSTEM.md`（默认 `~/.pi/agent/APPEND_SYSTEM.md`）软链至 `~/.agents/AGENTS.local.md` | 追加至系统提示；若受信任项目自带 `.pi/APPEND_SYSTEM.md`，项目级会覆盖全局这份 |
+| Gemini CLI / Amp | 按工具语法配置导入或列表 | Gemini CLI 可通过 `settings.json` 的 `context.fileName` 数组或 `GEMINI.md` 内 `@` 导入接入；Amp 可在 `~/.config/amp/AGENTS.md` 中使用 `@` 导入 |
+| [Codex](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/codex-home/src/instructions/mod.rs#L40-L83) | 仅保留主入口软链至 `~/.agents/AGENTS.md` | `$CODEX_HOME` 下 `AGENTS.override.md` 覆盖而非叠加 `AGENTS.md`，无原生第二全局文件槽位；保持单一主入口，由主指令条件兜底触发按需读取 |
+
+```bash
+# 仅在对应工具配置根已存在、~/.agents/AGENTS.local.md 存在且目标缺失时执行：
+ln -s "$HOME/.agents/AGENTS.local.md" "$HOME/.dsh/AGENTS.md"
+
+mkdir -p "$HOME/.gemini/config"
+ln -s "$HOME/.agents/AGENTS.local.md" "$HOME/.gemini/config/AGENTS.md"
+
+mkdir -p "$HOME/.claude/rules"
+ln -s "$HOME/.agents/AGENTS.local.md" "$HOME/.claude/rules/agents-local.md"
+
+mkdir -p "$HOME/.copilot/instructions"
+ln -s "$HOME/.agents/AGENTS.local.md" "$HOME/.copilot/instructions/agents-local.instructions.md"
+
+ln -s "$HOME/.agents/AGENTS.local.md" "$HOME/.pi/agent/APPEND_SYSTEM.md"
+```
+
+> 若 `~/.agents/AGENTS.local.md` 接近或超过宿主单文件上限（例如 Antigravity 的 24,000 字节），将详细的架构记录、历史存档或长命令清单拆到 `~/.agents/docs/` 等独立文件，在 `AGENTS.local.md` 中保留简短摘要与索引路径。
 
 ## <a id="uninstall-repair"></a>卸载与失效链接
 
@@ -160,6 +199,7 @@ trash-put "<target>/.agents/skills/<name>"
 ## <a id="validation"></a>验收与报告
 
 - 核对选定 skills 的目录链接、`SKILL.md` 可读性和相对引用；工具侧目录新建的非链接条目只留在该位置，检查真实落点后再判断是否属于仓库维护。
-- 分别核对共享 skills、各实际配置根的主文件、override 与本机补充。可用时用 harness 的原生目录或上下文查看功能确认发现结果；将入口已配置、主文件已注入、本地补充已实际读取分别报告。
+- 核对 `~/.agents/` 是否已初始化为本地 Git 仓库，以及 `.gitignore` 是否放行 `AGENTS.md`、`AGENTS.local.md` 与 `skills/` 等软链和实体文件。
+- 分别核对共享 skills、各实际配置根的主文件、override、本机补充原生注入软链与文件字节数（如 Antigravity 24,000 字节上限）。可用时用 harness 的原生目录或上下文查看功能确认发现结果；将入口已配置、主文件已注入、本机补充已自动注入或条件兜底读取分别报告。
 - 报告本次新增、修复、保持不变、存在冲突和跳过的项目。再次运行时重新探测，仅处理当前差异；已正确的入口保持原样。
 - 用户只要求说明安装方法时给出发现结果与操作方案；用户要求执行时完成授权范围内的安装和验证，再报告实际结果。
