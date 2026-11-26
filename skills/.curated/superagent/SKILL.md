@@ -33,7 +33,7 @@ description: 仅当用户明确指定当前会话作为 superagent 协作前台�
 |---|---|
 | 直接发起、管理外部 Codex worker | **默认走 SDK / `app-server` 编程编排**：具备结构化线程生命周期、持久恢复、实时事件流、额度查询与容量退避能力。使用 `uv run scripts/codex_dispatch.py`（含 `run`、`limits`、`fleet`），脚本说明与编排策略见 [Codex SDK 编排](references/sdk-orchestration.md) |
 | 接管非当前 SDK 控制器持有的存量 Codex CLI / TUI / `exec` 会话 | 通过磁盘 rollout 与进程状态旁路观察，在获准后按会话持有情况选用队列投递或无头恢复。见[存量 CLI 会话的旁路监控与推进](references/cli-monitoring.md) |
-| 面向人阅读的文稿成文、纯文字任务，或指定由当前宿主执行的工作 | **主会话已在 Gemini 宿主（如 Antigravity）中运行时，直接调用宿主自带的原生后台子代理承接**（零冷启动开销，不绕调外部命令行 Gemini CLI，也不让下级 Codex 反向调 Gemini CLI）；仅当主会话运行在非 Gemini 宿主中，或当前宿主账号配额耗尽需切换其他已登录账号时，才调用外部非交互 Gemini CLI。见[宿主子代理与模型分工](references/collaboration.md#host-subagents) |
+| 面向人阅读的文稿成文、纯文字任务，或指定由当前宿主执行的工作 | **主会话已在 Gemini 宿主（如 Antigravity）中运行时，由宿主原生后台子代理承接**，当前宿主内及其下级 Codex 均不得绕调外部非交互 Antigravity CLI（`agy -p`）；仅当主会话运行在非 Gemini 宿主，或当前账号配额耗尽需切换其他已登录账号时，才由主会话发起外部调用。见[宿主子代理与模型分工](references/collaboration.md#host-subagents) |
 
 > SDK 编程控制与存量 CLI 旁路接管属于两条不同的控制通道；同一会话在同一时刻只交给一个控制者推进。接入其他外部 coding agent 时，可按 `harness` skill 中的 SDK 接入形态横向扩展，并逐项核实会话恢复与通知语义。
 

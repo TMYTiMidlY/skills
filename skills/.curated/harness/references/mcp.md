@@ -4,6 +4,8 @@ MCP 是连接 AI 应用与外部系统的开放协议；同一台 server 接进�
 
 本文中的 Codex 主要承担外部 MCP server 的客户端角色。将完整 Codex 交给其他 agent 调用时，使用 [SDK 或 app-server](codex.md#programmatic-control)；旧官方 `codex mcp-server` / `codex-mcp-server` 已移除，其 [迁移边界](codex.md#codex-mcp-migration)与这里的 `codex mcp add/list` 分开核对。
 
+> 本文保留 Gemini CLI（`gemini`）的 MCP 源码对照作为历史实现与企业兼容参考：Google 已于 2026-06-18 将免费个人及 Google AI Pro／Ultra 通道迁移至 Antigravity CLI（`agy`），企业许可及部分付费 API 继续适用上游支持范围（详见 [Google 迁移公告](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)）；文中各节源码对照仍适用于对应标明的 Gemini CLI 版本。
+
 ## <a id="capability-surfaces"></a>MCP 概览
 
 Anthropic 在 2024-11-25 的公告里开源了 MCP，定位原文是「a new standard for connecting AI assistants to the systems where data lives, including content repositories, business tools, and development environments」，并称它「provides a universal, open standard for connecting AI systems with data sources, replacing fragmented integrations with a single protocol」。生态报道后来常把它比作 AI 应用的 USB-C 接口（如 Ars Technica 的报道标题「MCP: The new "USB-C for AI"」）；注意这个类比出自新闻，公告原文里没有。架构上（spec 2025-06-18）MCP 是 client-host-server 三方模型：host 进程装载并管理多个 client、每个 client 与一台 server 保持一条基于 JSON-RPC 的有状态会话，双方在初始化时做能力协商；server 通过三类 primitive 暴露能力。

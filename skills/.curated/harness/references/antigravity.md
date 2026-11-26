@@ -79,35 +79,26 @@ Google Antigravity 的终端 CLI（`agy`）与桌面版（Antigravity App / IDE�
   - 旧方案把 `HOME` 改写成 `~/.agy-homes/<name>`，会导致 `agy` 及其 `run_command` 派生的全部子进程（`trash-put`、`lake`、`elan`、`uv`、`git`、`ssh`、`codex` 等）把假 `HOME` 当成用户家目录：不仅 `trash-put` 会在 `~/.agy-homes/<name>/.local/share/Trash` 下产生普通终端 `trash-list` / `trash-empty`（含 `--all-users`）完全看不见的**隐形影子回收站**（实测漏掉 16 个旧克隆共 **55 GB**），还会造成 `.cache`（实测冗余 **22 GB**）、`.elan` 等缓存翻倍；靠逐个补顶层软链或覆写 `XDG_*` 只是围堵症状。
   - 改用 `--gemini_dir` 后，**全程不修改 `$HOME`**（且通过 `export HOME="${HOME%%/.agy-homes/*}"` 自动纠正可能残留的旧面板环境），从根源上消除一切假 `HOME` 派生问题，无需在实例目录下软链任何顶层点文件，也无需覆写 `XDG_*`。
 
-在 `.bashrc` 中定义多账号实例包装函数（或写成 `~/.local/bin/agy-<name>` 可执行脚本，对非交互 `ssh <host> <cmd>` 与子进程均可见）：
+可在 `.bashrc` 中定义多账号实例包装函数，或将其独立封装为可执行脚本供非交互 shell 与子进程调用；启动前按当前环境设置代理，并确认 `config` 软链指向预期的共享目录（全局规则与 skills 均由该共享目录统一提供）：
 
 ```bash
 _agy_instance() (
   set -euo pipefail
-  name="$1"; shift
-  real_home="${HOME%%/.agy-homes/*}"
-  bin="$real_home/.local/bin/agy"
-  gdir="$real_home/.agy-homes/$name/.gemini"
-  # 首次启动自动幂等铺齐 .gemini 下的共享软链，绝不触碰 $HOME
+  name="$1"
+  shift
+  gdir="$HOME/.agy-homes/$name/.gemini"
   mkdir -p "$gdir/antigravity-cli"
-  [ -e "$gdir/config" ] || [ -L "$gdir/config" ] || ln -s "$real_home/.gemini/config" "$gdir/config"
-  for rule in AGENTS.md GEMINI.md; do
-    if [ -e "$real_home/.agents/$rule" ] && [ ! -e "$gdir/$rule" ] && [ ! -L "$gdir/$rule" ]; then
-      ln -s "$real_home/.agents/$rule" "$gdir/$rule"
-    fi
-    if [ -L "$gdir/$rule" ] && [ ! -e "$gdir/$rule" ]; then
-      printf '[agy-instance] warning: broken symlink %s\n' "$gdir/$rule" >&2
-    fi
-  done
+  if [[ ! -e "$gdir/config" && ! -L "$gdir/config" ]]; then
+    ln -s "$HOME/.gemini/config" "$gdir/config"
+  fi
   for gitem in annotations brain conversations conversation_summaries.db conversation_summaries.db-shm conversation_summaries.db-wal history.jsonl implicit jetski_state.pbtxt mcp presence; do
-    if [ ! -e "$gdir/antigravity-cli/$gitem" ] && [ ! -L "$gdir/antigravity-cli/$gitem" ]; then
-      ln -s "$real_home/.gemini/antigravity-cli/$gitem" "$gdir/antigravity-cli/$gitem"
+    if [[ ! -e "$gdir/antigravity-cli/$gitem" && ! -L "$gdir/antigravity-cli/$gitem" ]]; then
+      ln -s "$HOME/.gemini/antigravity-cli/$gitem" "$gdir/antigravity-cli/$gitem"
     fi
   done
-  export HOME="$real_home"
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
   unset GEMINI_DIR JETSKI_APP_DATA_DIR 2>/dev/null || true
-  exec "$bin" "--gemini_dir=$gdir" "$@"
+  exec agy "--gemini_dir=$gdir" "$@"
 )
 ```
 
@@ -119,8 +110,7 @@ _agy_instance() (
 |---|---|---|
 | `antigravity-cli/antigravity-oauth-token` | 独立文件 | 该账号的凭据，**不能软链** |
 | `antigravity-cli/settings.json` | 独立文件或软链 | 各账号可独立保存默认模型（`/model`）与 `trustedWorkspaces`；`agy` 保存设置时走临时文件原子 rename |
-| `config` | 软链 → `~/.gemini/config` | 共享 `mcp_config.json`、`hooks.json`、skills、projects；二进制内 `fs.ConfigDir` 将 `<geminiDir>` 拼接 `"config"`（不固定指向真实 `$HOME`），因此多账号共享 `config/skills` 与 MCP 等配置依赖此软链 |
-| `AGENTS.md` / `GEMINI.md` | 软链或独立文件 | 不在 `config` 子目录内，需在各隔离 `.gemini` 根下单独补齐（分别链接到 `~/.agents/AGENTS.md` 与 `~/.agents/GEMINI.md`；实体存在才补链，已有入口保持原样）；同目录下 `AGENTS.md` 与 `GEMINI.md` 若同时存在会累积加载 |
+| `config` | 软链 → `~/.gemini/config` | 共享[全局规则](#global-rules-layout)、MCP、hooks、skills 与 projects；二进制内 `fs.ConfigDir` 在实际 `<geminiDir>` 下拼接 `config`，因此多账号复用这些配置依赖此软链 |
 | `antigravity-cli/{conversations,brain,implicit,presence,annotations,history.jsonl,jetski_state.pbtxt,mcp,conversation_summaries.db*}` | 软链 → `~/.gemini/antigravity-cli/…` | 共享会话历史、压缩数据、MCP schema 与活跃锁（`presence` 必须共享以通过 Ovis `/proc/<pid>/fd` realpath 校验） |
 
 > **旧版假 `HOME` 实例目录的存量清理**：若机器曾跑过改写 `HOME="$h"` 的旧版包装，先检查 `~/.agy-homes/<account>/.local/share/Trash/{files,info}` 是否残留影子回收站条目（按 FreeDesktop 重名规则追加 `_1`、`_2`，将 `files/<name>` 与 `info/<name>.trashinfo` 成对同卷 `rename` 合并回 `~/.local/share/Trash/`），并将旧版仍在运行的进程过渡期内的顶层目录（`.local`、`.cache` 等）合并回真实 `HOME`。
@@ -154,13 +144,13 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
 
 ## <a id="customization-discovery"></a>配置、Rules 与 Skills 发现
 
-> 以下边界以官方[配置发现文档](https://antigravity.google/docs/customization-discovery)、[Rules 文档](https://antigravity.google/docs/rules)为准，并结合 `1.5.8` CLI 二进制静态分析与本机实测补充；涉及 Desktop / App 专属交互（如 `manual` 触发与 UI 开关）以官方文档为准，未在 Desktop 运行时实测。
+> 本节个人规则的行为以 `agy 1.5.17` 隔离实测与二进制核对为准；较早的 skills 实验在对应条目标明版本，其余客户端入口及桌面交互以官方文档为准：[配置发现](https://antigravity.google/docs/customization-discovery) · [Rules](https://antigravity.google/docs/rules)。
 
 ### 作用域与目录遍历边界
 
 - **工作区侧**：从当前目录向上遍历至 Git 仓库根（`.git` 所在目录；若当前目录不在 Git 仓库内，则只扫描工作区当前目录本身），探测各层的 `.agents/` 与 `.gemini/`，以及工作区各级 `AGENTS.md` / `GEMINI.md`。**不向仓库外继续上溯，也不向下扫描未打开的子目录**；单层目录下的 `skills/<name>/SKILL.md` 仅向下探测一层。
 - **非 Git 多仓父目录**：当前目录若不是 Git 仓库，Antigravity 只扫描当前目录本身，不会向下进入子仓库读取其 `AGENTS.md` 或 `.agents/skills/`。子仓库的规则与技能只有在会话或委派 worker 以该 Git 仓库或 worktree 根为 `cwd` 启动时才会生效。
-- **个人全局侧**：默认环境下，CLI 后端 `globalCustomizationDirs` 仅枚举三个配置根——`~/.gemini/antigravity-cli`、`~/.gemini` 与 `~/.gemini/config`。**`~/.agents/` 不在全局扫描列表中**：项目级 `<dir>/.agents/skills/` 可被原生发现，但用户级 `~/.agents/skills/` 不会被 Antigravity 自动发现。
+- **个人全局侧**：CLI 后端的全局配置根仅枚举 `~/.gemini/antigravity-cli`、`~/.gemini` 与 `~/.gemini/config` 三处（传 `--gemini_dir` 时后两者随实例根及其 `config` 目录重定向），不直接扫描 `~/.agents/`；因此项目级 `<dir>/.agents/skills/` 可被工作区原生发现，用户级 `~/.agents/skills/` 与全局规则须通过下方 `config/` 入口显式接入。
 
 ### Skills 发现、兼容性与优先级
 
@@ -179,17 +169,38 @@ export DBUS_SESSION_BUS_ADDRESS="unix:path=$gdir/agy-no-keyring-bus"
 - **元数据与刷新**：官方[配置发现文档](https://antigravity.google/docs/customization-discovery)将 `SKILL.md` 的 `description` 标为必填、`name` 标为可选（缺省时回退目录名）；但 `1.5.8` 的 `convertSkillPath` 存在 `RequireName` 校验分支，且跨工具仓库通常要求两者齐全。文件增改在下一轮次自动生效；若要在**当前交互式 CLI 会话内**即时刷新 `/skills` 与斜杠补全，执行 `/skills reload`。
 - **内置技能分层门控**（🔬 `1.5.8` 实测样本）：`builtin/skills/` 磁盘目录共存 **14** 个 `SKILL.md`；Language Server RPC `GetAllSkills` 返回 **13** 个（受门控隐藏的内置技能未返回）；主会话系统提示实际注入 `<skills>` 为 **5** 个（通过 `builtin.RegisterGated`、特性旗标、当前角色与 `WithModeFilter` 按模式裁剪）。
 
-### Rules 发现、触发与上下文预算
+### <a id="global-rules-layout"></a>全局规则布局
 
-- **累积加载与 realpath 去重**：来自不同作用域（全局、仓库各级）的已发现规则**累积合并**生效，不会因为高优先级规则存在而整体屏蔽低优先级规则；同一 `~/.gemini` 下的 `AGENTS.md` 与 `GEMINI.md` 亦会累积注入。发现阶段按 `EvalSymlinks` 解析后的物理路径（realpath）去重，不同路径的两个独立常规文件即便内容完全相同也不会在加载时合并去重（引用内联展开也不等同于发现去重）。
-- **普通指令 vs `rules/*.md`**：直接放置的 `AGENTS.md` 与 `GEMINI.md` 视为普通 Markdown 并以 `always_on` 注入（YAML frontmatter 被忽略）。`.agents/rules/*.md` 与 `.gemini/rules/*.md` 则要求有效 `trigger`：
-  - `always_on`：每轮注入规则正文
-  - `model_decision`：需提供 `description`，仅以摘要供模型按需调用
-  - `glob`：按路径模式匹配触发；`1.5.8` 二进制同时兼容 `globs` 与单数 `glob` 字段
-  - `manual`：手动 `@` 触发（官方标注为 App/IDE 侧交互能力）
-- **清单注册与 `@` 引用差异**：通过 `rules.json` 可显式登记更深层子目录或目录外规则文件并保留其 `trigger`。规则正文中，`@[label](path)` 会在单文件大小校验之前内联展开目标文件内容；裸写 `@path` 仅改写引用路径提示，不在加载阶段内联文件内容。
-- **双阈值保护**（`1.5.8` 静态分析）：单文件（含 `@[label](path)` 展开后文本）存在 **24,000 字节**硬上限；全部非内置规则共用 **20,000 token** 全局聚合预算（`defaultRulesBudget`），超出后按体积从大到小将规则文件降级为仅保留路径指针（不再内联全文），仅内置插件自带规则豁免此预算裁剪。
-- **超限文件与预算**：仓库 `AGENTS.md` 超过 **24,000 字节**的单文件上限，或合并规则超过 **20,000 token** 的 `<user_rules>` 预算时，Antigravity 会把超大的规则文件降级为裸路径指针，不再内联正文。因此，文件中通过 prose 串联的后续指令（例如读取 `./AGENTS.local.md` 或跨仓写入边界）不会自动进入 Context；需要通过工具读取，或将细节拆到按需引用的 reference / `model_decision` 规则中并保持内联内容低于上限。
+Antigravity 各产品端的全局规则入口并不完全一致：CLI 与 App 均可从 `~/.gemini/config/AGENTS.md`、`~/.gemini/config/GEMINI.md` 及 `~/.gemini/config/rules/*.md` 加载全局规则，同时仍保留 `~/.gemini/AGENTS.md` 与 `~/.gemini/GEMINI.md` 作为顶层兼容入口；但官方文档的 IDE／IDE 扩展一栏仍列为顶层 `AGENTS.md`、`GEMINI.md` 与 `config/rules/*.md`。若同一台机器同时使用 CLI／App 与 IDE 或扩展，应逐个客户端验证实际生效路径，确认无误后再回收顶层链接（见[Rules 产品路径](https://antigravity.google/docs/rules#configuration-by-surface)）。
+
+对于 CLI，推荐将个人规则集中放在 `config/` 目录中：共享同一 `config` 软链的多账号 `--gemini_dir` 实例会自动同步整套规则，各自保留独立 `config` 的实例则分别维护：
+
+| 相对 `config/` 的路径 | 用途与配置方式 |
+| --- | --- |
+| `AGENTS.md` | 软链至 `~/.agents/AGENTS.md` |
+| `GEMINI.md` | 可选的自定义补充规则（保留已有文件或软链至其源文件） |
+| `rules/agents-local.md` | 带 `always_on` frontmatter 的本机补充入口 |
+
+其中 `rules/agents-local.md` 写作：
+
+```markdown
+---
+trigger: always_on
+---
+@[AGENTS.local.md](~/.agents/AGENTS.local.md)
+```
+
+固定文件名的 `AGENTS.md` 与 `GEMINI.md` 按普通 Markdown 直接作为常驻规则加载，可与本机补充并行生效；`rules/*.md` 下的模块规则则必须通过 YAML frontmatter 声明触发方式，可选 `always_on`（每轮注入）、`model_decision`（须配 `description`，由模型按需读取）、`glob`（按路径模式匹配）或 `manual`（手动 `@` 触发，交互入口见官方 App／IDE 说明；详见[Rules 触发方式](https://antigravity.google/docs/rules#yaml-frontmatter-and-activation-modes)）。
+
+之所以用带 frontmatter 的内联封装文件而非直接把 `~/.agents/AGENTS.local.md` 软链进 `rules/`，是因为模块规则严格校验 `trigger`：在 `agy 1.5.17` 隔离实测中，无 frontmatter 的裸 `rules/agents-local.md` 软链以及通过 `rules.json` 登记的同一裸文件，都会因缺少有效 `trigger` 而被丢弃，无法进入规则列表（日志记录 `Invalid rule trigger: CORTEX_MEMORY_TRIGGER_UNSPECIFIED`）。`rules.json` 清单可用于登记目录外文件或更深层子目录中的规则并保留其触发方式，但目标文件本身仍须带有效 frontmatter；此外，清单中指向用户目录的路径须写绝对路径，`~/` 展开仅适用于下文的 `@[label](path)` 内联语法（见[清单字段与路径](https://antigravity.google/docs/customization-discovery#discovery-manifests)）。
+
+> `agy 1.5.17` 对 `rules/AGENTS.md` 这一特殊文件名存在兼容识别，但模块规则的公开约定仍是以 YAML frontmatter 显式声明 `trigger`，不宜依赖该特例。
+
+### 规则内联与预算
+
+- **单文件 24,000 字节上限与 `@[label](path)` 展开顺序**：加载器先展开正文中的 `@[label](path)` 引用，再按 **24,000 字节**的单文件上限检查并截断展开后的文本。路径解析时，相对路径以当前规则文件所在目录为基准，`~/` 以用户家目录为基准；而裸写 `@path` 不会在加载阶段展开全文，只生成供模型自行定位的路径引用。据此决定本机补充的落点：若 `GEMINI.md` 已有较多自定义规则，将本机补充单独放入 `config/rules/agents-local.md`，可让两份正文各自享有独立的 24,000 字节额度，避免合并展开后被截断；若没有自定义 `GEMINI.md`，或两者合并后远低于 24,000 字节，也可以直接在 `GEMINI.md` 中用 `@[label](path)` 内联。
+- **常驻规则共享 20,000 token 聚合预算**：全部非内置常驻规则共享 **20,000 token** 的全局预算。聚合超限时，体积较大的规则会被降级为仅保留路径与描述的指针，改由模型按需读取；内置插件自带规则豁免此预算。CLI 本地的规则 token 计数与在线模型计费口径相互独立，排查预算时需分别核对（见[Rules 容量限制](https://antigravity.google/docs/rules#size-limits-and-token-budgets)）。
+- **规则叠加、去重与迁移验收**：`1.5.17` 在旧顶层目录（`~/.gemini/`）与 `config/` 下的固定文件名指向同一物理实体时能够自动去重；但若同一实体同时作为全局规则和项目规则被发现，或同时经固定文件名与内联模块两条路径加载，仍可能被重复计入。从旧布局迁移时（尤其是此前用 `config/AGENTS.md` 注入本机补充的场景），先在旁路备好完整的候选配置，再将主规则新指向与本机补充入口一并切换，避免切换窗口内漏载规则；初期先保留顶层兼容链接，待核实实际工作区下的规则预算与 `<user_rules>` 全文无误后再回收。核验时，可通过本地语言服务器的 `GetAllRules` 与 `GetTokenBase` 检查规则发现、触发模式及预算占用，再通过新会话的 [SQLite 记录](#session-storage) 核对实际注入模型的 `<user_rules>` 全文。
 
 ## <a id="context-compaction"></a>上下文压缩
 

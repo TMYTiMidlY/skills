@@ -136,7 +136,9 @@ git clone https://github.com/TMYTiMidlY/skills.git "<repo>"
 
 ### <a id="shared-skills"></a>共享 skills 的接入方式
 
-本仓将选定 skills 链接到用户级 `~/.agents/skills/` 或项目级 `.agents/skills/`。DSH、Codex、Copilot CLI、Gemini CLI、Cursor、Amp、pi、Cline、Warp、Windsurf、Roo Code 已有共享目录发现机制；Claude Code 通过自己的 skills 目录接入。具体到所用版本、项目范围和其他工具，由 manage-skills 按[发现范围表](skills/.curated/manage-skills/references/installation.md#skills-discovery)判断。
+本仓将选定 skills 链接到用户级 `~/.agents/skills/` 或项目级 `.agents/skills/`。DSH、Codex、Copilot CLI、Cursor、Amp、pi、Cline、Warp、Windsurf、Roo Code 原生支持共享目录发现；Claude Code 通过自有 skills 目录接入，Antigravity 在用户级通过 `~/.gemini/config/skills/` 接入（项目级支持共享目录）。具体到所用版本和项目范围，由 manage-skills 按[发现范围表](skills/.curated/manage-skills/references/installation.md#skills-discovery)判断。
+
+> Google 于 2026-06-18 将 Gemini CLI 的免费个人及 Google AI Pro／Ultra 通道迁移至 Antigravity CLI（`agy`），Gemini Code Assist 企业许可与部分付费 API 用法仍见上游，详见 [Google 迁移公告](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)。
 
 Skills 和通用指令使用不同的发现规则，安装时需要分别处理，见[共享指令与发现入口](#agent-instructions)。
 
@@ -196,8 +198,8 @@ pre-commit run lychee --all-files
 | --- | --- |
 | DSH | 直接读取 `~/.agents/AGENTS.md`；`~/.dsh/AGENTS.md` 用于软链注入 `~/.agents/AGENTS.local.md`（或保存 DSH 专用要求） |
 | Codex、Amp、pi | Skills 可用共享目录，主指令在各实际配置根下将同名 `AGENTS.md` 软链接到 `~/.agents/AGENTS.md`；Codex 独立账号入口分别检查 |
-| Antigravity | 项目级 skills 可用共享目录，用户级 skills 链接到 `config/skills`；主指令在各 `.gemini` 或独立 `--gemini_dir` 下将同名 `AGENTS.md` 软链接到 `~/.agents/AGENTS.md` |
-| Copilot CLI、Gemini CLI | Skills 可用共享目录，主指令将各自专属文件名软链接到 `~/.agents/AGENTS.md` |
+| Antigravity CLI | 项目级 skills 可用共享目录，用户级 skills 软链接到 `~/.gemini/config/skills/`；个人规则统一放在 `config/` 下（含 `AGENTS.md`、可选自定义 `GEMINI.md` 及内联本机补充的 `rules/agents-local.md`），共享同一 `config` 的账号自动复用整套规则，见[安装方式](skills/.curated/manage-skills/references/installation.md#antigravity-instructions) |
+| Copilot CLI | Skills 可用共享目录，主指令将 `copilot-instructions.md` 软链接到 `~/.agents/AGENTS.md` |
 | Claude Code 本地 CLI | Skills 软链接到 `~/.agents/skills`，`CLAUDE.md` 软链接到 `~/.agents/AGENTS.md` |
 | Cursor | Skills 可用共享目录；主指令按用户设置或项目级规则处理 |
 
@@ -207,7 +209,7 @@ manage-skills 只为已发现且在本次范围内的工具补齐所需入口。
 
 本机相关内容统一保存为普通文件 `~/.agents/AGENTS.local.md`，仓库根目录保留通用的 `AGENTS.md` 与兼容链接 `CLAUDE.md`。`~/.agents/` 建议初始化为本地 Git 仓库，追踪本机实体文件以及 `AGENTS.md`、`skills/*` 等软链接本身（核对 `.gitignore`，不误屏蔽这些条目）。
 
-对支持第二全局入口的宿主（DSH、Antigravity、Claude Code、Copilot CLI、pi），通过各自原生机制软链注入 `~/.agents/AGENTS.local.md`，避免依赖模型记忆手动读取；仅支持单一全局主入口的宿主（如 Codex）保留主入口软链，由 [AGENTS.md](AGENTS.md) 中的条件兜底按需读取。
+DSH、Antigravity、Claude Code、Copilot CLI、pi 可通过各自的原生规则入口自动注入 `~/.agents/AGENTS.local.md`；仅支持单一全局主入口的宿主（如 Codex）保留主入口软链，由 [AGENTS.md](AGENTS.md) 中的条件兜底按需读取。
 
 本地补充的更新范围、篇幅（留意 Antigravity 24,000 字节单文件上限等宿主约束）与组织要求见 [AGENTS.md](AGENTS.md)。各宿主的注入入口、Git 追踪检查与验收方法统一维护在[本机补充](skills/.curated/manage-skills/references/installation.md#local-instructions)。
 
