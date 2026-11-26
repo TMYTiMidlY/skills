@@ -2,7 +2,7 @@
 
 Copilot CLI 闭源、只发 minified bundle（源码定位见[运行时主 bundle 与补丁目标](copilot-cli.md#runtime-bundle)）。本文记录默认档位与重试行为的运行时补丁。固定默认模型、固定 effort 和 context tier 可以用配置；“每个模型自动选择最高可用 effort、切模型默认使用长上下文、用户显式默认模型不被组织默认模型覆盖”还涉及启动覆盖层、选择器与会话切换逻辑，需要按版本适配。
 
-1.0.83 起默认档位计算迁入 native，脚本通过 [CLI 调用边界](#native-defaults) 适配，已覆盖到 1.0.113；旧版的 JavaScript 锚点与重试补丁保留在[旧版适配](#legacy-js)。
+1.0.83 起默认档位计算迁入 native，脚本通过 [CLI 调用边界](#native-defaults) 适配，已覆盖到 1.0.116。旧版的 JavaScript 锚点与重试补丁保留在[旧版适配](#legacy-js)。
 
 **打补丁只改运行时真正跑的那份 CLI bundle**——pkg cache 版本目录（`~/.cache/copilot/pkg/<platform>/<version>/`）下的主入口文件：1.0.105 起 `app.js` 缩为薄启动壳并 `import("./cli-main.js")`，主逻辑在 `cli-main.js`；1.0.91 及更早在 `app.js`。默认定位最高缓存版本，传了 `--prefer-version` 时则以指定版本为准；不要去改 npm 的 `node_modules` 种子包或 SEA 的 ELF 二进制（加载机制见 [copilot-cli.md](copilot-cli.md#runtime-bundle)）。
 
@@ -71,6 +71,16 @@ uv run scripts/patch-copilot-cli.py --revert --latest-only
 > 边界依据：1.0.112（构建标识 `24d885ba`）与 1.0.113（`150b9c66`）发行包中的 `cli-main.js`；1.0.113 随包类型声明 `SessionUpdateInferenceOptions` 同时包含 `reasoningEffort` 与 `contextTier`。旧脚本在 1.0.112 报 `headless effort application count=0 (want 1)`，仅覆盖到 1.0.112 的脚本在 1.0.113 报 `headless agent effort update count=0 (want 1)`，两类失配均会触发整组 `SKIP` 而不写入残缺改动。
 
 > 验证范围：1.0.91、1.0.105、1.0.109、1.0.110、1.0.112 五版干净副本均通过补丁写入、整包 Node 语法校验与幂等重跑；旧版升级实测覆盖 v3、v4 直升 v5，v1、v2 仅保留摘要校验分支而未做动态复测。1.0.112 另完成 34 项真实 native 会话、受控模型目录与边界桩检查、9 项提取的非交互分支用例，以及 2 项在发送提示词前退出的已鉴权非交互探针。1.0.113 先在隔离副本通过写入、语法、幂等及 9 项提取分支用例，再经自动补丁服务落地；该服务为 oneshot，执行完毕显示 `inactive (dead)` 属正常终态，应以 `Result=success` 与 `ExecMainStatus=0` 判成功。验收须沿用日常 Copilot 鉴权环境，避免混用套餐权限不同的 `gh` 登录态；独立 PTY 实测已打补丁的 1.0.113 发行包时，默认模型 `Gemini 4 Carbon` 带 `(default)` 标记并落到 High 与 936K，直接输入 `/model gpt-6.1-sol` 落到 Max 与 922K，窗口数值均取自当时的模型目录而非补丁常量。恢复事件回放、远程与 `isLocalAttach` 以及 BYOK 旁路部分依赖边界桩验证，不等同于真实远端或自定义提供方的全链路实测。
+
+1.0.115（构建标识 `c05d4c44`）与 1.0.116（`775f64c5`）将非交互的 `modelCliHeadlessConfiguration` 拆为三处调用。先用局部参数对象解析，`--agent` 的初次解析出错时去掉 CLI effort 重试校验，选定 agent 后再按会话的新模型与 effort 重新解析。旧脚本只统计对象字面量调用，命中的是重试与重算两处，因此报 `modelCliHeadlessConfiguration count=2 (want 1)`。新锚点验证三次调用的参数、结果绑定及 `selectCustomAgent`。全新普通会话在初次解析时补默认档位，未指定模型的 agent 在选定后补齐档位并保留显式 effort。恢复会话、agent 预检及已指定模型的 agent 沿用上游解析。
+
+两版的初始内置模型切换共用 `managed_settings`、`repo_settings` 和普通启动三个来源，同时改用专用函数序列化用户设置。仅在 `managed_settings` 分支中，补丁使用 native 解析出的用户默认模型和提供方，并按该模型重新调用 tier 解析函数。仓库分支按原参数提交。最终档位更新由新版的同一个异步守卫控制，向 `model.switchTo` 传扁平参数，向 `options.update` 传嵌套的 `inference` 参数。打开 `/model`、选择器提交、裸命令切换、交互初始化与覆盖层使用原有调用点和 `tmy-native-defaults-v5` helper。
+
+> 1.0.112–1.0.116 的五份干净副本均通过严格写入、整包 `node --check`、原版备份比对和幂等重跑。由历史 v4 helper 和 1.0.112 调用点构造的样本可原子升级到 v5。修改过的 helper、缺失的挂钩与残缺的非交互调用结构均触发 `SKIP`。
+
+> 1.0.116 使用日常鉴权在隔离目录运行四次非交互探针，在发送提示词前读取真实 native 的模型目录与会话状态。Gemini 4 Carbon 默认 High、`long_context`，显式传 `--effort low --context default` 后为 Low、`default`。自定义 agent 未指定档位时为 High、`long_context`，指定 Low 时仍保留 `long_context`。独立 PTY 中，启动时为 Gemini 4 Carbon、High，`/model` 列表显示默认标记，`/context` 为 936k。直接输入 `/model gpt-6.1-sol` 后为 Max、922k，从选择器切回后 `/context` 恢复到 936k。
+
+> 另有 20 项函数或调用边界检查。组织下发默认模型、仓库设置、agent 预检重试、恢复、远程、`isLocalAttach` 和 BYOK 旁路使用提取的调用点或边界桩验证。
 
 ### <a id="legacy-js"></a>旧版 JavaScript 适配
 

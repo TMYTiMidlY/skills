@@ -22,7 +22,7 @@ harness/references/copilot-patch.md）。
      `modelsIsTieredTokenPrices`、`effortLevel`/`contextTier`）而非整段表达式形状。
   5. 能降级就不放弃：clearpoint 找不到模型对象时退化成「保留上次设置」而不是 SKIP。
 
-新版 native profile（1.0.83-1.0.113）：整组适配启动、启动覆盖层、主会话切换与模型选择器；
+新版 native profile（1.0.83-1.0.116）：整组适配启动、启动覆盖层、主会话切换与模型选择器；
 使用有权使用的档位、保留显式选择，用户配置了默认模型时优先于组织下发的默认模型并同步默认标记，
 不修改 native 二进制。该组所有入口必须同时命中；缺少入口时报 SKIP，不把 native 迁移当成 N/A。
 
@@ -775,6 +775,7 @@ def native_hooks_complete(src, marker, legacy=False):
              ("startup", "picker", "initialize", "startupOverlay", "headless", "headlessOptions"))
     headless_managed_expected = 1 if (not legacy and '"managed_settings"' in rest) else 0
     options_expected = 2 if "/*tmy-headless-native-switch*/" in rest else 1
+    headless_expected = 1 + int("/*tmy-headless-agent-defaults*/" in rest)
     if marker == NATIVE_MARKER:
         commands = list(re.finditer(
             r'__tmyNativeDefaults\.switchTo\([\w$]+,[\w$]+\.session\.instance,\{', rest))
@@ -783,9 +784,10 @@ def native_hooks_complete(src, marker, legacy=False):
         command_end = js_object_end(rest, commands[0].end() - 1)
         if rest[command_end:command_end + 6] != ',true)':
             return False
+    expected_counts = {"headlessOptions": options_expected, "headless": headless_expected}
     return (src.count(f"/*{marker}*/") == 1 and
-            all(rest.count(f"__tmyNativeDefaults.{name}(") ==
-                (options_expected if name == "headlessOptions" else 1) for name in hooks) and
+            all(rest.count(f"__tmyNativeDefaults.{name}(") == expected_counts.get(name, 1)
+                for name in hooks) and
             rest.count("__tmyNativeDefaults.headlessStartupSwitch(") == headless_managed_expected and
             rest.count("__tmyNativeDefaults.switchTo(") == 2)
 
@@ -794,7 +796,7 @@ def _find_overlay_and_headless_managed_edits(src, alias):
     """Locate startupOverlay (all native versions) and headlessStartupSwitch (1.0.105+)."""
     edits = []
     overlays = list(re.finditer(
-        r'([\w$]+)\.model\.applyStartupOverlay\((\{deviceManagedModel:[^{}]*\})\)', src))
+        r'(?<![\w$])([\w$]+)\.model\.applyStartupOverlay\((\{deviceManagedModel:[^{}]*\})\)', src))
     if len(overlays) != 1:
         raise ValueError(f"startup model overlay count={len(overlays)} (want 1)")
     ov = overlays[0]
@@ -823,7 +825,8 @@ def _find_overlay_and_headless_managed_edits(src, alias):
         res_matches = list(re.finditer(
             r'([\w$]+)=await ' + re.escape(alias) +
             r'\.modelResolverResolveSelectedModelNative\(\{[^{}]*'
-            r'currentSessionModel:\{[^{}]*\},userSettingsJson:JSON\.stringify\(([\w$]+)\)[^{}]*\}\),'
+            r'currentSessionModel:\{[^{}]*\},userSettingsJson:(?:JSON\.stringify|[\w$]+)'
+            r'\(([\w$]+)\)[^{}]*\}\),'
             r'([\w$]+)=\1\.info\.resolvedModel\?\?void 0', back))
         if len(res_matches) != 1:
             raise ValueError(f"headless model resolver binding count={len(res_matches)} (want 1)")
@@ -966,29 +969,78 @@ def p_native_defaults(src):
         prop_start = src.index("{", caller.start())
         edits.append((prop_start + 1, prop_start + 1, f"__tmySettings:{config},"))
 
-        headless_result = None
-        for native_name, hook in (("modelCliStartupConfiguration", "startup"),
-                                  ("modelCliHeadlessConfiguration", "headless")):
-            candidates = []
-            for m in re.finditer(re.escape(alias) + r'\.' + native_name + r'\(\{', src):
-                o_start = m.end() - 1
-                o_end = js_object_end(src, o_start)
-                if src[o_end] == ")" and (hook != "startup" or "cliReasoningEffort:" in src[o_start:o_end]):
-                    candidates.append((m, o_start, o_end))
-            if len(candidates) != 1:
-                raise ValueError(f"{native_name} count={len(candidates)} (want 1)")
-            call, obj_start, obj_end = candidates[0]
-            extra = ""
-            if hook == "headless":
-                headless_result = one(r'([\w$]+)=$', src[max(0, call.start() - 200):call.start()],
-                                      "headless result binding").group(1)
-                initial = one(r'initialModel:([\w$]+)\.modelId',
-                              src[obj_start:obj_end], "headless initial model").group(1)
-                extra = f",{initial}.reasoningEffort"
-            edits.append((call.start(), obj_end + 1,
-                          f"__tmyNativeDefaults.{hook}({alias},{src[obj_start:obj_end]}{extra})"))
+        native = r'(?<![\w$.])' + re.escape(alias) + r'\.'
+        startup_calls = []
+        for call in re.finditer(native + r'modelCliStartupConfiguration\(\{', src):
+            obj_start = call.end() - 1
+            obj_end = js_object_end(src, obj_start)
+            if src[obj_end] == ")" and "cliReasoningEffort:" in src[obj_start:obj_end]:
+                startup_calls.append((call, obj_start, obj_end))
+        if len(startup_calls) != 1:
+            raise ValueError(f"modelCliStartupConfiguration count={len(startup_calls)} (want 1)")
+        call, obj_start, obj_end = startup_calls[0]
+        edits.append((call.start(), obj_end + 1,
+                      f"__tmyNativeDefaults.startup({alias},{src[obj_start:obj_end]})"))
 
-        init = one(r'([\w$]+)\.initialize\((\{cliModel:[^{}]*'
+        headless = native + r'modelCliHeadlessConfiguration'
+        headless_count = len(re.findall(headless + r'\(', src))
+        if headless_count == 3:
+            # 1.0.115+ preflights --agent, retries validation without CLI effort,
+            # then resolves again after agent selection. Keep agent preflight
+            # and resume native. Apply defaults after selecting an unpinned agent.
+            ident = r'[\w$]+'
+            preflight = one(
+                rf',(?P<result>{ident})=(?P<call>{headless}\((?P<input>{ident})\)),'
+                rf'{ident}=(?P<agent>{ident})&&(?P=result)\.fatalError\?'
+                rf'{headless}\(\{{\.\.\.(?P=input),cliReasoningEffort:void 0\}}\):(?P=result);',
+                label="headless agent preflight")
+            headless_result, native_call, input_var, agent = preflight.groups()
+            inputs = one(
+                rf',({ident})=!!{re.escape(agent)}\|\|!{native}sessionScalarCreatedFromEvents'
+                rf'\(({ident})\.sessionId\),{re.escape(input_var)}=\{{',
+                label="headless configuration input")
+            fresh_or_agent, session = inputs.groups()
+            obj_start = inputs.end() - 1
+            obj_end = js_object_end(src, obj_start)
+            args = src[obj_start:obj_end]
+            if (obj_end != preflight.start() or not args.startswith(f"{{sessionId:{session}.sessionId,")
+                    or "initialModel:" not in args):
+                raise ValueError("headless configuration input binding changed")
+            rerun = one(
+                rf'{re.escape(headless_result)}=(?P<call>{headless}\('
+                rf'(?P<args>\{{\.\.\.{re.escape(input_var)},cliModel:void 0,selectedModel:{ident},'
+                rf'sessionReasoningEffort:{ident}\}})\))',
+                label="headless configuration after agent selection")
+            if rerun.start() <= preflight.end():
+                raise ValueError("headless agent selection order changed")
+            agent_selection = one(
+                rf'\{{agent:({ident})\}}=await {re.escape(session)}\.selectCustomAgent\({re.escape(agent)},',
+                src[preflight.end():rerun.start()], "headless selected agent binding").group(1)
+            edits.append((preflight.start("call"), preflight.end("call"),
+                          f"({agent}||!{fresh_or_agent}?{native_call}:"
+                          f"__tmyNativeDefaults.headless({alias},{input_var}))"))
+            edits.append((rerun.start("call"), rerun.end("call"),
+                          f"({agent_selection}?.model||{agent_selection}?.models?.length?"
+                          f"{rerun.group('call')}:/*tmy-headless-agent-defaults*/"
+                          f"__tmyNativeDefaults.headless({alias},{rerun.group('args')},"
+                          f"{agent_selection}?.reasoningEffort))"))
+        elif headless_count == 1:
+            call = one(r'(?<![\w$])([\w$]+)=(' + headless + r')\(\{',
+                       label="headless inline configuration")
+            headless_result = call.group(1)
+            obj_start = call.end() - 1
+            obj_end = js_object_end(src, obj_start)
+            if src[obj_end] != ")":
+                raise ValueError("headless inline configuration arguments changed")
+            initial = one(r'initialModel:([\w$]+)\.modelId',
+                          src[obj_start:obj_end], "headless initial model").group(1)
+            edits.append((call.start(2), obj_end + 1,
+                          f"__tmyNativeDefaults.headless({alias},{src[obj_start:obj_end]},"
+                          f"{initial}.reasoningEffort)"))
+        else:
+            raise ValueError(f"modelCliHeadlessConfiguration count={headless_count} (want 1 or 3)")
+
+        init = one(r'(?<![\w$])([\w$]+)\.initialize\((\{cliModel:[^{}]*'
                    r'isRemote:([\w$]+)\.isRemote===!0\})(?:,([\w$]+))?\)',
                    label="interactive model initialization")
         handle, args, session, streamer = init.groups()
@@ -999,7 +1051,7 @@ def p_native_defaults(src):
         edits.extend(_find_overlay_and_headless_managed_edits(src, alias))
 
         switches = {"picker": [], "command": []}
-        for call in re.finditer(r'([\w$]+(?:\.[\w$]+)*)\.model\.switchTo\(\{', src):
+        for call in re.finditer(r'(?<![\w$.])([\w$]+(?:\.[\w$]+)*)\.model\.switchTo\(\{', src):
             start = call.end() - 1
             end = js_object_end(src, start)
             args = src[start:end]
@@ -1055,10 +1107,10 @@ def p_native_defaults(src):
             # 1.0.112 preserves agent/BYOK options.update, but built-in models now
             # apply defaults through model.switchTo. Preserve that split and its
             # existing .catch handler; carry the computed tier through both arms.
-            update = one(re.escape(effort) + r'!==void 0&&!([\w$]+)&&'
+            update = one(re.escape(effort) + r'!==void 0&&(![\w$]+&&)?'
                          r'(\([^()]+\))&&await\(async\(\)=>\{',
                          label="headless native effort application")
-            flag, inner_cond = update.groups()
+            outer_guard, inner_cond = update.groups()
             body_start = update.end() - 1
             body_end = js_object_end(src, body_start)
             if src[body_end:body_end + 4] != ')().':
@@ -1078,7 +1130,7 @@ def p_native_defaults(src):
                 raise ValueError("headless native effort switch payload changed")
             field = one(r'(?<=,)reasoningEffort:' + re.escape(effort) + r'(?=,)',
                         args, "headless native effort field")
-            guard = (f"!{flag}&&(({effort}!==void 0&&{inner_cond})||"
+            guard = (f"{outer_guard or ''}(({effort}!==void 0&&{inner_cond})||"
                      f"{headless_result}.__tmyContextTier!==void 0)"
                      "/*tmy-headless-native-switch*/&&await(async()=>{")
             edits.append((update.start(), update.end(), guard))
