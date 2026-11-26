@@ -296,9 +296,9 @@ repo/
 
 指令文件没有持续 watcher。文件系统触及或恢复会话对账后，新来源以 `Additional instructions from:` 注入，已改变的来源以 `Updated instructions from:` 替换，已移除的来源以 `Instructions removed:` 声明失效；未变内容通过来源与内容比较抑制重复。自动注入会记录来源和作用范围，模型手动读过任意路径的文件则只说明该会话看到了文件内容，不能据此断言新会话也会自动加载。
 
-`dsh-base` 默认给整条渲染基线 65,536 字节，单个源文件读取上限默认为 1,048,576 字节。超预算时先省略较宽泛文件，再截断最具体文件，并给出预算通知；核对实际提示词时，应同时查看来源消息和省略／截断通知。
+`dsh-base` 默认单个源文件读取上限为 1,048,576 字节，渲染预算 `maxBytes` 默认为 65,536 字节。`dsh-v0.2.1-rc.2`（及 `0.2.1-rc` 系列）由整条基线共用这 65,536 字节；自 `dsh-v0.2.2-alpha.2` 起，用户全局指令链与项目指令链各自独立享有 65,536 字节（同时包含两条链时合计上限为 2 × `maxBytes`，且余额不在两链之间共享）。超预算时链内先省略较宽泛文件（全局链内 `$DSH_HOME/AGENTS.md` 先于 `$DSH_AGENTS_HOME/AGENTS.md` 被省略），再截断最具体文件，并给出预算通知；核对实际提示词时，应同时查看来源消息和省略／截断通知。
 
-> 来源：[字节预算与省略策略](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L30-L74)、[新增、更新与移除消息](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L163-L210)、[刷新触发条件与预算省略边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L219-L226)。
+> 来源：[单基线字节预算与省略策略](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L30-L74)、[按指令链分别预算](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-alpha.2/packages/context/agent-instructions/README.zh.md#L30-L76)、[链间不共享预算边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-alpha.2/packages/context/agent-instructions/README.zh.md#L229)、[新增、更新与移除消息](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L163-L210)、[刷新触发条件与预算省略边界](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/packages/context/agent-instructions/README.zh.md#L219-L226)。
 
 ### Session 日志与持久化
 
