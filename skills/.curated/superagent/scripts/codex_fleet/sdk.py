@@ -20,7 +20,6 @@ from pydantic import RootModel
 from .events import Phase, SubagentTap, unpack
 from .guard import terminate_process
 
-DEFAULT_MODEL = "gpt-6.2-sol"
 DEFAULT_EFFORT = "xhigh"
 ROOT_HINT = (
     "You are the primary agent. Complete the assigned task, verify repository gates, "
@@ -170,8 +169,8 @@ class Runtime:
             if not version or version_tuple(version) < version_tuple(minimum):
                 raise RuntimeError(f"Codex CLI {version!r} is below required {minimum}")
             config = (await self.rpc("config/read", {"includeLayers": False}))["config"]
-            if self.spec.get("model") is None:
-                self.spec["model"] = config.get("model") or DEFAULT_MODEL
+            if not self.spec.get("model"):
+                self.spec["model"] = config.get("model")
             if self.spec.get("effort") is None:
                 self.spec["effort"] = config.get("model_reasoning_effort") or DEFAULT_EFFORT
             v2 = config.get("features", {}).get("multi_agent_v2", {})
@@ -196,7 +195,10 @@ class Runtime:
         return await self.rpc("account/rateLimits/read", {})
 
     async def open_thread(self, thread_id: str | None, instructions: str | None):
-        params = {"cwd": self.spec["cwd"], "model": self.spec.get("model", DEFAULT_MODEL), "config": self.native}
+        params = {"cwd": self.spec["cwd"], "config": self.native}
+        model = self.spec.get("model")
+        if model:
+            params["model"] = model
         if instructions is not None:
             params["developerInstructions"] = instructions
         if self.sandbox is not None:

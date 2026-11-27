@@ -387,15 +387,18 @@ class RuntimeTests(TemporaryWorkspace, unittest.IsolatedAsyncioTestCase):
                 runtime.rpc = rpc
                 try:
                     await runtime.start()
-                    await runtime.open_thread(None, None)
+                    thread_id = await runtime.open_thread(None, None)
                     result, _ = await self.collect_turn(runtime)
                     self.assertEqual(result["status"], "completed")
+                    await runtime.open_thread(thread_id, None)
                 finally:
                     await runtime.close()
                 recorded = requests(self.path / "rpc.jsonl")
                 opened = [row["params"] for row in recorded if row["method"] == "thread/start"][-1]
+                resumed = [row["params"] for row in recorded if row["method"] == "thread/resume"][-1]
                 turned = [row["params"] for row in recorded if row["method"] == "turn/start"][-1]
                 self.assertEqual(opened["model"], expected_model)
+                self.assertEqual(resumed["model"], expected_model)
                 self.assertEqual(turned["effort"], expected_effort)
 
     async def collect_turn(self, runtime: Runtime) -> tuple[dict, list[dict]]:
@@ -954,7 +957,7 @@ class CLITests(TemporaryWorkspace, unittest.TestCase):
         recorded = requests(record)
         opened = next(row["params"] for row in recorded if row["method"] == "thread/start")
         turned = next(row["params"] for row in recorded if row["method"] == "turn/start")
-        self.assertEqual(opened["model"], "gpt-6.2-sol")
+        self.assertNotIn("model", opened)
         self.assertEqual(turned["effort"], "xhigh")
         self.assertEqual(opened["config"]["features.multi_agent_v2.max_concurrent_threads_per_session"], 3)
         self.assertNotIn("sandbox", opened)
@@ -967,7 +970,9 @@ class CLITests(TemporaryWorkspace, unittest.TestCase):
                           MOCK_RECORD=str(record))
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(json.loads(second.stdout)["thread_id"], summary["thread_id"])
-        self.assertIn("thread/resume", [row["method"] for row in requests(record)])
+        resumed = next(row["params"] for row in requests(record) if row["method"] == "thread/resume")
+        self.assertEqual(resumed["threadId"], summary["thread_id"])
+        self.assertNotIn("model", resumed)
 
     def test_run_quota_errors_are_data_not_task_failure(self) -> None:
         result = self.cli(["run", "--cwd", str(self.path), "--prompt", "task", "--codex-bin", str(self.mock_binary())], MOCK_LIMITS_ERROR="1")
